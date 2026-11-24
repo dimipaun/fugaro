@@ -13,10 +13,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/dimipaun/fugaro/internal/buildtoken"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
@@ -527,4 +530,166 @@ func TestGitCredentialNeverPrintsTheValue(t *testing.T) {
 			}
 		})
 	}
+}
+
+// buildTokenRoute is a stand-in for the installation's credentials service on
+// the entry route (`/v1/build/token`): it serves one answer the test names,
+// records what each call asked for and what identity token it presented, and
+// refuses every other method and path — so a step that asked the wrong route,
+// asked with no token or asked twice is caught rather than assumed. It is the
+// shape of the route and not a model of the service: what the service decides
+// (which repositories the entry's own image map puts on a build) is
+// internal/credsvc's own, and this stands in for its answer alone.
+type buildTokenRoute struct {
+	mu       sync.Mutex
+	requests []buildtoken.Request
+	bearers  []string
+	answer   buildtoken.Response
+}
+
+func (s *buildTokenRoute) start(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != credsvc.BuildTokenPath {
+			http.Error(w, "not a route of this service", http.StatusNotFound)
+			return
+		}
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "unreadable", http.StatusBadRequest)
+			return
+		}
+		var req buildtoken.Request
+		if err := json.Unmarshal(raw, &req); err != nil {
+			http.Error(w, "not this contract's body", http.StatusBadRequest)
+			return
+		}
+		s.mu.Lock()
+		s.requests = append(s.requests, req)
+		s.bearers = append(s.bearers, r.Header.Get("Authorization"))
+		answer := s.answer
+		s.mu.Unlock()
+		out, err := json.Marshal(answer)
+		if err != nil {
+			http.Error(w, "unbuildable", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(out)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func (s *buildTokenRoute) asked() []buildtoken.Request {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.requests)
+}
+
+func (s *buildTokenRoute) presented() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.bearers)
+}
+
+// TestCatalogGitCredentialFromService is the catalog build's credential step
+// end to end: with FUGARO_CREDENTIALS_SERVICE_URL set the step no longer reads
+// a secret of the entry's at all — the catalog build names none (IS8, D3330) —
+// and asks the installation's service for the one credential it clones the
+// entry's repositories with, presenting the build's own identity token minted
+// at the metadata server. It is the entry route a catalog build asks, not the
+// repository route a repository's build asks, and the request is the entry,
+// the build's own id, the provider, the repositories the bake composed stages
+// for and how long the step needs them.
+//
+// A Bitbucket build is answered a proxy grant and no token (R6), and this step
+// writes only a token: it refuses and writes nothing, so the build fails at its
+// credential step rather than cloning with a placeholder. The refusal is proven
+// here with the same route and the same identity a GitHub case passes with, so
+// what is refused is the answer's shape and not the wiring.
+//
+// Mutation (verified, run and restored): make writeBuildToken accept a grant
+// (write the grant's URL as a credential) and the Bitbucket case writes a file
+// and fails; drop the entry mode's canonicalization of --repos and the request
+// names Acme/App rather than acme/app, which the service refuses by name.
+func TestCatalogGitCredentialFromService(t *testing.T) {
+	const (
+		token = "entry-token-not-a-real-credential"
+		ttl   = 3600
+	)
+	t.Run("github", func(t *testing.T) {
+		testutil.IsolateGit(t)
+		gitCredentialEnv(t)
+		meta := buildCallMetadata(t)
+		t.Setenv(gitCredAppIDEnv, "12345")
+		route := &buildTokenRoute{answer: buildtoken.Response{Token: &buildtoken.Token{
+			Value: token, User: github.GitUsername, Host: "github.com",
+			ExpiresAt: time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC),
+		}}}
+		srv := route.start(t)
+		t.Setenv(envCredentialsServiceURL, srv.URL)
+		out := filepath.Join(t.TempDir(), "git-credentials")
+		stdout, stderr, err := execute(t, "image", "git-credential",
+			"--entry", "agent", "--build-id", "b-1", "--provider", gitprov.KindGitHub,
+			// Two spellings of one repository, so what the request carries is
+			// the canonical name once (the key space the service reads the
+			// entry's own from).
+			"--repos", "Acme/App,acme/app", "--ttl-seconds", strconv.Itoa(ttl), "--out", out)
+		if err != nil {
+			t.Fatalf("the catalog build's credential step failed: %v", err)
+		}
+		asked := route.asked()
+		if len(asked) != 1 {
+			t.Fatalf("the step asked the service %d times, want the one request it is", len(asked))
+		}
+		req := asked[0]
+		if req.Entry != "agent" || req.BuildID != "b-1" || req.Provider != gitprov.KindGitHub || req.TTLSeconds != ttl {
+			t.Errorf("the step asked for %+v, want the entry being built, this build's own id, its provider and the lifetime it needs", req)
+		}
+		if len(req.Repositories) != 1 || req.Repositories[0] != "acme/app" {
+			t.Errorf("the step named the repositories %v, want acme/app once: the entry route reads them against the entry's own map", req.Repositories)
+		}
+		if presented := route.presented(); len(presented) != 1 || !strings.HasPrefix(presented[0], "Bearer ") {
+			t.Errorf("the step presented %v, want the build's own identity token as the bearer", presented)
+		}
+		if meta.count() != 1 {
+			t.Errorf("the metadata server was read %d times for one call, want the one mint a call makes", meta.count())
+		}
+		got := readCredential(t, out, "github.com")
+		if !strings.Contains(got, "password="+token) {
+			t.Errorf("the step wrote %q, want the credential the service answered", got)
+		}
+		if strings.Contains(stdout+stderr, token) {
+			t.Errorf("the step printed what it wrote: %q / %q", stdout, stderr)
+		}
+	})
+	t.Run("bitbucket", func(t *testing.T) {
+		testutil.IsolateGit(t)
+		gitCredentialEnv(t)
+		buildCallMetadata(t)
+		route := &buildTokenRoute{answer: buildtoken.Response{Proxy: &buildtoken.ProxyGrant{
+			URL: "https://credentials.example.com/v1/bitbucket/proxy/", Repositories: []string{"acme/app"},
+			ExpiresAt: time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC),
+		}}}
+		srv := route.start(t)
+		t.Setenv(envCredentialsServiceURL, srv.URL)
+		// The mounted token is a decoy: a step that fell back to its
+		// environment instead of refusing the grant would pass on it.
+		t.Setenv(gitCredTokenEnv, "mounted-token-not-a-real-credential")
+		t.Setenv(gitCredUserEnv, "x-token-auth")
+		out := filepath.Join(t.TempDir(), "git-credentials")
+		_, _, err := execute(t, "image", "git-credential",
+			"--entry", "agent", "--build-id", "b-1", "--provider", gitprov.KindBitbucket,
+			"--repos", "acme/app", "--ttl-seconds", strconv.Itoa(ttl), "--out", out)
+		if err == nil {
+			t.Fatal("the step wrote a credential out of a proxy grant")
+		}
+		if !strings.Contains(err.Error(), "grant") {
+			t.Errorf("the step refused a grant with %v, want the refusal naming it", err)
+		}
+		if _, err := os.Stat(out); !os.IsNotExist(err) {
+			t.Errorf("a refused build wrote a credential file")
+		}
+	})
 }

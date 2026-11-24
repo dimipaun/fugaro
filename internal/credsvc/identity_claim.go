@@ -111,6 +111,32 @@ func identityListed(list []string, account string) bool {
 	return false
 }
 
+// sameAccount reports whether two spellings name the same account, folded as
+// every address in this service is folded (foldEmail): the ASCII lower case the
+// contract holds a claim's account match to, so two spellings of one address
+// are one account and two accounts are never one.
+//
+// The fold is the WHOLE of the comparison, and both spellings are folded
+// through the same rule: a deployment writes an account the way its console
+// spells it and a record's ExpectedAccount is the ask's own spelling (the
+// ticket route admits it folded, ticketAccountAdmitted), so the claim route's
+// check, the real store's fence and the store's retry each have to see the two
+// as one address — a byte-for-byte comparison in any one of them is a run whose
+// ticket names a differently-cased account that can never claim. An address
+// that cannot be folded — not printable ASCII — names nobody and matches
+// nothing, not even itself, which is the rule identityListed keeps.
+func sameAccount(a, b string) bool {
+	fa, ok := foldEmail(a)
+	if !ok {
+		return false
+	}
+	fb, ok := foldEmail(b)
+	if !ok {
+		return false
+	}
+	return fa == fb
+}
+
 // jobVerifier is the half of the service's own authenticator the claim reads:
 // the job class's check, which answers the verified account of a caller that
 // presents its own Google ID token — the job's, the review job's or a shared
@@ -171,15 +197,6 @@ func (s *Server) identityClaim(ctx context.Context, w http.ResponseWriter, r *ht
 		s.refuseIdentityNotServed(w)
 		return
 	}
-	if s.cfg.Identity.Store == nil {
-		// A deployment with a signer and no store is a configuration error and
-		// not a store that answers "no record": a claim read against one would
-		// be a claim nobody could check (the scope stub's own rule, StubIdentityScope).
-		s.log.Error("credsvc: the identity claim has no issuance store configured")
-		s.refuseIdentityCall(ctx, w, "", "", StatusUnavailable, ErrorStateUnavailable,
-			"the service holds no issuance record to check this claim against")
-		return
-	}
 	tok, err := bearerFromHTTP(r)
 	if err != nil {
 		// No line: the call is refused before its caller was verified.
@@ -189,6 +206,22 @@ func (s *Server) identityClaim(ctx context.Context, w http.ResponseWriter, r *ht
 	account, err := s.verifyClaimCaller(ctx, tok)
 	if err != nil {
 		s.refuseIdentityCaller(w, "this route admits a run's own job service account, verified by its own Google ID token: the claim must come from the account the launch named, so no other caller is served here. A person, a roster service account and the resident orchestrator claim nothing — the ticket route is the one that admits them", err)
+		return
+	}
+	if s.cfg.Identity.Store == nil {
+		// A deployment with a signer and no store is a configuration error and
+		// not a store that answers "no record": a claim read against one would
+		// be a claim nobody could check (the scope stub's own rule, StubIdentityScope).
+		//
+		// The check is HERE, after the caller was verified and not before the
+		// bearer was read, because every refusal past the caller's verification
+		// writes exactly one audit line and a line names what this service
+		// verified: an unauthenticated caller is answered by refuse above, with no
+		// line, and never through refuseIdentityCall, which is reached only once
+		// the caller IS verified.
+		s.log.Error("credsvc: the identity claim has no issuance store configured")
+		s.refuseIdentityCall(ctx, w, "", "", StatusUnavailable, ErrorStateUnavailable,
+			"the service holds no issuance record to check this claim against")
 		return
 	}
 	// The claim is the run's FIRST call, so it carries no run identity: the run
@@ -242,8 +275,15 @@ func (s *Server) identityClaim(ctx context.Context, w http.ResponseWriter, r *ht
 		// The store's own failure is logged and never answered: it names the
 		// path, and a refusal names the field and never what the call sent. The
 		// run the ticket names is not written on this line either, because no
-		// record was read: it is still the caller's text.
-		s.log.Error("credsvc: the issuance record could not be read", "run", run, "repository", slug, "error", err)
+		// record was read: it is still the caller's text, and a line that carried
+		// it would let any job account of this installation write run ids into the
+		// operator's audit. The cause is carried as its Go type for that reason
+		// and never by its text: an *identitywire.StoreError, like the *rtdb.Error
+		// under it, spells the path it read — creds/issuance/<slug>/<run>, both
+		// halves the caller typed into the ticket — so passing err itself would
+		// put those two names back on the line the rest of this branch keeps them
+		// off (the rule refusallog.go states).
+		s.log.Error("credsvc: the issuance record could not be read", "error_class", errorClass(err))
 		s.refuseIdentityCall(ctx, w, "", "", StatusUnavailable, ErrorStateUnavailable, "the issuance record could not be read")
 		return
 	case !found:
@@ -278,7 +318,7 @@ func (s *Server) identityClaim(ctx context.Context, w http.ResponseWriter, r *ht
 			"the ticket is not this run's: a ticket is replaced when the same caller asks for the run again, and the one presented here is not the record's — the run must be launched again")
 		return
 	}
-	if !strings.EqualFold(account, rec.ExpectedAccount) {
+	if !sameAccount(account, rec.ExpectedAccount) {
 		// The fold is the service's own spelling of an address and not a
 		// loosening: the account was verified by Google, and the record's is the
 		// one the launch named and this service checked against the repository's
@@ -348,7 +388,7 @@ func (s *Server) identityClaim(ctx context.Context, w http.ResponseWriter, r *ht
 	// binding Claim to the ticket it was checked against would do, and that is
 	// C1's interface rather than this route's.
 	if claimed.TicketHash != identitywire.Digest(req.Ticket) ||
-		!strings.EqualFold(account, claimed.ExpectedAccount) ||
+		!sameAccount(account, claimed.ExpectedAccount) ||
 		!now.Before(ticketExpiry(claimed)) ||
 		claimed.Claims.Slug != slug || claimed.Claims.Run != run {
 		s.refuseIdentityCall(ctx, w, run, slug, StatusUnverified, identitywire.RefusalIdentityRefused,
@@ -450,9 +490,10 @@ func (s *Server) refuseIdentityCall(ctx context.Context, w http.ResponseWriter, 
 // RefusalIdentityRefused and its siblings).
 //
 // The audit's status is a closed vocabulary (audit.go's validErrorType lists
-// the wire's older ten) and the conventions of this plan say no task edits that
-// file: the identity codes are the CLI's to branch on and the line's to
-// classify, so a refusal here is recorded as the class of thing it is. The
+// the wire's codes and not the identity wire's) and the conventions of this
+// plan say no task edits that file: the identity codes are the CLI's to branch
+// on and the line's to classify, so a refusal here is recorded as the class of
+// thing it is. The
 // class is the refusal's own HTTP status, which the route has already decided —
 // 503 is this service's own failure, 400 is a request this contract does not
 // read, and 403 is a run whose identity is not this caller's. There is no case

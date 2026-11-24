@@ -60,8 +60,12 @@ func queuedRow(q QueuedRun, now time.Time) RunRow {
 		Run: clean(q.Run), Slug: budget.Key(q.Slug),
 		Title: dash(title), Stage: "queued", Round: "-", Verify: "-", Models: "-", Auth: "-",
 		// A queued run has no registry entry yet, so it has no mode either:
-		// the same "-" every other absent value on this row shows.
-		Mode: "-", From: "-",
+		// the same "-" every other absent value on this row shows. Source goes
+		// with them: the routing table's answer is written by the run into that
+		// entry, so a row without one has nothing to report either -- and the
+		// detail prints it, where an empty string would be a blank line rather
+		// than the "-" the rest of the row shows.
+		Mode: "-", From: "-", Source: "-",
 		Recipe: clean(q.Recipe), Workflow: clean(q.Workflow), RequestedBy: clean(q.RequestedBy),
 		LaunchedBy: safetext.Field(q.LaunchedBy),
 		Age:        age, HasAge: true,

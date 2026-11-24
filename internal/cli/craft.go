@@ -339,13 +339,14 @@ type craftLsServe struct {
 	routes  map[string]config.ModelProvider
 	prices  *pricing.Table
 	// priced is whether a price row is required of a craft's model at all: a
-	// run prices its calls only with the gateway on, which is the mode being
-	// observe or enforce, and never under agent.auth oauth, where there is no
-	// gateway. It is validate's own gate (cfg.Agent.Auth beside the mode,
-	// budgetProblems' caller), and the auth it reads is the resolved one: a
-	// run's auth is what the project answers with, not what one document of
-	// the two says. Asking it of a craft under a mode that never prices would
-	// refuse a model the run serves.
+	// run prices its calls whenever it has a gateway, and the one shape of a
+	// run without one is agent.auth oauth (D3026, R12). It is validate's own
+	// gate — budgetProblems' caller, on the auth alone — and the auth it reads
+	// is the resolved one: a run's auth is what the project answers with, not
+	// what one document of the two says. The mode was the second condition
+	// here, so a craft under an off mode was never priced (AB4, D3020): every
+	// run is accounted for now, and the price of a craft's model is what says
+	// a run of that craft can be.
 	priced bool
 }
 
@@ -394,7 +395,7 @@ func craftLsServes(cmd *cobra.Command, f craftLsFiles) craftLsServe {
 	if ov, err := f.lc.Overrides(); err == nil {
 		if t, err := priceTableFor(f.lc.Providers, ov, budgetNow()); err == nil {
 			s.prices = t
-			s.priced = s.agent.Auth != "oauth" && s.e.Mode != "" && s.e.Mode != policy.ModeOff
+			s.priced = s.agent.Auth != "oauth"
 		}
 	}
 	return s

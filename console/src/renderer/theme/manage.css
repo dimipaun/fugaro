@@ -133,7 +133,9 @@ div.manage-actions {
 }
 
 button.manage-copy,
-button.manage-view {
+button.manage-view,
+button.manage-write,
+button.manage-write-cancel {
   min-height: var(--row-height-compact);
   padding: var(--space-3xs) var(--space-sm);
   background: var(--surface);
@@ -147,6 +149,58 @@ button.manage-view {
 
 button.manage-copy {
   font-family: var(--font-mono);
+}
+
+/* The command that states a consequence (the plan's MWR): the button, and the
+   sentence a person has to read before they run it -- which for the below-floor
+   Copy-commands is the whole of why there is no write button. The box is a grid
+   so the two are one column and the sentence sits under the command it belongs
+   to. */
+div.manage-copy-box {
+  display: grid;
+  gap: var(--space-3xs);
+  justify-items: start;
+}
+
+p.manage-copy-consequence {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+/* The write the console performs itself (MW1's `models add`, MW2's `image add`;
+   the plan's MWR): the control, the form it opens in its own box, and one row per
+   value. The form is a block under the control rather than a row in the actions
+   line, because the values are a small table of their own and a label wrapping
+   its box is what a person reads as a field. */
+div.manage-write-box {
+  display: block;
+}
+
+div.manage-write-form {
+  display: grid;
+  gap: var(--space-2xs);
+  margin-top: var(--space-2xs);
+  padding: var(--space-xs);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+label.manage-write-field {
+  display: grid;
+  gap: var(--space-3xs);
+  font-size: var(--font-size-sm);
+}
+
+input.manage-write-input {
+  min-height: var(--row-height-compact);
+  padding: var(--space-3xs) var(--space-sm);
+  background: var(--surface);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-md);
+  color: inherit;
+  font: inherit;
+  font-size: var(--font-size-sm);
 }
 
 /* ---- The two sentences ----------------------------------------------------

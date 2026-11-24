@@ -484,14 +484,20 @@ func TestPushPrunesTheLedgerToItsWindow(t *testing.T) {
 // dropped when it ages out, never escalated into a late buzz. The row inside the
 // window is retried and becomes a sent row; the row past it is pruned and never
 // reaches the provider.
+//
+// The intent inside the window is one whose state change is still in force: the
+// unanswered prompt is in the outbox, which is what derives the event the row
+// names. An intent whose state change has ended is not retried at all
+// (TestPushDropsAPendingIntentWhoseStateChangeHasEnded).
 func TestPushRetriesAPendingIntentInsideTheWindowAndDropsItPastIt(t *testing.T) {
 	f := newPushFixture(t, pushTestNow)
 	f.pair(t, mailboxSwitchState(nil))
-	inside := budget.Key(pushPrompt + ":p-inside")
-	past := budget.Key(pushPrompt + ":p-past")
-	f.db.Set(pushTestPath+"/ledger/"+inside, map[string]any{"category": pushPrompt, "key": "p-inside",
+	inside := budget.Key(pushPrompt + ":prompt:p-inside")
+	past := budget.Key(pushPrompt + ":prompt:p-past")
+	f.db.Set("mailbox/"+pushTestUID+"/outbox/p-inside", pushPromptRecord(t, "p-inside", f.now.Add(-10*time.Minute).UnixMilli()))
+	f.db.Set(pushTestPath+"/ledger/"+inside, map[string]any{"category": pushPrompt, "key": "prompt:p-inside",
 		"at": f.now.Add(-10 * time.Minute).UnixMilli(), "state": pushStatePending, "attempts": 1})
-	f.db.Set(pushTestPath+"/ledger/"+past, map[string]any{"category": pushPrompt, "key": "p-past",
+	f.db.Set(pushTestPath+"/ledger/"+past, map[string]any{"category": pushPrompt, "key": "prompt:p-past",
 		"at": f.now.Add(-45 * time.Minute).UnixMilli(), "state": pushStatePending, "attempts": 1})
 
 	out, _ := f.sweep(t)
@@ -521,7 +527,8 @@ func TestPushRetriesAPendingIntentInsideTheWindowAndDropsItPastIt(t *testing.T) 
 	prefs := mailboxSwitchState(nil)
 	prefs["prompt"] = false
 	f2.pair(t, prefs)
-	f2.db.Set(pushTestPath+"/ledger/"+inside, map[string]any{"category": pushPrompt, "key": "p-inside",
+	f2.db.Set("mailbox/"+pushTestUID+"/outbox/p-inside", pushPromptRecord(t, "p-inside", f2.now.Add(-10*time.Minute).UnixMilli()))
+	f2.db.Set(pushTestPath+"/ledger/"+inside, map[string]any{"category": pushPrompt, "key": "prompt:p-inside",
 		"at": f2.now.Add(-10 * time.Minute).UnixMilli(), "state": pushStatePending})
 	f2.sweep(t)
 	if len(f2.sent) != 0 {
@@ -532,6 +539,104 @@ func TestPushRetriesAPendingIntentInsideTheWindowAndDropsItPastIt(t *testing.T) 
 	}
 }
 
+// TestPushDropsAPendingIntentWhoseStateChangeHasEnded is the retry's own bound
+// on what it may resend: the retry window says how long a buzz is worth
+// repeating, and the state change is what it would be about. An intent whose
+// event is no longer derived is dropped rather than sent — the app resolves a
+// buzz against what it can read (§3.2), so a lock screen told about a state
+// that is over is a lie however fresh the intent is — and the row goes with it,
+// because a state change that happens again is a new transition and `consider`
+// derives it with no row in the way.
+//
+// Both halves are state changes the OWNER ended: a prompt answered while the
+// intent waited, and one the mailbox's TTL removed from the outbox. The row is
+// inside the retry window in both, which is the case the prune does not reach —
+// it drops a pending row only once the window has closed (pushPrune).
+func TestPushDropsAPendingIntentWhoseStateChangeHasEnded(t *testing.T) {
+	asked := pushTestNow.Add(-10 * time.Minute).UnixMilli()
+	f := newPushFixture(t, pushTestNow)
+	f.pair(t, mailboxSwitchState(nil))
+	answered := budget.Key(pushPrompt + ":prompt:p-answered")
+	f.db.Set("mailbox/"+pushTestUID+"/outbox/p-answered", pushPromptRecord(t, "p-answered", asked))
+	f.db.Set("mailbox/"+pushTestUID+"/inbox/a-1", map[string]any{"id": "a-1", "sender": pushTestUID, "text": "yes",
+		"at": asked, "kind": mailboxKindAnswer, "reply_to": "p-answered", "mac": strings.Repeat("a", 64)})
+	f.db.Set(pushTestPath+"/ledger/"+answered, map[string]any{"category": pushPrompt, "key": "prompt:p-answered",
+		"at": asked, "state": pushStatePending, "attempts": 1})
+
+	out, _ := f.sweep(t)
+	if len(f.sent) != 0 {
+		t.Fatalf("sent %v for a prompt the owner has answered, want nothing: the state change the intent names has ended", f.categories())
+	}
+	if !strings.Contains(out, "1 suppressed") {
+		t.Errorf("output = %q, want the dropped intent counted", out)
+	}
+	if v := f.db.Value(pushTestPath + "/ledger/" + answered); v != nil {
+		t.Errorf("the answered prompt's intent survived: %v, want the row dropped rather than left pending", v)
+	}
+
+	// A prompt past D118's TTL is the same state change ended by the clock: the
+	// mailbox sweep removes it, so an intent still pending for it is an intent
+	// for a question nobody can answer any more.
+	f2 := newPushFixture(t, pushTestNow)
+	f2.pair(t, mailboxSwitchState(nil))
+	stale := budget.Key(pushPrompt + ":prompt:p-stale")
+	f2.db.Set("mailbox/"+pushTestUID+"/outbox/p-stale", pushPromptRecord(t, "p-stale", f2.now.Add(-73*time.Hour).UnixMilli()))
+	f2.db.Set(pushTestPath+"/ledger/"+stale, map[string]any{"category": pushPrompt, "key": "prompt:p-stale",
+		"at": f2.now.Add(-10 * time.Minute).UnixMilli(), "state": pushStatePending, "attempts": 1})
+
+	f2.sweep(t)
+	if len(f2.sent) != 0 {
+		t.Fatalf("sent %v for a prompt past its TTL, want nothing: the mailbox sweep has removed it", f2.categories())
+	}
+	if v := f2.db.Value(pushTestPath + "/ledger/" + stale); v != nil {
+		t.Errorf("the expired prompt's intent survived: %v", v)
+	}
+}
+
+// TestPushRetriesAPendingIntentWhenASweepsOwnReadFailed is what bounds the drop
+// above: a key missing from `live` says the state change is over only when the
+// derivation answered whole. The installation's events come back beside the
+// errors the reads that failed left (installationEvents) and the sweep warns on
+// them and goes on, so a cap the sender could not read is a key missing from a
+// PARTIAL derivation — and the intent is retried there, which is what §6
+// promises a pending one, rather than dropped with the dedupe and the hourly
+// cap's slot it holds.
+func TestPushRetriesAPendingIntentWhenASweepsOwnReadFailed(t *testing.T) {
+	asked := pushTestNow.Add(-10 * time.Minute).UnixMilli()
+	run := "20261115-090000-cap1"
+	f := newPushFixture(t, pushTestNow)
+	f.pair(t, mailboxSwitchState(nil))
+	// The run IS at its cap: the state change is in force, and the only reason
+	// the sweep cannot see it is the node below.
+	f.stoppedByCap(run, 1_000_000, 1_000_000)
+	key := budget.Key(pushCapReached + ":cap:" + appSlug + "/" + run)
+	f.db.Set(pushTestPath+"/ledger/"+key, map[string]any{"category": pushCapReached, "key": "cap:" + appSlug + "/" + run,
+		"at": asked, "state": pushStatePending, "attempts": 1})
+	// The cap read fails this sweep: the node holds a value it cannot be read
+	// as, which is the error capEvents answers with when a read fails — and the
+	// one DenyRead cannot give here, because a denied read answers for every
+	// node above it too, the root the registry phase reads first among them.
+	f.db.Set(budget.PathCapsRepo(appSlug), "not a cap node")
+
+	out, errOut := f.sweep(t)
+	if got := f.categories(); !slices.Equal(got, []string{pushCapReached}) {
+		t.Fatalf("sent %v, want the pending intent retried: the derivation was partial, and a key missing from one says the read failed", got)
+	}
+	if !strings.Contains(out, "1 retried") {
+		t.Errorf("output = %q, want the retry counted", out)
+	}
+	if !strings.Contains(errOut, "push:") {
+		t.Errorf("stderr = %q, want the read that failed said out loud", errOut)
+	}
+	row, _ := f.db.Value(pushTestPath + "/ledger/" + key).(map[string]any)
+	if row == nil {
+		t.Fatal("the intent was dropped on a read that failed, and its dedupe and cap slot went with it")
+	}
+	if got := mailboxNodeString(t, row, "state"); got != pushStateSent {
+		t.Errorf("the retried row's state = %q, want %q", got, pushStateSent)
+	}
+}
+
 // TestPushDoesNotRetryInsideQuietHours is §6's quiet-hours row applied to the
 // retry path: the window is honoured at the sender before the provider is
 // called, and a retry is a send. An intent that comes due inside the window is
@@ -539,18 +644,22 @@ func TestPushRetriesAPendingIntentInsideTheWindowAndDropsItPastIt(t *testing.T) 
 // the retry window and not the quiet one is what ends an intent.
 func TestPushDoesNotRetryInsideQuietHours(t *testing.T) {
 	// 22:05, inside the stored 22:00–07:00 window, with an intent queued before
-	// the window opened.
+	// the window opened and the prompt it names still unanswered.
 	f := newPushFixture(t, time.Date(2026, 1, 15, 22, 5, 0, 0, time.UTC))
 	f.pair(t, mailboxSwitchState(map[string]any{"zone": "UTC", "start": 22 * 60, "end": 7 * 60}))
-	inside := budget.Key(pushPrompt + ":p-inside")
-	f.db.Set(pushTestPath+"/ledger/"+inside, map[string]any{"category": pushPrompt, "key": "p-inside",
+	inside := budget.Key(pushPrompt + ":prompt:p-inside")
+	f.db.Set("mailbox/"+pushTestUID+"/outbox/p-inside", pushPromptRecord(t, "p-inside", f.now.Add(-15*time.Minute).UnixMilli()))
+	f.db.Set(pushTestPath+"/ledger/"+inside, map[string]any{"category": pushPrompt, "key": "prompt:p-inside",
 		"at": f.now.Add(-15 * time.Minute).UnixMilli(), "state": pushStatePending, "attempts": 1})
 
 	out, _ := f.sweep(t)
 	if len(f.sent) != 0 {
 		t.Fatalf("sent %v inside the quiet-hours window: a retry is a send, and the window is honoured at the sender before the provider is called", f.categories())
 	}
-	if !strings.Contains(out, "1 suppressed") {
+	// Two: the retry the window holds back, and the event's own turn in the
+	// same sweep, which the window holds back at `consider` as it would any
+	// other send.
+	if !strings.Contains(out, "0 sent, 2 suppressed") {
 		t.Errorf("output = %q, want the held-back retry counted as suppressed", out)
 	}
 	row, _ := f.db.Value(pushTestPath + "/ledger/" + inside).(map[string]any)
@@ -561,17 +670,24 @@ func TestPushDoesNotRetryInsideQuietHours(t *testing.T) {
 		t.Errorf("the row's state = %q, want %q", got, pushStatePending)
 	}
 
-	// Half an hour later the intent ages out of its own window and is pruned —
-	// dropped, never sent late and never escalated (§6). That the row is GONE is
-	// the assertion that carries the quiet check: the window is still open at
-	// this hour, so a sender that had simply not retried would still hold it.
+	// Half an hour later the intent ages out of its own window — and the state
+	// change it names is still in force, so it is marked givenup rather than
+	// deleted: §6 dropped it, never sent late and never escalated into a fresh
+	// intent. That the row is still THERE is the assertion that carries the
+	// quiet check: a sender that had dropped the intent on the quiet window
+	// would have left no row to mark, and the state change would be announced
+	// again as a new transition.
 	f.now = f.now.Add(35 * time.Minute)
 	f.sweep(t)
 	if len(f.sent) != 0 {
 		t.Fatalf("sent %v when the held-back intent aged out, want nothing: the retry window is what ends an intent", f.categories())
 	}
-	if v := f.db.Value(pushTestPath + "/ledger/" + inside); v != nil {
-		t.Errorf("the aged-out intent survived: %v, want the retry window to have dropped it", v)
+	row, _ = f.db.Value(pushTestPath + "/ledger/" + inside).(map[string]any)
+	if row == nil {
+		t.Fatal("the aged-out intent was dropped: its state change is still in force, so the row is the record of the one notification it had")
+	}
+	if got := mailboxNodeString(t, row, "state"); got != pushStateGivenUp {
+		t.Errorf("the aged-out row's state = %q, want %q: the retry window closed and the prompt is still unanswered", got, pushStateGivenUp)
 	}
 }
 
@@ -586,8 +702,9 @@ func TestPushStopsTheSweepWhenARetryReapsTheToken(t *testing.T) {
 	f := newPushFixture(t, pushTestNow)
 	f.pair(t, mailboxSwitchState(nil))
 	f.kill()
-	inside := budget.Key(pushPrompt + ":p-inside")
-	f.db.Set(pushTestPath+"/ledger/"+inside, map[string]any{"category": pushPrompt, "key": "p-inside",
+	inside := budget.Key(pushPrompt + ":prompt:p-inside")
+	f.db.Set("mailbox/"+pushTestUID+"/outbox/p-inside", pushPromptRecord(t, "p-inside", f.now.Add(-10*time.Minute).UnixMilli()))
+	f.db.Set(pushTestPath+"/ledger/"+inside, map[string]any{"category": pushPrompt, "key": "prompt:p-inside",
 		"at": f.now.Add(-10 * time.Minute).UnixMilli(), "state": pushStatePending, "attempts": 1})
 	f.answer = pushUnregistered
 
@@ -966,6 +1083,66 @@ func TestPushCapNearIsOffByDefaultAndOnWhenAsked(t *testing.T) {
 	f2.sweep(t)
 	if got := f2.categories(); !slices.Equal(got, []string{pushCapNear}) {
 		t.Fatalf("sent %v, want cap_near once the account asked for it", got)
+	}
+}
+
+// TestPushSendsEveryCategoryButCapNearFromAnAbsentPrefsNode pins D160's default
+// set where it is actually read: a node with no prefs at all. Every category
+// but cap_near is interrupting by default, so a hand-written node — the only
+// way to have no prefs, because the registration message always carries all five
+// (internal/mailbox's PrefsRequired) — gets the four the installation can derive
+// and not the fifth. The run is planted at four fifths of its cap so cap_near IS
+// derived: what the test pins is the switch, not the absence of an event.
+func TestPushSendsEveryCategoryButCapNearFromAnAbsentPrefsNode(t *testing.T) {
+	const run = "20261001-090000-aaaa"
+	f := newPushFixture(t, pushTestNow)
+	f.pair(t, nil)
+	f.kill()
+	f.stoppedByCap(run, 1_000_000, 1_000_000)
+	f.entry(run, "", 900_000)
+	f.db.Set("mailbox/"+pushTestUID+"/heartbeat", map[string]any{"at": f.now.Add(-13 * time.Minute).UnixMilli(), "boot": "boot-a"})
+	f.db.Set("mailbox/"+pushTestUID+"/outbox/p-1", pushPromptRecord(t, "p-1", f.now.Add(-time.Minute).UnixMilli()))
+
+	out, _ := f.sweep(t)
+	want := []string{pushCapReached, pushConsumerOffline, pushKillSwitch, pushPrompt}
+	if got := f.categories(); !slices.Equal(got, want) {
+		t.Fatalf("sent %v from a node with no prefs, want %v: D160 keeps cap_near alone off by default", got, want)
+	}
+	if !strings.Contains(out, "4 sent") {
+		t.Errorf("output = %q, want the four notifications counted", out)
+	}
+}
+
+// TestPushRefusesALedgerLargerThanItWrites is the bound on what the sender will
+// work through: a ledger past pushMaxRows is one a writer other than this sender
+// has been at — its own stays under pushHourlyCap x 72 — and the sender refuses
+// the node rather than pruning, sending or writing a row in it. The refusal is a
+// warning and not the job's exit code, like every other failure of the send, and
+// the ledger is left exactly as it was read.
+func TestPushRefusesALedgerLargerThanItWrites(t *testing.T) {
+	f := newPushFixture(t, pushTestNow)
+	f.pair(t, mailboxSwitchState(nil))
+	f.kill()
+	rows := map[string]any{}
+	for i := 0; i <= pushMaxRows; i++ {
+		key := budget.Key(pushKillSwitch + fmt.Sprintf(":switch:%d", i))
+		rows[key] = map[string]any{"category": pushKillSwitch, "key": fmt.Sprintf("switch:%d", i),
+			"at": f.now.Add(-time.Hour).UnixMilli(), "state": pushStateSent}
+	}
+	f.db.Set(pushTestPath+"/ledger", rows)
+
+	out, errOut := f.sweep(t)
+	if len(f.sent) != 0 {
+		t.Fatalf("sent %v to an account whose ledger this sender refuses, want nothing", f.categories())
+	}
+	if !strings.Contains(errOut, "push:") || !strings.Contains(errOut, fmt.Sprint(pushMaxRows)) {
+		t.Errorf("stderr = %q, want the refusal naming the bound", errOut)
+	}
+	if !strings.Contains(out, "0 sent") {
+		t.Errorf("output = %q, want the sweep reported with nothing sent", out)
+	}
+	if got := f.pushRows(t); len(got) != pushMaxRows+1 {
+		t.Errorf("the ledger holds %d rows after the refusal, want the %d it was read with", len(got), pushMaxRows+1)
 	}
 }
 

@@ -647,8 +647,16 @@ func TestRefreshCredentialsServiceJobAccountsUnionsTheReviewVariants(t *testing.
 		t.Errorf("credentials_service.review_job_accounts = %+v, want %+v (the config's own variants in their sorted place, and the row the block already carried kept): a table the refresh DROPPED is a review job that holds the service's address and is refused by it", have, want)
 	}
 	// The coding table is refreshed in the same pass and by the same rule, and
-	// every other member of the block is the installation's own record.
+	// so is the shared class's own table (B5.1's rows, derived from the same
+	// config: every profile, on the axis's own spelling, with the repositories
+	// its profile serves). Every other member of the block is the
+	// installation's own record.
 	svc.ReviewJobAccounts = want
+	svc.SharedJobAccounts = []CredentialsSharedJob{
+		{Profile: "apikey", Provider: "github", Account: "", Repos: []string{"github/acme/webapp"}},
+		{Profile: "standard", Provider: "github", Account: "", Repos: []string{"github/acme/webapp"}},
+		{Profile: "standard", Provider: "github", Account: "acme-personal", Repos: []string{"github/acme/webapp"}},
+	}
 	svc.JobAccounts = []CredentialsJob{
 		{Provider: "bitbucket", Repo: "acme/sandbox", Workflow: "web"},
 		{Provider: "github", Repo: "acme/webapp", Workflow: "web"},
@@ -692,6 +700,402 @@ func TestRefreshCredentialsServiceJobAccountsUnionsTheReviewVariants(t *testing.
 	brokenReview := strings.Replace(string(vars), `"review_job_accounts": [`, `"review_job_accounts": "none"`, 1)
 	if _, err := RefreshCredentialsServiceJobAccounts([]byte(brokenReview), lc); err == nil {
 		t.Error("RefreshCredentialsServiceJobAccounts replaced a review table it could not read")
+	}
+}
+
+// The shared table is the block's THIRD member this side composes out of the
+// local config, and it is the one Check 580's 403 was about: a shared project
+// job whose triple the service's environment does not carry falls through to
+// the per-repository table, which holds no row for a job shared by a whole
+// profile's admitted set, and the clone the run starts with comes back
+// unverified_job_identity. The deploy fills the member in on the run that
+// CREATES the block and every later run carries the block as it is found, so a
+// profile added after that deploy — or the very first release that renders the
+// name at all, on an installation that has been carried since before it did —
+// is a shared job the service does not admit. No other command can put the row
+// there: `fugaro update` is the whole upgrade (CLAUDE.md's HARD RULE).
+//
+// The union is the other two tables' rule, with the difference the row shape
+// gives: a row's repositories are not part of its identity, so a row the config
+// still derives is taken from the config WHOLE and a row it no longer derives
+// is kept as found. Both directions are asserted below, and the first is the
+// one that fails closed: a carried row kept verbatim holds an admission the
+// config no longer states.
+//
+// Mutation (verified, run and restored): write the derived rows over the found
+// ones instead of unioning them — the "gone" row disappears from a table no
+// command can rebuild it into, and the assertion fails on it.
+func TestRefreshCredentialsServiceJobAccountsUnionsTheSharedJobs(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+credentialsBudgetLC+projectAccountLCBlock)
+	svc := credsVarsSpec()
+	// The block a deploy left: a shared row for a profile this machine's config
+	// no longer describes, and one the config still derives whose repositories
+	// are stale (a profile's allow_repos narrowed since the deploy, which a row
+	// kept verbatim would go on serving).
+	svc.SharedJobAccounts = []CredentialsSharedJob{
+		{Profile: "gone", Provider: "github", Account: "", Repos: []string{"github/acme/old"}},
+		{Profile: "standard", Provider: "github", Account: "", Repos: []string{"github/acme/old"}},
+	}
+	vars, err := SetCredentialsService([]byte(credsVarsDiscovered), svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := RefreshCredentialsServiceJobAccounts(vars, lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		CredentialsService *CredentialsServiceSpec `json:"credentials_service"`
+	}
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatalf("the result is not a tfvars document: %v\n%s", err, got)
+	}
+	if doc.CredentialsService == nil {
+		t.Fatalf("credentials_service was dropped:\n%s", got)
+	}
+	want := []CredentialsSharedJob{
+		{Profile: "apikey", Provider: "github", Account: "", Repos: []string{"github/acme/webapp"}},
+		{Profile: "gone", Provider: "github", Account: "", Repos: []string{"github/acme/old"}},
+		{Profile: "standard", Provider: "github", Account: "", Repos: []string{"github/acme/webapp"}},
+		{Profile: "standard", Provider: "github", Account: "acme-personal", Repos: []string{"github/acme/webapp"}},
+	}
+	if have := doc.CredentialsService.SharedJobAccounts; !reflect.DeepEqual(have, want) {
+		t.Errorf("credentials_service.shared_job_accounts = %+v, want %+v (the config's own rows in their sorted place, the row it still derives taken from the config whole, and the row it no longer derives kept): a table the refresh DROPPED is a shared job whose every call the service refuses", have, want)
+	}
+	// The other two tables are refreshed in the same pass and by their own
+	// rules, and every other member of the block is the installation's own
+	// record.
+	svc.SharedJobAccounts = want
+	svc.ReviewJobAccounts = []CredentialsReviewJob{
+		{Profile: "apikey", Provider: "github", Account: config.DefaultClaudeAccount},
+		{Profile: "standard", Provider: "github", Account: "acme-personal"},
+		{Profile: "standard", Provider: "github", Account: config.DefaultClaudeAccount},
+	}
+	svc.JobAccounts = []CredentialsJob{
+		{Provider: "bitbucket", Repo: "acme/sandbox", Workflow: "web"},
+		{Provider: "github", Repo: "acme/webapp", Workflow: "web"},
+		{Provider: "github", Repo: "acme/webapp", Workflow: "web_acme-personal"},
+		{Provider: "github", Repo: "acme/webapp", Workflow: "web_bmb"},
+	}
+	if !credsVarsSpecEqual(*doc.CredentialsService, svc) {
+		t.Errorf("credentials_service = %+v, want %+v: the three tables are the members this side composes, and the image, the URL, the bundle, the database and the verifier list are the installation's own record", *doc.CredentialsService, svc)
+	}
+	if wantDoc, have := credsVarsDoc(t, vars), credsVarsDoc(t, got); !mapsEqual(wantDoc, have) {
+		t.Errorf("the document changed beyond the one key:\nwant %v\ngot  %v", wantDoc, have)
+	}
+	// And it converges: a second refresh of the same document is byte for byte
+	// the same file, which is what an installation whose config has not changed
+	// carries into its plan — and what the release that first renders
+	// FUGARO_SHARED_JOB_ACCOUNTS leaves on every `fugaro update` after it.
+	again, err := RefreshCredentialsServiceJobAccounts(got, lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != string(got) {
+		t.Errorf("a second refresh changed the document:\nfirst  %s\nsecond %s", got, again)
+	}
+
+	// An installation that names no shared profile derives no row, and a block
+	// that carries none keeps no member — the module renders no entry for an
+	// empty list, so the refresh leaves the document, and the plan of an
+	// installation with no shared job, exactly as it was.
+	plain := credentialsLC(t)
+	none, err := SetCredentialsService([]byte(credsVarsDiscovered), credsVarsSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = RefreshCredentialsServiceJobAccounts(none, plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "shared_job_accounts") {
+		t.Errorf("the refresh gave an installation with no shared job a shared_job_accounts member:\n%s", got)
+	}
+	// A shared table this program cannot read is refused too, and for the other
+	// tables' own reason: the table it cannot read is the table it would drop.
+	brokenShared := strings.Replace(string(vars), `"shared_job_accounts": [`, `"shared_job_accounts": "none"`, 1)
+	if _, err := RefreshCredentialsServiceJobAccounts([]byte(brokenShared), lc); err == nil {
+		t.Error("RefreshCredentialsServiceJobAccounts replaced a shared table it could not read")
+	}
+}
+
+// A shared row whose repositories the update derived from the machine's own
+// record — a profile that names no allow_repos, sharedJobRepos' fallback — is
+// UNIONED on refresh and never narrowed by the config of whichever machine runs
+// the command. An installation is updated from any of its machines, and one
+// whose config does not record a teammate's repository is the ordinary case:
+// without the union, that machine's refresh writes the row down to its own
+// repositories while the CODING table keeps the teammate's job (it is unioned
+// like every table here), so the job exists, holds roles/run.invoker and is
+// refused by the service whole — Check 580's 403, one axis over.
+//
+// The profile's own allow_repos is the other branch and it still replaces the
+// carried list (the test above pins it): that list is the project's own
+// statement of what the profile serves, so the deployment follows it. The
+// boundary in both directions is the published policy: the service reads
+// projectpolicy.Admits on every call (credsvc's pairShared), so a repository
+// the installation no longer publishes is refused there whatever a row holds.
+//
+// Mutation (verified, run and restored): replace the row with the derived list
+// alone (drop unionSharedRepos from the refresh) — the teammate's repository
+// disappears from the row and this test fails on it.
+func TestRefreshCredentialsServiceJobAccountsNeverNarrowsAMachineDerivedRow(t *testing.T) {
+	// The machine that ran the last update recorded both of the profile's
+	// repositories, and the block it left carries them.
+	wide := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+credentialsBudgetLC+projectAccountLCBlock)
+	rows, err := CredentialsSharedJobAccounts(wide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := credsVarsSpec()
+	svc.SharedJobAccounts = nil
+	for _, r := range rows {
+		if r.Profile != "apikey" {
+			continue
+		}
+		r.Repos = append(slices.Clone(r.Repos), "github/acme/extra")
+		svc.SharedJobAccounts = append(svc.SharedJobAccounts, r)
+	}
+	if len(svc.SharedJobAccounts) != 1 {
+		t.Fatalf("the wide config derives no apikey row: %+v", rows)
+	}
+	vars, err := SetCredentialsService([]byte(credsVarsDiscovered), svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This machine's config records one repository of its own for the provider
+	// and none of the two above: a fresh teammate's clone, or a checkout that
+	// was never `fugaro repos add`ed for them.
+	narrow := parseLC(t, m4LocalConfig+
+		"  acme/narrow: { provider: github, base_branch: main, workflows: [web], github_app_id: \"123456789\" }\n"+
+		m5Additions+credentialsBudgetLC+projectAccountLCBlock)
+	got, err := RefreshCredentialsServiceJobAccounts(vars, narrow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		CredentialsService *CredentialsServiceSpec `json:"credentials_service"`
+	}
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatalf("the result is not a tfvars document: %v\n%s", err, got)
+	}
+	if doc.CredentialsService == nil {
+		t.Fatalf("credentials_service was dropped:\n%s", got)
+	}
+	var have []string
+	for _, r := range doc.CredentialsService.SharedJobAccounts {
+		if r.Profile == "apikey" {
+			have = r.Repos
+		}
+	}
+	// The row's order is not a fact this test has any business pinning (the
+	// derived list comes first, the carried entries it does not hold follow),
+	// so the two are compared as sets.
+	haveSorted := slices.Clone(have)
+	slices.Sort(haveSorted)
+	want := []string{"github/acme/extra", "github/acme/narrow", "github/acme/webapp"}
+	if !slices.Equal(haveSorted, want) {
+		t.Errorf("the apikey row's repositories after a narrower machine's refresh = %v, want %v: the fallback list is the updating machine's record, and a row narrowed by it refuses the teammate's shared run whole", have, want)
+	}
+	// And it converges: the union of the row with the same derived list is the
+	// row, so every later update from this machine writes the same document.
+	again, err := RefreshCredentialsServiceJobAccounts(got, narrow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != string(got) {
+		t.Errorf("a second refresh changed the document:\nfirst  %s\nsecond %s", got, again)
+	}
+
+	// The same defect one step earlier: the member is written for the FIRST
+	// time — a block that carries none, which is every installation on the
+	// release that first renders the name — by a machine that does not record
+	// the teammate's repository. The coding table keeps that repository's job
+	// (union), so the row has to name it too, and the merged table is where the
+	// refresh reads it.
+	fresh := credsVarsSpec()
+	fresh.SharedJobAccounts = nil
+	freshVars, err := SetCredentialsService([]byte(credsVarsDiscovered), fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = RefreshCredentialsServiceJobAccounts(freshVars, narrow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatalf("the result is not a tfvars document: %v\n%s", err, got)
+	}
+	have = nil
+	for _, r := range doc.CredentialsService.SharedJobAccounts {
+		if r.Profile == "apikey" {
+			have = r.Repos
+		}
+	}
+	haveSorted = slices.Clone(have)
+	slices.Sort(haveSorted)
+	if want := []string{"github/acme/narrow", "github/acme/webapp"}; !slices.Equal(haveSorted, want) {
+		t.Errorf("the apikey row a first render writes = %v, want %v: the coding table runs a job for the repository the machine's own config does not record, and a row that does not name it refuses that job's shared run", have, want)
+	}
+}
+
+// credentialsIdentityLC is a project config with a roster that names every
+// member class at once — a person, a service account and a group on each of the
+// two lists the launcher class comes from, and the same on budget_admins, whose
+// `user:` entries are the launch gate's implicit admins. The classes that carry
+// no address are the ones the two lists must be seen to drop.
+const credentialsIdentityLC = `version: 3
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry: us-east5-docker.pkg.dev/proj-1234/fugaro
+build: { service_account: fugaro-build@proj-1234.iam.gserviceaccount.com }
+user: test@example.com
+repos:
+  acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }
+budget: {mode: observe, per_run_usd: 5, firebase_project: aurora-fp, rtdb_url: "https://aurora-fp-default-rtdb.firebaseio.com"}
+terraform:
+  operators: ['user:ops@example.com', 'serviceAccount:fugaro-p-acme-sandbox-0123abcd@proj-1234.iam.gserviceaccount.com', 'group:eng@example.com']
+  admins: ['serviceAccount:fugaro-reports@proj-1234.iam.gserviceaccount.com', 'domain:example.com']
+  budget_admins: ['user:Boss@Example.COM', 'group:eng@example.com', 'user:second@example.com']
+`
+
+// RefreshCredentialsServiceIdentity is the carry's writer of the block's three
+// identity names (LM13 of docs/launcher-does-not-mint; D3121, D3123, F29/R16),
+// and the reason it exists is that the deploy is their only OTHER writer: the
+// run that CREATES the block fills them in (Credentials), every later run
+// carries the block as it is found (CarriedCredentialsService), and the three
+// names are new in this release — so an installation that already has the
+// service carries a block without them and nothing else ever adds them. The
+// service then renders no FUGARO_ROSTER_SERVICE_ACCOUNTS and no
+// FUGARO_IMPLICIT_ADMINS at exactly the installations that have it, which is
+// LM13's acceptance unmet where it counts, and LM14's probe has no signer to
+// read, so the minter grant can never move.
+//
+// The values are asserted against Credentials' own answer for the same config
+// rather than against literals, because the property that matters is that the
+// two writers cannot drift: the block an installation carries after an update
+// has to be the block the deploy would have written.
+//
+// Mutation (verified, run and restored): make writeCarriedCredentials skip the
+// infra.RefreshCredentialsServiceIdentity call, or drop the call from
+// RefreshCredentialsServiceIdentity's own body, and this test fails on all
+// three names — while the CLI-side test beside it (init_credentials_test.go's
+// TestUpdateNamesTheServicesIdentity) fails on the signer the service reads.
+func TestRefreshCredentialsServiceIdentityNamesTheService(t *testing.T) {
+	lc := parseLC(t, credentialsIdentityLC)
+	deployed, err := Credentials(lc, credsVarsImage(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The block a run of an earlier release left: the deploy's own members
+	// without the three names, which is what every installation that has the
+	// service carries into this release.
+	carried := credsVarsSpec()
+	vars, err := SetCredentialsService([]byte(credsVarsDiscovered), carried)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := RefreshCredentialsServiceIdentity(vars, lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		CredentialsService *CredentialsServiceSpec `json:"credentials_service"`
+	}
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatalf("the result is not a tfvars document: %v\n%s", err, got)
+	}
+	if doc.CredentialsService == nil {
+		t.Fatalf("credentials_service was dropped:\n%s", got)
+	}
+	if have := doc.CredentialsService.SignerAccount; have != deployed.SignerAccount {
+		t.Errorf("credentials_service.signer_account = %q, want %q: the signer is the Firebase root's own account, derived from the project the budget block names — the name the service signs a run's identity as, and the one LM14's probe reads", have, deployed.SignerAccount)
+	}
+	if have := doc.CredentialsService.RosterServiceAccounts; !slices.Equal(have, deployed.RosterServiceAccounts) {
+		t.Errorf("credentials_service.roster_service_accounts = %v, want %v: the roster's service accounts as the bare addresses an ID token's email claim carries — the module makes the service's invoker grant for this same list, so the account that may knock and the account that may be served are one value", have, deployed.RosterServiceAccounts)
+	}
+	if have := doc.CredentialsService.ImplicitAdmins; !slices.Equal(have, deployed.ImplicitAdmins) {
+		t.Errorf("credentials_service.implicit_admins = %v, want %v: the gate's own list, so the issuer's scope check gives the gate's answer (F29, R16 arm 1)", have, deployed.ImplicitAdmins)
+	}
+	// The two classes that hold no address are not resolved into either list:
+	// the fixture names a `group:` and a `domain:` on each, and a `group:`
+	// member written through would match no token's email claim while admitting
+	// everyone the group means.
+	for _, list := range [][]string{doc.CredentialsService.RosterServiceAccounts, doc.CredentialsService.ImplicitAdmins} {
+		for _, m := range list {
+			if strings.Contains(m, ":") {
+				t.Errorf("an identity list holds %q: the lists are bare addresses, the spelling a Google ID token's email claim carries", m)
+			}
+		}
+	}
+	if !slices.Contains(doc.CredentialsService.ImplicitAdmins, "Boss@example.com") {
+		t.Errorf("implicit_admins = %v, want the gate's own normalisation (the domain lowered, the local part as written)", doc.CredentialsService.ImplicitAdmins)
+	}
+	// Every other member of the block, and every other key of the document, is
+	// what it was: the image, the URL, the bundle container, the database, the
+	// job tables and the verifier list are the installation's own record.
+	carried.SignerAccount = deployed.SignerAccount
+	carried.RosterServiceAccounts = deployed.RosterServiceAccounts
+	carried.ImplicitAdmins = deployed.ImplicitAdmins
+	if !credsVarsSpecEqual(*doc.CredentialsService, carried) {
+		t.Errorf("credentials_service = %+v, want %+v: the three names are the only members this refresh writes", *doc.CredentialsService, carried)
+	}
+	if wantDoc, have := credsVarsDoc(t, vars), credsVarsDoc(t, got); !mapsEqual(wantDoc, have) {
+		t.Errorf("the document changed beyond the one key:\nwant %v\ngot  %v", wantDoc, have)
+	}
+	// And it converges: a second refresh of the same document is byte for byte
+	// the same file, which is what an installation whose config has not changed
+	// carries into its plan.
+	again, err := RefreshCredentialsServiceIdentity(got, lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != string(got) {
+		t.Errorf("a second refresh changed the document:\nfirst  %s\nsecond %s", got, again)
+	}
+
+	// A name with nothing to carry is DELETED rather than written empty, which
+	// is what the spec's omitempty tags write and what the module's defaults
+	// read as the empty class. This config names no service account on either
+	// launcher list and no implicit admin; the signer is still derived, because
+	// the project is.
+	bare := parseLC(t, credentialsBudgetYAML+`repos:
+  acme/sandbox: { workflows: [web], provider: bitbucket }
+`)
+	got, err = RefreshCredentialsServiceIdentity(vars, bare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bareDoc map[string]any
+	if err := json.Unmarshal(got, &bareDoc); err != nil {
+		t.Fatal(err)
+	}
+	bareSvc, _ := bareDoc["credentials_service"].(map[string]any)
+	if _, ok := bareSvc["roster_service_accounts"]; ok {
+		t.Errorf("roster_service_accounts = %v, want the key absent: a list with nothing in it is what the deploy writes nothing for, and an empty array here is a member a later run would carry for no fact", bareSvc["roster_service_accounts"])
+	}
+	if _, ok := bareSvc["implicit_admins"]; ok {
+		t.Errorf("implicit_admins = %v, want the key absent, for the same reason", bareSvc["implicit_admins"])
+	}
+	if bareSvc["signer_account"] == nil || bareSvc["signer_account"] == "" {
+		t.Errorf("signer_account = %v, want the account the budget block's project names: the signer is not a list and is never empty where the project is known", bareSvc["signer_account"])
+	}
+
+	// A document with no block is refused rather than given one: the three
+	// names are members of a service this run did not deploy.
+	if _, err := RefreshCredentialsServiceIdentity([]byte(credsVarsDiscovered), lc); err == nil {
+		t.Error("RefreshCredentialsServiceIdentity gave a document with no credentials_service the identity names")
+	}
+	if _, err := RefreshCredentialsServiceIdentity([]byte("not json"), lc); err == nil {
+		t.Error("RefreshCredentialsServiceIdentity rewrote a document it could not read")
+	}
+	// A config that cannot name the Firebase project the signer lives in is
+	// refused rather than written around, and the caller keeps the block it
+	// found — the direction the job tables' refresh takes.
+	if _, err := RefreshCredentialsServiceIdentity(vars, parseLC(t, m4LocalConfig+m5Additions)); err == nil || !strings.Contains(err.Error(), "budget.firebase_project") {
+		t.Errorf("a config that names no Firebase project = %v, want the derivation's own refusal naming budget.firebase_project", err)
 	}
 }
 

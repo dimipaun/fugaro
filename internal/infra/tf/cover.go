@@ -46,11 +46,14 @@ var allowedTypes = map[string]bool{
 	// confirmation covers can carry them. What the compute stage does run
 	// over its own plan is GrantsNotCovered: the grant rules below, the
 	// launchers' Batch Job Editor condition among them.
-	"google_compute_firewall":                 true,
-	"google_compute_router":                   true,
-	"google_compute_router_nat":               true,
-	"google_firebase_database_instance":       true,
-	"google_firebase_project":                 true,
+	"google_compute_firewall":           true,
+	"google_compute_router":             true,
+	"google_compute_router_nat":         true,
+	"google_firebase_database_instance": true,
+	"google_firebase_project":           true,
+	// The run index's composite indexes (RI2, contract-index.md): the plan is
+	// the owner-run Firebase root's, because no job may change an index.
+	"google_firestore_index":                  true,
 	"google_logging_log_view":                 true,
 	"google_logging_log_view_iam_member":      true,
 	"google_logging_project_bucket_config":    true,
@@ -269,6 +272,14 @@ var grantRules = map[string]map[string]who{
 		// the one project-level binding the task adds). Granting it to a job
 		// account or to a person is not a grant the installation makes.
 		customKey + CredentialsDatabaseRole: toCredentials | toMobile,
+		// The service's Vertex role (CS11, D3174): the installation project's
+		// own role, holding aiplatform.endpoints.predict and nothing else,
+		// bound to the service's own account in credentials.tf and to nothing
+		// else. A chain whose models are served on Vertex calls it as this
+		// service, so the reach has to be this account's and no job's; the
+		// jobs' own roles/aiplatform.user is the release-1 path CS11 keeps
+		// only under budget.mode: observe (X8 retires it).
+		customKey + CredentialsVertexRole: toCredentials,
 		// The dynamic-delivery class (D1931, DS2.2). fugaroIntakeSecrets is
 		// create, version-add and delete of the grammar's containers, held by
 		// the intake's own account and by nothing else, and only under the
@@ -331,7 +342,16 @@ var grantRules = map[string]map[string]who{
 		// which reads the target account and reads it in this run's own Firebase
 		// project, so the grant the module writes on the devices' signer is the
 		// only one this cell admits.
-		customKey + "fugaroTokenMinter": toPeople | toOrchestrator | toMobile,
+		//
+		// toCredentials is the issuer's own row (launcher-does-not-mint plan
+		// task LM13; D3121, F7): the credentials service signs a run's identity
+		// as the runs' signer once the people's row goes, and that row is the
+		// ONE grant this design adds. It is here on the row's own terms and not
+		// as a widening: the cell says the account may hold fugaroTokenMinter,
+		// and issuerMinterGrant — the rule beside mobileMinterGrant — is what
+		// holds it to this run's signer and to nothing else, the way the
+		// orchestrator's and the mobile service's bits are held to theirs.
+		customKey + "fugaroTokenMinter": toPeople | toOrchestrator | toMobile | toCredentials,
 		// The operators' actAs on the accounts a build runs as. Two module
 		// sites hold it now: the per-repository build account
 		// (modules/repo/build.tf's operator_build, on google_service_account
@@ -706,17 +726,26 @@ const ViewerRole = "fugaroViewer"
 
 // CredentialsAccountID is the credentials service's fixed service account ID
 // (internal/infra/tfvars.go's CredentialsAccountID, which
-// var.credentials_service.account_id carries) and CredentialsDatabaseRole the
-// custom role credentials.tf creates for it in the run's Firebase project.
+// var.credentials_service.account_id carries), CredentialsDatabaseRole the
+// custom role credentials.tf creates for it in the run's Firebase project, and
+// CredentialsVertexRole the second it creates for it in the installation's own
+// project where the installation names Vertex (CS11).
 //
 // The account is deliberately NOT among FugaroAccounts, for the deployer
-// account's reason and the ledger finding above: it holds its own role and the
+// account's reason and the ledger finding above: it holds its own roles and the
 // bundle's accessor, and nothing a job holds, so every row that would otherwise
 // accept it is refused (toCredentials). TestCoverNamesAreTheCodes and
 // TestCredentialsAccountIsItsOwnPrincipalKind read both halves.
+//
+// The Vertex role is a role of its own rather than a permission of the
+// database's — the two live in different projects and are read by different
+// callers — and it exists only where the installation names Vertex (D3174: the
+// service calls Vertex on its own installation identity, so a chain whose
+// models are served there needs this account to hold endpoints.predict).
 const (
 	CredentialsAccountID    = "fugaro-credentials"
 	CredentialsDatabaseRole = "fugaroCredentialsDatabase"
+	CredentialsVertexRole   = "fugaroCredentialsVertex"
 )
 
 // CoordinatorAccountID is the coordinator's writer account (internal/infra's
@@ -1070,7 +1099,7 @@ const (
 // reason (toBuildIdentity): its reach is the credentials service's invoker bit
 // and nothing a job of any repository holds.
 var (
-	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, CatalogLeaseRole, WorkspaceReadRole, IntakeSecretsRole, SecretListerRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole, MCPStateReadRole, LicenceRenewalRole}
+	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, CredentialsVertexRole, CatalogLeaseRole, WorkspaceReadRole, IntakeSecretsRole, SecretListerRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole, MCPStateReadRole, LicenceRenewalRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
 )
 
@@ -1742,6 +1771,15 @@ var RolePermissions = map[string][]string{
 	// installation's database. credentials.tf lists both permissions with their
 	// reasons; TestCredentialsDatabaseRoleIsTheTwoDataPermissions is the pin.
 	CredentialsDatabaseRole: {"firebasedatabase.instances.get", "firebasedatabase.instances.update"},
+	// The service's Vertex role (CS11, D3174): the one permission a :rawPredict
+	// on one of the installation project's Claude endpoints needs, and nothing
+	// else. roles/aiplatform.user — the release-1 grant a job holds under
+	// budget.mode: observe — carries endpoints.predict plus the platform's
+	// reads, model deployments, tuning and pipelines, which is exactly the
+	// surface a chain-serving credential holder must not have.
+	// deploy/terraform's TestTheServiceVertexRoleIsItsOwn is the pin that reads
+	// this entry against the module.
+	CredentialsVertexRole: {"aiplatform.endpoints.predict"},
 	// The catalog check job's database role (D1554): the two permissions
 	// catalogcheck.tf lists, and the same two the credentials role above pins.
 	// They are a second entry and not a shared one on purpose — the two
@@ -2040,6 +2078,7 @@ func MobileServiceArgs() []string { return slices.Clone(mobileServiceArgs) }
 // what those two facts are held by.
 const (
 	orchestratorServiceResource = "orchestrator"
+	orchestratorServiceName     = "fugaro-orchestrator"
 	orchestratorTickPath        = "/tick"
 )
 
@@ -2055,13 +2094,14 @@ var (
 // in the same binary — deploy/terraform is embedded — so the order is the
 // cover's and not a release's).
 //
-// FUGARO_SHARED_JOB_ACCOUNTS is on it now (B5.1): the service reads it as an
-// optional value (internal/cli's envSharedJobAccounts), and the module that
-// renders it from the shared jobs an installation deploys is the deployment
-// side's own step — which is why the name is here, on the allow-list ahead of
-// its module, rather than nowhere. Until that step every installation renders
-// the entry nowhere, the service starts with an empty shared set and the class
-// is refused whole: the fail-closed state B5.1 leaves production in. Before it,
+// It is EMPTY now, and FUGARO_SHARED_JOB_ACCOUNTS is the name that left it
+// last: the service reads it as an optional value (internal/cli's
+// envSharedJobAccounts) and the module that renders it from the shared jobs an
+// installation deploys is installation/credentials.tf, which sets it from
+// var.credentials_service.shared_job_accounts on the same switch every other
+// entry of that container is on (B5.1). It is kept as a function with a body
+// that can hold a name rather than deleted, because the next name the service
+// reads ahead of the module that renders it belongs here. Before it,
 // FUGARO_LAUNCHER_ACCOUNTS (the launcher class's list, D1938, F25) left this
 // list in the change that made installation/credentials.tf render it (DS2.2),
 // and FUGARO_REVIEW_JOB_ACCOUNTS left it the same way before that.
@@ -2083,9 +2123,7 @@ var (
 // is here and in the module's own source — so a name added ahead of its module
 // cannot be left behind once the module renders it.
 func CredentialsServiceEnvAwaitingTheModule() []string {
-	return []string{
-		"FUGARO_SHARED_JOB_ACCOUNTS",
-	}
+	return nil
 }
 
 // APITargets are the two services the Firebase web key may call, sorted;
@@ -2622,6 +2660,14 @@ func (c Cover) grant(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[str
 	// — is the project row's, covered by the row itself.
 	if why == "" && t == "google_service_account_iam_member" && c.isMobileMember(str(rc.Change.After["member"])) {
 		why = c.mobileMinterGrant(rc.Change)
+	}
+	// ... and the credentials service's own row on that same signer (LM13):
+	// the design's one NEW grant, and the only one of the three whose member is
+	// a literal of a DIFFERENT root's apply — isCredentialsMember has already
+	// pinned the member to the installation's credentials account, so what is
+	// left to hold is the account the row is ON.
+	if why == "" && t == "google_service_account_iam_member" && c.isCredentialsMember(str(rc.Change.After["member"])) {
+		why = c.issuerMinterGrant(rc.Change)
 	}
 	if why == "" {
 		why = c.deployerGrant(t, rc.Change, dep.accounts[modulePrefix(rc)])
@@ -3231,9 +3277,11 @@ func (c Cover) onDeployer(ch Change, createsDeployer bool) string {
 
 // deployerTokenCreator says why a token-creator grant is not the operators'
 // one-time impersonation setup (Task 1.5 step 2), "" when it is and "" for
-// every other grant on that type. The role is granted on the deployer account
-// and, since CSR14, on the installation's own verifier account, and on nothing
-// else; grantRules has already checked that the member is a person on the
+// every other grant on that type. The role is granted on the deployer account,
+// since CSR14 on the installation's own verifier account, and on the resident
+// orchestrator's account (orchestrator.tf: the daemon on an operator's machine
+// mints its ID token as that account, and the grant lets an operator act as an
+// account holding signJwt on the budget signer), and on nothing else; grantRules has already checked that the member is a person on the
 // review screen, so what is left is which account.
 //
 // The account has to be named, and named as one of those two, in this run's
@@ -3264,14 +3312,14 @@ func (c Cover) deployerTokenCreator(ch Change) string {
 	}
 	m := saName.FindStringSubmatch(id)
 	dp := c.deployerProject()
-	if m != nil && dp != "" && m[1] == dp && m[3] == dp && (m[2] == DeployerAccountID || m[2] == VerifierAccountID) {
+	if m != nil && dp != "" && m[1] == dp && m[3] == dp && (m[2] == DeployerAccountID || m[2] == VerifierAccountID || m[2] == OrchestratorAccountID) {
 		return ""
 	}
 	want := "the deployer account of this run"
 	if dp != "" {
-		want = DeployerAccount(dp) + " or the verifier account " + VerifierAccountID + "@" + dp + ".iam.gserviceaccount.com"
+		want = DeployerAccount(dp) + ", the verifier account " + VerifierAccountID + "@" + dp + ".iam.gserviceaccount.com or the resident orchestrator's account " + OrchestratorAccountID + "@" + dp + ".iam.gserviceaccount.com"
 	}
-	return fmt.Sprintf("grants %s on %s, which is not %s: the operators' impersonation is on those two accounts alone", DeployerTokenCreatorRole, id, want)
+	return fmt.Sprintf("grants %s on %s, which is not %s: the operators' impersonation is on those three accounts alone", DeployerTokenCreatorRole, id, want)
 }
 
 // orchestratorMinterGrant says why a token-minter grant to the resident
@@ -3365,6 +3413,64 @@ func (c Cover) mobileMinterGrant(ch Change) string {
 		}
 	}
 	return fmt.Sprintf("grants fugaroTokenMinter on %s to the public mobile service: its one signJwt is on the devices' signer account of this run's Firebase project (%s), never on the runs' own signer and never on a job account — signJwt signs any claim set for any uid, so the account it is on IS the identity this public service may mint (P5, O1, O8)", id, DeviceSignerAccountID+"@<one of this run's projects>.iam.gserviceaccount.com")
+}
+
+// issuerMinterGrant is orchestratorMinterGrant's rule for the credentials
+// service's own account (launcher-does-not-mint plan task LM13; D3121, F7), and
+// it is the rule that makes the design's one new row a property of a plan
+// rather than of the module's text: the account's signJwt is on the runs'
+// signer of this run's Firebase project and on nothing else.
+//
+// Why the target is the whole of the check here. The role's row already says
+// the account may hold fugaroTokenMinter, and iam.serviceAccounts.signJwt is
+// the widest grant of this tree: its holder signs ANY claim set for ANY uid as
+// the account it is on (orchestrator.tf's own sentence, section 4.3). That is
+// the grant the design moves a run's identity onto — the service becomes the
+// one identity that mints every run's and every launcher's token — so where
+// the orchestrator holds it as the budget backend's own writer, this account
+// holds it as the issuer, and the account it is on has to be the signer the
+// runs are minted through. A plan that pointed it at the devices' signer would
+// leave the runs' identity to the mobile route; one that pointed it at a job
+// account would put every run's identity behind the model credentials'
+// account.
+//
+// The account has to be named: the row is written in modules/firebase/iam.tf
+// with the signer's name and the role spelled out as literals rather than read
+// off the two resources beside it, because a reference reaches a plan as
+// UNKNOWN — a principal and a role nobody can read off the review screen, and
+// the row is one whose whole content is the account it is on. A plan that
+// computes either is refused, as a computed role is. The project is this run's
+// and not a fixed one, for mobileMinterGrant's reason: the Firebase project
+// may be the installation's own or one of its own (D6, D2781).
+//
+// The MEMBER is this account and no other — the LITERAL the root writes
+// (var.issuer_account) rather than a computed one. That half is already settled
+// by the time this function runs: grant() reaches it through
+// isCredentialsMember, which matches the member string byte for byte against
+// the installation's credentials account, so a plan whose member is computed
+// never arrives here: the minter cell carries no plain-account kind, and the
+// grant is refused before this function is reached. What is left is the
+// account the row is on, which is this function's whole subject.
+func (c Cover) issuerMinterGrant(ch Change) string {
+	key, ok := c.roleKey(str(ch.After["role"]))
+	if !ok || key != customKey+"fugaroTokenMinter" {
+		return ""
+	}
+	// The account ID the Firebase root's signer carries (modules/firebase/iam.tf,
+	// FugaroAccounts' own spelling of it).
+	const signerID = "fugaro-token-signer"
+	if unknown(ch, "service_account_id") {
+		return "a fugaroTokenMinter grant to the credentials service whose account is not known: the issuer's row is the budget signer account of this run, written out in the root that creates it (firebase/iam.tf's issuer_minter), and a plan that computes the account is one whose signer nobody can name"
+	}
+	id := str(ch.After["service_account_id"])
+	if m := saName.FindStringSubmatch(id); m != nil {
+		for _, p := range c.Projects {
+			if m[1] == p && m[3] == p && m[2] == signerID {
+				return ""
+			}
+		}
+	}
+	return fmt.Sprintf("grants fugaroTokenMinter on %s to the credentials service: the issuer's one row is the budget signer account of this run (%s), and signJwt on any other account makes the credentials service that account — the devices' signer, which would leave every run's identity to the mobile route, and the job accounts holding the model credentials among them (D3121, F7, section 4.3)", id, signerID+"@<one of this run's projects>.iam.gserviceaccount.com")
 }
 
 // accountClause is one clause of a job or build account's bucket condition,
@@ -5279,8 +5385,9 @@ func (c Cover) publicServiceMinInstances(a map[string]any, unk any, address, wha
 //     tick carries: Cloud Run's front end authenticates a run.app caller by the
 //     ID token whose audience is that service's own URL, and an access token
 //     there is refused before the container runs. The audience is therefore the
-//     URI — the same expression, so a token minted for another service or
-//     another URL cannot be described by this file — and the account is this
+//     URI's origin, the service's URL without the tick's route (the audience
+//     names a service, not a route on it), so a token minted for another
+//     service or another URL cannot be described by this file — and the account is this
 //     run's scheduler account, held to the same two arms the OAuth path's is
 //     (an unknown email is the module's own only when the plan creates an
 //     account with it; a known one must be a Fugaro account of this run).
@@ -5312,8 +5419,8 @@ func (c Cover) orchestratorTickChange(rc ResourceChange, a map[string]any, unk a
 		if at(unk, "http_target", "uri") != true {
 			return "an ID token whose audience is not known and a URL that is: the audience of a Cloud Run ID token is the service's own URL, and the two are one expression"
 		}
-	} else if got, want := str(oidc[0]["audience"]), str(at(ht, "uri")); got != want {
-		return fmt.Sprintf("an ID token for the audience %q, not for the URL it calls (%q): Cloud Run refuses an ID token whose audience is not the service's own URL, so this job would never be admitted",
+	} else if got, want := str(oidc[0]["audience"]), orchestratorTickOriginOf(str(at(ht, "uri"))); got != want {
+		return fmt.Sprintf("an ID token for the audience %q, not for the service URL it calls (%q): Cloud Run refuses an ID token whose audience is not the service's own URL (the URL without the route), so this job would never be admitted",
 			got, want)
 	}
 	if at(unk, "http_target", "oidc_token", "service_account_email") == true {
@@ -5358,10 +5465,21 @@ func (c Cover) orchestratorTickURI(uri string) string {
 	}
 	// <service>-<project number>: a label, a hyphen and digits. A URL that
 	// names no project at all is not a Cloud Run service URL, whoever hosts it.
-	if i := strings.LastIndex(service, "-"); i <= 0 || strings.Trim(service[i+1:], "0123456789") != "" {
+	number, ok := strings.CutPrefix(service, orchestratorServiceName+"-")
+	if !ok || number == "" || strings.Trim(number, "0123456789") != "" {
 		return bad()
 	}
 	return ""
+}
+
+// orchestratorTickOriginOf is the URL without its path: the audience the tick's
+// ID token carries.
+func orchestratorTickOriginOf(uri string) string {
+	u, err := url.Parse(uri)
+	if err != nil {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 // checkSpecs checks every FUGARO_CHECK_SPEC entry of a container's
@@ -5519,17 +5637,20 @@ var nonDataBearingTypes = map[string]bool{
 	"google_compute_router":                          true,
 	"google_compute_router_nat":                      true,
 	"google_firebase_project":                        true,
-	"google_logging_log_view_iam_member":             true,
-	"google_logging_project_exclusion":               true,
-	"google_logging_project_sink":                    true,
-	"google_monitoring_alert_policy":                 true,
-	"google_monitoring_notification_channel":         true,
-	"google_project_iam_custom_role":                 true,
-	"google_project_iam_member":                      true,
-	"google_project_service":                         true,
-	"google_secret_manager_secret_iam_member":        true,
-	"google_service_account_iam_member":              true,
-	"google_storage_bucket_iam_member":               true,
+	// An index holds no documents: the runs it orders live in the collection,
+	// and deleting the index loses an answer, never a row.
+	"google_firestore_index":                  true,
+	"google_logging_log_view_iam_member":      true,
+	"google_logging_project_exclusion":        true,
+	"google_logging_project_sink":             true,
+	"google_monitoring_alert_policy":          true,
+	"google_monitoring_notification_channel":  true,
+	"google_project_iam_custom_role":          true,
+	"google_project_iam_member":               true,
+	"google_project_service":                  true,
+	"google_secret_manager_secret_iam_member": true,
+	"google_service_account_iam_member":       true,
+	"google_storage_bucket_iam_member":        true,
 }
 
 // DataBearingType classifies a resource type for D1551: whether its objects

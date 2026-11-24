@@ -31,13 +31,27 @@
 // production files). The project's row is what is left.
 //
 // **Nothing here is a claim about a run.** No field of the row comes from a run
-// and no line names one; the feed's document cannot even carry a run, because
-// `document.js` accepts the runs-bucket fields only as empty arrays.
+// and no line names one. The feed's document can carry a run of its own since
+// VS4 -- an id, C1's fallback mark and C3's pause, and `document.js` refuses
+// every other member a runs-bucket row has -- and none of it is a figure, a
+// name or a link this list draws.
+//
+// **The running jobs are wired here too** (mobile identity-pairing plan, task
+// J2). The project's row above and the running-jobs view beside it are one
+// screen's two halves, so the app hands both to one object: `JobList` gains the
+// paired **sessions** and one `readRuns` function, and `running()` reads each
+// project through it. What is injected and what is not is the rule this file
+// already follows -- the module imports no database SDK, so a second
+// subscription to a project cannot be bought with an import, and `running.js`
+// judges what the function returns. Nothing here decides what a running run is;
+// that is `running.js`'s, and this method is the wiring that hands it readings.
 
+import { assertSessionPort } from '../../../shared/mobile-session/port.js';
 import { FeedReader, LIVENESS } from '../feed/index.js';
 import { LIST_CODES } from './fields.js';
 import { heartbeatRow } from './heartbeat.js';
 import { projectRow } from './row.js';
+import { runningJobs } from './running.js';
 
 /** A frozen refusal, in the shape the app's modules use. */
 function refuse(code, field) {
@@ -186,6 +200,12 @@ export function jobList({ snapshot, presence } = {}) {
  * a mailbox client, and is omitted when it has none: the heartbeat is then
  * `unknown` -- nothing has read it -- which is not `offline`.
  *
+ * `sessions` and `readRuns` are the running-jobs half of the same screen: the
+ * paired projects as **C2 ports**, and the function that reads one project's
+ * runs through its own session. Both are omitted together on a phone with no
+ * paired project, and `running()` then says it read nothing rather than that
+ * nothing is running.
+ *
  * **The readers are not this module's to build twice.** There is one
  * `FeedReader` and there is one presence report; `snapshot()` is a read of
  * what they last said and starts nothing.
@@ -195,17 +215,36 @@ export class JobList {
   #readPresence;
   #now;
   #presence = null;
+  #sessions;
+  #readRuns;
 
-  constructor({ reader, readPresence = null, now = () => Date.now() } = {}) {
+  /**
+   * `sessions` are the paired projects' **C2 ports** -- one per project, each
+   * asserted below, because a session is what the running view's project id
+   * comes from -- and `readRuns(session)` reads one project's runs through it.
+   * They are handed together or not at all: sessions with no reader are a wiring
+   * defect rather than a list with nothing to read, and they are refused here
+   * rather than at the first draw.
+   */
+  constructor({ reader, readPresence = null, sessions = [], readRuns = null, now = () => Date.now() } = {}) {
     if (reader === null || typeof reader !== 'object' || typeof reader.snapshot !== 'function') {
       throw new TypeError('JobList needs a feed reader');
     }
     if (readPresence !== null && typeof readPresence !== 'function') {
       throw new TypeError('readPresence must be a function or null');
     }
+    if (!Array.isArray(sessions)) throw new TypeError('sessions must be a list of sessions');
+    if (readRuns !== null && typeof readRuns !== 'function') {
+      throw new TypeError('readRuns must be a function or null');
+    }
+    if (readRuns === null && sessions.length > 0) {
+      throw new TypeError('sessions were handed in with nothing to read them with');
+    }
     if (typeof now !== 'function') throw new TypeError('now must be a function');
     this.#reader = reader;
     this.#readPresence = readPresence;
+    this.#sessions = sessions;
+    this.#readRuns = readRuns;
     this.#now = now;
   }
 
@@ -253,6 +292,52 @@ export class JobList {
     return Object.freeze({ ok: true, polled: true, heartbeat });
   }
 
+  /**
+   * The running jobs across the paired projects, read now.
+   *
+   * One `readRuns` per session, all of them at once, and each session is
+   * asserted through the port first: a session that is not one is refused with
+   * the port's own code (`assertSessionPort` throws, and this module passes
+   * another module's refusal through unchanged, as `poll()` does). A reading
+   * that comes back is judged by `running.js`, which owns what a running run is.
+   *
+   * **Two ways a project becomes an `unreachable` row rather than a refusal**,
+   * and both are the app's own answers about a project it could not read: the
+   * function throws, or it answers with a refusal in the app's shape (`ok:
+   * false`). Neither blanks the list -- a project the phone cannot reach is
+   * shown as such, and the others' jobs are what the screen is for -- and the
+   * row is the feedback, so nothing is swallowed without a trace. A reading that
+   * is neither is passed on and refused by `runningJobs`, because a value the
+   * app did not build is a defect and not an outage.
+   *
+   * With no reader there is nothing to read and the answer says so (`read:
+   * false`), the way `poll()` answers `polled: false`: an empty list that meant
+   * "nothing is running" and an empty list that meant "nobody looked" must not
+   * be the same value.
+   */
+  async running() {
+    if (typeof this.#readRuns !== 'function') {
+      return Object.freeze({ ok: true, read: false, rows: Object.freeze([]) });
+    }
+    const readings = await Promise.all(this.#sessions.map(async (raw) => {
+      const session = assertSessionPort(raw);
+      let answer;
+      try {
+        answer = await this.#readRuns(session);
+      } catch {
+        // The read failed: the project is unreachable, and that is the row.
+        return Object.freeze({ project: session.project_id, reachable: false });
+      }
+      if (answer === null || typeof answer !== 'object' || Array.isArray(answer) || answer.ok === false) {
+        return Object.freeze({ project: session.project_id, reachable: false });
+      }
+      return answer;
+    }));
+    const view = runningJobs({ projects: readings, nowMs: this.#now() });
+    if (!view.ok) return view;
+    return Object.freeze({ ok: true, read: true, rows: view.rows });
+  }
+
   /** What to draw, from what the feed and the mailbox last said. */
   snapshot({ nowMs = this.#now() } = {}) {
     return jobList({ snapshot: this.#reader.snapshot({ nowMs }), presence: this.#presence });
@@ -272,10 +357,12 @@ export function createJobList({
   repositories,
   registry,
   readPresence = null,
+  sessions = [],
+  readRuns = null,
   now = () => Date.now(),
   view,
   sampler,
 } = {}) {
   const reader = new FeedReader({ port, account, repositories, registry, now, view, sampler });
-  return new JobList({ reader, readPresence, now });
+  return new JobList({ reader, readPresence, sessions, readRuns, now });
 }

@@ -681,7 +681,7 @@ func TestUpdatePrintsTheDeployTimePinWarning(t *testing.T) {
 	if got := strings.Count(out.String(), pin); got != 1 {
 		t.Errorf("the warning is printed %d times, want once:\n%s", got, out.String())
 	}
-	for _, want := range []string{"warning: " + pin, "missing [go]"} {
+	for _, want := range []string{"Warning: " + pin, "missing [go]"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("the update printed %q, want %q", out.String(), want)
 		}

@@ -465,15 +465,24 @@ func newCoreRoot() *cobra.Command {
 		// is free. A leading `fugaro -v` is the version all the same, because
 		// NormalizeVersionArgs rewrites it before cobra parses anything.
 		Version: Version,
-		// The plugin staleness line (design 4.5) and the update-check kickoff
-		// (docs/gcp-setup.md "Staying up to date"). No command defines its own
-		// PersistentPreRun, which would replace this one. The update-available
-		// nag is NOT printed from a PersistentPostRun: cobra's Command.execute
-		// returns as soon as RunE errors, skipping PostRun and
-		// PersistentPostRun entirely, so most command failures would never
-		// carry it. cmd/fugaro/main.go instead calls WarnUpdateAvailable
-		// itself, after ExecuteContextC returns, whether or not it errored.
-		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
+		// The plugin staleness line (design 4.5), the update-check kickoff
+		// (docs/gcp-setup.md "Staying up to date") and the required-CLI fence
+		// (required_cli.go). No command defines its own PersistentPreRun, which
+		// would replace this one — the tree-walk test in required_cli_test.go
+		// fails on one. The update-available nag is NOT printed from a
+		// PersistentPostRun: cobra's Command.execute returns as soon as RunE
+		// errors, skipping PostRun and PersistentPostRun entirely, so most
+		// command failures would never carry it. cmd/fugaro/main.go instead
+		// calls WarnUpdateAvailable itself, after ExecuteContextC returns,
+		// whether or not it errored.
+		//
+		// It is a PersistentPreRunE because the fence has to refuse: a command
+		// below its project's required CLI returns the refusal from here, and
+		// cobra's Command.execute propagates a pre-run error exactly as it does
+		// a RunE's — main.go prints it and exits 1. The fence is last, so
+		// everything above it is what it always was, and so the flags it reads
+		// the command's own project from are parsed.
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			// A command the desktop console spawns as a read changes nothing
 			// on this machine, so it does not write the remembered checkouts
@@ -493,6 +502,7 @@ func newCoreRoot() *cobra.Command {
 			disabled := updateCheckDisabled(cmd)
 			cmd.SetContext(withUpdateCheckDisabled(cmd.Context(), disabled))
 			startUpdateCheck(cmd, disabled)
+			return fenceCommand(cmd)
 		},
 	}
 	root.SetVersionTemplate(versionTemplate)

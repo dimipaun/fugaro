@@ -1,0 +1,291 @@
+{
+  "schema_version": 3,
+  "plan": "docs/required-version-stamp/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "T1",
+      "title": "the stamp package",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/versionstamp/stamp.go",
+          "internal/versionstamp/source.go",
+          "internal/versionstamp/stamp_test.go",
+          "internal/versionstamp/source_test.go",
+          "schemas/required-cli.schema.json",
+          "internal/cli/required_cli_source.go",
+          "docs/ci-affected-tests/read-map.json"
+        ]
+      }
+    },
+    {
+      "id": "T2c",
+      "title": "the published-release lookup",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/updatecheck/published.go",
+          "internal/updatecheck/published_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T2a",
+      "title": "the version-stamp stage",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/initflow/stage.go",
+          "internal/initflow/loop_test.go",
+          "internal/cli/update_version_stamp.go",
+          "internal/cli/update_version_stamp_test.go",
+          "internal/cli/init_stages.go",
+          "internal/cli/setup_refusals_test.go",
+          "internal/cli/testdata/setup_events.golden.ndjson"
+        ]
+      }
+    },
+    {
+      "id": "T2b",
+      "title": "the gate, the release bound, the in-flight note and the policy delete",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_managed.go",
+          "internal/cli/update_version_stamp.go",
+          "internal/cli/update_in_flight_test.go",
+          "docs/design/update-in-flight.md",
+          "internal/cli/update_version_stamp_gate_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T3",
+      "title": "the fence at the root",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/root.go",
+          "internal/cli/required_cli.go",
+          "internal/cli/required_cli_test.go",
+          "internal/cli/project.go",
+          "internal/cli/required_cli_shared_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T4",
+      "title": "update refuses below the stamp",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_stamp_guard.go",
+          "internal/cli/init.go",
+          "internal/cli/update_stamp_guard_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T5",
+      "title": "doctor's cli-below-required",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/doctor.go",
+          "internal/cli/doctor_render.go",
+          "internal/cli/doctor_required.go",
+          "internal/cli/doctor_required_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T6",
+      "title": "the daemon holds below the stamp",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/orchestrator_run.go",
+          "internal/cli/orchestrator_required_test.go"
+        ]
+      }
+    },
+    {
+      "id": "K1",
+      "title": "Check 900, as a script",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-900-version-stamp.sh",
+          "scripts/live-checks/check-900-version-stamp_test.sh"
+        ]
+      }
+    },
+    {
+      "id": "K2",
+      "title": "Check 900 registered",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live_checks_test.go",
+          "docs/gcp-live-checklist.md",
+          "docs/coordinator/README.md",
+          "docs/periodic-reviews/README.md",
+          "docs/ci-affected-tests/read-map.json"
+        ]
+      }
+    },
+    {
+      "id": "T8",
+      "title": "end to end, and the release notes",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/required_cli_e2e_test.go",
+          "docs/releases/v0.29.0.md"
+        ]
+      }
+    },
+    {
+      "id": "T7",
+      "title": "the refusal in the working skill, and the last-resort recovery",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "plugin/skills/working/SKILL.md",
+          "docs/release.md"
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "task": "T2a",
+      "needs": "T1",
+      "reason": "the node's shape it writes"
+    },
+    {
+      "task": "T3",
+      "needs": "T1",
+      "reason": "the reader and the refusal error"
+    },
+    {
+      "task": "T4",
+      "needs": "T1",
+      "reason": "the reader and the refusal error"
+    },
+    {
+      "task": "T5",
+      "needs": "T1",
+      "reason": "the reader it reports from"
+    },
+    {
+      "task": "T6",
+      "needs": "T1",
+      "reason": "the reader"
+    },
+    {
+      "task": "K1",
+      "needs": "T1",
+      "reason": "the node's shape and the schema it checks against"
+    },
+    {
+      "task": "T2b",
+      "needs": "T2a",
+      "reason": "it gates, wires and documents the stage, and edits its file"
+    },
+    {
+      "task": "T2b",
+      "needs": "T2c",
+      "reason": "the release lookup it wires in"
+    },
+    {
+      "task": "K2",
+      "needs": "K1",
+      "reason": "it registers the script K1 writes"
+    },
+    {
+      "task": "T8",
+      "needs": "T2b",
+      "reason": "the stage raises only once the release lookup is wired in"
+    },
+    {
+      "task": "T8",
+      "needs": "T3",
+      "reason": "the end-to-end test walks the fence"
+    },
+    {
+      "task": "T8",
+      "needs": "T4",
+      "reason": "the end-to-end test walks the door's refusal"
+    },
+    {
+      "task": "T8",
+      "needs": "T5",
+      "reason": "the end-to-end test reads doctor's row"
+    },
+    {
+      "task": "T8",
+      "needs": "T6",
+      "reason": "the daemon's hold is part of the behaviour the release note states"
+    },
+    {
+      "task": "T7",
+      "needs": "T2b",
+      "reason": "the release bound and the recovery the docs describe"
+    },
+    {
+      "task": "T7",
+      "needs": "T3",
+      "reason": "the refusal the skill names"
+    }
+  ]
+}

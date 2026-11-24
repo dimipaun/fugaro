@@ -288,6 +288,63 @@ func TestRecordRoundTripsChainRaises(t *testing.T) {
 	}
 }
 
+// TestPlanBlockRoundTrips: the plan the runner resolved survives the round trip
+// — one entry per step of the loop after implement, its kind and the rounds
+// resolved for it (docs/review-levels-ab-jobmax V1.3) — because it is the only
+// place a reader outside the runner finds a review level's cap: the resolution
+// reads the recipe's text, the configuration and the rigor mode, none of which
+// the record keeps.
+func TestPlanBlockRoundTrips(t *testing.T) {
+	s := newStore(t)
+	plan := &PlanRecord{Steps: []PlanStepRecord{
+		{Kind: "first_line", Rounds: 3},
+		{Kind: "review", Rounds: 2},
+		{Kind: "adversarial", Rounds: 2},
+	}}
+	rec := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeReady,
+		StartedAt: time.Now().UTC(), Plan: plan}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Plan, plan) {
+		t.Fatalf("ReadRecord plan = %+v, want %+v", got.Plan, plan)
+	}
+	if got.Version != 1 {
+		t.Errorf("version = %d, want 1: the field is additive", got.Version)
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"plan"`) {
+		t.Fatalf("a run with a plan does not encode the block a reader looks for: %s", data)
+	}
+
+	// Absent rather than an empty block for a run that built none, so a reader
+	// can tell a mode: review run from one whose plan is empty.
+	data, err = json.Marshal(&Record{Version: 1, RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "plan") {
+		t.Fatalf("a record with no plan encoded the field: %s", data)
+	}
+
+	// A record written before this field existed still parses, without one.
+	old := `{"version":1,"run_id":"` + runID + `","status":"succeeded","stage":"writeback","outcome":"ready","cost_usd":1,"started_at":"2026-09-26T22:15:30Z"}`
+	if err := s.PutFile(ctx, "result.json", []byte(old), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ReadRecord(ctx)
+	if err != nil || got.Plan != nil {
+		t.Fatalf("old record = %+v, %v, want no plan block", got, err)
+	}
+}
+
 // TestNewToleratedBoundsWhatItStores: the record is a small object every
 // listing reads, so the block is bounded — the list at MaxTolerated, each
 // title at MaxToleratedTitle — and Total says how many the mode really

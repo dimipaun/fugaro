@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/routing"
 )
 
@@ -333,4 +334,41 @@ func mustObject(t *testing.T, raw json.RawMessage, member string, item ...int) j
 		t.Fatalf("%q holds %d items, and item %d was asked for: %s", member, len(list), item[0], raw)
 	}
 	return list[item[0]]
+}
+
+// TestConfigPoolVocabularyMatchesTheContract pins the config's own copy of this
+// contract's vocabulary to the contract, which is the one thing PL1 could not
+// do from its own package: internal/routing's resolver reads config's matcher
+// (RT1, resolve.go), so internal/config cannot import this package and declares
+// the rule names, the principal kinds and the rule resolution a second time.
+// The two are one wire vocabulary (R5, R21, contract-pools.md) — a rule the
+// config accepts is a rule the service serves by — so they are held equal here,
+// from the side that can see both.
+func TestConfigPoolVocabularyMatchesTheContract(t *testing.T) {
+	wantRules := make([]string, 0, len(routing.Rules))
+	for _, r := range routing.Rules {
+		wantRules = append(wantRules, string(r))
+	}
+	if !slices.Equal(config.PoolRules, wantRules) {
+		t.Errorf("config.PoolRules = %v and routing.Rules = %v", config.PoolRules, wantRules)
+	}
+	wantKinds := make([]string, 0, len(routing.PrincipalKinds))
+	for _, k := range routing.PrincipalKinds {
+		wantKinds = append(wantKinds, string(k))
+	}
+	if !slices.Equal(config.PrincipalKinds, wantKinds) {
+		t.Errorf("config.PrincipalKinds = %v and routing.PrincipalKinds = %v", config.PrincipalKinds, wantKinds)
+	}
+	for _, tc := range []struct {
+		pool config.Pool
+		want routing.Rule
+	}{
+		{config.Pool{Rule: string(routing.RuleOrdered), Strategy: string(routing.RuleRoundRobin)}, routing.RuleOrdered},
+		{config.Pool{Strategy: string(routing.RuleRoundRobin)}, routing.RuleRoundRobin},
+		{config.Pool{}, routing.RuleFailover},
+	} {
+		if got := routing.Rule(tc.pool.RuleOrDefault()); got != tc.want {
+			t.Errorf("config.Pool%+v: RuleOrDefault = %q and the contract resolves it to %q", tc.pool, got, tc.want)
+		}
+	}
 }

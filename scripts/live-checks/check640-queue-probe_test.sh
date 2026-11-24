@@ -32,7 +32,7 @@ rev=$(cat "$FAKE_DIR/rev")
 case "$1 $2" in
 "orchestrator state")
   if [ -n "${FAKE_NO_REV:-}" ]; then echo '{"kind":"state","source":"cache","brief":"x"}'; exit 0; fi
-  printf '{"version":1,"kind":"state","id":"x","source":"node","rev":%s,"schema_version":5,"brief":"x"}\n' "$rev"
+  printf '{"version":1,"kind":"state","id":"x","source":"node","rev":%s,"schema_version":5,"brief":"x","items":[%s]}\n' "$rev" "${FAKE_ITEMS:-}"
   ;;
 "orchestrator patch")
   while [ $# -gt 0 ]; do [ "$1" = "-f" ] && file=$2; shift; done
@@ -97,6 +97,57 @@ test_happy_path() {
   expect_contains "$(calls)" "--project fugaro" "happy: default project"
   case "$(grep '^orchestrator patch' "$FAKE_DIR/calls")" in *"--json"*) fail "happy: a patch ran with --json" ;; esac
   [ -z "$(ls -A "$FAKE_DIR/tmp")" ] || fail "happy: the scratch directory was left behind"
+}
+
+test_the_tier_clears_a_docs_line_and_the_brief_asks_for_one_line() {
+  run tier bash "$script"
+  local up
+  up=$(cat "$FAKE_DIR/patch1.json")
+  expect_contains "$up" '"rigor_tier": "small"' "tier: small, not trivial (which expects 0.25 USD)"
+  expect_contains "$up" "Change exactly one line" "tier: the brief asks for one line"
+}
+
+test_a_suffix_makes_a_new_id() {
+  run suffix bash "$script" --suffix b2
+  [ "$status" = 0 ] || fail "suffix: exit $status: $err"
+  expect_contains "$(cat "$FAKE_DIR/patch1.json")" '"id": "chk640-probe-20261122-b2"' "suffix: item id"
+  expect_contains "$(cat "$FAKE_DIR/patch2.json")" '"id": "chk640-probe-20261122-b2"' "suffix: approved id"
+  run suffixeq bash "$script" --suffix=c
+  expect_contains "$(cat "$FAKE_DIR/patch1.json")" '"id": "chk640-probe-20261122-c"' "suffix=: item id"
+}
+
+test_a_bad_suffix_is_refused() {
+  local bad
+  for bad in "B" "a-b" "a_b" "abcdefghijklm" "a b"; do
+    run badsuffix bash "$script" --suffix "$bad"
+    [ "$status" = 2 ] || fail "suffix '$bad': exit $status, want 2"
+    [ -z "$(calls)" ] || fail "suffix '$bad': fugaro was called"
+  done
+  run twelve bash "$script" --suffix abcdefghijkl --dry-run
+  [ "$status" = 0 ] || fail "a 12-character suffix: exit $status: $err"
+}
+
+test_a_spent_id_is_refused() {
+  local item='{"id":"chk640-probe-20261122-b","phase":"done","run_id":"r","attempts":1,"repo":"x"}'
+  FAKE_ITEMS=$item run spent bash "$script" --suffix b
+  [ "$status" = 2 ] || fail "spent suffix: exit $status, want 2"
+  [ "$(npatches)" = 0 ] || fail "spent suffix: a patch was sent"
+  expect_contains "$err" "is spent" "spent suffix: the reason"
+
+  item='{"id":"chk640-probe-20261122","phase":"running","run_id":"r","attempts":1,"repo":"x"}'
+  FAKE_ITEMS=$item run spentplain bash "$script"
+  [ "$status" = 2 ] || fail "spent plain id: exit $status, want 2"
+  expect_contains "$err" "pass --suffix" "spent plain id: says what to do"
+
+  # An id that is there but still queued is the idempotent rerun of today.
+  item='{"id":"chk640-probe-20261122","phase":"queued","attempts":0,"repo":"x"}'
+  FAKE_ITEMS=$item run rerun bash "$script"
+  [ "$status" = 0 ] || fail "queued rerun: exit $status: $err"
+
+  # Another suffix is free even when the day's own id is spent.
+  item='{"id":"chk640-probe-20261122","phase":"done","run_id":"r","attempts":1,"repo":"x"}'
+  FAKE_ITEMS=$item run freesuffix bash "$script" --suffix b
+  [ "$status" = 0 ] || fail "free suffix: exit $status: $err"
 }
 
 test_the_brief_names_no_cost_cap() {
@@ -190,6 +241,10 @@ t() {
 
 test_index=0
 t test_happy_path
+t test_the_tier_clears_a_docs_line_and_the_brief_asks_for_one_line
+t test_a_suffix_makes_a_new_id
+t test_a_bad_suffix_is_refused
+t test_a_spent_id_is_refused
 t test_the_brief_names_no_cost_cap
 t test_dry_run_writes_nothing
 t test_project_flag

@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 )
 
 // The workspace root's plan cover, tested over plan JSON the way
@@ -41,7 +43,18 @@ const (
 
 	wsMemberA = "fugaro-run-alpha-a@member-alpha-1234.iam.gserviceaccount.com"
 	wsMemberB = "fugaro-run-alpha-b@member-beta-5678.iam.gserviceaccount.com"
+
+	// The roster's people (WC2, R6, D2971): the addresses the workspace's own
+	// roster names as `human`, which the root binds one invoke grant to each and
+	// which the cover is GIVEN — no plan carries the roster, and a rule that read
+	// it out of the plan would accept whatever people the plan named.
+	wsPersonA = "ada@example.com"
+	wsPersonB = "grace@example.org"
 )
+
+// wsPeople is the roster the cover is given: the addresses a plan may bind an
+// invoke grant to as a person, and no other.
+var wsPeople = []string{wsPersonA, wsPersonB}
 
 // wsCover is the image identity the workspace cover holds the service to: this
 // run's registry, the remote (pull-through) repository and the owner the run's
@@ -263,6 +276,57 @@ func wsInvoker(member string, acts ...string) string {
 		wsInvokerAfter("", "", "", member), acts...)
 }
 
+// wsPersonInvoker is one roster person's invoke grant on the workspace's
+// service: the same resource the members' grants are, a different resource
+// address and a `user:` member (WC2, R6).
+func wsPersonInvoker(person string, acts ...string) string {
+	return wsChange("google_cloud_run_v2_service_iam_member.workspace_person_invoker", workspaceInvokerType,
+		wsInvokerAfter("", "", "", "user:"+person), acts...)
+}
+
+// wsPersonInvokerDelete is that grant as terraform plans it when a person
+// leaves the roster: the state it had, and no `after`.
+func wsPersonInvokerDelete(person string) string {
+	return wsDelete("google_cloud_run_v2_service_iam_member.workspace_person_invoker", workspaceInvokerType,
+		wsInvokerAfter("", "", "", "user:"+person))
+}
+
+// wsPersonAccessor is the ONE conditioned accessor the workspace's own account
+// holds on a person's token (WC2, R6): a project-level grant of the bundle
+// accessor's role, under the condition that is the fence. cond is the whole
+// `condition` attribute, so a case can write none, a wider one or the exact
+// fence; member is the principal, defaulting to the workspace's own account.
+func wsPersonAccessor(project, member, cond string, acts ...string) string {
+	if project == "" {
+		project = wsProject
+	}
+	if member == "" {
+		member = "serviceAccount:" + wsEmail
+	}
+	after := `"project":"` + project + `","role":"` + WorkspaceBundleAccessorRole + `","member":"` + member + `"`
+	if cond != "" {
+		after += `,"condition":` + cond
+	}
+	return wsChange("google_project_iam_member.workspace_person_token", workspaceGrantType, after, acts...)
+}
+
+// wsPersonAccessorExpr is the person accessor's member expression as the plan's
+// configuration writes it when the member is the account resource named: the
+// root writes google_service_account.workspace.member, which terraform knows
+// only at apply (wsMemberExpr's own shape, another resource).
+func wsPersonAccessorExpr(account string) string {
+	return `{"address":"google_project_iam_member.workspace_person_token","mode":"managed","type":"google_project_iam_member","expressions":{"member":{"references":["` +
+		account + `.member","` + account + `"]}}}`
+}
+
+// wsPersonFence is the condition the root writes, as the plan carries it: the
+// title and the expression, taken from internal/backend/gcp so the case cannot
+// drift from what the cover holds a plan to (gcp.WorkspacePersonTokenCondition).
+func wsPersonFence() string {
+	return `[{"title":"` + gcp.WorkspacePersonTokenConditionTitle + `","expression":"` +
+		strings.ReplaceAll(gcp.WorkspacePersonTokenCondition(), `"`, `\"`) + `","description":null}]`
+}
+
 // wsInvokerDelete is the same grant as terraform plans it when the member
 // leaves the table: the state it had, and no `after`.
 func wsInvokerDelete(member string) string {
@@ -271,8 +335,9 @@ func wsInvokerDelete(member string) string {
 }
 
 // wsDeployed is the whole root as a first apply plans it: the three resources
-// of the workspace's own identity, the service, its one bundle accessor and one
-// invoke grant per member job account.
+// of the workspace's own identity, the service, its one bundle accessor, the
+// ONE conditioned accessor on a person's token, one invoke grant per member job
+// account and one per person of the roster (WC2, R6).
 func wsDeployed() []string {
 	return []string{
 		wsPinnedRole(),
@@ -281,8 +346,11 @@ func wsDeployed() []string {
 		wsComputedGrant(wsProject, wsRole, "create"),
 		wsServiceChange(wsServiceAttrs{}, "create"),
 		wsAccessor("", "", "", "", "create"),
+		wsPersonAccessor("", "", wsPersonFence(), "create"),
 		wsInvoker(wsMemberA, "create"),
 		wsInvoker(wsMemberB, "create"),
+		wsPersonInvoker(wsPersonA, "create"),
+		wsPersonInvoker(wsPersonB, "create"),
 	}
 }
 
@@ -297,7 +365,15 @@ func wsWhy(t *testing.T, p *Plan) string {
 // by definition not one of them.
 func wsWhyMembers(t *testing.T, p *Plan, members []string) string {
 	t.Helper()
-	return strings.Join(wsCover.WorkspaceNotCovered(p, wsProject, WorkspaceServiceAccountID, wsBundle, members), "; ")
+	return strings.Join(wsCover.WorkspaceNotCovered(p, wsProject, WorkspaceServiceAccountID, wsBundle, members, wsPeople), "; ")
+}
+
+// wsWhyPeople is wsWhyMembers' other half: the cover is handed the roster the
+// workspace holds now, so a person who has left the roster is by definition not
+// one of them (WC2, R6).
+func wsWhyPeople(t *testing.T, p *Plan, people []string) string {
+	t.Helper()
+	return strings.Join(wsCover.WorkspaceNotCovered(p, wsProject, WorkspaceServiceAccountID, wsBundle, wsMembers, people), "; ")
 }
 
 // wsAdd is the root's plan with one change appended, which every refusal case
@@ -330,8 +406,11 @@ func TestWorkspacePlanAdmitsTheService(t *testing.T) {
 			wsComputedGrant(wsProject, wsRole, "no-op"),
 			wsServiceChange(wsServiceAttrs{}, "no-op"),
 			wsAccessor("", "", "", "", "no-op"),
+			wsPersonAccessor("", "", wsPersonFence(), "no-op"),
 			wsInvoker(wsMemberA, "no-op"),
 			wsInvoker(wsMemberB, "no-op"),
+			wsPersonInvoker(wsPersonA, "no-op"),
+			wsPersonInvoker(wsPersonB, "no-op"),
 		}},
 		{"the service's own URL filled on a second apply: the service is updated and nothing else changes", "", []string{
 			wsPinnedRole(),
@@ -339,8 +418,11 @@ func TestWorkspacePlanAdmitsTheService(t *testing.T) {
 			wsComputedGrant(wsProject, wsRole, "no-op"),
 			wsServiceChange(wsServiceAttrs{env: `"env":[{"name":"` + WorkspaceModeEnv + `","value":"1"},{"name":"FUGARO_CREDENTIALS_SERVICE_URL","value":"https://fugaro-workspace-credentials-abc.a.run.app"}]`}, "update"),
 			wsAccessor("", "", "", "", "no-op"),
+			wsPersonAccessor("", "", wsPersonFence(), "no-op"),
 			wsInvoker(wsMemberA, "no-op"),
 			wsInvoker(wsMemberB, "no-op"),
+			wsPersonInvoker(wsPersonA, "no-op"),
+			wsPersonInvoker(wsPersonB, "no-op"),
 		}},
 		{"the workspace's account, its role and its grant alone: no service is deployed (var.credentials_service unset)", "", []string{
 			wsPinnedRole(),
@@ -422,11 +504,167 @@ func TestWorkspacePlanAdmitsRemovingAMembersInvokeGrant(t *testing.T) {
 		{"an invoke grant replaced rather than deleted", wsChange("google_cloud_run_v2_service_iam_member.workspace_invoker", workspaceInvokerType,
 			wsInvokerAfter("", "fugaro-workspace-credentials-v2", "", wsMemberA), "delete", "create"), "actions delete, create"},
 		{"an invoke grant deleted for a principal that is not a service account", wsInvokerDelete("group:workspace-owners@example.com"),
-			"not a service account address"},
+			"neither a service account address nor a person"},
+		// The class of the address, not the presence of a `:` in the member, is
+		// what says an account: these three carry no colon at all, and a reader
+		// that took the bare spelling for a service account address admitted the
+		// deletion of a grant to the whole internet (WC2's review).
+		{"an invoke grant deleted for allUsers", wsInvokerDelete("allUsers"),
+			"neither a service account address nor a person"},
+		{"an invoke grant deleted for allAuthenticatedUsers", wsInvokerDelete("allAuthenticatedUsers"),
+			"neither a service account address nor a person"},
+		{"an invoke grant deleted for a bare domain", wsInvokerDelete("example.com"),
+			"neither a service account address nor a person"},
 	}
 	for _, c := range refused {
 		t.Run(c.name, func(t *testing.T) {
 			why := wsWhy(t, wsAdd(t, c.extra))
+			if why == "" {
+				t.Fatalf("this plan must be refused: %s", c.name)
+			}
+			if !strings.Contains(why, c.want) {
+				t.Errorf("the refusal must say why, want a sentence with %q, got: %s", c.want, why)
+			}
+		})
+	}
+}
+
+// TestWorkspacePlanAdmitsRemovingAPersonsInvokeGrant is WC2's half of F25's
+// sentence ("Removing a person needs no operator repair"): the SECOND deletion
+// the workspace root's plan holds is a person's invoke grant, so `fugaro update`
+// converges a roster that has dropped a person with no repair — and the deletion
+// of anything else stays refused.
+//
+// The cover is handed the roster the workspace holds AFTER the removal, exactly
+// as the member case is: the person who left is the address that roster no
+// longer names, so the deletion is held to the project, the role and the plan's
+// own service and not to the roster.
+func TestWorkspacePlanAdmitsRemovingAPersonsInvokeGrant(t *testing.T) {
+	if why := wsWhyPeople(t, wsPlan(t,
+		wsPinnedRole(),
+		wsSA(wsProject, WorkspaceServiceAccountID, "no-op"),
+		wsComputedGrant(wsProject, wsRole, "no-op"),
+		wsServiceChange(wsServiceAttrs{}, "no-op"),
+		wsAccessor("", "", "", "", "no-op"),
+		wsPersonAccessor("", "", wsPersonFence(), "no-op"),
+		wsInvoker(wsMemberA, "no-op"),
+		wsPersonInvokerDelete(wsPersonA),
+		wsPersonInvoker(wsPersonB, "no-op"),
+	), []string{wsPersonB}); why != "" {
+		t.Errorf("removing a person must be no operator repair (F25, WC2): the plan that deletes its invoke grant and nothing else is this root's, got: %s", why)
+	}
+
+	refused := []struct {
+		name  string
+		extra string
+		want  string
+	}{
+		{"a person's invoke grant deleted for a principal that is not a person or an account", wsDelete("google_cloud_run_v2_service_iam_member.workspace_person_invoker", workspaceInvokerType,
+			wsInvokerAfter("", "", "", "group:workspace-owners@example.com")),
+			"neither a service account address nor a person"},
+		{"a person's invoke grant deleted on another service", wsDelete("google_cloud_run_v2_service_iam_member.workspace_person_invoker", workspaceInvokerType,
+			wsInvokerAfter("", "fugaro-workspace-credentials-v2", "", "user:"+wsPersonA)),
+			"deleted, and the workspace's own service is this plan's own workspace service"},
+		{"a person's invoke grant deleted in another project", wsDelete("google_cloud_run_v2_service_iam_member.workspace_person_invoker", workspaceInvokerType,
+			wsInvokerAfter("member-project-5678", "", "", "user:"+wsPersonA)),
+			"an invoke grant in project"},
+		{"the person accessor deleted", wsDelete("google_project_iam_member.workspace_person_token", workspaceGrantType,
+			`"project":"`+wsProject+`","role":"`+WorkspaceBundleAccessorRole+`","member":"serviceAccount:`+wsEmail+`"`),
+			"actions delete"},
+	}
+	for _, c := range refused {
+		t.Run(c.name, func(t *testing.T) {
+			why := wsWhy(t, wsAdd(t, c.extra))
+			if why == "" {
+				t.Fatalf("this plan must be refused: %s", c.name)
+			}
+			if !strings.Contains(why, c.want) {
+				t.Errorf("the refusal must say why, want a sentence with %q, got: %s", c.want, why)
+			}
+		})
+	}
+}
+
+// TestTheWorkspaceAccessorIsThePersonsOneName is R6's own rule (WC2, D2971): the
+// ONE conditioned accessor the workspace's own account holds is a person's
+// Claude token and no other secret of the workspace's project, and the cover
+// admits exactly the fence the root writes (gcp.WorkspacePersonTokenCondition)
+// and refuses every wider one by name.
+//
+// Everything wider is here: no condition at all (every secret of the project),
+// the per-person prefix alone (every personal name a person keeps there), the
+// intake's own expression (which admits the project-shared class too), the
+// shared class alone, another name's suffix, an expression that merely CONTAINS
+// the fence, the right expression under another title, another member and
+// another project.
+func TestTheWorkspaceAccessorIsThePersonsOneName(t *testing.T) {
+	fence := gcp.WorkspacePersonTokenCondition()
+	prefix := `resource.name.extract("/secrets/{secret}").startsWith("fugaro_u_")`
+	cond := func(title, expr string) string {
+		return `[{"title":"` + title + `","expression":"` + strings.ReplaceAll(expr, `"`, `\"`) + `","description":null}]`
+	}
+
+	admitted := []struct {
+		name string
+		cfg  string
+		rc   string
+	}{
+		{"the root's own accessor, the member known", "", wsPersonAccessor("", "", wsPersonFence(), "create")},
+		{"the root's own accessor, the member terraform computes", wsPersonAccessorExpr("google_service_account.workspace"),
+			`{"address":"google_project_iam_member.workspace_person_token","mode":"managed","type":"` + workspaceGrantType + `","change":{"actions":["create"],"after":{"project":"` + wsProject + `","role":"` + WorkspaceBundleAccessorRole + `","condition":` + wsPersonFence() + `},"after_unknown":{"member":true}}}`},
+	}
+	for _, c := range admitted {
+		t.Run(c.name, func(t *testing.T) {
+			var p *Plan
+			if c.cfg == "" {
+				p = wsPlan(t, c.rc)
+			} else {
+				p = wsPlanCfg(t, c.cfg, wsSA(wsProject, WorkspaceServiceAccountID, "create"), c.rc)
+			}
+			if why := wsWhy(t, p); why != "" {
+				t.Errorf("the workspace's own person accessor must be covered, got: %s", why)
+			}
+		})
+	}
+
+	refused := []struct {
+		name string
+		cond string
+		want string
+	}{
+		{"no condition at all", "", "with NO condition"},
+		{"the per-person prefix alone", cond(gcp.WorkspacePersonTokenConditionTitle, prefix), "under a condition that is not"},
+		{"the intake's own expression, which admits the shared class", cond(gcp.WorkspacePersonTokenConditionTitle, gcp.DynamicSecretNamesCondition()), "under a condition that is not"},
+		{"the project-shared class alone", cond(gcp.WorkspacePersonTokenConditionTitle, `resource.name.extract("/secrets/{secret}").startsWith("fugaro_p_")`), "under a condition that is not"},
+		{"another name's suffix", cond(gcp.WorkspacePersonTokenConditionTitle, prefix+` && resource.name.extract("/secrets/{secret}").endsWith("_github-token")`), "under a condition that is not"},
+		{"an expression that merely contains the fence", cond(gcp.WorkspacePersonTokenConditionTitle, "true || ("+fence+")"), "under a condition that is not"},
+		{"the right expression under another title", cond("fugaro-somebody-elses", fence), "under a condition that is not"},
+		{"two conditions", `[{"title":"` + gcp.WorkspacePersonTokenConditionTitle + `","expression":"true"},{"title":"` + gcp.WorkspacePersonTokenConditionTitle + `","expression":"true"}]`, "more than one condition"},
+	}
+	for _, c := range refused {
+		t.Run(c.name, func(t *testing.T) {
+			why := wsWhy(t, wsPlan(t, wsPersonAccessor("", "", c.cond, "create")))
+			if why == "" {
+				t.Fatalf("this plan must be refused: %s", c.name)
+			}
+			if !strings.Contains(why, c.want) {
+				t.Errorf("the refusal must say why, want a sentence with %q, got: %s", c.want, why)
+			}
+		})
+	}
+
+	refusedMember := []struct {
+		name string
+		rc   string
+		want string
+	}{
+		{"the accessor for a member's job account", wsPersonAccessor("", "serviceAccount:"+wsMemberA, wsPersonFence(), "create"), "read by " + wsEmail + " and by nobody else"},
+		{"the accessor for a person", wsPersonAccessor("", "user:"+wsPersonA, wsPersonFence(), "create"), "read by " + wsEmail + " and by nobody else"},
+		{"the accessor in another project", wsPersonAccessor("member-project-5678", "", wsPersonFence(), "create"), "a project accessor in project"},
+	}
+	for _, c := range refusedMember {
+		t.Run(c.name, func(t *testing.T) {
+			why := wsWhy(t, wsPlan(t, c.rc))
 			if why == "" {
 				t.Fatalf("this plan must be refused: %s", c.name)
 			}
@@ -443,8 +681,9 @@ func TestWorkspacePlanAdmitsRemovingAMembersInvokeGrant(t *testing.T) {
 // account, an unpinned image, a command, an environment that is not the root's,
 // or R9's limits moved), an accessor on another container, with another role or
 // for another principal, an invoke grant with another role, on another service,
-// in another project or to a principal that is not a member's job account — and
-// the workspace's own role, account and grant held as they were.
+// in another project or to a principal that is not a member's job account or a
+// roster person — and the workspace's own role, account and grant held as they
+// were.
 func TestWorkspacePlanRefusesAnythingElse(t *testing.T) {
 	other := []struct {
 		typ  string
@@ -491,7 +730,7 @@ func TestWorkspacePlanRefusesAnythingElse(t *testing.T) {
 		}, "reached by " + wsEmail + " and by nobody else"},
 		{"another role on the workspace's account", []string{
 			wsKnownGrant(wsProject, "serviceAccount:"+wsEmail, "roles/editor", "create"),
-		}, "holds " + wsRole + " and nothing else"},
+		}, "carries two project grants and no third"},
 		{"the database role in another project", []string{
 			wsKnownGrant("member-project-5678", "serviceAccount:"+wsEmail, WorkspaceDatabaseRole("member-project-5678"), "create"),
 		}, "the workspace's own database is"},
@@ -628,15 +867,15 @@ func TestWorkspacePlanRefusesAnythingElse(t *testing.T) {
 			wsChange("google_cloud_run_v2_service_iam_member.workspace_invoker", workspaceInvokerType,
 				wsInvokerAfter("member-project-5678", "", "", "serviceAccount:"+wsMemberA), "create"),
 		}, "an invoke grant in project"},
-		{"an invoke grant to a person", []string{
+		{"an invoke grant to a person the roster does not name", []string{
 			wsInvoker("user:someone@example.com", "create"),
-		}, "invoked by a member's own job accounts alone"},
+		}, "invoked by a member's own job accounts and by the roster's own people alone"},
 		{"an invoke grant to allUsers", []string{
 			wsInvoker("allUsers", "create"),
-		}, "invoked by a member's own job accounts alone"},
+		}, "invoked by a member's own job accounts and by the roster's own people alone"},
 		{"an invoke grant to a member of another workspace", []string{
 			wsInvoker("serviceAccount:fugaro-run-stranger@member-gamma-9012.iam.gserviceaccount.com", "create"),
-		}, "invoked by a member's own job accounts alone"},
+		}, "invoked by a member's own job accounts and by the roster's own people alone"},
 	}
 	for _, c := range refused {
 		t.Run(c.name, func(t *testing.T) {
@@ -752,7 +991,7 @@ func TestWorkspacePlanRefusesAnotherRoleAThirdPermissionAndTheUnknownService(t *
 // TestWorkspacePlanRefusesNoPlan is the nil case every cover has: a plan that
 // could not be read is not a plan to confirm.
 func TestWorkspacePlanRefusesNoPlan(t *testing.T) {
-	if why := wsCover.WorkspaceNotCovered(nil, wsProject, WorkspaceServiceAccountID, wsBundle, wsMembers); len(why) == 0 {
+	if why := wsCover.WorkspaceNotCovered(nil, wsProject, WorkspaceServiceAccountID, wsBundle, wsMembers, wsPeople); len(why) == 0 {
 		t.Fatal("a nil plan must be refused")
 	}
 }
@@ -769,7 +1008,7 @@ func TestWorkspacePlanRefusesAnImageWithoutARecordedOwner(t *testing.T) {
 	unrecorded := wsCover
 	unrecorded.Owner = ""
 	why := strings.Join(unrecorded.WorkspaceNotCovered(wsPlan(t, wsDeployed()...), wsProject,
-		WorkspaceServiceAccountID, wsBundle, wsMembers), "; ")
+		WorkspaceServiceAccountID, wsBundle, wsMembers, wsPeople), "; ")
 	if !strings.Contains(why, "released pin an installation's credentials service runs and nothing else") {
 		t.Fatalf("a cover with no recorded owner must refuse the service's image, got: %s", why)
 	}
@@ -815,7 +1054,7 @@ func TestWorkspaceRootDeclaresTheTypesTheCoverHolds(t *testing.T) {
 		}
 	}
 	if len(types) != 6 {
-		t.Fatalf("the workspace root must declare exactly the workspace's role, its TWO accounts (the workspace's own service and the SA fallback's IAM account), that service's one grant, its credentials service, that service's bundle accessor and its members' invoke grants, got %v", types)
+		t.Fatalf("the workspace root must declare exactly the workspace's role, its TWO accounts (the workspace's own service and the SA fallback's IAM account), that service's one grant, its credentials service, that service's bundle accessor and its one conditioned accessor, and its members' and its roster's people's invoke grants, got %v", types)
 	}
 	// find is the root's text with runs of whitespace collapsed, so a literal
 	// can be read wherever the formatter wrapped it.
@@ -832,6 +1071,9 @@ func TestWorkspaceRootDeclaresTheTypesTheCoverHolds(t *testing.T) {
 		{"the service running as the workspace's own account", `service_account = google_service_account.workspace.email`},
 		{"the bundle container the accessor is on", `secret_id = var.credentials_service.bundle_secret`},
 		{"the member table the invoke grants come from", `"serviceAccount:${each.value}"`},
+		{"the roster's people's invoke grants", `"user:${each.value}"`},
+		{"the person accessor's condition title", `title = "` + gcp.WorkspacePersonTokenConditionTitle + `"`},
+		{"the person accessor's fence", `expression = "` + strings.ReplaceAll(gcp.WorkspacePersonTokenCondition(), `"`, `\"`) + `"`},
 	} {
 		if !strings.Contains(flat, want.literal) {
 			t.Errorf("the root does not hold %s (%s), and the cover builds its rules from it", want.what, want.literal)

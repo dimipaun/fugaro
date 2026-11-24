@@ -346,7 +346,7 @@ func TestValidateWarnsWhenTheProjectLayerSetsModelGrades(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, layerWithDefaults("  model_grades:\n    strong: { model: anthropic/claude-sonnet-5.5 }\n"))
-	layerCheckout(t, f, minimalAnchored)
+	layerCheckout(t, f, pinnedMinimal)
 	_, errOut, err := execute(t, "validate")
 	if err != nil {
 		t.Fatalf("a file that resolves over the layer is valid: %v", err)

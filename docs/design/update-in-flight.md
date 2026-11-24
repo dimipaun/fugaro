@@ -54,7 +54,7 @@ release could observe or lose.
 | image catalog guard | Reads the owner's local config's `image_catalog` before anything else the run does, and judges every entry through the catalog's own reader — `catalogUnfetchable` and `catalog.Resolve`, the two `fugaro image build` resolves an entry through: the entry's repository at its pinned ref, and the definition's own refusals. The one entry whose fix is unambiguous — a `source.branch` the repository no longer has, whose file the default branch has — is fixed in the file with one `yamledit` splice, the file backed up first and the value that went named in the line; every other finding is one line naming the key to edit | None. The file is this machine's and no run reads it: the catalog reaches a run through the published node and the image its own execution already holds. Its only cloud reads are the entry's repository, through the same read-only credential seam the catalog build reads a Dockerfile with, and the published policy node that seam resolves the secret against — no write, no plan, no apply, no bucket, no job — and a read it cannot make is one warning line and never the run's failure | Safe | `guardCatalogEntries`, `internal/cli/update_catalog_guard.go`; `TestUpdateCatalogGuardRemovesAStalePin`, `TestUpdateCatalogGuardIsSilentOnACleanCatalog`, `TestUpdateConvergesWithACatalog`, `internal/cli/update_catalog_guard_test.go` |
 | default profiles | Writes the default job profile of every provider the project's repositories use into the local config, before the first stage plans, so that the installation stage deploys its job in this same update (S5, R1, D2310); a config that can no longer compose the job of one of those profiles — the last GitHub repository moved to Bitbucket, or a repository on a second App added — is planned from the installation's own record of that job instead, which the plan then leaves alone (`installSpec`, `infra.CarriedProjectJobs`) | None. The file is this machine's and no run reads it: the profile reaches a run through the policy stage's node and the shared job the installation stage deploys, and both are this run's own writes (the rows below). The carry changes no job either: it puts back the job the installation already holds, whole, so the plan proposes no change to it | Safe | `createDefaultProfiles`, `installSpec`, `internal/cli/init_policy_migrate.go`, `CarriedProjectJobs`, `internal/infra/tfvars.go` |
 | preflight | Reads the environment and the local config; no cloud write | None | Safe | `preflightStage` |
-| installation | Terraform root `installation`: the GCS bucket, the Artifact Registry, the credential containers, the history/coordinator/catalog-check jobs, the shared project jobs, the credentials service's own block (its image is moved by the credentials-service row below), and — for an installation whose tfvars carry an `orchestrator` block, a key no release writes yet, so today it is on no installation unless its owner put it there by hand, and that block every update carries forward rather than planning it away (`internal/infra/tfvars.go`'s `CarriedOrchestrator`) — the resident orchestrator's own service account and section 4.3's bindings (`modules/installation/orchestrator.tf`; mobile plan task P5.1b) | A create or an update, never a replace: `google_storage_bucket.runs`, the registries and the secret containers carry `prevent_destroy` (`deploy/terraform/gcp/modules/installation/bucket.tf`, `registry.tf`, `secrets.tf`, `credentials.tf`). A job whose *name* would change is ForceNew and is destroyed — see the job row below. The orchestrator's block is one more create, in a step that already runs: the block is `null` unless the installation asked for one, and a `null` variable creates nothing, so the step is a **no-op** for every installation that has not opted in — it plans and applies exactly what it planned and applied before the module file existed — and nothing the account holds is anything a run in flight uses | Safe, with the job-name caveat | `newInstallationStage`, `deploy/terraform/gcp/roots/installation/main.tf`, `deploy/terraform/gcp/modules/installation/orchestrator.tf` |
+| installation | Terraform root `installation`: the GCS bucket, the Artifact Registry, the credential containers, the history/coordinator/catalog-check jobs, the shared project jobs, the credentials service's own block (its image is moved by the credentials-service row below), and — for an installation whose tfvars carry an `orchestrator` block, which the credentials-service stage writes the first time an update finds the installation able to carry one (a credentials service and a recorded Firebase backend; `ensureOrchestratorBlock`, `internal/cli/update_orchestrator.go`) and every later update carries forward rather than planning it away (`internal/infra/tfvars.go`'s `CarriedOrchestrator`) — the resident orchestrator's own service account and section 4.3's bindings (`modules/installation/orchestrator.tf`; mobile plan task P5.1b) | A create or an update, never a replace: `google_storage_bucket.runs`, the registries and the secret containers carry `prevent_destroy` (`deploy/terraform/gcp/modules/installation/bucket.tf`, `registry.tf`, `secrets.tf`, `credentials.tf`). A job whose *name* would change is ForceNew and is destroyed — see the job row below. The orchestrator's block is creates in a step that already runs, and one revision: the account, its bindings, the pairing container, the service and the tick are new, and the one existing resource that changes is the credentials service, whose new revision names the daemon's account in the orchestrator class (`FUGARO_ORCHESTRATOR_ACCOUNTS`) and drains the one a run started on exactly as an image move does — a call between the two revisions is served by either, and both read the same bundle and node. The same apply creates one binding per operator on the new account (`fugaro_orchestrator_token_creator`), which touches nothing a run holds. An installation that cannot carry the block (no credentials service, no recorded Firebase backend, a development build) plans none and the update says so in one line. Nothing the account holds is anything a run in flight uses, the update names the revision in its in-flight lines (`resident orchestrator: …`), and it waits for no run | Safe, with the job-name caveat | `newInstallationStage`, `deploy/terraform/gcp/roots/installation/main.tf`, `deploy/terraform/gcp/modules/installation/orchestrator.tf` |
 | installation, licence renewal (part of the row above) | The renewal job, its service account, the Cloud Scheduler trigger and the empty container the renewal secret is written into, created by the same root under the coordinator's own condition (`local.deploy_coordinator`, `modules/installation/licence.tf`) | A create, once: none of the four names changes after the first apply, the container is created EMPTY and carries `prevent_destroy` (D524 — the core never reads a key), and no run names, reads or writes the job, the account, the schedule or the container. A run's records, ledger and counters are untouched by all four | Safe | `licenceJob`, `internal/cli/update_licence.go`, `deploy/terraform/gcp/modules/installation/licence.tf` |
 | installation, the implicit review job (piece 1 of `docs/review-job/spec.md`) | One review-only job per (provider, account) for a project that declares no profile (`ImplicitReviewJobName`), with its own service account and the row the credentials service admits a review caller by. It is composed by the run that finds the `credentials_service` block in the installation's tfvars (`specReviewJobsOfTheService`), so an installation at the previous version — the block deployed by the release behind, no review job beside it — gets the job from ONE `fugaro update`; a config that can no longer compose it keeps the job the record holds (`CarriedProjectReviewJobs`) | None: a create beside the jobs the run's own execution runs on, never a replace of one — a job's template reaches the next execution, and a run in flight holds its own execution's. The next update hands terraform the same entry with two members moved and no others: the base image, because the installation stage composes this root before the images stage pins this release's, and `FUGARO_CREDENTIALS_SERVICE_URL`, because the address the run that deployed the service records reaches a shared job on the apply after that one (`internal/infra/projectjobs.go`); the update after that hands it back byte for byte. The job's name, its service account and its class never move, which is what a destroy would need | Safe | `implicitReviewVariant`, `internal/infra/projectjobs.go`; `specReviewJobsOfTheService`, `internal/cli/init_stages.go`; `CarriedProjectReviewJobs`, `internal/infra/tfvars.go`; `TestUpdateAddsTheImplicitReviewJobAndLeavesARunInFlightRunning`, `internal/cli/update_review_job_test.go` |
 | Firebase | The Realtime Database instance, the web API key, the token-signing service account | The run reaches the database with an ID token exchanged from a custom token minted by its own launcher: `token.Exchange`, `internal/budget/token/exchange.go`; the database identity is not an IAM identity (`deploy/terraform/gcp/modules/firebase/iam.tf`). A re-apply of the instance's own fields does not invalidate it | Safe | `newFirebaseStage`, `deploy/terraform/gcp/modules/firebase/firebase.tf` |
@@ -215,6 +215,38 @@ retype bumps the version — is what keeps an old runner's record readable by a 
 binary. A shape change is therefore a release's decision and not an update's
 hazard; adding a field is safe for both directions.
 
+**A paused run.** A run that suspends itself has ended its execution and released its lease
+(R12), so the registry the note's count otherwise reads holds no entry of it. The pause is
+written in two places instead (C3, [contract-pause.md](../model-credentials-routing/contract-pause.md)):
+the record `pause.json` in the run's own bucket prefix, which the run that resumes it reads, and
+the credentials service's node `paused/<slug>/<run>` in the Realtime Database, which says who
+launched the run, on what pool and until when (R6, R8, R26 — the node is display data to a
+launcher and an input only to the service and the orchestrator). A paused chain is in flight the
+way a running one is (PR12, D3195), so the update counts it too, and says under the count how many
+of the runs in flight are paused (`pausedRuns`, `internal/cli/update_in_flight.go`). A node is not
+on its own a paused run: it is the service's record that a pause was asked for, and what makes the
+run count is the run's own record still ending `paused` — the reading every guard makes of a pause
+(`pauseInFlight`, `pauseStands`, `internal/cli/runs_prstate.go`) and the one a resume reads it by
+(PR4: a node whose run did not end paused is resumed no more than a cancelled one). A node a
+launcher has cancelled is not counted either — the chain is over and no guard reads it as in flight
+(D3197) — and one this release cannot place is no pause the orchestrator would resume
+(`ErrInvalidPauseNode`), nor is a node whose record the bucket no longer has: a run's objects live
+in the bucket for a window and age out together, which is what bounds this figure over an
+installation's history.
+
+What that figure is, exactly, is the count of the pauses the door can see standing, and not a
+promise that the orchestrator still has each resume to do. The contract puts no resumed mark on the
+node (C3), and the run a pause was resumed with is found in the chain instead — the run whose task
+names `resumes` with the paused run's id (PR5) — which this count does not walk. A pause that has
+already been resumed is therefore counted while its record ends `paused`, and the line under the
+count says what was read (`held by a pause that still stands`) rather than that one is still due.
+
+The update rewrites nothing a paused run holds:
+its record, its node, its saved session and its chain's ledger are exactly as the suspend left
+them (F36), and the run the orchestrator resumes it with reads `pause.json`, checks out the
+checkpoint and enters the stage the paused run was in (PR5) — so the pause spans the update the
+way a running run does, on either release.
+
 ## What the update must do about it
 
 Nothing in the table asks a person to stop a run, and one row did the opposite:
@@ -230,12 +262,29 @@ it with fourteen runs going and no output at all (the feedback of 2026-11-15).
 What it prints after that is the count's own line: how many runs are in flight,
 that the update waits for none of them and changes nothing they hold. Then one
 short line per step that can still reach one, indented under it, or a single line
-saying no step does (`inFlightSteps`). The note is exactly as long as that count
-and no longer — plus R5's own line, printed where this machine's config still
-says the word (`budgetOffRunFinishes`): a run that started with the budget off
-has no session for the mode to bound and holds its key already, so the count's
-line cannot carry it, and what the note owes the person is that such a run
-finishes. Beyond that line the note is as short as the count: the same feedback
+saying no step does (`inFlightSteps`). Nothing is inserted into the count's own
+sentence: it is the one the live checks read as a whole, count and all
+([gcp-live-checklist.md](../gcp-live-checklist.md), Check 632). The note is
+exactly as long as that count
+and no longer — plus the lines that are not steps and carry the facts the
+count's own sentence cannot: how many of the runs in flight are held by a pause
+that still stands (PR6, because a suspended run's execution has ended and left
+the registry the count otherwise reads — R12), R5's, and MG3's. R5's is printed where this machine's config still says the
+word (`budgetOffRunFinishes`): a run that started with the budget off has no
+session for the mode to bound and holds its key already, so what the note owes
+the person is that such a run finishes. MG3's says that this release keeps
+writing the repository's old access record beside the routing table, which is
+what a run whose image predates the table resolves from (`repoAuthSources`,
+`internal/cli/update_repoauth.go`; `legacy_auth.go`, `internal/credsvc`) — and it
+counts those runs, because the image a run is running is a fact this machine
+does hold: the run's own record carries it (`ImageInfo`, written at bootstrap out
+of the statement the image makes about itself), so the line reads each run of the
+registry against the moment the table reached the branch (`chainIntroduced`,
+`runsOnTheOldRecord`) and says how many of the count above are its readers. A
+record that names no build time, and one that cannot be read at all, count —
+the direction the image-age gate takes for an image it cannot place — and the
+line is printed only when the number is not zero.
+Beyond those lines the note is as short as the count: the same feedback
 could not find what it was after in the paragraph this used to be, and what each
 line stands for — the question its step is gated on — is written where that
 step's own code and gate are. It never
@@ -302,7 +351,12 @@ The tests are `TestUpdateLeavesARunInFlightRunning` and its siblings
 converges under `fugaro update` while a run of its own repository is in flight,
 and that run's later writes — its lease, the ledger and the counters the report
 settles, the outcome it ends with, its record and its review session — still
-land under the new rules and the migrated policy.
+land under the new rules and the migrated policy. The same fixture carries a
+paused run beside the running one (PR6): the update rewrites nothing it holds —
+its record, its node, its saved session and its chain's ledger — the note counts
+it and says how many of the runs in flight are paused
+(`TestUpdateCountsPausedRuns`), and the run that resumes it picks the chain up
+afterwards.
 `TestUpdateAddsTheImplicitReviewJobAndLeavesARunInFlightRunning`
 (`internal/cli/update_review_job_test.go`) is the same fixture read against the
 one job this release adds (the row above): an installation at the previous

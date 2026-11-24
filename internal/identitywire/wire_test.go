@@ -30,7 +30,7 @@ type request struct {
 // decoding nobody checked.
 func bodies() []body {
 	return []body{
-		{"TicketRequest", identitywire.TicketRequest{}, `{"slug":"acme-sandbox","run":"fb-20261120-041919-8271","account":"fugaro-job@acme.iam.gserviceaccount.com","launcher":"dimi@example.com","branch":"fugaro/fb-20261120-041919-8271","pull_requests":[7],"context_repos":["acme/other"],"max_runtime_seconds":3600,"attempt":"wi-1:2","job":"projects/acme-sandbox/locations/europe-west1/jobs/fb-20261120-041919-8271"}`},
+		{"TicketRequest", identitywire.TicketRequest{}, `{"slug":"acme-sandbox","run":"fb-20261120-041919-8271","account":"fugaro-job@acme.iam.gserviceaccount.com","launcher":"dimi@example.com","branch":"fugaro/fb-20261120-041919-8271","pull_requests":[7],"context_repos":["acme/other"],"max_runtime_seconds":3600,"attempt":"wi-1:2","resumes":"fb-20261119-041919-0000","job":"projects/acme-sandbox/locations/europe-west1/jobs/fb-20261120-041919-8271"}`},
 		{"TicketResponse", identitywire.TicketResponse{}, `{"ticket":"t-1","expires_at":"2026-11-20T01:00:00Z"}`},
 		{"ClaimRequest", identitywire.ClaimRequest{}, `{"ticket":"t-1","nonce":"n-1","attestation":"h.p.s"}`},
 		{"ClaimResponse", identitywire.ClaimResponse{}, `{"token":"tok-1","expires_at":"2026-11-20T01:00:00Z"}`},

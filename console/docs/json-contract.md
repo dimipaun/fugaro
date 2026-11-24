@@ -288,6 +288,7 @@ reading a document will meet.
 | `auth` | string | — | no | the run's auth mode, from the live registry entry. `oauth` means `spent_usd` is notional: such a run has no gateway, so `budget.AgentEntry.Spent` is its whole notional total (`snapshotEntry`, `internal/budget/registry.go`), while a cascade run's row carries the billed part its gateway charged and leaves its tier-A dollars to the notional counters (`notional_usd`) |
 | `mode` | string | — | no | the **rigor mode** the run resolved and is running at (`runstore.RigorRecord.Mode`, through the run's own registry entry — `budget.AgentEntry.Mode`, which the runner writes from its record at bootstrap and again at every moment that folds a new one in, so a live row follows a mid-run raise). It is **the same value** `runs ls --json`'s `rigor.mode` prints and the record keeps: one resolution, shown in two windows. **CLI 0.23.0.** Always present, `"-"` when the entry carries none — a run under rules that predate the child, which the run then goes without (the rules' `$other` refuses the whole entry for a child they do not know, so the field's arrival cost a rules deploy; `fugaro update` is the whole of it) — which is **"not recorded", never a mode the CLI picked**. Not an authority: no policy, admission or budget rule reads a feed value (design §5.1 rule 2), and the console's own live chip joins the run list's block by id today, so a reader that takes this one must not draw both |
 | `from` | string | — | no | the **layer that decided `mode`** (`internal/rigor`'s `Layer`: `area`, `repo`, `project`, `default` or `request`, D24): `area` for a rule the run's paths matched, then the repository's, the project's, Fugaro's built-in default, and the run's own request. Always present with `mode` and `"-"` with it — the two are one value, and a reader that has one has the other. **CLI 0.23.0.** A word from the CLI's own table, never text a job wrote, and never an authority |
+| `source` | string | — | no | what the run's **running stage goes out on**, as the project's routing table answered it (`budget.AgentEntry.Source`, the live half of the record's `stages[].source`): the kind of the source that served the stage, and the name after a colon when the kind names one — `pool:team`, `anthropic` (`internal/routing`'s `SourceName`; the record's member is that object, this one is the same two facts spelled as the one string a row has room for). **The CLI release after 0.28.0.** Always present, `"-"` when the entry carries none — a run the project's table does not serve, and a run under rules that predate the member, which the run then goes without (the rules' `$other` refuses the whole entry for a child they do not know, so the member's arrival cost a rules deploy; `fugaro update` is the whole of it) — which is **"not recorded", never "no source"**. For a run the table serves the entry's `auth` is written as nothing and every view prints `-` for it (D3070): `auth` keeps its member and its meaning, and a release-behind reader sees no change to it. A name a run wrote, sanitised like every other database-derived string here, and **never an authority** — no policy, admission or budget rule reads it |
 | `notional` | bool | — | no | **the availability state of `spent_usd`**: true when `spent_usd` is a subscription's list price, which for a live row is `auth == "oauth"` (`internal/watch/build.go`). It is a fact about this **live** row, never a reading of a recorded run's `model_basis`: a recorded run's split is `model_notional_usd` (C1.16/P12 — a cascade run the plan served in full has an api-list basis and billed nothing) |
 | `spent_usd` | `*float64` | USD | no | **null = unavailable** |
 | `age_seconds` | `*float64` | seconds | no | **null = unavailable** |
@@ -321,7 +322,7 @@ the same number through `record_pr`, has not landed.
 | `run` | string | — | no | measured |
 | `slug` / `repo` | string | — / `owner/name` | no | measured |
 | `title` | string | — | no | **job-written, sanitized** |
-| `status` | string | — | no | the runstore status: `succeeded`, `failed`, `halted`, `cancelled`, `infra_error` |
+| `status` | string | — | no | the runstore status: `succeeded`, `failed`, `halted`, `cancelled`, `infra_error`, `paused`. **`paused`** (contract-pause R15, D3195) is a run that suspended itself: its execution is **terminal** — the job is gone, which is why the run is a finished row here — and its chain is in flight until the orchestrator resumes it, so a reader must not draw it as an ending. It is one of this enum and not an unknown word: a screen that does not know it yet draws the unknown state rather than a wrong one, and the status set gains it in VS3 (`resume_at` and `resumed_by` beside it are what the chain comes back by) |
 | `outcome` | string | — | no | `ready`, `none`, … ; `ready` is what fills `ready[]` |
 | `failed` | bool | — | no | measured |
 | `pr_url` | string | URL | **yes** | **absent when the run has no PR — do not build a link from it** (gap 7) |
@@ -330,6 +331,8 @@ the same number through `record_pr`, has not landed.
 | `profile` / `provider` / `account` | string | — | **yes** | as on `JSONRun` (`account` present only on a named account's job, absent on the profile's no-account job and, with the other two, on a per-repository job) |
 | `launched_by` | string | — | **yes** | as on `JSONRun` (**CLI 0.9.0**): a finished run's row is a run's row, and a reader following a run from `runs[]` into `finished[]`/`ready[]` (`jsonFinished`) must not lose who launched it either. Absent when the launch record has none |
 | `plan_task` | string | — | **yes** | as on `JSONRun` (**CLI 0.11.2**): a finished run's row is a run's row, so a reader following a run from `runs[]` into `finished[]`/`ready[]` (`jsonFinished`) keeps the plan task it claims. Absent when the launch record has none |
+| `resume_at` | string | RFC 3339, UTC | **yes** | when the orchestrator will resume this run's chain (contract-pause R15, D3195), the same instant `runview.Row`'s key of the same name carries and from the same place: the credentials service's own node for the pause (`runstore.PauseNode.ResumeAt`, epoch ms, under `paused/<slug>/<run>`), written before the run ends `paused`. **The CLI release after 0.28.0.** Present **only on a paused run** — `status` is `paused` — so presence is the state, exactly as `waiting_until`'s is on `JSONRun`, and it is absent when the reader had no node to read (no pauses database, a read that failed, a node this release does not know), which is **"the resume time is unknown", never "no resume is coming"**: the run's own record still says it suspended itself. The plain table shows the same fact as `expected resume T`, and the screen's paused row as its own line |
+| `resumed_by` | string | — | **yes** | the run that picked this pause up (contract-pause R17), the same value `runview.Row`'s key of the same name carries: the run whose own task names this one under `resumes` (`task.Spec.Resumes`), joined off the row the read holds — so it is **a run id this read saw**, never text a job wrote. **The CLI release after 0.28.0.** Present only on a paused row, and absent while no run the read holds has resumed it — a page narrower than the resume — which is **"this read did not see the resumer", never "nothing resumed it"**. The plain table shows it as `resumed by <short id>` |
 | `age_seconds` | float64 | seconds | no | measured |
 
 ### The three facts the whole feed turns on
@@ -422,7 +425,7 @@ both `*float64`.
 
 `showRepo`: `slug`, `repo` (`omitempty`),
 `daily_cap_usd` `*float64`, `daily_cap_source` (string, no `omitempty` —
-**`repo`, `default` or `none`**), `per_run_cap_usd` `*float64`,
+**`repo`, `default`, `global` or `none`**; `dailyCapSource`), `per_run_cap_usd` `*float64`,
 **`per_run_cap_source`** (string, no `omitempty` — `repo`, `default`, `global`
 or `none`; `perRunCapSource`), `counted_usd`, `spent_usd`,
 `notional_usd`, `compute_usd` (below), `leased_usd` float64 (no `omitempty`, as
@@ -691,12 +694,14 @@ reads:
 | `pr_url` | string | **yes** | the URL as the host gave it |
 | `execution`, `log_url` | string | **yes** | `log_url` is what `logs RUN --url` prints |
 | `created` | time.Time | no | RFC 3339 |
-| `cost` | `runstore.Cost` | no | model/compute dollars: `model_usd` is the **whole** model figure and `model_notional_usd` the subscription's part of it (C1.16, P12 — a mixed cascade run's `model_basis` is `api-list` for the whole run, so the basis is only the fallback for a row written before the split existed) |
+| `cost` | `runstore.Cost` | no | model/compute dollars: `model_usd` is the **whole** model figure and `model_notional_usd` the subscription's part of it (C1.16, P12 — a mixed cascade run's `model_basis` is `api-list` for the whole run, so the basis is only the fallback for a row written before the split existed). **`fallback_usd`** (C1, CS8, the model-credentials-routing plan) is the part of that figure the run's **fallback** calls spent — the calls a source that was not its chain's first served and a metered source paid for — and it is a part of `model_usd` and not a figure beside it, never added to `total_usd`. It is real money only: a fallback a subscription served is not in it, because its list price is notional. Absent (0) when the run spent nothing on fallback **and** on every record written before the member existed, so a reader must not read the absence as "this run never fell back" — the run-level fact is the stages', `stages[].fallback` |
 | `image_age_s` | `*int64` | **yes** | null = unknown |
 | `terminal`, `settled` | bool | no | |
 | `branch`, `outcome` | string | **yes** | |
 | `task_pr`, `record_pr`, `pr` | int | **yes** | **`pr` is the run's PR number on this shape** (design gap 6's second spelling) |
 | `pr_state` | string | **yes** | the state of the pull request the row carries, in the owner's four words of 2026-11-12 (**CLI 0.24.0**): `live` (a run is going on it), `ready` (no run is going and it waits only on a merge) or `stalled` (it had a run, no run is going and it is not ready). It is read from the run records alone, with no call to the forge: a listing groups the rows it read by the pull request they carry, takes the newest run of each that says what the pull request is and reads the state from it — a run going makes the pull request `live` whatever the runs that ended left behind, and otherwise the newest run whose `outcome` is `ready` or `draft` decides (`ready` is `ready`, `draft` is `stalled`; a run that said neither, a rebase or a review among them, does not decide, and a pull request whose runs in the window all said neither is `stalled`). It is the last state a run recorded of the pull request and not the pull request's state now: nothing in the read calls the forge, so a pull request merged or closed after the run that left it `ready` keeps `ready`, and one closed after a draft keeps `stalled`. **A review run is on the pull request its task reviews**, which its record names only at the artifact stage that ends the review, so such a row carries `pr_state` while its `pr` is still absent. **Absent for a row that carries no pull request** — a run that opened none, an artifact run — and on a document whose read is not a window: `diagnose --json`'s `row` holds the one run it diagnoses, which cannot say what that pull request is doing, and drops the state rather than guess. The fourth word, `orphan` (a pull request no run ever produced or follows), is one no listing of runs can write, because such a pull request has no row. It is an enum the CLI writes from its own table and never text a job wrote, and `fugaro runs ls --state live\|ready\|stalled` is the same three words |
+| `resume_at` | `*time.Time` | **yes** | when the orchestrator will resume this run's chain (contract-pause R15, D3195), as RFC 3339 UTC: the instant the credentials service recorded on its own node for the pause (`runstore.PauseNode.ResumeAt`, epoch ms, under `paused/<slug>/<run>`), read by the listing and **never by `Join`** — it is not in any of the run's own records. **The CLI release after 0.28.0.** Present **only on a row whose own `status` is `paused`**, and absent when the node could not be read at all (the project has no pauses database, the read failed, a format this release does not know), which is **"the resume time is unknown", never "no resume is coming"**: the run's record still says it suspended itself. The instant is the **service's own** and never the job's (R8, D3189), it is the same value `JSONFinished`'s key of the same name carries, and the text views show it in their own `RESUME` column |
+| `resumed_by` | string | **yes** | the run that picked this pause up (contract-pause R17): the run whose own task names this one under `resumes` (`task.Spec.Resumes`), read by the listing off the resumer's row — so the value is **a run id this read holds**, never text a job wrote, and it is a run id like `previous_run` beside it. **The CLI release after 0.28.0.** Present only on a paused row, and absent while nothing the document holds has resumed it: a chain is walked backwards, so a paused run's own chain names its ancestors and never the run the orchestrator launched to continue it, and a listing narrower than the resume (`runs ls --since`) holds neither. Absence reads **"this read did not see the resumer"**, never "nothing resumed it" |
 | `pushed` bool, `pushed_head`° | | | |
 | `started_at` | `*time.Time` | **yes** | null = not started |
 | `base_branch`, `previous_run` | string | **yes** | |
@@ -942,8 +947,10 @@ exactly its own tags and nothing is nested under a `process` or `checks` key:
 | `comments_path` | string | **yes** | where the comments it was given are stored |
 | `owner_ruled` | string | **yes** | the repository owner's ruling this run worked from (OD1): the text the launcher appended to the run's brief verbatim — the ruling its own launch was given, or, for a follow-up launched without one, the one the run before it worked from, which it inherits — so the run the console diagnoses is one that was told the answer. Absent for a run that worked from no ruling: every run but a follow-up that answered an `owner_decisions` block, and every follow-up after a run that worked from none. **The run's own bytes**, exactly as the fields above. Redacted and clipped to `task.MaxOwnerRuledBytes` = 4 KiB on read, and held to `task.ValidateOwnerRuled` when a follow-up inherits it: a record whose ruling is not text a brief may hold (blank, a control character, over the bound) is read as a run that worked from none, and its `owner_ruled_decisions` with it. The decisions that ruling answered are the record's `owner_ruled_decisions`, and the rulings this run worked from behind it the record's `owner_ruled_earlier` — neither of which this shape carries: the console shows the run's own ruling, and the chain is the reviewers' |
 | `route_by`, `model_by` | `map[string]float64` | **yes** | the run's spend by provider route and by model (a Claude call has no route) |
-| `stages` | `[]runstore.StageTiming` | **yes** | the run's per-stage record (governance T1.1–T1.3), in the record's own order and bounded at `diagnoseStages` = 128: each entry is `name`, `started_at`, `duration_s`, `calls`°, `agents`°, `model_usd`°, `model`° and `model_notional_usd`°. `calls` and `agents` are **pointers**, so a stage nobody counted has the key absent, which is not the same fact as a stage counted at zero. `model_usd` is what the stage's calls cost, `model_notional_usd` the notional part of it (D140). The stages are the run's whole model spend but for gateway spend that settled after its stage's wait ran out, which is in `model_by["unattributed"]` and in no stage: exactly, `sum(stages[].model_usd) + model_by["unattributed"] == row.cost.model_usd`. **That identity is why the bound is where it is**: it holds only for the whole list, so `diagnoseStages` sits above the loop's own maximum (87 stages under the config limits, plus the provision and render stages) and never truncates a run the loop can make — it guards against the record a hand can edit, not against the loop. Absent when the record has no stages, and when there is no record at all |
+| `stages` | `[]runstore.StageTiming` | **yes** | the run's per-stage record (governance T1.1–T1.3), in the record's own order and bounded at `diagnoseStages` = 128: each entry is `name`, `started_at`, `duration_s`, `calls`°, `agents`°, `model_usd`°, `model`°, `model_notional_usd`°, **`source`°** and **`fallback`°**. `calls` and `agents` are **pointers**, so a stage nobody counted has the key absent, which is not the same fact as a stage counted at zero. `model_usd` is what the stage's calls cost, `model_notional_usd` the notional part of it (D140). **`source` and `fallback` are C1's own members** (the model-credentials-routing plan, CS8): `source` is the credential source that served the stage — `{kind, name}`, `routing.SourceName`, where `kind` is one of the five `routing.Kinds` and `name` is the pool's or the provider's own name, always written and empty for the two kinds that are one credential of the project (`anthropic`, `vertex`) — and `fallback` is true when any call of that stage was served by a source that is not its chain's first. Both are **absent together** on a stage no call the credentials service answered, which is what an absent `source` means and **not** "a source nobody named", and both are absent on every record written before the members existed: a reader tests the key rather than the empty value. Neither holds a credential value, and every string in either is redacted like the rest of the record. The stages are the run's whole model spend but for gateway spend that settled after its stage's wait ran out, which is in `model_by["unattributed"]` and in no stage: exactly, `sum(stages[].model_usd) + model_by["unattributed"] == row.cost.model_usd`. **That identity is why the bound is where it is**: it holds only for the whole list, so `diagnoseStages` sits above the loop's own maximum (87 stages under the config limits, plus the provision and render stages) and never truncates a run the loop can make — it guards against the record a hand can edit, not against the loop. Absent when the record has no stages, and when there is no record at all |
+| `switches` | `[]runstore.Switch` | **yes** | the run's credential switch log (C1.16, D140; the model-credentials-routing plan's CS8): every call the credentials service moved off the credential it was on, in the record's own order, which is the order the gateway settled them in, and bounded at `diagnoseSwitches` = 128 on read. Each entry is `from`°, `to`, `reason`, `cache_miss_usd`° and `cache_miss_unmeasured`°: `from` is the credential the call was on and is **empty** when the call started on the credential that answered it (the service's own meaning for an empty one, which is why the key is optional), `to` is the credential that answered, and `reason` is why the cascade moved — one of the service's closed set of words (`credsvc.ValidReason`), never free text. `cache_miss_usd` is the estimated cost of re-reading what the previous call had cached, priced at the answering tier's input rate less its cache-read rate (F24): **an estimate for a reader, charged to nothing** — the ledger settles the calls themselves and no figure on this shape is summed from one — and `cache_miss_unmeasured` is true when the answering tier's cache behaviour is not measured, where the miss is **unknown rather than free** and the `0` beside it is the absence of a figure and not a figure. Every string in the list is redacted, `reason` included (a hand-edited record need not respect the closed set). **The bound is not the stages' identity**: a switch is a record of what the run did and no figure here is summed from the list, so a log longer than the bound is already a record a hand wrote. Absent — never an empty list — for a run the credentials service never moved, and for every record written before the member existed |
 | `reviews` | `[]runstore.ReviewSummary` | **yes** | the record's review rounds, in the record's own order and bounded at `diagnoseReviews` = 96: each entry is `round`, `tier`, `verdict`, `findings` and, when the round recorded one, `bounce`°, `head`°, **`model`°** and **`effort`°** (CLI 0.16.0). `tier` is `first`, `senior` or `adversarial`, and `verdict` is the reviewer's own word or `none` for a round that returned nothing parseable. `model` and `effort` are what **reviewed** the round — the stage's pinned model and the reasoning effort that reached the stage — and the pair with `head`, the commit the round read, tells a reader which model the record says reviewed which head: these are the record's own unsigned bytes, recorded and not verified, so they are a hint for a person and never an input to a decision. `model`, `effort` and `head` are **absent** in a round that recorded none, which is every review written before CLI 0.16.0, so a reader tests the key rather than the empty string. Every string in the list is redacted, `model` and `effort` included: they are the record's bytes, which a hand can edit. The bound sits above the loop's own maximum (77 rounds), so it guards against the record a hand can edit, never against the loop; a run that reached it prints the first `diagnoseReviews` rounds and then the line `… at most 96 review rounds are printed`, which says the list is cut and not how many rounds it left out. Absent when the record has no reviews, and when there is no record at all |
+| `review_levels` | `[]ReviewLevel` | **yes** | each review level's own loop, as the Run screen's iterations bar reads it (**V1.3**, `docs/review-levels-ab-jobmax/implementation-plan.md`): one entry, in the order `l1`, `l2`, `l3`, for every level either the record's `reviews` or its `plan` block names. An entry is `level`, `rounds` — **that level's own rounds used**, the highest `round` among the reviews at its tier (a `first` round is `l1`, an `adversarial` round is `l3` and an `independent` round is no level of this shape), which is the same figure `fugaro diagnose`'s `Review levels` block prints — and `cap`, the rounds `planOf` resolved for that level's step — re-resolved at every moment the rigor mode rose (`recordRigor`, V1.3), because the senior and the adversarial loop read the mode again on every round and the block must state the cap the loop is held inside rather than the one bootstrap resolved. **`cap` is `null`, never `0` and never a guess, for a level whose cap the record does not carry** (V1.3: a plan block the run never wrote, a level with no plan step, a record written before the block existed), so a reader must test for `null` and never read the key as a number: the console draws such a level as `n/a` with no full mark. A cap is a **configuration** figure — nothing in the record says how many rounds the level actually ran against — so the entry is the loop's rounds and the config's cap and never a count of anything else. Absent for a record that carries neither a plan block nor a review at any level, and when there is no record at all |
 | `reported_usd`, `charge_usd` | float64 | **yes** | what providers said the calls cost, beside what the table charged — **absent (0) when no provider reported one**, so the pair is read together |
 | `reported_warning` | string | **yes** | set when the two differ by more than `reportedGapPct` percent |
 | `pin_warnings` | `[]string` | **yes** | the model prices the run's cap counted on a guess |
@@ -1712,9 +1719,18 @@ keeps the view the CLI resolved out of a screen's hands: an admin of the
 installation sees every user's rows, a plain operator sees their own row
 alone, and an identity the installation's own lists do not place stays
 private. It is read-only —
-the figures come from the run records (`launch.json`'s `launched_by`, and
-`result.json`'s outcome and settled cost), never from the budget database, so
-there is no write path behind it and no counter a screen has to reconcile.
+the figures come from the run index, one page of entries for the window and no
+run object read at all (IR6, F32) — or, while the index has never finished a
+walk, from the run records themselves (`launch.json`'s `launched_by`, and
+`result.json`'s outcome and settled cost), which is the read this command made
+before the index existed; `index_complete` says which of the two it was. The two
+reads answer the same question and do not always answer it alike — the index
+windows a run by its entry's own last change where the records window it by the
+day its run id places its start, and a run the index has not folded yet reaches
+it with no launcher, so it is a row under `unknown` there and under the launcher
+its own launch recorded here — so a screen renders both the same way but must not
+treat them as one read. Never from the budget database, so there is no write path
+behind it and no counter a screen has to reconcile.
 
 | Field | Type | omitempty | Availability state |
 |---|---|---|---|
@@ -1728,9 +1744,10 @@ there is no write path behind it and no counter a screen has to reconcile.
 | `until` | string | no | the window's last UTC day. Both are UTC days, like `runs ls`'s window |
 | `max_runs` | int | no | the bound the read ran under (`--max-runs`, default 5000) |
 | `truncated` | bool | no | **the window held more runs than `max_runs`**: every figure is over its newest `max_runs` alone. The bound is on the read and not on a person: it is applied before the view is, so a private view can be over fewer of the caller's own runs than `max_runs` suggests. A console must show this the way it shows a gap, never as the window's own total |
+| `index_complete` | bool | no | whether the figures are the **run index**'s own page: `true` when they are, read as one page of entries for the window with no run object read at all (F32), and `false` while the index has never finished a walk, when the run records are read instead — one object read per run. It is the one field this document gained for the index (IR6), and it is the whole of the difference a consumer sees: **the two reads answer the same question and are not the same read**, so a screen renders them the same way and reads this only to know which it is looking at. They agree on every run **both windows hold** and part in two places. The window: the index windows a run by its entry's own last change (a settled run's finish), where the records window it by the day its run id places its start, so a run that started and settled on opposite sides of an edge is in one read and not the other. The run the index has not folded yet — an overlay row, in flight or inside the fold gap — reaches it with its run id, its slug and its status alone, no launcher and no record, so the index read puts it under `unknown` with no record where the record read names the launcher its own `launch.json` recorded. A folded run both windows hold reads the same either way |
 | `rows` | `[]userstats.Row` | no | `[]` when none. One row per (user, currency) — dollars are never added across currencies |
 | `totals` | `[]userstats.Row` | no | one per currency, in currency order, with `user` `""` |
-| `unlaunched` | int | no | runs in the window with neither a launch nor a record (never launched, cancelled before launch, or a stale claim). They never started: they are in no row and no total. It is the window's count, over everyone's runs, so it is **not** the caller's own in the `"own"` view any more than `truncated` is |
+| `unlaunched` | int | no | runs in the window that **never started**: neither a launch nor a record, and no status settled for them (never launched, cancelled before launch, or a stale claim). A run the overlay lists with a status and no records yet — in flight, or finished inside the fold gap — started, so it is not one of these: it is a row with no record, under the unknown launcher. They are in no row and no total. It is the window's count, over everyone's runs, so it is **not** the caller's own in the `"own"` view any more than `truncated` is |
 | `notes` | `[]string` | no | the lines the human table prints before and after its own: whose numbers these are, what the money counts, and what the read left out. The document and the table say the same things |
 
 **The `"own"` view filters a read that is not its own.** It holds the runs
@@ -1848,11 +1865,12 @@ it on the surface (`plan.status` in `console/src/main/ipc.ts`), as the data
 behind the graph screen's per-task state (console v2 plan GV1.6). The section
 stays here for §6.11's reason — the screen reads a shape off the code rather
 than assuming one from a design. Its argv is design §5.1 rule 6's
-`plan status --json` row: at most `--all` (GD6's "everything" toggle), plus
-`--project <name>` and `--config <path>` like every other cloud row, and **no
-path** — the checkout reaches the CLI as the spawn's own working directory, from
-the installation's record and never from the renderer. The console asks for it
-at most once a minute per installation and arguments.
+`plan status --json` row: at most `--all` (GD6's "everything" toggle) and
+`--no-merges` (D3217 as amended, below), plus `--project <name>` and
+`--config <path>` like every other cloud row, and **no path** — the checkout
+reaches the CLI as the spawn's own working directory, from the installation's
+record and never from the renderer. The console asks for it at most once a
+minute per installation and arguments.
 
 **It is a cloud read, unlike `plan graph`.** A task's state is a *run's* state,
 and a run lives in the runs bucket of the selected project — so this command
@@ -1864,19 +1882,26 @@ naming the same task is not theirs to claim. It writes nothing — the remembere
 checkouts included: `plan status` is one of the console's reads
 (`consoleReadPaths`), so resolving the checkout records nothing.
 
-**What it reads is bounded, and the lookups are bounded more tightly, because
-they are what a console pays for.** The runs it lists are every run the bucket
-still holds — the ninety-day window `fugaro run --pr` reads with, which is the
-bucket's own lifecycle, since a run older than that has been deleted with its
-run and can join nothing. Every run in that window is read. What is scoped is
-the merge lookup below: it spawns the operator's `gh`, one spawn per distinct
-pull request, and it is asked only about the pull requests of the runs that
-**join at least one plan here**, at most **32** per read, the newest runs'
-first; a pull request past the cap has no answer (`merge unknown`, and a
-warning says how many). The answers are not kept between invocations (that
-cache lives in `internal/watch`'s process, and this command is one process). A
-repository whose history is full of runs naming no task of any plan in this
-checkout spends no lookup on them.
+**What it reads is bounded by the checkout's plans, not by the repository's
+history.** The runs come from the run index (C-INDEX: the collection the
+history job's fold writes, one document per run), and the read asks it one
+question per plan task of the checkout's plans, plus one per pull request the
+runs those questions answered carry — the second pass is how a follow-up, which
+records no `plan_task` of its own, is joined (rule iii below). **No listing of
+the runs bucket is made at all**, so a plan of four tasks asks four questions
+however much history the repository has, and a run older than the bucket's own
+life cycle still joins as long as the index holds it. The estimate's history is
+the summary document's own table, so it is one read rather than a scan (F15).
+What is scoped is the merge lookup below: it spawns the operator's `gh`, one
+spawn per distinct pull request, and it is asked only about the pull requests
+of the runs that **join at least one plan here**, at most **32** per
+read, the newest runs' first; a pull request past the cap has no answer
+(`merge unknown`, and a warning says how many). The answers are not kept
+between invocations (that cache lives in `internal/watch`'s process, and this
+command is one process). A repository whose history is full of runs naming no
+task of any plan in this checkout spends no lookup on them. `--no-merges` is
+the new console's first paint: it asks `gh` nothing at all, and says so in the
+document (below).
 
 The document:
 
@@ -1887,6 +1912,9 @@ The document:
 | `totals` | object | never | never | every plan's figures added up, below. A header line a screen draws before the plans |
 | `streams` | array | never | never | the release streams catalogue, in the file's own order, below; `[]` when the catalogue could not be read (`warnings` says why, and a release's name and version are then simply absent) |
 | `warnings` | array | never | never | the lines a human read prints before its table, below; `[]` when there is nothing to say |
+| `index_complete` | bool | never | never | whether the run index has ever finished a walk (C-INDEX, D3215). While it is **`false`** the text listing prints one line saying the index is still building, and the runs joined here are the ones folded so far: a reader never prints a silently short list as the whole truth |
+| `folded_through` | string (RFC 3339) | **yes** | never | how fresh the indexed runs are: the moment the index is folded through, and the point after which a run's own change comes from the overlay rather than a document. Absent before the first fold — never a zero timestamp |
+| `merges_read` | bool | **yes** | never | **present, and `false`, only under `--no-merges`** (D3217 as amended): the read spawned no `gh`, so every task whose run recorded a ready pull request reads `done` with the `merge unknown` mark and nothing is counted `closed`. Its presence is what lets a screen tell "no merges were read" from "there was no merge to read"; the default read does not carry it at all |
 
 one entry of `plans`:
 
@@ -1917,7 +1945,7 @@ one entry of `nodes`:
 | `run` | string | **yes** | never | the **suffix** of the run this task is joined to — the four characters after the last dash of a run id, which is the part a person reads out loud, and the short form `fugaro watch` shows a run by (`internal/task`'s `ShortRun`; where two shown rows collide it is longer, and `DisplayRuns` extends it); `runs ls` prints the whole id |
 | `stage` | string | **yes** | never | the stage that run is in. **Job-written display text**: it arrives sanitised (`safetext.Field`) and is rendered as text |
 | `pr_number` | number | **yes** | never | the pull request number this task shows, **whenever the run has recorded one** — running or finished. It is the run's `record_pr` (F9) when it has one, the run's own number otherwise, and it is absent rather than `0` when there is none: a repository that numbers its pull requests from 1 makes `0` no number at all. It is never a link (§5.1 rule 2) |
-| `mark` | string | **yes** | never | `"merge unknown"`, and nothing else today: the task's run recorded a ready pull request and no lookup could say whether it merged (below). A screen shows it beside the state, never instead of it |
+| `mark` | string | **yes** | never | `"merge unknown"`, and nothing else today: the task's run recorded a ready pull request and no lookup could say whether it merged — because none answered, or because `--no-merges` made none (below). A screen shows it beside the state, never instead of it |
 
 one entry of `releases`:
 
@@ -1954,7 +1982,8 @@ the CLI's, not a screen's rule:
   or `launching`), and `stage` comes from it. The task is being worked on now.
 - `done` — a joined run's pull request is **merged**, according to the
   operator's own `gh` (GitHub only, fail-open); or a finished run recorded a
-  ready or reviewed pull request and **no lookup could answer at all**, and then
+  ready or reviewed pull request and **no lookup could answer at all** (the
+  default read's cap reached, or `--no-merges`, which asks nothing), and then
   `mark` is `merge unknown`. Either way the work is in.
 - `cancelled` — the latest run was cancelled **and it is the task's only run**.
   The work was dropped.
@@ -1973,7 +2002,8 @@ subprocess. A URL that matches but names **another repository** than the
 checkout's is not asked about either, and answers *not merged*: a run's
 `pr_url` is job-written, and a job must not mark its own task done by pointing
 at somebody else's merged pull request. Where there is no answer (no `gh`, a
-Bitbucket repository, a failed or timed-out lookup, one past the cap), a task
+Bitbucket repository, a failed or timed-out lookup, one past the cap, or
+`--no-merges`, which asks nothing at all), a task
 whose run's record says its pull request is ready shows `done` with the mark,
 rather than staying open forever: a screen that waited for an answer nobody can
 give would be a screen that never settles. A `done` **with** the mark is **not** counted closed — only a confirmed merge is
@@ -4143,9 +4173,12 @@ shared-image lock. The catalog's document:
 | `entries[].description` | string | yes | |
 | `entries[].digest` | string | yes | the digest the last build of it recorded, absent when none has |
 
-**It is offline and read-only**, which is why it is the whole of the group's
-reach in the console: `image add`, `image rm`, `image promote`, `image build` and
-`image refresh` are the never table's (§5.1 rule 6). A **catalog the CLI cannot
+**It is offline and read-only**, and the group's writers — `image add`,
+`image rm`, `image promote`, `image build` and `image refresh` — are the never
+table's (§5.1 rule 6) **save one exception by name**: the add §6.34 documents,
+whose two operations the same rule grants the console (`image.add.plan` and
+`image.add`), which is what makes this read no longer the whole of the group's
+reach. A **catalog the CLI cannot
 read from the cloud is not a refusal for this read**: the command answers with the
 catalog this machine's configuration holds, and a console draws it. The console's
 row is `image ls --json` (design §5.1 rule 6), with no argument and no flag but
@@ -4258,6 +4291,107 @@ entry, the validation, the dry run and the confirmation are that modal's
 named here because it is the second of the pair, not because it reads anything.
 
 
+### 6.33 `fugaro models add <id> --dry-run --json` — the models write's dry run (the console improvements plan's MW1; the console's `models.add.plan` and `models.add`)
+
+**Command:** `internal/cli/models_add.go` `newModelsAddCmd` / `runModelsAdd`.
+**Document:** `modelsAddPlanDoc`, indented, one object
+(`schemas/models-add-plan.schema.json`, and the golden file
+`internal/cli/testdata/models_add_plan.golden.json`):
+
+| Key | Type | Note |
+|---|---|---|
+| `version` | int | `modelsAddPlanVersion`, `1` today (D848: a member is added within a version, and removing or retyping one bumps it) |
+| `layer` | string | the layer the change would land in — `local` and never another, because the command edits the selected installation's own file (D780). One word of the same vocabulary the settings write's `layer` uses |
+| `path` | string | the file the change would be written to, as the caller's read or `--config` resolved it |
+| `model` | string | the id the command was given, exactly as it would be written. Never a pattern: a claim is the one model the owner named (D785) |
+| `route` | string | the provider entry the model would be claimed on |
+| `changed` | bool | whether the file would change at all. **False is a classification and not an error** — an add the file already holds exits 0 with this document and an empty `steps` |
+| `claim` | object | `key` (`providers.<route>.models`), `entry` (the id appended there) and `claimed_by` (the existing entry or pattern that already covers the model). **The last two are never both set, and one of them always is** |
+| `allowed_models` | object | `key` (`budget.allowed_models`), `entry` and `present`: an absent list stays absent rather than becoming a list of one (D786), so a consumer reads `present` before it reads `entry` |
+| `prices` | object | `key` (`model_prices.<id>`), `input_per_m`, `output_per_m` and `source` (`given`, `catalog` or `local`). The entry is written only for `given` — a model the catalog or the file already prices needs none |
+| `steps` | array | the follow-up the change owes, in the order it would run: `name` (the apply chain's own step name, `policy` today) and `state` (`run`, or `saved` under `--no-apply`). Empty exactly when `changed` is false |
+| `refusal` | string | **empty in every document this CLI prints**: a refused add is the CLI's own sentence with a non-zero exit and no document at all, which is what a consumer branches on |
+
+**It is the change as data**, and the write it stands in for is the same
+command less `--dry-run --json`: `models.add` is the console's **fifth write**
+(design §5.1 rule 6), and the only argv of the surface that reaches an add of a
+model.
+
+**The console's two rows carry four arguments.** Three are `=`-form words the
+renderer sends — `--route=<r>`, `--price-in=<usd>`, `--price-out=<usd>` — so no
+value of either row can be read as a flag, and every one of them is held to a
+grammar in main before the argv exists (`console/src/main/ipc.ts`'s `modelId`,
+`modelRoute` and `modelPrice`). The fourth is the model id, passed as the
+positional **behind `--`** (`terminatedValue` in
+`console/src/main/spawn.ts`), which is the word `models add <id>` reads. **The
+write's row declares the plan's own four and no others**, so the argv the
+operator confirmed is the argv that runs.
+
+**`--no-apply` is on both rows, and it is a word of the command path and never
+a payload's.** It is what keeps the write's follow-up step — the published
+policy node's migration in place — saved for the operator's own `fugaro apply`
+(D1565), so `steps[].state` is `saved` in every document either row prints. A
+CLI whose `models add` has neither `--no-apply` nor `--dry-run` is a CLI this
+console refuses to drive at all: below that floor the Manage kind offers the
+Copy-command instead (`MODELS_ADD_CLI_FLOOR`,
+`console/src/shared/version.ts`, asked on main's side too by
+`console/src/main/modelsadd.ts`).
+
+**The window is drawn from this document and from nothing a renderer sends.**
+Main reads the members strictly (`console/src/main/modelsview.ts`), holds the
+document's own SHA-256 and the exact argv the yes spawns, and re-runs *that*
+argv — the digest re-checked first — which is why the plan window shows the
+command line rather than a description of it (design §5.1 rule 11). The
+document is a **widening**: it changes what every run of the project may name and
+spend on, so the window's confirming button is gated by the tick the console
+draws (`MODELS_ADD_TICK_LABEL`) and a yes without it is refused. `fugaro models
+add` is otherwise the never table's, as a command and as a word of `models`.
+
+### 6.34 `fugaro image add <name> --dry-run --json` — the image write's dry run (the console improvements plan's MW2; the console's `image.add.plan` and `image.add`)
+
+**Command:** `internal/cli/image_catalog.go` `newImageAddCmd` / `runImageAdd`.
+**Document:** `imageAddPlanDoc`, indented, one object
+(`schemas/image-add-plan.schema.json`, and the golden file
+`internal/cli/testdata/image_add_plan.golden.json`):
+
+| Key | Type | Note |
+|---|---|---|
+| `version` | int | `imageAddPlanVersion`, `1` today |
+| `command` | string | the door the document is for — `image add`, and a plan for another command is refused by main's reader |
+| `project` | string | the installation the entry would land in. **Main compares it against the installation the console is acting on** and refuses a plan for another, because the confirmed write would otherwise land somewhere the screen never named |
+| `entry` | object | `name`, `tags` (`[]` when the entry provides none), `description` (`""` when the caller gave none), `default` (false for every write this console can make: `--default` is a definition flag no row of the spawn table emits) and `source` (the one-line definition `image ls` prints, `dockerfile owner/name:path`, with `@branch` where the entry names one) |
+| `steps` | array | the follow-up the add owes, in the order it would run: `name` (`catalog-build`, `repository`, `policy`) and `saved` (true under `--no-apply`, which is every document either console row prints). **The build is the one step here that bills** |
+| `refusal` | — | no member: the shape carries none, and a refused add is the CLI's own sentence with a non-zero exit and no document at all |
+
+**It is the change as data too**, and `image add` is the console's **sixth
+write** (design §5.1 rule 6). `--dry-run` builds the entry from its flags, asks
+every refusal the real add would ask — the definition's own rules, a name the
+catalog already has, a definition no build could fetch, D1573's agent refusal and
+the installation's skew gate — prints this document and writes nothing: no
+catalog entry, no build, no saved step, and nothing priced.
+
+**The console's two rows carry four arguments**, on the same rule as §6.33's:
+`--dockerfile=<owner/name:path>`, `--tags=<a,b>` and `--description=<text>` are
+`=`-form words held to main's grammars (`console/src/main/ipc.ts`'s
+`imageName`, `imageDockerfile`, `imageTags` and `imageDescription`), and the
+entry's name is the positional behind `--`. **`--inline`, `--image`, `--default`
+and `--branch` are words of neither row**: they are the other definitions of one
+entry, they write executable content from a renderer's text or name an image that
+already exists, and `assertArgvFlags` refuses each of them for every operation
+but the rows that declare it. **`--no-apply` keeps the add's three steps off the
+operator's machine** until they run them (D1565), the build included — which on
+this surface matters more than anywhere else, because that step bills by itself.
+
+**The write is a project admin's, and the window says so before the click**: the
+Manage control is enabled only for a project admin (RB4's gating), because
+`image add` refuses anyone else (`accessGateProject`, and the CLI's own skew
+gate), and a role that changed between the window and the write is refused by the
+CLI's own sentence, which the screen draws like any other refusal. Unlike §6.33's
+the document is a **narrowing** — it raises no limit — so the window's yes is one
+deliberate click and no tick. `fugaro image add` is otherwise the never table's,
+as a command and as a word of `image`.
+
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
@@ -4324,7 +4458,7 @@ and **not** off this document or the design:
 | `coordinator intents` | yes (`newCoordinatorIntentsCmd`, §6.16) — the declarations read (coordinator v2 C4, D827): it has **no argument of its own** (`--all` and `--json` are the console row's fixed words), and it carries `--project` and `--config` like the rest because it resolves the local config the way the project view does. **The one row here whose child asks nothing of the host at all**: the declarations are the caller's own database node, read through the same credentials §6.13's stored read uses, so there is no App key, no installation token and no provider anywhere in it |
 | `settings set\|unset` | yes (`newSettingsCmd`, §6.20) — **the second row here that writes** (the settings-edit plan's C3, design §5.1 rule 12): the dry run and the confirmed write are the same command with the same aiming pair, and the layer written is §6.19's `target_layer` rather than a flag a renderer chose. The write carries `--no-apply` (the composite-commands plan's AP8, D1572), so the change is saved and its follow-up steps are owed rather than run — and it carries it only at or above the floor that registers the word (`NO_APPLY_CLI_FLOOR`, 0.26.0, where that plan's AP5 and AP6 ship it, §6.20), so a CLI older than that gets no word |
 | `user ls` | yes (`newUserLsCmd`, §6.29) — the Members view's roster read (the roles-and-scopes plan's RS7, roles.md D691(b)), and with `--me` the caller's own role, which reads no roster at all. Both forms carry the aiming pair, and the five words of the group that change a roster are the never table's |
-| `image ls` | yes (`newImageLsCmd`, §6.30) — the project's image catalog, and with `--shared` the installation's shared-image lock. **It is offline** and writes nothing, and the group's writers — `image add`, `image rm`, `image promote`, `image build`, `image refresh` — are the never table's as commands and as words of `image`, which is why this one row is the group's whole reach |
+| `image ls` | yes (`newImageLsCmd`, §6.30) — the project's image catalog, and with `--shared` the installation's shared-image lock. **It is offline** and writes nothing, and the group's writers — `image add`, `image rm`, `image promote`, `image build`, `image refresh` — are the never table's as commands and as words of `image`, **save the add §6.34 documents, whose two operations that same rule grants the console by name** — so this read is not quite the group's whole reach any more, and the write's own two rows are the other half of it |
 | `recipes ls` | yes (`newRecipesLsCmd`, §6.31) — the recipes in force, one winner per name. **It is offline** and writes nothing, and `recipes publish` and `recipes validate` are the never table's as words of `recipes` (`publish` as a command too) |
 | `apply --status` | yes (`newApplyCmd`, §6.28) — **the third row here that writes**, and the only one with a read arm: `fugaro apply` runs the follow-up steps a management command saved for later (the composite-commands plan's D1560). The console is admitted to `apply --status --json` and nothing else (D1569, design §5.1 rule 6): the bare `apply` is a row of that table the console does not spawn yet, and the read costs no cloud, so the pair here is what aims it at an installation |
 | `setup` | yes (`newSetupCmd`, §6.32) — **the first row here whose argv arrives partly on stdin as a document rather than as a word**: `--answers-file -` is the wizard's five answers, which the console passes as `-` and never a path. With `--plan-only` the row reads and creates nothing (the console's `setup.plan`), and without it the row is `setup.apply`, **the fourth row here that writes** (design §5.1 rule 5) and the console's fourth write overall. **The console gives both of the command's rows no project selection at all** — no `--project`, no `--config` and no `FUGARO_PROJECT` — because the answers name the project the run creates (§6.32) |
@@ -4341,8 +4475,8 @@ table against the live constructors.
 
 ## 9. What the console may do with all this
 
-1. **Every document in the console's set is read-only** — with **three
-   exceptions, and all three are writes the console's own confirmation
+1. **Every document in the console's set is read-only** — with **six
+   exceptions, and all six are writes the console's own confirmation
    answers**: the launch (§6.14, design §5.1 rule 11), which was the console's
    **first write**; the settings edit (§6.20, design §5.1 rule 12, the
    settings-edit plan's C3), which is its **second write**; the record's
@@ -4350,24 +4484,33 @@ table against the live constructors.
    is its **third write** — the first two behind a window the main process opens
    (rules 11 and 12), and the move behind a sheet of the Graph screen's own
    whose every word is still the main process's, so a confirmation authorises
-   nothing the preview did not draw; and the first run's apply (§6.32, design
+   nothing the preview did not draw; the first run's apply (§6.32, design
    §5.1 rule 5, the console improvements plan's SW3a), which is its **fourth
    write** — behind the same window rule 11 opens, on the plan that window drew
    and the answers main held, so no renderer word reaches the child and a
    different project, region or rigor cannot be slipped in between the plan and
-   the write (design §3.4 rule 3's amendment, D2904). **A fifth write
-   reads no document of this file at all**, so it neither widens nor narrows
-   this sentence: `licence.save` (design §5.1 rule 5, the subscriptions plan's
+   the write (design §3.4 rule 3's amendment, D2904); and the two Manage writes,
+   the models add (§6.33, design §5.1 rule 6, the plan's MW1) and the image add
+   (§6.34, the plan's MW2), which are its **fifth** and **sixth** — both behind
+   rule 11's window, drawn from the CLI's own `--dry-run` document, whose SHA-256
+   and exact argv main holds and re-runs, so the command line the operator
+   confirmed is the one that runs and no renderer value reaches the child
+   (D2903). **A seventh write reads no document of this file at all**, so it
+   neither widens nor narrows this sentence: `licence.save` (design §5.1 rule 5,
+   the subscriptions plan's
    S2.7) keeps the licence key the operator pasted in the console's own store
    (design §5.1 rule 10), spawns nothing, consumes none of the documents below,
    and needs no confirmation window because there is no child and no cloud
    object to confirm — what it writes is a file of the console's own, and what
    it refuses is a key that does not verify. The allow-list is by
-   exact argv (design §5.1 rule 6), and all four are on it: `run.launch`,
-   `settings.edit`, `roadmap.move` and `setup.apply` are the four **spawning**
-   operations of
-   the surface that write
-   — `licence.save` is the fifth that writes and spawns nothing, which is why
+   exact argv (design §5.1 rule 6), and all six are on it: `run.launch`,
+   `settings.edit`, `roadmap.move`, `setup.apply`, `models.add` and `image.add`
+   are the six **spawning** operations of
+   the surface that write — four of them showing the operator a document first,
+   from a dry run of the same command they then run (`settings.edit`'s
+   `--dry-run --json` phase, `setup.plan`, `models.add.plan` and
+   `image.add.plan`) — and `licence.save` is the seventh that writes and spawns
+   nothing, which is why
    there is no row of §8 for it (V2.5.1a,
    2026-10-28/29, took the surface to twenty-four; K2a's
    `link.openPullRequest` took it to twenty-five and writes nothing, and C4c's

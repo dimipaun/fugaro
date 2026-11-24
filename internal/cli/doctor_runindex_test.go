@@ -57,14 +57,12 @@ func runIndexSummaryDoc(complete bool, folded time.Time) map[string]any {
 // summary doctor could not read is neither silence nor a finding: it is a
 // counted line saying the fact is unknown.
 func TestDoctorNamesReindexWhenIncomplete(t *testing.T) {
-	// The stamps below are ages measured against the retention the check
-	// compares them with, and the rig pins the CLI's clock inside the shipped
-	// catalog's own window (newDoctorRig). Read from the wall clock instead, an
-	// "older than the retention" stamp is only that old by the pinned clock once
-	// the catalog has aged as well: the day the test runs would then decide
-	// whether the state is a finding, and the two days after the catalog's
-	// checked_at would fail it. Pinning here first makes the stamps and the check
-	// read one clock, whatever day it is.
+	// The clock the checks read is the rig's pinned one (pinCatalogClock, in
+	// newDoctorRig) and not the wall clock, so the stamps below are built from
+	// it here as well: a stamp the wall clock produced drifts one day older
+	// every real day against the pinned clock, and the two states about a stamp
+	// older than the retention stop being that once the drift passes the
+	// retention itself.
 	pinCatalogClock(t, shippedCatalog(t), 24*time.Hour)
 	now := budgetNow()
 	stale := now.Add(-(budget.PruneAfter + 1) * 24 * time.Hour)

@@ -3706,10 +3706,10 @@ func TestFilledServiceServedAuthsDropsTheAnthropicMountsOnly(t *testing.T) {
 		if !slices.Contains(config.ServiceServedAuths, auth) {
 			t.Fatalf("config.ServiceServedAuths is %v and does not carry %q: B2.7's flip is what makes a switched %s repository give up its two Claude mounts (D2072, G17)", config.ServiceServedAuths, auth, auth)
 		}
-		if got := ModelSecretsServed(true, auth); got != config.ModelSecretServedAnthropic {
+		if got := ModelSecretsServed(ChainPlan{}, true, auth); got != config.ModelSecretServedAnthropic {
 			t.Errorf("ModelSecretsServed(serving, %q) = %q, want %q: a switched repository of an auth in the flip list reaches the service for the Anthropic key and the OAuth token, so those two mounts go (D2072)", auth, got, config.ModelSecretServedAnthropic)
 		}
-		if got := ModelSecretsServed(false, auth); got != config.ModelSecretServedNone {
+		if got := ModelSecretsServed(ChainPlan{}, false, auth); got != config.ModelSecretServedNone {
 			t.Errorf("ModelSecretsServed(held off, %q) = %q, want %q: a repository the switch holds off keeps every mount, whatever the flip list says", auth, got, config.ModelSecretServedNone)
 		}
 	}
@@ -3779,7 +3779,7 @@ func TestFilledServiceServedAuthsKeepsProviderKeys(t *testing.T) {
 	}
 	// The provider's key is not a credential of the service's, at any auth: a
 	// vertex repository's calls are the project's own GCP service.
-	if got := ModelSecretsServed(true, "vertex"); got != config.ModelSecretServedNone {
+	if got := ModelSecretsServed(ChainPlan{}, true, "vertex"); got != config.ModelSecretServedNone {
 		t.Errorf("ModelSecretsServed(serving, vertex) = %q, want %q: a Vertex workflow's calls are not a credential this service holds", got, config.ModelSecretServedNone)
 	}
 }
@@ -4280,10 +4280,10 @@ func TestFilledBuildListDropsTheCheckMounts(t *testing.T) {
 // D1634). A mixed stage account's own variant job is the arm's one exception,
 // its Claude OAuth mount being the STAGE's credential rather than the run's.
 func TestCascadeStillDropsItsMounts(t *testing.T) {
-	if got := ModelSecretsServed(true, config.AuthCascade); got != config.ModelSecretServedAll {
+	if got := ModelSecretsServed(ChainPlan{}, true, config.AuthCascade); got != config.ModelSecretServedAll {
 		t.Errorf("ModelSecretsServed(serving, cascade) = %q, want %q: the cascade's runner reads every model credential from the service, so its job keeps none (D143)", got, config.ModelSecretServedAll)
 	}
-	if got := ModelSecretsServed(false, config.AuthCascade); got != config.ModelSecretServedNone {
+	if got := ModelSecretsServed(ChainPlan{}, false, config.AuthCascade); got != config.ModelSecretServedNone {
 		t.Errorf("ModelSecretsServed(held off, cascade) = %q, want %q: a cascade repository the switch holds off keeps exactly what it had", got, config.ModelSecretServedNone)
 	}
 	rs := repoRootServed(t, repoRootCascadeAgent, repoRootLC, config.BudgetEnforce)
@@ -5903,11 +5903,34 @@ func sharedSandboxPolicy(repos ...string) *projectpolicy.Policy {
 	}
 }
 
+func bakedOnSharedJob(t *testing.T) {
+	t.Helper()
+	SharedJobBaked = true
+	t.Cleanup(func() { SharedJobBaked = false })
+}
+
+// TestABakedRepoIsNotMarkedSharedUntilTheSharedJobCarriesItsTools is why
+// switching a baked repository's account works: fugaro run launches its baked
+// workflow on the per-repository job, so update must keep applying the
+// repository root that creates it.
+func TestABakedRepoIsNotMarkedSharedUntilTheSharedJobCarriesItsTools(t *testing.T) {
+	in := sandboxInputs(t, m5Additions)
+	in.Policy = sharedSandboxPolicy("bitbucket/acme/sandbox")
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Shared {
+		t.Error("a repository with a baked workflow is marked shared while the shared job cannot carry its tools: update would apply no root and fugaro run would find no per-repository job")
+	}
+}
+
 // TestSpecMarksASharedRepo is M6's mark: a repository a deployed profile
 // admits is shared, which is the fact M7 reads to stop applying its
 // repository-level root and the structural precondition D2303 puts in place of
 // a retire gate.
 func TestSpecMarksASharedRepo(t *testing.T) {
+	bakedOnSharedJob(t)
 	in := sandboxInputs(t, m5Additions)
 	in.Policy = sharedSandboxPolicy("bitbucket/acme/sandbox")
 	rs, err := Repo(in)
@@ -5926,6 +5949,7 @@ func TestSpecMarksASharedRepo(t *testing.T) {
 // the field existed and no root applies differently on the strength of the
 // mark alone.
 func TestTheSharedMarkChangesNoTerraformInput(t *testing.T) {
+	bakedOnSharedJob(t)
 	marked := sandboxInputs(t, m5Additions)
 	marked.Policy = sharedSandboxPolicy("bitbucket/acme/sandbox")
 	unmarked := sandboxInputs(t, m5Additions)

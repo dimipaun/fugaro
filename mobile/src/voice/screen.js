@@ -60,6 +60,17 @@
 // screen, with no badge source to ask and the on-device engine as the only
 // engine a transcript can have come from.
 //
+// **The line the owner speaks goes into the one conversation** (Task X1; D2788:
+// *one transcript for voice and text*). This screen is the voice view, so a
+// message it accepts is a message that was **said**: it is recorded as the
+// operator's own line, carrying the engine tag read at that moment, and
+// `src/text/transcript.js` holds it for the text view to draw. The recording is
+// a fact of the accept rather than a second door: a message the client refused
+// was never said to anybody and is not recorded (the text view's `unsent` is
+// where refused text stays visible), and a line whose session has signed out is
+// refused by the store rather than appended to a conversation that is over.
+// With no transcript wired the screen behaves exactly as P3.5's did.
+//
 // **The queue is bounded and refuses rather than evicting.** A queue that
 // dropped its oldest entry to make room would lose an update silently, which is
 // the same failure as speaking over the user with a different name. It is also
@@ -81,6 +92,7 @@ import { emptyLeaseState, readLease, releaseLease as release, takeLease as take 
 import { STATE } from '../../../shared/presence/index.js';
 import { ENGINE } from '../../../shared/voice-switch/index.js';
 import { isVoicePipeline } from '../audio/index.js';
+import { TRANSCRIPT_SOURCE, TRANSCRIPT_WHO, isTranscript } from '../text/index.js';
 import { DIRECTIONS, INDICATOR_FIELDS, failClosedIndicator } from '../voice-switch/index.js';
 import { INTERRUPT_SWITCH, interruptDecision } from './interrupt.js';
 
@@ -195,6 +207,9 @@ function isBadge(answer) {
  * @param {() => string} [options.engine] the engine that produced the utterance
  *   now arriving (P5.3.7's route: `local`, or the provider's name); absent means
  *   this device's own engine, which is the only one P3.5's pipeline has
+ * @param {object} [options.transcript] the one conversation voice and text
+ *   share (X1's `createTranscript`); absent means nothing is recorded and a
+ *   snapshot's `conversation` is empty
  * @returns {object} the screen
  * @throws {TypeError} for a port, a value source or a setting that cannot be used
  */
@@ -208,6 +223,7 @@ export function createVoiceScreen({
   utterance: dialogue = null,
   indicator: badgeSource = null,
   engine: engineOf = null,
+  transcript = null,
 } = {}) {
   if (!isVoicePipeline(pipeline)) throw new TypeError('pipeline is a VoicePipeline');
   // `licenceRefusal` is the third name this screen needs (S6.3): the offline
@@ -232,6 +248,9 @@ export function createVoiceScreen({
   }
   if (engineOf !== null && typeof engineOf !== 'function') {
     throw new TypeError('engine is a function answering the last utterance\'s engine, or absent');
+  }
+  if (transcript !== null && !isTranscript(transcript)) {
+    throw new TypeError('transcript is X1\'s createTranscript value, or absent');
   }
 
   /** D127's setting, in memory and nowhere else: it is never written down. */
@@ -260,8 +279,14 @@ export function createVoiceScreen({
    * which is the one thing a status line must not do.
    */
   let lastRefused = null;
-  /** The last thing heard, partial or final. */
-  let transcript = null;
+  /**
+   * The last thing heard, partial or final -- P3.5's own slot, and not the one
+   * transcript of X1 below: that one is the `transcript` this screen was handed
+   * and holds the whole conversation, while this is what the microphone is
+   * hearing right now. The snapshot keeps the name `transcript` for it, because
+   * that is the field a view already renders.
+   */
+  let lastHeard = null;
   /** P1.2's lease state, and the last time a lease call refused. */
   let leaseState = null;
   let leaseRefused = null;
@@ -405,7 +430,7 @@ export function createVoiceScreen({
   // snapshot that read the route when it was rendered would tag the third line
   // with the fourth utterance's engine.
   pipeline.on('transcript', (event) => {
-    transcript = Object.freeze({ text: event.text, final: event.final, engine: readEngineTag() });
+    lastHeard = Object.freeze({ text: event.text, final: event.final, engine: readEngineTag() });
   });
   // D122: the OS refused the microphone or the background audio mode.
   pipeline.on('unavailable', (event) => {
@@ -455,6 +480,11 @@ export function createVoiceScreen({
    */
   async function accept(text, options) {
     if (typeof text !== 'string' || text.length === 0) return noteRefusal(refuse(SCREEN_CODES.BAD_TEXT, 'text'));
+    // The engine that produced THIS utterance, read before anything is awaited:
+    // the send can take a round trip, and a tag read after it is the tag of
+    // whatever the owner said next -- the same lie the `transcript` event's own
+    // comment forbids, one await later.
+    const engine = readEngineTag();
     if (offline()) {
       const refusedByLicence = await client.licenceRefusal(text, options);
       // The licence's refusal is the client's and is returned as itself -- it
@@ -465,8 +495,44 @@ export function createVoiceScreen({
       return noteRefusal(refuse(SCREEN_CODES.OFFLINE, 'presence'));
     }
     const sent = await client.send(text, options);
-    if (sent.ok) lastRefused = null;
+    if (!sent.ok) return sent;
+    lastRefused = null;
+    // The words are the owner's own and they have reached the session: this is
+    // the voice view's half of the one conversation (X1, D2788), recorded here
+    // because the engine tag is a fact about this utterance and only this
+    // screen holds it. The store's own verdict is not this door's answer to
+    // give: the message has already left the phone, and what is left is whether
+    // the line was kept -- one that was not (a session that signed out
+    // mid-sentence) is a conversation this screen must not pretend is live.
+    // The line is the REDACTED text the client signed, not the words the owner
+    // said (D118): the client hands its own redaction back as `sent.text`
+    // precisely so this screen does not have to redact, or guess, again.
+    record(sent.text, engine);
     return sent;
+  }
+
+  /**
+   * Add one line to the one conversation, if a transcript is wired. The verdict
+   * is deliberately dropped: see `accept`. `engine` is the tag `accept` read
+   * when the utterance arrived -- carrying it in rather than reading it here is
+   * the whole point: by the time the send has answered, the pipeline may have
+   * heard the next utterance, and a line tagged with its engine is a line the
+   * conversation lies about.
+   *
+   * `text` is the text the client SIGNED (`sent.text`, the redacted one), never
+   * the owner's raw words: a line is what reached the session (D118). A client
+   * that answers `ok` without saying what it sent is not the mailbox client,
+   * and nothing is recorded for it -- a line is never guessed from the words
+   * this screen was handed.
+   */
+  function record(text, engine) {
+    if (transcript === null || typeof text !== 'string') return;
+    transcript.append({
+      who: TRANSCRIPT_WHO.OPERATOR,
+      source: TRANSCRIPT_SOURCE.VOICE,
+      text,
+      engine,
+    });
   }
 
   /**
@@ -704,6 +770,11 @@ export function createVoiceScreen({
      * Everything a screen renders, in one frozen snapshot. It reads the
      * pipeline for what is happening now (`speaking`, `turn`) rather than
      * caching it, so the snapshot cannot say something the pipeline would not.
+     *
+     * `conversation` is the one transcript's lines, oldest first (X1, D2788):
+     * the same list the text view draws, so the voice view shows what was said
+     * while the owner was typing and the text view shows what was said while
+     * they were speaking. Empty without a transcript.
      */
     state() {
       const claim = leaseState === null ? null : readLease(leaseState);
@@ -717,7 +788,8 @@ export function createVoiceScreen({
         leaseRefused,
         speaking: pipeline.speaking(),
         turn: pipeline.turn(),
-        transcript,
+        transcript: lastHeard,
+        conversation: transcript === null ? Object.freeze([]) : transcript.entries(),
         indicator: frozenBadges(),
         refused: lastRefused,
       });
