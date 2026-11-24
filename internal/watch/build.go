@@ -279,6 +279,23 @@ type RunRow struct {
 	// the JSON writes as an absent key rather than as a number (watch --json,
 	// task GV2.5).
 	PRNumber int
+
+	// Paused is the run's own record saying it suspended itself and the
+	// orchestrator will resume its chain at ResumeAt (runstore.StatusPaused,
+	// contract-pause R15). A paused run is a finished row here: its registry
+	// entry is gone, so it is read from the runs bucket like every other row
+	// whose run is over.
+	//
+	// ResumeAt is the instant the resume is due at, epoch milliseconds, and
+	// ResumedBy is the run that resumed this one — both stamped by MergePaused
+	// from outside the row, because neither is in the run's own record: the
+	// instant is on the credentials service's node for the pause
+	// (runstore.PauseNode) and the resumer is another run's task naming this
+	// run under `resumes`. So a frame built without those two reads draws the
+	// word alone, which is the run's own record saying all it knows.
+	Paused    bool
+	ResumeAt  int64
+	ResumedBy string
 }
 
 // prNumberOf is the pull request number a registry entry's prUrl names, or 0

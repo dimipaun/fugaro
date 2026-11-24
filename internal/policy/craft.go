@@ -34,6 +34,13 @@ import (
 const (
 	PoolStrategyFailover   = "failover"
 	PoolStrategyRoundRobin = "round-robin"
+	// PoolRuleOrdered is the pool rule that arrived with the routing table
+	// (R5, D3177): the first listed member that is usable, and no preference
+	// beyond the order the pool's owner wrote it in. It is a RULE and not a
+	// strategy — `ordered` is not one of the two values above and a pool that
+	// wants it writes `rule` — so it lives here beside the rule that orders
+	// the values rather than in the strategy block's own list.
+	PoolRuleOrdered = "ordered"
 )
 
 // CraftPool is one layer's pool: the strategy and the ordered members, which
@@ -48,6 +55,16 @@ type CraftPool struct {
 	// — and the one value a merge renders is the strategy in force
 	// (poolStrategyText).
 	Strategy string
+	// Rule is the pool's rule (R5): "" is a pool that names none, which is
+	// served by its Strategy and by failover only where it names neither
+	// (routing.Rule.RuleOrDefault). Like Strategy it is kept as the layer wrote
+	// it, and it is a member of its own rather than a third value of Strategy:
+	// `ordered` arrived as a rule and a value never changes meaning (R21).
+	//
+	// It is judged for tightness exactly as the strategy is, on its own key, so
+	// a layer that pins `ordered` tightens a pool and one that loosens a rule
+	// is dropped and recorded (tightenCraftPool).
+	Rule string
 	// Members is the pool's members, in the order it tries them.
 	Members []string
 	// Owner is the account the pool belongs to, by the email its roster
@@ -131,6 +148,13 @@ func CraftPoolMembersKey(name string) string { return CraftPoolKey(name) + ".mem
 // CraftPoolStrategyKey is the policy key of a pool's strategy
 // ("crafts.pools.claude.strategy").
 func CraftPoolStrategyKey(name string) string { return CraftPoolKey(name) + ".strategy" }
+
+// CraftPoolRuleKey is the policy key of a pool's rule
+// ("crafts.pools.claude.rule"). It is a key of its own and not a third spelling
+// under the strategy's: a rule is a new member (R21), so a layer that writes
+// one and a layer that writes a strategy are two statements a reader keeps
+// apart.
+func CraftPoolRuleKey(name string) string { return CraftPoolKey(name) + ".rule" }
 
 // CraftPoolOwnerKey is the policy key of a pool's owner
 // ("crafts.pools.claude.owner").
@@ -234,11 +258,14 @@ func (e *Effective) defineCraftPools(pools map[string]CraftPool, src string) {
 			e.Craft.Pools = make(map[string]CraftPool, len(pools))
 		}
 		p := pools[name]
-		e.Craft.Pools[name] = CraftPool{Strategy: p.Strategy, Members: dedupe(p.Members),
+		e.Craft.Pools[name] = CraftPool{Strategy: p.Strategy, Rule: p.Rule, Members: dedupe(p.Members),
 			Owner: p.Owner, AllowedUsers: dedupe(p.AllowedUsers), LegacyOpen: p.LegacyOpen}
 		e.Sources[CraftPoolMembersKey(name)] = src
 		if p.Strategy != "" {
 			e.Sources[CraftPoolStrategyKey(name)] = src
+		}
+		if p.Rule != "" {
+			e.Sources[CraftPoolRuleKey(name)] = src
 		}
 		if p.Owner != "" {
 			e.Sources[CraftPoolOwnerKey(name)] = src
@@ -258,10 +285,11 @@ func (e *Effective) defineCraftPools(pools map[string]CraftPool, src string) {
 // is what a craft's access speaks and a second definition of it would leave
 // that name meaning two pools.
 //
-// The members may only narrow and the strategy may only tighten. Each is
-// judged on its own key, so a layer that narrows the list keeps the project's
-// strategy and one that pins the order keeps the project's members. A value
-// equal to the running one moves nothing and is not recorded (Merge).
+// The members may only narrow, and the strategy and the rule — which are one
+// scale of tightness (poolStrategyRank) — may only tighten. Each is judged on
+// its own key, so a layer that narrows the list keeps the project's strategy
+// and its rule, and one that pins the order keeps the project's members. A
+// value equal to the running one moves nothing and is not recorded (Merge).
 //
 // Both entries name a layer and carry the value in force, an empty effective
 // value being reserved for the refusals that have none at all (craftSource,
@@ -284,13 +312,32 @@ func (e *Effective) tightenCraftPool(name string, p CraftPool, src string) {
 				e.craftSource(CraftPoolMembersKey(name))})
 		}
 	}
+	// Both are judged against the value in force (ruleInForce), not against the
+	// member they were written under: the rule and the strategy are one scale of
+	// tightness and one of them serves the pool, so a layer's rule must be able
+	// to tighten a pool the project wrote as a strategy and to lose to a pool it
+	// wrote as a rule.
+	inForce := ruleInForce(out)
 	if p.Strategy != "" {
-		switch rank, running := poolStrategyRank(p.Strategy), poolStrategyRank(out.Strategy); {
+		switch rank, running := poolStrategyRank(p.Strategy), poolStrategyRank(inForce); {
 		case rank > running:
 			out.Strategy, e.Sources[CraftPoolStrategyKey(name)] = p.Strategy, src
 		case rank < running:
 			e.Ignored = append(e.Ignored, Ignored{CraftPoolStrategyKey(name),
-				p.Strategy, poolStrategyText(out.Strategy), e.craftSource(CraftPoolStrategyKey(name))})
+				p.Strategy, poolStrategyText(inForce), e.craftSource(CraftPoolStrategyKey(name))})
+		}
+	}
+	// The rule is judged on its own key and by the same order of tightness, so
+	// a layer that pins `ordered` moves the pool and one that widens a rule is
+	// dropped and recorded. An empty effective rule is `failover`, which is what
+	// a pool that names none is served by (poolStrategyText, R21).
+	if p.Rule != "" {
+		switch rank, running := poolStrategyRank(p.Rule), poolStrategyRank(inForce); {
+		case rank > running:
+			out.Rule, e.Sources[CraftPoolRuleKey(name)] = p.Rule, src
+		case rank < running:
+			e.Ignored = append(e.Ignored, Ignored{CraftPoolRuleKey(name),
+				p.Rule, poolStrategyText(inForce), e.craftSource(CraftPoolRuleKey(name))})
 		}
 	}
 	// The roster may only narrow: every name on it is a grant of the pool's
@@ -405,10 +452,11 @@ func narrows(have, want []string) bool {
 	return true
 }
 
-// poolStrategyText is a pool's strategy as an Effective.Ignored entry renders
-// it: the strategy in force, which is failover where the layer named none
-// (D1632, config.Pool.StrategyOrDefault) — the reading poolStrategyRank's
-// failover case already starts from.
+// poolStrategyText is a pool's strategy or rule as an Effective.Ignored entry
+// renders it: the value in force, which is failover where the layer named none
+// (D1632, config.Pool.StrategyOrDefault, routing.Rule.RuleOrDefault) — the
+// reading poolStrategyRank's failover case already starts from, for the rule as
+// for the strategy (R5, R21).
 //
 // CraftPool.Strategy keeps the layer's own spelling, but a dropped value is
 // read by documents this package does not own — the run's warning, the PR
@@ -424,17 +472,48 @@ func poolStrategyText(s string) string {
 	return s
 }
 
-// poolStrategyRank is how tight a written strategy is: failover — and the
+// ruleInForce is what serves a pool: its rule where it names one and its
+// strategy otherwise, and failover where it names neither (R5, R21) — the
+// resolve config.Pool.RuleOrDefault and routing.Rule.RuleOrDefault make, read
+// here on the pool the merge keeps. The rule and the strategy are one scale of
+// tightness, so a later layer's value is judged against this and not against
+// the member it was written under: judged against `out.Rule` alone, a
+// repository's `failover` beside a project's `strategy: round-robin` is dropped
+// as a widening although the pool is served round-robin, and its `round-robin`
+// is recorded as a value that lost to an effective failover although the pool
+// is not served failover.
+//
+// A pool that names neither member answers "" — the D1632 default — and that
+// answer is not a hole: poolStrategyRank ranks it with failover, the tightness
+// a pool that names nothing is served at, and poolStrategyText prints it as
+// failover.
+func ruleInForce(p CraftPool) string {
+	if p.Rule != "" {
+		return p.Rule
+	}
+	return p.Strategy
+}
+
+// poolStrategyRank is how tight a written strategy or rule is: `ordered` is
+// the tightest, because it takes the first listed member that is usable and
+// spreads neither spend nor the repository's code past it; failover — and the
 // empty string, which is a pool that names none and takes failover (D1632) —
-// is the tighter, round-robin the looser, and a value that is neither has no
-// rank at all, the answer this package gives a mode it does not know. A
-// strategy is refused where the pool is written (config.ValidatePools), so an
-// unranked one only ever comes from the project layer, whose pool is the one
-// the merge keeps as it stands: what this rank decides is that a later layer's
-// unranked name loses to it, the direction a name this release does not know
-// must fail in.
+// comes next; round-robin is the looser, because it shares the load across
+// every usable member; and a value that is none of the three has no rank at
+// all, the answer this package gives a mode it does not know.
+//
+// It ranks the two members together on purpose: they are one scale of
+// tightness (R5, R21), and a pool whose rule and strategy are compared as one
+// family is what keeps `ordered` — a rule — judgeable by the same merge that
+// judges a strategy. A value is refused where the pool is written
+// (config.ValidatePools), so an unranked one only ever comes from the project
+// layer, whose pool is the one the merge keeps as it stands: what this rank
+// decides is that a later layer's unranked name loses to it, the direction a
+// name this release does not know must fail in.
 func poolStrategyRank(s string) int {
 	switch s {
+	case PoolRuleOrdered:
+		return 3
 	case "", PoolStrategyFailover:
 		return 2
 	case PoolStrategyRoundRobin:

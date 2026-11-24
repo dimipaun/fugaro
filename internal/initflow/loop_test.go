@@ -211,15 +211,19 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 	// owner's `fugaro update` publishes (update_workspace.go / D1292), the
 	// credential route a MEMBER's own update publishes per repository
 	// (update_route.go, WS9/D2973), the
-	// project layer and its one local file (init_layer_stage.go), the
+	// project layer and its one local file (init_layer_stage.go), the L8
+	// migration of the repositories' own values into the project
+	// (update_lift.go, docs/repo-override-rulings M2), the
 	// checkout's own steps inside fugaro update (init_checkout_upgrade.go), the credentials service's image moving onto this release's after the policy migration (init_stages.go's newCredentialsStage), the
 	// owner's own cache-price keys renamed in place (update_model_prices.go, SA4.2),
 	// the login unit that runs the orchestrator daemon (init_orchestrator_stage.go,
 	// O9), the copy of the installation's model keys into the credentials
-	// service's bundle (update_keys.go, KS12) and the compute backend's
-	// provisioning, which the design puts last (compute-backend §8.1 task 6).
-	if len(names) != 22 {
-		t.Fatalf("the design has twenty-two stages, got %v", names)
+	// service's bundle (update_keys.go, KS12), the required-CLI stamp raised
+	// once the installation has converged (update_version_stamp.go, D3260/R1)
+	// and the compute backend's provisioning, which the design puts last
+	// (compute-backend §8.1 task 6).
+	if len(names) != 24 {
+		t.Fatalf("the design has twenty-four stages, got %v", names)
 	}
 	pos := map[string]int{}
 	for i, n := range names {
@@ -234,7 +238,7 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 		}
 	}
 	// The order the dogfooding run found by hand.
-	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Repository, Rules, ModelPrices, Policy, CredentialsService, CredentialsCopy, WorkspaceProject, Workspace, CredentialsRoute, Layer, Checkout, Unit, Compute}
+	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Repository, Rules, ModelPrices, Policy, CredentialsService, CredentialsCopy, VersionStamp, WorkspaceProject, Workspace, CredentialsRoute, Lift, Layer, Checkout, Unit, Compute}
 	if !slices.Equal(names, want) {
 		t.Errorf("order = %v, want %v", names, want)
 	}

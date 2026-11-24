@@ -90,19 +90,34 @@ func TestSpellingForGeminiOnVertex(t *testing.T) {
 		}
 	}
 
-	// The fail-closed direction, for the kinds that translate: a Gemini model
+	// The fail-closed direction, for the kind that translates: a Gemini model
 	// this build does not carry, and a model whose spelling was written as
-	// something near the map's own, are both "no spelling" — and a provider
-	// route is refused a Google model in every case, because no route ID was
-	// measured for one (RouteIDFor).
+	// something near the map's own, are both "no spelling" on Vertex.
 	for _, model := range geminiNotCarried {
 		if got, ok := SpellingFor("vertex", model); ok {
 			t.Errorf("SpellingFor(%q, %q) = (%q, true), want no answer: a source this map does not spell a model for may not be sent it", "vertex", model, got)
 		}
 	}
-	for _, model := range append(geminiNotCarried, "google/gemini-3-pro") {
+	// A provider route answers differently, and that is the map's provider
+	// branch: a Google model is not Claude's, so there is no canonical ID and
+	// route ID to translate between — the route's own ID for it is its name, and
+	// the answer is the ID it was written with, whether this catalog carries it
+	// or not. Which models a route serves is the provider entry's own claim
+	// (config.ModelProvider.Matches, RT3's reach rule). This table stays the only
+	// authority for how a Google model is written on Vertex, which is the
+	// question this file is about.
+	for _, model := range []string{"google/gemini-3-pro", "google/gemini-2.5-pro", "google/gemini-4", "google/gemini-3-pro-preview"} {
+		got, ok := SpellingFor("provider", model)
+		if !ok || got != model {
+			t.Errorf("SpellingFor(%q, %q) = (%q, %v), want (%q, true): a Google model under a provider route is spelled as the ID it was written with", "provider", model, got, ok, model)
+		}
+	}
+	// A name that is not a provider model ID at all is still no spelling there,
+	// this table's own models included: an alias is not a model any source may
+	// be sent, and neither is no model at all.
+	for _, model := range []string{"gemini-3-pro", "GOOGLE/GEMINI-3-PRO", ""} {
 		if got, ok := SpellingFor("provider", model); ok {
-			t.Errorf("SpellingFor(%q, %q) = (%q, true), want no answer: no provider route's ID has been measured for a Google model, and Vertex's own spelling is not one", "provider", model, got)
+			t.Errorf("SpellingFor(%q, %q) = (%q, true), want no answer: a name that is not a model ID is not a model a source may be sent", "provider", model, got)
 		}
 	}
 }

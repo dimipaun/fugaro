@@ -106,6 +106,12 @@ type State struct {
 	// test that does not care which commit a branch is at writes no entry
 	// and every read still happens at a commit.
 	Commits map[string]string `json:"commits,omitempty"`
+	// DefaultBranch is the branch the repository names as its default
+	// (gitprov.Provider.Repository), which is the name a reader carries
+	// beside the files it read. "" leaves it unnamed, as a host that names
+	// no default branch does; the files in Files are still read at the
+	// default branch either way.
+	DefaultBranch string `json:"default_branch,omitempty"`
 	// Trees is the tree a commit holds, for a test that needs one ref's
 	// read to answer a different tree than another's: the branch's tree in
 	// Branches and the resolved commit's in Trees. A commit not here sees
@@ -427,7 +433,7 @@ func (p *Provider) Repository(context.Context) (gitprov.RepoInfo, error) {
 		p.FailRepository--
 		return gitprov.RepoInfo{}, errors.New("fake provider: injected Repository failure")
 	}
-	return gitprov.RepoInfo{Private: !p.State.Public}, nil
+	return gitprov.RepoInfo{Private: !p.State.Public, DefaultBranch: p.State.DefaultBranch}, nil
 }
 
 // Contents implements gitprov.ContentsReader: the file at path, at ref, out

@@ -6000,11 +6000,15 @@ byte and the key order are kept.
 A role name is the shorthand for agent.models.<role> — coder, reviewer,
 background, vision and diagnose — and a key may be named in full
 (agent.model, agent.recipe, agent.levels.l2.model, agent.levels.l2.effort).
---layer repo, the default, writes the repository's own fugaro.yaml in the
-checkout's working tree for the owner to review and commit; --layer project
-writes this machine's project layer file, where the key is the
-layer.defaults.agent.<same> one and applies to every repository of the
-project. layer.claude_models, the Claude models a project's routes may
+--layer project, the default for a model key, writes this machine's project
+layer file, where the key is the layer.defaults.agent.<same> one and
+applies to every repository of the project — a model is the project's
+choice (D3237), so agent.model, agent.models.* and agent.levels.<l>.model
+are stated there and nowhere else, and a write of one into a repository
+(its name, or --layer repo) is refused. --layer repo writes the
+repository's own fugaro.yaml in the checkout's working tree for the owner
+to review and commit, which is where agent.recipe and a level's effort
+still live. layer.claude_models, the Claude models a project's routes may
 serve, is written as provider=anthropic/<id> at --layer project alone.
 
 A switch is judged the way a launch judges it: a route of the project config
@@ -6026,7 +6030,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for use |
-| `--layer` | string | "" | no | where the write lands: repo (a repository's own fugaro.yaml, the default), project (this machine's project layer file) or local |
+| `--layer` | string | "" | no | where the write lands: project (this machine's project layer file, the default for a model key) or repo (a repository's own fugaro.yaml, for agent.recipe and a level's effort); local is no layer these keys have |
 
 Subcommands:
 
@@ -6604,7 +6608,11 @@ its next request on.
 The order is the command (M4): the device node under config/admin/devices
 goes first, because the node's existence is what the rules read and its
 deletion revokes at once, without waiting for an ID token to expire; then
-the account's push node under config/admin/push, the sibling that holds
+the device's refresh family under config/admin/refresh, because the node
+ends the phone's database reads while the family is the session it holds,
+so a stolen phone loses that session at its next refresh and cannot refresh
+again (D2794); then the account's push node under config/admin/push, the
+sibling that holds
 the one registration this installation made for it, so the phone's token
 goes with the pairing rather than outliving it (push design §3.4); then,
 where the installation has a resident orchestrator, the installation's own
@@ -6617,6 +6625,13 @@ key. Every deletion this command can make is here, in that order.
 Deleting the cloud copy un-reads nothing: whoever held the key keeps it, a
 project Owner or Editor among them, and what the step ends is the
 installation's own service's ability to verify a message and to forge one.
+
+The member record is not deleted here. Revoking a DEVICE must not hand the
+address back to whoever signs in with it next (F34), so the record stays and
+the next pairing must match its provider and sub; removing a MEMBER is
+`fugaro user revoke`'s act, which deletes the record, every device node of
+the address and every refresh family through the same removal this command
+uses per device (O14).
 
 The pairing session's own node is not one of them. Its key is the p~ uid
 the session drew, and nothing on this laptop records that uid, so a revoke
@@ -9425,9 +9440,15 @@ nothing at your own terminal, and a coding agent's session is refused it, with
 the command to run yourself (D1552). This whole family is refused in a session,
 and no flag lifts it. Nothing here reads or prints a value.
 
-This is a local file edit. It ends on one line: next: fugaro update — the
-published policy's entry is derived from this list, so the change reaches the
-project's runs in that run and not before it.
+A workflow secret's list is written twice in one run: to the local block, and to
+the project record at creds/projectsecrets, which is the list the credentials
+service admits a fetch by (D3328). The record is the project's database, so this
+needs the Firebase backend the project's runs use; the project block's names
+have no record entry and are a local edit alone.
+
+This ends on one line: next: fugaro update — the published policy's entry is
+derived from this list, so the change reaches the project's runs in that run and
+not before it.
 
 Usage: `fugaro secrets allow NAME PATTERN...`
 
@@ -9435,6 +9456,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--all-repos` | bool | `false` | no | admit every repository enrolled in the project, whatever its owner, in the name's project record entry (--all-repos=false takes it away); it names no local pattern and is not written to the local block |
 | `-h`, `--help` | bool | `false` | no | help for allow |
 | `--proxy` | bool | `false` | no | set project_secrets.NAME.proxy, the Bitbucket token's switch for the credentials service (--proxy=false turns it off) |
 
@@ -9456,16 +9478,16 @@ an error and not a write — the command says there is no change, because the
 state it was asked for is the state the file is in.
 
 A removal that leaves the list empty is allowed and is not a removal of the
-entry: the value is then stored for no repository, and the entry stays for the
-day a pattern is added back.
+entry: the value is then stored for no repository, and both the local entry and
+the project record's entry stay for the day a pattern is added back.
 
 This whole family is refused in a coding agent's session (spec §5): what a
 secret reaches is a decision no plan shows. Nothing here reads or
 prints a value.
 
-This is a local file edit. It ends on one line: next: fugaro update — the
-published policy's entry is derived from this list, so the change reaches the
-project's runs in that run and not before it.
+This ends on one line: next: fugaro update — the published policy's entry is
+derived from this list, so the change reaches the project's runs in that run and
+not before it.
 
 Usage: `fugaro secrets deny NAME PATTERN...`
 
@@ -10165,6 +10187,13 @@ so the smaller value wins — lands in the project layer when the key may be set
 there and in the local project config when it may not, and every other key
 lands in the narrowest layer it may be set in. --layer repo without --repo uses
 the current directory's checkout and refuses when the directory is not one.
+
+A key the project owns is refused here whatever --layer names: the model
+choice (agent.model, agent.models.*, agent.levels.<l>.model), ab.rate, the
+rigor default and areas and a grade's model moved out of a repository's file
+(D3237), and each is refused with the command that states it in its new home —
+`fugaro models use --layer project` for a model, `fugaro rigor set --repo` for the
+rigor level. `fugaro settings unset` still removes one from a repository's file.
 
 A string-list key takes --add V or --remove V instead of a value. A map or an
 object list takes --add-entry and --remove-entry instead: --add-entry carries

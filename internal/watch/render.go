@@ -779,6 +779,11 @@ func (r *rend) repo(tier int, b RepoBlock, sel Cursor, expanded map[Cursor]bool,
 // b.Runs alone — so the whole id is not on this screen for a finished run at
 // all: it is `--json`'s, and `runs ls` prints `<slug>/<full id>` (design
 // generic-tool §10.3).
+//
+// A run that suspended itself is one of these rows — its own record's status
+// word is PAUSED — and its pause's two facts follow it: the instant its resume
+// is due at and the run that resumed it, each said only when the reader has it
+// (MergePaused).
 func (r *rend) finishedRow(run RunRow, selected bool, ending string) string {
 	cur := " "
 	if selected {
@@ -803,6 +808,20 @@ func (r *rend) finishedRow(run RunRow, selected bool, ending string) string {
 	segs := []seg{{cur + " " + ending + " ", ""}, {dash(run.Title) + " ", cBold}, {word, c}}
 	if run.PRURL != "" {
 		segs = append(segs, seg{" " + run.PRURL, ""})
+	}
+	// A paused run's own two facts, in the same words the waiting line uses
+	// for the instant a held-up run expects to come back (detail): the run's
+	// record says it suspended itself, and these say when it comes back and
+	// what brought it back. Either may be missing — the instant is the
+	// credentials service's node and the resumer is another run's task — and a
+	// missing one is simply not said.
+	if run.Paused {
+		if run.ResumeAt > 0 {
+			segs = append(segs, seg{r.g.sep + "expected resume " + stampText(run.ResumeAt), cWarn})
+		}
+		if run.ResumedBy != "" {
+			segs = append(segs, seg{r.g.sep + "resumed by " + task.ShortRun(run.ResumedBy), cFaint})
+		}
 	}
 	segs = append(segs, seg{r.g.sep + ageText(run) + " ago", cFaint})
 	return r.line(segs...)

@@ -121,6 +121,14 @@
     "at": "bootstrap",
     "revision": "origin/main"
   },
+  "plan": {
+    "steps": [
+      {
+        "kind": "review",
+        "rounds": 2
+      }
+    ]
+  },
   "review_scope": {
     "applicable": true,
     "implement_files": [

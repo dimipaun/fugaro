@@ -149,7 +149,7 @@ const BitbucketProxyPrefix = "/v1/bitbucket/proxy/"
 
 // WorkflowSecretsPath is the path a run's own job asks this service for one of
 // its workflow's secrets on (B3.2, G19): a workflow secret the job does not
-// mount is fetched from here at bootstrap, one variable per call, and the value
+// mount is fetched from here at bootstrap, one secret per call, and the value
 // is the answer's own field.
 //
 // The path, the request and the answer are here rather than beside the route
@@ -158,24 +158,49 @@ const BitbucketProxyPrefix = "/v1/bitbucket/proxy/"
 // it spells the model path's — and a contract two packages spell is written
 // down once, in this file, for the reason this file's own header gives. Which
 // workflow a call may be served is decided from the VERIFIED job account and
-// never from anything the call carries (G19): the request names one variable of
-// the caller's own workflow and nothing else, so there is no field in which a
-// caller could name another workflow, another repository or another job's
-// secret.
+// never from anything the call carries (G19): the request names one variable
+// (version 1) or one logical secret (version 2) of the caller's own repository
+// and nothing else, so there is no field in which a caller could name another
+// workflow, another repository or another job's secret.
 const WorkflowSecretsPath = "/v1/workflow-secrets"
 
 // maxWorkflowSecretsRequestBytes bounds a workflow-secrets call's body. The
-// whole request is one small field ({"env":"NAME"}), so the bound is the mint's
-// and small on purpose: a body larger than this is not one of these calls, and
-// it is refused before it is decoded.
+// whole request is one or two small fields ({"env":"NAME"}, or
+// {"name":"secret","version":2}), so the bound is the mint's and small on
+// purpose: a body larger than this is not one of these calls, and it is refused
+// before it is decoded.
 const maxWorkflowSecretsRequestBytes = 4 << 10
 
-// WorkflowSecretsRequest is what such a call carries: the environment variable
-// the job's own mount would have named, and the name the record
-// (creds/workflowsecrets/<slug>, B3.1) is read by. It is the CALLER's text and
-// is therefore trusted for nothing — the record decides whether the calling
-// job's workflow has a secret under it, and a name the record does not hold is
-// refused with a typed refusal rather than being looked up anywhere else.
+// The two versions of this contract, as the request's version field spells
+// them. Version 1 is the ABSENCE of the field rather than the value 1: every
+// caller of it was written before the field existed and writes none, so a
+// version-1 call is byte for byte the body it has always been and a body that
+// spells 1 is one no side of this contract produces (Validate refuses it).
+//
+// Version 2 is D3324/D3328/D3333: the call names the LOGICAL secret
+// (config.Secret.Name) instead of the variable, the unit of access becomes the
+// repository rather than the workflow, the value is served from the project's
+// own `fugaro_p_<name>` container, and the name's allow-list decides which
+// repositories may fetch it. The `env` field keeps its meaning throughout and
+// version 2 does not read it (CLAUDE.md, "a field never changes meaning"): the
+// field still says which variable a value is exposed as, and a version-2 call
+// names no variable at all.
+const (
+	// WorkflowSecretsVersion1 is the version a request that declares none is.
+	WorkflowSecretsVersion1 = 1
+	// WorkflowSecretsVersion2 is the version that carries a name.
+	WorkflowSecretsVersion2 = 2
+)
+
+// WorkflowSecretsRequest is what such a call carries, in one of its two shapes:
+// the environment variable the job's own mount would have named (version 1, the
+// record creds/workflowsecrets/<slug> deciding which container that variable is
+// read from), or the logical secret's name (version 2, served from the project
+// record's `fugaro_p_<name>` container). Both are the CALLER's text and are
+// therefore trusted for nothing — the record decides whether the calling job's
+// repository or workflow holds a secret under what it named, and a name the
+// record does not hold is refused with a typed refusal rather than being looked
+// up anywhere else.
 //
 // There is no field for the repository, the workflow or the run: the first two
 // are the verified job account's (JobAccount.Slug, JobAccount.Workflow) and the
@@ -183,26 +208,94 @@ const maxWorkflowSecretsRequestBytes = 4 << 10
 // any of them would be a contract whose service decided from what the call
 // said about itself.
 type WorkflowSecretsRequest struct {
-	// Env is the variable's name, held to config.EnvNameRE — the shape the
-	// workflow-secret check itself uses (D1372), so a name no job could have
-	// mounted under is refused as a request this route does not read rather
-	// than searched for.
-	Env string `json:"env"`
+	// Env is the variable's name (version 1), held to config.EnvNameRE — the
+	// shape the workflow-secret check itself uses (D1372), so a name no job
+	// could have mounted under is refused as a request this route does not read
+	// rather than searched for.
+	Env string `json:"env,omitempty"`
+	// Name is the logical secret's name (version 2), held to
+	// config.SecretNameRE — the shape a repository's `secrets:` entry is held
+	// to, because a version-2 call names the same entry a workflow declares.
+	Name string `json:"name,omitempty"`
+	// Version declares which of the two shapes this call is. It is absent on
+	// every version-1 call, and 2 on every version-2 one.
+	Version int `json:"version,omitempty"`
 }
 
-// WorkflowSecretsResponse is the answer: the variable that was asked for, and
-// the value the record's container holds for it. It is ONE value and not the
-// workflow's whole set, which is what keeps every line this act writes naming
-// exactly one container (audit.go) and keeps what a caller is served to what it
-// named — a job is served the variable it asked for and no other.
+// VersionOf is the version this call is: what it declares, and
+// WorkflowSecretsVersion1 when it declares nothing.
+//
+// A version this contract does not carry is REPORTED and not clamped, so the
+// reader that meets it refuses it as the body it is: a service or a runner that
+// answered a version 3 as if it were version 2 would be reading a shape this
+// release cannot know.
+func (r WorkflowSecretsRequest) VersionOf() int {
+	if r.Version == 0 {
+		return WorkflowSecretsVersion1
+	}
+	return r.Version
+}
+
+// Validate holds a call to the shape of the version it declares, and it is the
+// rule both sides of this contract read by: the service, before it reads any
+// record, and the runner, so that a body it built is a body this contract
+// carries before it reaches the wire.
+//
+// One shape per version, because the two name the same secret in two different
+// vocabularies and a body that carried both would have to be read as one of
+// them: version 1 is {env} and names no secret, version 2 is {name, version: 2}
+// and names no variable. A field of the other version, a name either shape
+// could not carry, and a version this contract does not know are each refused —
+// by a sentence written here, naming the field that was wrong and never its
+// content (the package's no-echo rule: the body is the caller's text).
+func (r WorkflowSecretsRequest) Validate() error {
+	switch r.VersionOf() {
+	case WorkflowSecretsVersion1:
+		if r.Version == WorkflowSecretsVersion1 {
+			// Version 1 is the ABSENCE of the field, which is what every caller
+			// of it writes: the strict reader refuses the spelled-out form
+			// rather than reading two spellings of one shape, so there is one
+			// body per version and a test of either side pins bytes.
+			return errors.New("credsvc: a version 1 workflow-secrets call carries no version field")
+		}
+		if r.Name != "" {
+			return errors.New("credsvc: a version 1 workflow-secrets call names no secret; it asks by environment variable")
+		}
+		if !config.EnvNameRE.MatchString(r.Env) {
+			return errors.New("credsvc: a version 1 workflow-secrets call names no environment variable")
+		}
+		return nil
+	case WorkflowSecretsVersion2:
+		if r.Env != "" {
+			return errors.New("credsvc: a version 2 workflow-secrets call names the secret and no environment variable")
+		}
+		if !config.SecretNameRE.MatchString(r.Name) {
+			return errors.New("credsvc: a version 2 workflow-secrets call names no workflow secret")
+		}
+		return nil
+	}
+	return fmt.Errorf("credsvc: the call declares workflow-secrets version %d, which this contract does not carry", r.Version)
+}
+
+// WorkflowSecretsResponse is the answer: what was asked for — the variable
+// (version 1) or the logical name (version 2) — and the value the record's
+// container holds for it. It is ONE value and not the workflow's whole set,
+// which is what keeps every line this act writes naming exactly one container
+// (audit.go) and keeps what a caller is served to what it named — a job is
+// served the secret it asked for and no other.
 //
 // The value is a credential and this answer is the only place it appears: it is
 // written no-store (writeReadAnswer), no header of the answer carries it, and
 // neither the audit line nor any refusal of this route can hold it (G18).
 type WorkflowSecretsResponse struct {
 	// Env is the variable the value is for, echoed so an answer can never be
-	// read as another variable's.
-	Env string `json:"env"`
+	// read as another variable's. A version-2 answer carries none.
+	Env string `json:"env,omitempty"`
+	// Name is the logical secret the value is for, echoed for the same reason
+	// Env is: a caller that asked by name must be able to tell this answer from
+	// another name's, and the runner reads it against the name it sent. A
+	// version-1 answer carries none.
+	Name string `json:"name,omitempty"`
 	// Value is the credential's value.
 	Value string `json:"value"`
 }
@@ -516,6 +609,33 @@ const (
 	// every refusal but ErrorExhaustedUntil it halts the run (D143), and no
 	// credential value is in it, because none was used.
 	ErrorNoCandidateCredentials = "no_candidate_credentials"
+	// ErrorWorkflowSecretNotAllowed is a version-2 workflow-secrets call whose
+	// name is not one the caller's own repository may fetch (D3328): the
+	// project record holds the name, and its allow-list does not admit the
+	// repository the verified job account names. The status is the unverified
+	// one — the verified caller is not the caller this secret is served to, and
+	// asking again cannot change that — and the code is what the runner reads to
+	// print the fix (`fugaro secrets allow NAME owner/repo`).
+	//
+	// It is deliberately not ErrorUnverifiedRunIdentity, whose sentence sends an
+	// operator looking at an identity: here the identity is exactly what it
+	// claims and the secret's own list is what refuses.
+	ErrorWorkflowSecretNotAllowed = "workflow_secret_not_allowed"
+	// ErrorWorkflowSecretUnmarked is a version-2 call whose name IS allowed and
+	// whose container is not one this service serves a workflow secret from
+	// (F18, G2): a `fugaro_p_<name>` container that carries no workflow-secret
+	// marker, or one whose shape is not the intake's. The status is the
+	// unavailable one, because it is the installation's state and not the
+	// caller's call that is wrong, and the code is what tells it from the
+	// ordinary refusals beside it — an operator reads it and runs the fix.
+	ErrorWorkflowSecretUnmarked = "workflow_secret_unmarked"
+	// ErrorWorkflowSecretsOff is version 2 refused because the repository's own
+	// copies are still in force (G9, F24): `config.RepoSecretsOff` is false, so a
+	// project copy would shadow a repository's own value, and the door that keeps
+	// that from happening is not open yet in this release. The status is the
+	// unavailable one, and the code is what makes a run at a newer release stop
+	// with a sentence about the flip rather than about a missing secret.
+	ErrorWorkflowSecretsOff = "workflow_secrets_off"
 )
 
 // The statuses. An unverified caller is 403; everything the service cannot

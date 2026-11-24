@@ -122,12 +122,12 @@ while [ $# -gt 0 ]; do
   *) shift ;;
   esac
 done
-if [ ${#confs[@]} -gt 0 ] && cat "${confs[@]}" | grep -qF -- "$FAKE890_TOKEN"; then
+if [ ${#confs[@]} -gt 0 ] && grep -qF -- "$FAKE890_TOKEN" "${confs[@]}"; then
   printf 'config carried the token\n' >>"$FAKE890_LOG/curl.auth"
 fi
 case "$url" in
 https://firestore.googleapis.com/*)
-  if [ ${#confs[@]} -gt 0 ] && cat "${confs[@]}" | grep -qF -- "X-Goog-User-Project: chk890-fp"; then
+  if [ ${#confs[@]} -gt 0 ] && grep -qF -- "X-Goog-User-Project: chk890-fp" "${confs[@]}"; then
     printf '%s\n' "$url" >>"$FAKE890_LOG/curl.userproject"
   fi
   ;;
