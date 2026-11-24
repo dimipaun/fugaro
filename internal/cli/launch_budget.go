@@ -1154,34 +1154,9 @@ func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.
 	if err != nil {
 		return nil, err
 	}
-	// The identity window is the target job's own timeout (a long job
-	// elsewhere must not lengthen it). On a shared project job the launch
-	// resolved it already (project_job.go, from the profile's timeout_class —
-	// the same number the job was deployed with, so there is nothing to read
-	// back from the API). Elsewhere it is the job a named run actually starts,
-	// gcp.WorkflowVariant(spec.Workflow, spec.OAuthToken), not the bare
-	// workflow — the two can have different timeouts (review finding: this
-	// used to read the default account's job's timeout for every named run).
-	var jobTimeout time.Duration
-	switch {
-	case job != nil:
-		jobTimeout = job.Timeout
-	default:
-		if variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken); ok {
-			jobTimeout, err = e.be.TaskTimeout(ctx, slug, variant)
-		} else {
-			err = backend.ErrNotFound // not a workflow name: no job can match it either
-		}
-		if errors.Is(err, backend.ErrNotFound) {
-			// No such job: the launch itself reports that, after the mint.
-			jobTimeout, err = backend.DefaultTaskTimeout, nil
-		}
-		if err != nil {
-			return nil, remote(err)
-		}
-	}
-	if o := launchTimeoutOf(spec); o > 0 {
-		jobTimeout = max(jobTimeout, o+backend.TaskTimeoutSlack)
+	jobTimeout, err := e.launchIdentityWindow(ctx, slug, spec, job)
+	if err != nil {
+		return nil, err
 	}
 	// The key is drawn before the mint, so a draw that fails costs no
 	// signature and leaves nothing to clean up. Its error names no value
@@ -1236,6 +1211,50 @@ func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.
 		return nil, remote(err)
 	}
 	return k, nil
+}
+
+// launchIdentityWindow is how long this run's identity may live, measured from
+// the moment it is taken: the target job's own timeout, floor'd by the
+// launch's own timeout.
+//
+// It is the ticket's MaxRuntimeSeconds and the sealed token's FX, in one
+// function rather than two spellings, because the two mechanisms are one
+// identity (R7): a launch that asked the service for one window and sealed the
+// other would hand a bridged run an identity of a different length than the
+// release beside it gives the same launch.
+//
+// The window is the target job's own timeout (a long job elsewhere must not
+// lengthen it). On a shared project job the launch resolved it already
+// (project_job.go, from the profile's timeout_class — the same number the job
+// was deployed with, so there is nothing to read back from the API). Elsewhere
+// it is the job a named run actually starts,
+// gcp.WorkflowVariant(spec.Workflow, spec.OAuthToken), not the bare workflow —
+// the two can have different timeouts (review finding: this used to read the
+// default account's job's timeout for every named run).
+func (e *cloudEnv) launchIdentityWindow(ctx context.Context, slug string, spec *task.Spec, job *launchProjectJob) (time.Duration, error) {
+	var jobTimeout time.Duration
+	var err error
+	switch {
+	case job != nil:
+		jobTimeout = job.Timeout
+	default:
+		if variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken); ok {
+			jobTimeout, err = e.be.TaskTimeout(ctx, slug, variant)
+		} else {
+			err = backend.ErrNotFound // not a workflow name: no job can match it either
+		}
+		if errors.Is(err, backend.ErrNotFound) {
+			// No such job: the launch itself reports that, after the mint.
+			jobTimeout, err = backend.DefaultTaskTimeout, nil
+		}
+		if err != nil {
+			return 0, remote(err)
+		}
+	}
+	if o := launchTimeoutOf(spec); o > 0 {
+		jobTimeout = max(jobTimeout, o+backend.TaskTimeoutSlack)
+	}
+	return jobTimeout, nil
 }
 
 // sealMarker is the marker entry of a launch that minted: the variable's name

@@ -26,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/identitywire"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -86,6 +87,25 @@ type cloudEnv struct {
 	// and the review spec), and the operator needs the line once, not once per
 	// call.
 	stageAccountNote bool
+	// issuerAttempt is the orchestrator attempt this launch re-issues, which is
+	// what an ask of the installation's credentials service names (D3136). It
+	// is set by the one launcher that re-issues an attempt — the resident
+	// service's (orchestrator_launcher.go) — and empty on every other path,
+	// where the contract wants no reference at all.
+	issuerAttempt identitywire.AttemptID
+	// identity mints the ID token this launch presents to the installation's
+	// credentials service (launch_identity.go), where it is not the launcher's
+	// own: a resident service presents the token of the account it runs as,
+	// read from the metadata server. nil on every other path, which presents
+	// the launcher's own (launchIdentity).
+	identity func(ctx context.Context, serviceURL string) (string, error)
+	// launchServiceURL is the credentials service this launch asks for its
+	// ticket where it is not the one the local config publishes: a resident
+	// service's own config is the installation's and carries no
+	// credentials_service block, so the URL is read from the shared config the
+	// installation publishes (orchestrator_serve.go). Empty on every other
+	// path, which reads the block (configuredCredentialsServiceURL).
+	launchServiceURL string
 }
 
 // openRecordBucket opens the bucket build records are read from. Tests

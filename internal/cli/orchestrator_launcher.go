@@ -6,6 +6,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/identitywire"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -90,6 +91,121 @@ type residentLauncher struct {
 	open func(ctx context.Context) (*cloudEnv, error)
 }
 
+// residentPass is the resident launcher of ONE pass: the launcher the service
+// was built with, plus the record the pass planned from, which is what its ask
+// for a run's identity has to name an attempt out of (D3136).
+//
+// WHY THE ATTEMPT IS RESOLVED HERE AND NOT IN THE LAUNCHER. The launcher is
+// built once, when the service starts, and a pass reads the node afresh every
+// tick; the attempt of a re-issue is a fact of the RECORD (orchestrator.State)
+// the plan was derived from, and Starter.Launcher is handed only a spec and a
+// run id (orchestrator.Launcher). So the pass carries its record beside the
+// launcher for the one call the carrying makes, and the resolution is the
+// pass's own rather than a second read of the node: what is read here is the
+// same value the plan's ActionReissue was derived from, in the same tick.
+//
+// The attempt travels to the launcher's own ask ON THE CONTEXT
+// (withIssuerAttempt), which is how every other per-launch fact of this command
+// crosses that interface — the repository's document and the forge read cache
+// are both installed the same way (withLaunchDocument, withServiceReadCache) —
+// and it is per request rather than per pass because one pass re-issues one
+// attempt per item it reads.
+type residentPass struct {
+	// launch is the service's own launcher, which is the resident one in
+	// production (orchestratorServiceConfig) and a test's stand-in where a test
+	// drives the carrying itself.
+	launch orchestrator.Launcher
+	state  orchestrator.State
+}
+
+var _ orchestrator.Launcher = residentPass{}
+
+// Launch is orchestrator.Launcher over the pass's own record: the attempt is
+// read out of it, installed for the ask, and the launch is the launcher's own.
+func (p residentPass) Launch(ctx context.Context, spec orchestrator.Spec, runID string) (string, error) {
+	attempt, err := residentAttempt(p.state, spec.ItemID, runID)
+	if err != nil {
+		return "", err
+	}
+	return p.launch.Launch(withIssuerAttempt(ctx, attempt), spec, runID)
+}
+
+// residentAttempt is the attempt a resident pass is re-issuing, read off the
+// record the pass planned from: the open intent of the item the item id names,
+// held to the run id the plan is starting it under.
+//
+// It is the record half of what the issuer will hold the ask to
+// (orchestrator.ReissuableAttempt, which LM24 asks of the same node), and it is
+// deliberately the same two facts: the open intent — the one attempt of the item
+// that has not reported, which is the one a plan re-issues (openIntentOf) — and
+// the run id that intent recorded. A record that carries no open intent, or one
+// under another run id, is refused here rather than asked about, so a launch
+// cannot name an attempt the node does not hold: a request the pass derived from
+// a record this cannot be read back out of is a bug in the pass, and the issuer
+// would refuse it in the same words one round trip later.
+//
+// WHY NOT "" AND LET THE ISSUER DECIDE. Because "" is a shape the contract does
+// NOT admit for this class (an orchestrator's ask that names no attempt is
+// refused, D3136): a launch that asked without one would spend its retries and
+// fail with a sentence about the ask rather than about this record.
+func residentAttempt(s orchestrator.State, itemID, runID string) (identitywire.AttemptID, error) {
+	for _, it := range s.Intents {
+		if orchestrator.IntentItem(it.ID) != itemID || it.Outcome != "" {
+			continue
+		}
+		if it.RunID != runID {
+			return "", userErr("the record of the item %s carries the attempt %s under the run %s, and this launch is starting %s: a resident pass starts the attempt its own node recorded and no other, so nothing was started. A run whose task the bucket holds and whose node records another run id is one the daemon has moved on from — patch the item's attempt so that it names this run, or launch it from a machine of your own (fugaro run --retry %s)", oneLine(itemID), oneLine(it.ID), task.ShortRun(oneLine(it.RunID)), task.ShortRun(oneLine(runID)), runID)
+		}
+		attempt := identitywire.AttemptID(it.ID)
+		if !attempt.Valid() {
+			return "", userErr("the record of the item %s carries the attempt %q, which is not a reference the installation's credentials service reads (an item id, a colon and the attempt's number): this launch's ask names it, so nothing was started — patch the item's attempt to a well-formed one", oneLine(itemID), oneLine(it.ID))
+		}
+		return attempt, nil
+	}
+	return "", userErr("the record of the item %s carries no open attempt, and a resident pass starts an attempt its own node recorded: nothing was started. The node has moved on from this run id (%s), so wait for the next patch of the item, or launch it from a machine of your own (fugaro run --retry %s)", oneLine(itemID), task.ShortRun(oneLine(runID)), runID)
+}
+
+// residentServiceURL is the credentials service this installation published,
+// which is the URL this launch asks for its run's identity at. It is read from
+// the SHARED CONFIG — the published record of the installation, in the runs
+// bucket the launch already holds open — because the container is told six
+// names and the service's URL is not one of them (orchestrator_serve.go's
+// header counts them; orchestrator.tf sets them), while a person's launch reads
+// the same fact out of the block their own config carries
+// (configuredCredentialsServiceURL).
+//
+// A READ THAT GIVES NOTHING IS R7'S FIRST ANSWER AND NOT A FAULT, and that is
+// what the three silent branches below are: no object published, a document
+// this release cannot validate (ParseShared's anchor — another installation's
+// name, project or bucket, or a shape it refuses), or a bucket that did not
+// answer. All three leave the launch with no service it can reach, which is the
+// installation the bridge is FOR: the launch signs the run's identity locally as
+// it did before the service existed, and an installation that really has one
+// answers that mint with IAM's own refusal, which the launch rewraps into the
+// fix (launchMinterRefusal, LM14's row being gone). The alternative — refusing
+// the re-issue — would take a resident pass down for a bucket hiccup on
+// installations that carry no service at all, which is every installation this
+// release can still serve.
+//
+// A document that IS refused is read as that same absence rather than as an
+// error to act on, and the reader a person has for it is the CLI's own: a
+// `fugaro` command refuses a shared config it cannot validate, by name, at the
+// moment it reads one. What must not happen is the opposite direction — a URL
+// taken out of a document that names another installation — and ParseShared's
+// anchor is what prevents it: the bucket, the project and the name are the
+// three fields it holds to the reading machine's own, so a document from
+// elsewhere arrives here as `refused` and contributes no URL.
+func residentServiceURL(ctx context.Context, env *cloudEnv) string {
+	lc := env.lc
+	shared, _, err := readShared(ctx, env.bucket, SharedAnchor{
+		Name: lc.Name, GCPProject: lc.GCPProject, Bucket: lc.RunsBucketName(), ImageSource: lc.ImageSource,
+	})
+	if err != nil || shared == nil {
+		return ""
+	}
+	return configuredCredentialsServiceURL(shared)
+}
+
 // Launch starts the run the node recorded, over the command's own launch.
 //
 // The request it reads is the run's stored record and not the spec it is
@@ -127,6 +243,23 @@ func (l *residentLauncher) Launch(ctx context.Context, spec orchestrator.Spec, r
 	// instance dies — which is what every production caller that opens one
 	// does with it (run.go's own launch, watch.go's loop, imagecheck.go).
 	defer env.Close()
+	// THE THREE FACTS OF THE ASK THIS CONTAINER HAS TO BE TOLD (LM6 of
+	// docs/launcher-does-not-mint), and they are three because a container is
+	// not a person: who the launch is (its own account's token, not a person's
+	// gcloud), WHERE the issuer is (the URL the installation published, which
+	// its own config does not carry — the six names it is told are not one), and
+	// WHICH attempt it re-issues (D3136, set by residentPass on the copy it
+	// calls this on).
+	//
+	// They are set before anything of the launch is read or written below, and
+	// before launchRun — which is where the ask is made and where the launch's
+	// own claim, declaration and record come after it (R5). The registry the
+	// launch has already written nothing to is the point: a service unreachable
+	// or refusing leaves no claim to release and no record to clean, because
+	// nothing of the run exists yet.
+	env.identity = residentIdentity
+	env.launchServiceURL = residentServiceURL(ctx, env)
+	env.issuerAttempt = issuerAttemptOf(ctx)
 	// retrySpec is the command's --retry reader: the run is located in the
 	// runs bucket by the id the node recorded (a bare id, which is the
 	// whole-bucket listing the launcher's own binding exists for, so a
