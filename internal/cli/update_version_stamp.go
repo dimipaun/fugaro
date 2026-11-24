@@ -182,7 +182,20 @@ func (s *versionStampStage) read(ctx context.Context) (*versionStampPlan, error)
 	var raw json.RawMessage
 	etag, found, err := db.GetETag(ctx, versionstamp.Path, &raw)
 	if err != nil {
-		return nil, dbErr(lc, err, false)
+		// The spec's read-failure rule (D3264): the stamp is a fence and not a
+		// boundary, so a database that cannot be read leaves the node exactly
+		// where it is and the run goes on — the answer the door's own check
+		// gives the same failure one step earlier (update_stamp_guard.go), which
+		// is what keeps a blip from stopping the one command that brings the
+		// installation forward. The stamp is owed all the same, so the next
+		// update raises it.
+		//
+		// A stamp that is THERE and unreadable is the one read this stage fails
+		// closed on, and that answer is Decode's, below.
+		return nil, &versionStampSkip{
+			reason: "the required CLI could not be read (" + oneLine(err.Error()) + "): the stamp is left where it is, and the next " + selfCommand() + " update raises it",
+			undone: true,
+		}
 	}
 	p := &versionStampPlan{lc: lc, db: db, ver: ver, etag: etag, found: found}
 	if found {
