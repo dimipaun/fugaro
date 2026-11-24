@@ -37,11 +37,15 @@ func newModelsUseCmd() *cobra.Command {
 			"A role name is the shorthand for agent.models.<role> — coder, reviewer,\n" +
 			"background, vision and diagnose — and a key may be named in full\n" +
 			"(agent.model, agent.recipe, agent.levels.l2.model, agent.levels.l2.effort).\n" +
-			"--layer repo, the default, writes the repository's own fugaro.yaml in the\n" +
-			"checkout's working tree for the owner to review and commit; --layer project\n" +
-			"writes this machine's project layer file, where the key is the\n" +
-			"layer.defaults.agent.<same> one and applies to every repository of the\n" +
-			"project. layer.claude_models, the Claude models a project's routes may\n" +
+			"--layer project, the default for a model key, writes this machine's project\n" +
+			"layer file, where the key is the layer.defaults.agent.<same> one and\n" +
+			"applies to every repository of the project — a model is the project's\n" +
+			"choice (D3237), so agent.model, agent.models.* and agent.levels.<l>.model\n" +
+			"are stated there and nowhere else, and a write of one into a repository\n" +
+			"(its name, or --layer repo) is refused. --layer repo writes the\n" +
+			"repository's own fugaro.yaml in the checkout's working tree for the owner\n" +
+			"to review and commit, which is where agent.recipe and a level's effort\n" +
+			"still live. layer.claude_models, the Claude models a project's routes may\n" +
 			"serve, is written as provider=anthropic/<id> at --layer project alone.\n\n" +
 			"A switch is judged the way a launch judges it: a route of the project config\n" +
 			"must claim the model and its allow_data_to must name the repository (every\n" +
@@ -58,7 +62,7 @@ func newModelsUseCmd() *cobra.Command {
 			return runModelsUse(cmd, args, &o)
 		},
 	}
-	cmd.Flags().StringVar(&o.layer, "layer", "", "where the write lands: repo (a repository's own fugaro.yaml, the default), project (this machine's project layer file) or local")
+	cmd.Flags().StringVar(&o.layer, "layer", "", "where the write lands: project (this machine's project layer file, the default for a model key) or repo (a repository's own fugaro.yaml, for agent.recipe and a level's effort); local is no layer these keys have")
 	return cmd
 }
 
@@ -88,13 +92,24 @@ func runModelsUse(cmd *cobra.Command, args []string, o *modelsUseOptions) error 
 	if !found {
 		return userErr("%s: no setting has that name", base)
 	}
+	// A lifted key has one home (R15): the project layer. So the default is the
+	// project for it — a repository's own file is no longer a layer it is stated
+	// in, and the narrowest layer it may be set in is the project's — and no
+	// write of one lands in a repository, whether the repository is named
+	// positionally or `--layer repo` is spelled: a write release A's runs drop
+	// is the trap R15 refuses and F23 raised.
+	lifted, isLifted := liftedKeyAt(base)
 	layer := o.layer
 	if layer == "" {
-		if layered || strings.HasPrefix(base, "layer.") {
+		switch {
+		case layered || strings.HasPrefix(base, "layer."), isLifted:
 			layer = settingsLayerProject
-		} else {
+		default:
 			layer = settingsDefaultLayer(baseRow)
 		}
+	}
+	if isLifted && (layer == settingsLayerRepo || repo != "") {
+		return userErr("%s", lifted.Why)
 	}
 	// The project layer spells every key it carries with the `layer.` prefix, so
 	// a project-layer write of agent.models.coder resolves through the

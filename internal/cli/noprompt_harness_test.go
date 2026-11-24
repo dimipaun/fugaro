@@ -694,6 +694,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro rigor floor show":       "reads the selected project's own config and prints the floor it carries, which is the whole of what a bare run does",
 	"fugaro runs digest":            "prints the no-project-config refusal",
 	"fugaro runs ls":                "prints the no-project-config refusal",
+	"fugaro runs reindex":           "prints the no-project-config refusal",
 	"fugaro runs reports":           "refuses from inside its body: it writes the project's stored reports only as the project's reports job, and a bare run says so and names fugaro runs digest",
 	"fugaro runs stats":             "prints the no-project-config refusal",
 	"fugaro runs summary":           "prints the no-project-config refusal",

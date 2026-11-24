@@ -1,0 +1,54 @@
+{
+  "model": "google/gemini-3-flash",
+  "max_tokens": 512,
+  "system": [
+    {"type": "text", "text": "line one"},
+    {"type": "text", "text": "line two", "cache_control": {"type": "ephemeral", "ttl": "1h"}}
+  ],
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "read a file",
+      "input_schema": {
+        "type": "object",
+        "properties": {"path": {"type": "string", "description": "the path"}},
+        "required": ["path"]
+      }
+    },
+    {
+      "name": "run_command",
+      "description": "run a command",
+      "input_schema": {
+        "type": "object",
+        "properties": {"argv": {"type": "array", "items": {"type": "string"}, "enum": ["ls", "pwd"]}},
+        "nullable": true,
+        "format": "json"
+      },
+      "cache_control": {"type": "ephemeral"}
+    }
+  ],
+  "tool_choice": {"type": "auto"},
+  "messages": [
+    {"role": "user", "content": "read a file"},
+    {
+      "role": "assistant",
+      "content": [
+        {"type": "text", "text": "sure"},
+        {"type": "tool_use", "id": "toolu_vrtx_thought_YSBmaXh0dXJlIHRob3VnaHQgc2lnbmF0dXJl", "name": "read_file", "input": {"path": "a.txt"}},
+        {"type": "tool_use", "id": "toolu_vrtx_thought_YSBzZWNvbmQgZml4dHVyZSB0aG91Z2h0IHNpZ25hdHVyZQ", "name": "run_command", "input": {"argv": ["ls"]}}
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {"type": "tool_result", "tool_use_id": "toolu_vrtx_thought_YSBmaXh0dXJlIHRob3VnaHQgc2lnbmF0dXJl", "content": "the file's text"},
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_vrtx_thought_YSBzZWNvbmQgZml4dHVyZSB0aG91Z2h0IHNpZ25hdHVyZQ",
+          "content": [{"type": "text", "text": "stdout: ok"}, {"type": "text", "text": "stderr: none"}],
+          "is_error": true
+        }
+      ]
+    }
+  ]
+}

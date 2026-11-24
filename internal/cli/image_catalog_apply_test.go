@@ -108,6 +108,12 @@ func imageAddChainWorld(t *testing.T) (*initRig, *gcpfake.Build) {
 	// the config itself points at (recordReadURL, cloud.go).
 	bucketURL := "gs://fugaro-layer-" + initProject
 	r.appendConfig(t, "bucket_url: "+bucketURL+"\n")
+	// And the installation's credentials service, which is where a catalog
+	// entry's build reads the git credential it clones with (IS8, D3330): the
+	// request names no secret of its own any more, so a submit on a machine
+	// whose config records no address is refused rather than billed for a
+	// build that would fail at its credential step.
+	r.appendConfig(t, "credentials_service: { url: "+catalogBuildServiceURL+" }\n")
 	// A gs:// bucket_url is opened by gocloud, which wants credentials it never
 	// uses, and the project-name check is answered from its cache as a check
 	// made a moment ago is (setBucketURL, image_test.go).

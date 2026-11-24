@@ -990,6 +990,9 @@
         "layer.ab.rate": {
           "default": "unset = 0: no run is a challenger"
         },
+        "layer.ab.repos": {
+          "default": "unset = none: every repository runs at the block's own rate"
+        },
         "layer.claude_models": {
           "default": "unset = every Claude model the project's accounts may serve"
         },
@@ -1541,8 +1544,20 @@
         "pools.*.owner": {
           "default": "unset = required: the pool is served to its owner and the users it names"
         },
+        "pools.*.principal.id": {
+          "default": "unset = required: the person's Google subject, the service account's address, or the project's name"
+        },
+        "pools.*.principal.kind": {
+          "default": "unset = required: whose pool it is, one of person, service-account, project"
+        },
+        "pools.*.rule": {
+          "default": "unset = the pool's strategy, and failover where it names neither"
+        },
         "pools.*.strategy": {
           "default": "unset = failover"
+        },
+        "pools.*.threshold": {
+          "default": "unset = none: the pool does nothing beyond its rule, and no value is invented for it"
         },
         "profile": {
           "default": "unset = the project layer's default_profile"
@@ -1908,6 +1923,9 @@
         },
         "workspace_pin.service_address": {
           "default": "unset = this project takes no workspace credential"
+        },
+        "workspace_shared.*.all_members": {
+          "default": "unset = false: the credential is offered to the members `projects` names, and only the written true offers it to every member of the workspace"
         },
         "workspace_shared.*.covers": {
           "default": "unset = the credential covers no repository"

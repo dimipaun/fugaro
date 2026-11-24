@@ -111,6 +111,20 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		"**The one grant a member holds in the workspace's project is the invoke grant on the workspace's own credentials service**",
 		"`roles/run.invoker` per member job account",
 		"no node of the workspace's database",
+		// WC2 makes that sentence's implication false: from the task that
+		// renders the roster's people into the workspace's own root, a
+		// member's job accounts are no longer the only holders of that
+		// grant. So the sentence names the other two principals — one
+		// invoke grant per address for each `human` of the roster, and one
+		// accessor for the workspace's own account, conditioned to the
+		// person's prefix AND to the one name the workspace serves (D2971,
+		// R6) — and the width of that condition is pinned, because a
+		// condition that dropped either half would read the project's other
+		// secrets.
+		"**A person the workspace's roster names holds the same invoke grant, and the workspace's own account holds one conditioned accessor beside it.**",
+		"`roles/run.invoker` per address",
+		"conditioned to the `fugaro_u_` prefix",
+		"the one personal name the workspace serves",
 		// The pool, the intersection, and what a compromised member reaches.
 		"**A compromised member reaches the pool, and the intersection is what bounds it.**",
 		"cannot read a credential's value",
@@ -324,6 +338,12 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		// the workspace's project, and a section that kept the older wording
 		// would tell a reader no member's account reaches the workspace at all.
 		"because no member holds a grant on the workspace's project",
+		// And WC2's own: the roster's people hold that grant too, so a
+		// sentence that left a member's job accounts as its only holders
+		// would send a reader past the grant a person of the workspace
+		// holds and past the accessor the workspace's own account holds
+		// beside it.
+		"only member job accounts hold a grant",
 		// The meter, which is machinery on this tree and wired to the paid-call
 		// path of the workspace's own deployment -- which is built here and
 		// which `fugaro update` applies -- so the cap IS a fence over a
@@ -344,6 +364,53 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 	} {
 		if strings.Contains(flattenDoc(s), banned) {
 			t.Errorf("SECURITY.md says %q: that is wider than the design and wider than the tree", banned)
+		}
+	}
+}
+
+// TestSecurityMdStatesTheWorkspacesOwnSlip is WC4's half of the sentence this
+// task makes false, and it is the reason the plan's shared-files table takes
+// `SECURITY.md` as its one exception: the slip paragraph states, of every slip,
+// that the roster which decided its credential set "is read at issue time and
+// never remembered" and that "a slip already issued keeps serving the run it was
+// granted for" — and the workspace's own slip is narrower than that on every
+// count. The service re-reads the roster as it re-reads the node, so a person
+// taken off the roster is refused within the minute, a slip a person holds is
+// refused on every call once they are gone, the slip records the owner's
+// verified address case-folded at grant time, and a grant nobody claimed is
+// over at its claim deadline rather than claimable for weeks. The pin reads the
+// section the sentence lives in, because a claim stated anywhere else in the
+// document is not a claim the reader of that paragraph has.
+func TestSecurityMdStatesTheWorkspacesOwnSlip(t *testing.T) {
+	s := readDoc(t, "SECURITY.md")
+	const slipsHeading = "### The intake, and the slips a run holds"
+	if !strings.Contains(s, "\n"+slipsHeading+"\n") {
+		t.Fatalf("SECURITY.md has no `%s` section: the workspace's own slip is narrower than the installation's, and the paragraph that states the wider rule is where the narrowing has to be read", slipsHeading)
+	}
+	section := flattenDoc(docSection(t, "SECURITY.md", s, slipsHeading))
+	for _, want := range []string{
+		// The narrowing, named as one: a reader who takes the paragraph above
+		// at face value has to meet this sentence in the same place.
+		"A workspace's own slip is narrower than that on every count",
+		// The roster IS re-read, as the node is, and a removed person is
+		// refused within the minute -- both their next grant and the calls of
+		// the runs they already launched (R3, D3146).
+		"re-reads the roster as it re-reads the node",
+		"every 60 seconds",
+		"is refused their next grant",
+		"every call under a slip they already hold within that minute",
+		// The check every call makes needs the verified address, and it is
+		// case-folded when the grant writes it (F11, finding 7).
+		"records its owner's verified address, case-folded at grant time",
+		"the check every call reads",
+		// And the claim deadline: the number is WC4's to choose and is chosen
+		// here, so the document states it rather than leaving a reader to
+		// guess how long an unclaimed grant is worth.
+		"a claim deadline counted from the grant — 30 minutes",
+		"can no longer be claimed",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("SECURITY.md's slips paragraph never says %q: the paragraph states the wider rule, and WC4's narrower one has to be read beside it or the document is false about the workspace's own slip", want)
 		}
 	}
 }
@@ -399,17 +466,21 @@ func TestDesignV1NamesTheWorkspace(t *testing.T) {
 const slipsSecurityHeading = "### The intake, and the slips a run holds"
 
 // TestSecurityMdStatesTheRostersOneException is WC8's pin on the sentence it
-// rewrote. The claim it replaces -- "a slip already issued keeps serving the run
-// it was granted for" -- is what a reader takes from a grant that records its
-// credential set once, and it is the reading D3146 rules out for a workspace: a
-// person the workspace's roster drops stops being served within a minute, and
-// the run under their slip halts naming the removal rather than moving to
-// another credential.
+// adds to the slips paragraph, reconciled with WC4's when the two tasks met on
+// `main`. WC4 narrowed the paragraph for a workspace's own slip -- the roster
+// re-read as the node is, the case-folded address, the claim deadline -- and
+// left the pool's own rule standing, because "a slip already issued keeps
+// serving the run it was granted for" is true of the publisher's pool a grant's
+// credential set is read from; WC8 adds what the run does when the roster its
+// slip is re-read against drops its person. So the paragraph states both, and
+// this pin holds them together: a rewrite that dropped either half would leave
+// a reader with the wrong rule.
 //
-// The banned sentence is read out of the whole document and not out of the
-// section: the false claim is exactly the shape a rewrite drifts back into, and
-// a bullet pointing at the section that carried it would be as wrong as the
-// section.
+// What the halt's reason says is pinned nowhere, deliberately: the reason a run
+// refused under a removed owner's slip carries is the open half of D3146 (the
+// landed service answers the one sentence it answers every refusal of a run's
+// identity, so the halt does not name the removal), and the document states the
+// halt itself rather than a sentence about its wording.
 func TestSecurityMdStatesTheRostersOneException(t *testing.T) {
 	doc := readDoc(t, "SECURITY.md")
 	section := flattenDoc(docSection(t, "SECURITY.md", doc, slipsSecurityHeading))
@@ -419,21 +490,17 @@ func TestSecurityMdStatesTheRostersOneException(t *testing.T) {
 		// the next grant.
 		"the roster that decided a slip's credential set is read at issue time and never remembered",
 		"a member the publisher takes off a pool is refused at the next grant",
-		// And the exception, in one sentence of its own: the workspace's
-		// roster is the one a live slip is re-read against, and the run stops
-		// rather than being served another credential.
-		"while the one roster a live slip is re-read against is a workspace's own",
-		"its credentials service reads on every call that slip is presented on",
-		"a person the workspace's roster drops is refused there within a minute",
-		"the run under their slip halts, naming the removal",
-		"rather than being served another credential (D3146)",
+		"while a slip already issued keeps serving the run it was granted for",
+		// WC4's narrowing, which is what makes the sentence above safe to keep.
+		"A workspace's own slip is narrower than that on every count",
+		"every call under a slip they already hold within that minute",
+		// And WC8's own fact, which neither side of the paragraph stated: the
+		// run under such a slip ends rather than being served another
+		// credential (D3146).
+		"the run under such a slip halts rather than being served another credential",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the `%s` section does not state %q: a slip that keeps serving a run whose person the workspace has dropped is the guarantee D3146 refuses", slipsSecurityHeading, want)
 		}
-	}
-	const banned = "a slip already issued keeps serving the run it was granted for"
-	if strings.Contains(flattenDoc(doc), banned) {
-		t.Errorf("SECURITY.md still says %q: a workspace's service re-reads its roster under a live slip, so a slip does not keep serving a run whose person was removed (D3146)", banned)
 	}
 }

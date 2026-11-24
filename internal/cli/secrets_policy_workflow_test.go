@@ -6,18 +6,42 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
-// secretsPolicyWorkflowFixture is a project whose local config holds an entry
-// in the other block: workflow_secrets holds exactly the names project_secrets
-// cannot (D1260), and its allow_data_to is the one member of that block the
-// policy flag has anything to write.
+// secretsWorkflowRecordFixture is the world a workflow secret's policy write
+// lives in: a project whose local config holds the name's entry in the other
+// block — workflow_secrets holds exactly the names project_secrets cannot
+// (D1260), and its allow_data_to is the one member of that block the policy
+// flag has anything to write — and the installation's own database, because
+// every such write is made in two places at once (IS3, D3328): the local block
+// and the project record at creds/projectsecrets.
+//
+// The database is a fixture of its own rather than the plain secretsFixture
+// because a writer into it asks the ownership question first
+// (requireOwnBudgetDB), and that reads budget.firebase_project out of the
+// config: the block the shared harness writes names only the database's URL, so
+// the fixture says which Firebase project it belongs to, the way
+// `fugaro update --firebase-project` leaves it.
+func secretsWorkflowRecordFixture(t *testing.T) (path string, db *gcpfake.RTDB) {
+	t.Helper()
+	secretsRmFugaro(t)
+	sm := gcpfake.NewSecrets(t)
+	f := newCloudFixture(t, "secret_manager: "+sm.URL+"/")
+	providerKeyEndpoint(t, f.run, newRunServiceSkew(t))
+	setBudgetBlock(t, os.Getenv("FUGARO_CONFIG"),
+		"budget: { firebase_project: proj-1234, rtdb_url: "+f.budget.DB.URL+" }")
+	projectSecretFixture(t, "workflow_secrets:\n  deploy-token: { allow_data_to: [\"acme/app\"] }\n")
+	return os.Getenv("FUGARO_CONFIG"), f.budget.DB
+}
+
+// secretsPolicyWorkflowFixture is the same world for the tests that ask only
+// what the local file holds.
 func secretsPolicyWorkflowFixture(t *testing.T) string {
 	t.Helper()
-	secretsFixture(t)
-	projectSecretFixture(t, "workflow_secrets:\n  deploy-token: { allow_data_to: [\"acme/app\"] }\n")
-	return os.Getenv("FUGARO_CONFIG")
+	path, _ := secretsWorkflowRecordFixture(t)
+	return path
 }
 
 // secretsPolicyWorkflowEntry reads the entry the config now holds in

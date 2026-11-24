@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/imagebake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
@@ -41,6 +42,11 @@ const catalogCheckCommit = "0123456789abcdef0123456789abcdef01234567"
 const (
 	catalogCheckAppDef   = "FROM example.invalid/app\nRUN true\n"
 	catalogCheckOtherDef = "FROM example.invalid/other\nRUN true\n"
+	// catalogCheckServiceURL is the installation's credentials service as the
+	// job's environment names it on every installation that deployed one (IS8,
+	// D3330): a rebuild's credential step asks it for the git credential the
+	// build clones with, and the request carries the same address.
+	catalogCheckServiceURL = "https://credentials.example.com"
 )
 
 // catalogCheckEntry is the definition of the catalog entry named name: two
@@ -155,6 +161,12 @@ func newCatalogCheckJob(t *testing.T, spec catalogCheckSpec) *catalogCheckFixtur
 	t.Setenv("FUGARO_GCP_PROJECT", "proj-1234")
 	t.Setenv("FUGARO_REGION", "us-east5")
 	t.Setenv("FUGARO_BUCKET", "gs://"+catalogBuildBucket)
+	// The installation's credentials service, which the job's environment
+	// carries on every installation that deployed one (infra's
+	// CatalogCheckSpec, IS8): a rebuild's credential step asks it for the git
+	// credential the build clones with, so a job without the address submits
+	// no rebuild at all.
+	t.Setenv(providers.EnvCredentialsServiceURL, catalogCheckServiceURL)
 	t.Setenv(catalogCheckSpecEnv, string(data))
 	return f
 }
@@ -335,12 +347,13 @@ func TestCatalogCheckJobRebuildsTheChangedEntryAsTheBuildIdentity(t *testing.T) 
 		GitProvider: "bitbucket", RepoURL: "https://bitbucket.org/acme/other.git", BaseBranch: "main",
 		GitSecretID: gcp.SecretID(otherSlug, "bitbucket-token"), GitUser: bitbucket.GitUsername,
 		Base: checkBase, Image: catalogBuildImage(t, "runtime"),
-		Definition:     gcp.CatalogDefinition{SourceCommit: catalogCheckCommit, Generation: gen, SHA256: sum},
-		ServiceAccount: gcp.BuildIdentityEmail("proj-1234"),
-		MachineType:    "E2_HIGHCPU_8",
-		Bucket:         "gs://" + catalogBuildBucket,
-		TemplateSalt:   gcp.TemplateSalt(Version),
-		Selftest:       catalogCheckSelftest(t, "acme/other", catalogCheckCommit),
+		Definition:            gcp.CatalogDefinition{SourceCommit: catalogCheckCommit, Generation: gen, SHA256: sum},
+		ServiceAccount:        gcp.BuildIdentityEmail("proj-1234"),
+		MachineType:           "E2_HIGHCPU_8",
+		Bucket:                "gs://" + catalogBuildBucket,
+		CredentialsServiceURL: catalogCheckServiceURL,
+		TemplateSalt:          gcp.TemplateSalt(Version),
+		Selftest:              catalogCheckSelftest(t, "acme/other", catalogCheckCommit),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1016,15 +1029,16 @@ func TestCatalogCheckReadsTheStagedContextHash(t *testing.T) {
 		GitProvider: "bitbucket", RepoURL: "https://bitbucket.org/acme/app.git", BaseBranch: "main",
 		GitSecretID: gcp.SecretID(slug, "bitbucket-token"), GitUser: bitbucket.GitUsername,
 		Base: checkBase, Image: catalogBuildImage(t, "tools"),
-		Definition:     gcp.CatalogDefinition{SourceCommit: stagedCommit, Generation: gens["tools"], SHA256: sums["tools"]},
-		Context:        ".",
-		ContextCommit:  stagedCommit,
-		ContextSHA256:  staged,
-		ServiceAccount: gcp.BuildIdentityEmail("proj-1234"),
-		MachineType:    "E2_HIGHCPU_8",
-		Bucket:         "gs://" + catalogBuildBucket,
-		TemplateSalt:   gcp.TemplateSalt(Version),
-		Selftest:       catalogCheckSelftest(t, "acme/app", stagedCommit),
+		Definition:            gcp.CatalogDefinition{SourceCommit: stagedCommit, Generation: gens["tools"], SHA256: sums["tools"]},
+		Context:               ".",
+		ContextCommit:         stagedCommit,
+		ContextSHA256:         staged,
+		ServiceAccount:        gcp.BuildIdentityEmail("proj-1234"),
+		MachineType:           "E2_HIGHCPU_8",
+		Bucket:                "gs://" + catalogBuildBucket,
+		CredentialsServiceURL: catalogCheckServiceURL,
+		TemplateSalt:          gcp.TemplateSalt(Version),
+		Selftest:              catalogCheckSelftest(t, "acme/app", stagedCommit),
 	})
 	if err != nil {
 		t.Fatal(err)

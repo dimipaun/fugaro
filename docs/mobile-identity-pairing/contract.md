@@ -99,9 +99,13 @@ fetched key set being accepted only inside such an envelope.
 
 **The verifier and the project's routes (P1-P4, P7).** That the app sends what these shapes say and reads what they
 say; that the device key in a pair request is the one that will sign every later refresh and revoke (O6); that the
-policy is asked once, the same way, by pair, refresh and restore; and that the compare-and-set store is what makes a
-`jti` and a challenge single-use across the service's instances. The routes answer a refusal with one of the codes
-above and never with a sentence alone.
+policy is asked once, the same way, by pair, refresh and restore; that the compare-and-set store is what makes a
+`jti` and a challenge single-use across the service's instances; and that a project's refresh families live one node
+per device under `config/admin/refresh`, keyed by the device's uid (`RefreshRoot` and `RefreshFamilyPath`, so P4's
+store and P7's admin revoke agree on where a family is). The routes answer a refusal with one of the codes above and
+never with a sentence alone. The family path is in the contract rather than in either side because a store that kept
+its families elsewhere would make the admin revoke delete nothing, report no error and leave a stolen phone
+refreshing (D2794, F32).
 
 **The stub decides nothing, and no side may rely on it.** `stub.go` returns each shape's fail-closed zero value: no
 claims, no admission, no record, no token, no mint, `false` from every store that reports whether something happened,

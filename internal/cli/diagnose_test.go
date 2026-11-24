@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -30,6 +31,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/runmsg"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -180,6 +182,98 @@ func TestDiagnosePrintsStagesAndTolerated(t *testing.T) {
 	tf := d.Tolerated.Findings[0]
 	if tf.Title != "a comment left behind: [REDACTED]" || tf.Mode != rigor.Pro || tf.Label != score.Label() {
 		t.Fatalf("tolerated finding = %+v", tf)
+	}
+}
+
+// TestDiagnosePrintsTheSwitchLog: the run's switch log (C1.16, D140) and the
+// source that served each stage (C1, CS8) are on the record and neither reached
+// a JSON the console reads, so the console could not draw the fallback a step
+// took or the money it cost (D3188, VS1). diagnose --json carries both, in the
+// record's own order, with every string redacted like the rest of the document
+// -- the service wrote from, to and reason, and the record is launcher-writable,
+// so they are bytes a hand can edit. The log is bounded at diagnoseSwitches,
+// which is the bound a hand-edited record cannot have had.
+func TestDiagnosePrintsTheSwitchLog(t *testing.T) {
+	const secret = "ghp_test0123456789abcdef"
+	t.Setenv("FUGARO_BITBUCKET_TOKEN", secret)
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abd7"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	cost := runstore.NewCost(2.5, 0, runstore.BasisAPIList)
+	cost.FallbackUSD = 1.4
+	switches := []runstore.Switch{
+		{From: "default " + secret, To: "alice", Reason: credsvc.ReasonExhausted, CacheMissUSD: 0.42},
+		{To: "bob " + secret, Reason: credsvc.ReasonBroken, CacheMissUnmeasured: true},
+	}
+	for len(switches) < diagnoseSwitches+1 {
+		switches = append(switches, runstore.Switch{To: "alice", Reason: credsvc.ReasonExhausted})
+	}
+	rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady,
+		CostUSD: 2.5, Cost: &cost,
+		Stages: []runstore.StageTiming{
+			{Name: "implement", ModelUSD: 2.0, Fallback: true,
+				Source: &routing.SourceName{Kind: routing.KindPool, Name: "team " + secret}},
+			{Name: "review", ModelUSD: 0.5},
+		},
+		Switches: switches}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, secret) {
+		t.Fatalf("the document carries the secret:\n%s", out)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if len(d.Switches) != diagnoseSwitches {
+		t.Fatalf("%d switches printed, want the bound %d", len(d.Switches), diagnoseSwitches)
+	}
+	first := d.Switches[0]
+	if first.From != "default [REDACTED]" || first.To != "alice" || first.Reason != credsvc.ReasonExhausted || first.CacheMissUSD != 0.42 {
+		t.Fatalf("the first switch = %+v", first)
+	}
+	// An empty from is the service's own meaning for a call that started on the
+	// credential that answered it, so it stays absent rather than becoming a
+	// name -- and the unmeasured flag is what says the miss is unknown rather
+	// than free, which the zero beside it must not be read without.
+	second := d.Switches[1]
+	if second.From != "" || second.To != "bob [REDACTED]" || !second.CacheMissUnmeasured || second.CacheMissUSD != 0 {
+		t.Fatalf("the second switch = %+v", second)
+	}
+	src := d.Stages[0].Source
+	if !d.Stages[0].Fallback || src == nil || src.Kind != routing.KindPool || src.Name != "team [REDACTED]" {
+		t.Fatalf("implement's source = %+v (fallback %v)", src, d.Stages[0].Fallback)
+	}
+	if d.Stages[1].Source != nil || d.Stages[1].Fallback {
+		t.Fatalf("review's source = %+v: a stage the service answered no call of has none", d.Stages[1])
+	}
+}
+
+// TestDiagnoseOmitsTheSwitchLogOfARunThatNeverSwitched: the key is absent, not
+// an empty list, for a run the credentials service never moved a call of --
+// which is every run whose record predates the member, and every run on a chain
+// that held. An empty list would read as "this run's log was read and is empty",
+// a claim about a record that has no such member at all.
+func TestDiagnoseOmitsTheSwitchLogOfARunThatNeverSwitched(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abd8"
+	seedRun(t, f, id, "", "someone@example.com", true)
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, `"switches"`) {
+		t.Fatalf("a run with no switches carries the key:\n%s", out)
 	}
 }
 
@@ -2321,9 +2415,132 @@ func TestDiagnoseRedactsEveryStringOfAReviewRound(t *testing.T) {
 	}
 }
 
+// TestDiagnosePrintsEachLevelsRoundsAndCap: the document carries, per review
+// level, the rounds that level's own loop reached and the cap the run's plan
+// resolved for it (V1.3) -- the figures the Run screen's iterations bar is drawn
+// from, and the same figures the human output prints. Each level's loop numbers
+// its rounds from 1, so the rounds a level spent are the highest number its own
+// reviews carry and never a count of them.
+func TestDiagnosePrintsEachLevelsRoundsAndCap(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260101-000033-abcd"
+	seedPlannedRun(t, f, id,
+		[]runstore.ReviewSummary{
+			{Round: 1, Tier: runstore.TierFirst, Verdict: "changes", Findings: 1},
+			{Round: 2, Tier: runstore.TierFirst, Verdict: "ship"},
+			{Round: 1, Tier: runstore.TierSenior, Verdict: "changes", Findings: 2},
+			{Round: 2, Tier: runstore.TierSenior, Verdict: "ship"},
+			{Round: 1, Tier: runstore.TierAdversarial, Verdict: "ship"},
+		},
+		&runstore.PlanRecord{Steps: []runstore.PlanStepRecord{
+			{Kind: "first_line", Rounds: 3},
+			{Kind: "review", Rounds: 2},
+			{Kind: "adversarial", Rounds: 2},
+		}})
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"\nReview levels\n",
+		"  level l1: 2 of 3 rounds\n",
+		"  level l2: 2 of 2 rounds\n",
+		"  level l3: 1 of 2 rounds\n",
+	} {
+		if !strings.Contains(human, want) {
+			t.Errorf("diagnose does not print %q:\n%s", want, human)
+		}
+	}
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	levels, _ := doc["review_levels"].([]any)
+	if len(levels) != 3 {
+		t.Fatalf("review_levels = %v, want one entry per level", doc["review_levels"])
+	}
+	if got := keysOfDoc(levels[0].(map[string]any)); !slices.Equal(got, []string{"cap", "level", "rounds"}) {
+		t.Errorf("a level's keys = %v, want level, rounds and cap", got)
+	}
+	for i, want := range []struct {
+		level  string
+		rounds float64
+		cap    float64
+	}{{"l1", 2, 3}, {"l2", 2, 2}, {"l3", 1, 2}} {
+		entry := levels[i].(map[string]any)
+		if entry["level"] != want.level || entry["rounds"] != want.rounds || entry["cap"] != want.cap {
+			t.Errorf("review_levels[%d] = %v, want %s at %v of %v", i, entry, want.level, want.rounds, want.cap)
+		}
+	}
+}
+
+// TestDiagnosePrintsANullCapWithoutAPlan: a record with no plan block carries no
+// cap for any level, and the document says so with a null rather than a number
+// nothing set (V1.3: a cap it cannot resolve prints null, never a guess) -- and
+// with the sentence the human output prints in its place. A record with no plan
+// and no review carries no block at all, so a reader can tell it from one that
+// carries levels and no caps.
+func TestDiagnosePrintsANullCapWithoutAPlan(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260101-000034-abcd"
+	seedReviewersRun(t, f, id, []runstore.ReviewSummary{
+		{Round: 1, Tier: runstore.TierSenior, Verdict: "ship"},
+		{Round: 2, Tier: runstore.TierSenior, Verdict: "changes", Findings: 1},
+	})
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "  level l2: 2 rounds, no cap recorded\n"; !strings.Contains(human, want) {
+		t.Errorf("diagnose does not print %q:\n%s", want, human)
+	}
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	levels, _ := doc["review_levels"].([]any)
+	if len(levels) != 1 {
+		t.Fatalf("review_levels = %v, want the one level the record's reviews reach", doc["review_levels"])
+	}
+	entry := levels[0].(map[string]any)
+	if entry["level"] != "l2" || entry["rounds"] != float64(2) {
+		t.Errorf("review_levels[0] = %v, want l2 at 2 rounds", entry)
+	}
+	if cap, ok := entry["cap"]; !ok || cap != nil {
+		t.Errorf("cap = %v (present %v), want a null: a record with no plan block resolves no cap", cap, ok)
+	}
+	// A record that carries neither prints no block, so a reader can tell the
+	// two apart.
+	const empty = "20260101-000035-abcd"
+	seedReviewersRun(t, f, empty, nil)
+	out, _, err = execute(t, "diagnose", "--json", empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "review_levels") {
+		t.Errorf("a record with no plan and no reviews printed the block:\n%s", out)
+	}
+}
+
 // seedReviewersRun stores a finished run under id whose record carries the
 // given review rounds and nothing else the diagnosis reads.
 func seedReviewersRun(t *testing.T, f *cloudFixture, id string, reviews []runstore.ReviewSummary) {
+	t.Helper()
+	seedPlannedRun(t, f, id, reviews, nil)
+}
+
+// seedPlannedRun is seedReviewersRun with the record's plan block, which is what
+// a run's review caps are read off (V1.3): nil for a record written before the
+// block existed, which is what a reader without one has to fall back to.
+func seedPlannedRun(t *testing.T, f *cloudFixture, id string, reviews []runstore.ReviewSummary, plan *runstore.PlanRecord) {
 	t.Helper()
 	seedSpec(t, f, firstRunSpec(id), false)
 	ctx := context.Background()
@@ -2334,7 +2551,7 @@ func seedReviewersRun(t *testing.T, f *cloudFixture, id string, reviews []runsto
 	if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web",
 		Status: runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
 		Reason: "tests failing on the final commit", CostUSD: 1.25, Cost: &cost,
-		Reviews: reviews}); err != nil {
+		Reviews: reviews, Plan: plan}); err != nil {
 		t.Fatal(err)
 	}
 }

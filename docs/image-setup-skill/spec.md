@@ -21,7 +21,7 @@ A Fugaro skill that helps users set up project-level Docker images for running j
 
 ## Baked repos (optional)
 - Asked during `fugaro setup`, **default yes**.
-- Prompt wording, kept simple: "Bake your repos into the Docker images? This makes jobs start faster."
+- Prompt wording, kept simple: "Bake repos into the images for faster job starts?"
 - Stored as a project setting. It can be changed later, followed by a rebuild.
 - Job logic is the same either way: if the repo is in the image, fetch and check out the target commit; otherwise, clone.
 - Baked images go stale, so rebuild them regularly (for example as part of `fugaro update`).

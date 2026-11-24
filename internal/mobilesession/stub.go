@@ -54,6 +54,13 @@ func (stubPolicy) Allow(context.Context, string, Claims) (Verdict, error) {
 	return Verdict{}, nil
 }
 
+// CrashReports answers off: the stub reads no published policy, so it holds no
+// switch to report, and off is the fail-closed value the contract fixes — the
+// same answer a real policy gives for a key it does not carry, and the one that
+// sends nothing (D734). A caller that read an on out of this stub would be
+// reading a decision no stub is allowed to make.
+func (stubPolicy) CrashReports(context.Context, string) (bool, error) { return false, nil }
+
 // StubInviteStore is the shape of an invite store and nothing else: it finds no
 // invite for any nonce and spends nothing, which is the same answer a store
 // gives for a nonce that was never issued. It holds no state, so two calls with

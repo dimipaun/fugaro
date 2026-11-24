@@ -916,8 +916,15 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		}
 		wctx, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
 		defer cancelWrite()
-		if werr := writeRecord(d.Store, wctx, r.recordSnapshot()); werr != nil && err == nil {
-			err = fmt.Errorf("writing run record: %w", werr)
+		final := r.recordSnapshot()
+		if werr := writeRecord(d.Store, wctx, final); werr != nil {
+			if err == nil {
+				err = fmt.Errorf("writing run record: %w", werr)
+			}
+		} else {
+			// The run's last summary goes with its last record, so a listing
+			// reads the ending a person's `runs ls` shows (saveSummary).
+			r.saveSummary(wctx, final)
 		}
 		rec = r.rec
 		err = r.redactErr(err)
@@ -1040,8 +1047,44 @@ func (r *run) save(ctx context.Context) {
 	}
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
 	defer cancel()
-	if err := writeRecord(r.d.Store, wctx, r.recordSnapshot()); err != nil {
+	rec := r.recordSnapshot()
+	if err := writeRecord(r.d.Store, wctx, rec); err != nil {
 		r.d.Log.Warn("writing run record failed", "err", err)
+		return
+	}
+	// The summary follows the record it projects, and only a record that
+	// reached the bucket: an object standing in for one that is not there
+	// would be a listing's row of a run that never happened.
+	r.saveSummary(wctx, rec)
+}
+
+// saveSummary writes the run's summary object beside the record it projects:
+// the two objects `runs ls` reads a row from instead of three
+// (docs/runs-ls-speed, RL4, D2966). It is written where the record is written
+// -- every save, which is each stage end and the finalize -- because a listing
+// shows the run as it is now, and a summary that lagged its record would show
+// a row that never was.
+//
+// It is best-effort in the way the pull-request index is (prindex.go): the
+// object is a shortcut over the run's own objects, so a summary that fails to
+// write costs a listing its speedup and never the run, and a run that has none
+// is read from its three objects exactly as before. rec is the record as it
+// was written, so the summary and the record it stands in for cannot disagree.
+func (r *run) saveSummary(ctx context.Context, rec *runstore.Record) {
+	// A run with no bucket, no record or no clock is a run there is nothing to
+	// write here for: the first two are a run too early to have a record and a
+	// fixture that carries none, and the clock is the one Run fills in, absent
+	// from a run assembled by hand (which is where the other two come from).
+	// A summary names the moment it was written, so with no clock there is no
+	// object to write, and writing one is never worth a panic in a run.
+	now := r.d.Now
+	if r.d.Bucket == nil || rec == nil || now == nil {
+		return
+	}
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
+	defer cancel()
+	if err := runstore.WriteSummary(wctx, r.d.Store, runstore.NewSummary(rec, r.spec, now().UTC())); err != nil {
+		r.d.Log.Warn("writing the run summary failed", "err", err)
 	}
 }
 
@@ -3881,14 +3924,29 @@ func (r *run) bootstrap(ctx context.Context) error {
 		Reserve: wf.Timeouts.FinalizeReserve.Duration, Stage: wf.Timeouts.Stage.Duration,
 		StopFraction: r.cfg.Agent.ReviewStopFraction, Now: r.d.Now}
 	if r.follow != nil {
-		if err := r.prepareFollowUp(ctx); err != nil {
-			return err
+		if r.spec.Resumes != "" {
+			// A resumed run's task is a follow-up's too (task.Spec.Resumes):
+			// it works on the paused run's pull request and continues its
+			// chain. What it starts from is the pause and not the pull
+			// request's comments: it reads none. What it does inherit is what
+			// the paused run worked from — its rulings and the questions they
+			// answer — read off that run's record with the pause
+			// (prepareResume, inheritRulings): suspending a run does not end
+			// the answers the owner has given it.
+			if err := r.prepareResume(ctx); err != nil {
+				return err
+			}
+		} else {
+			if err := r.prepareFollowUp(ctx); err != nil {
+				return err
+			}
+			// The ruling this run works from, with the decisions it answers
+			// (OD1): its launch's own, or the pair the run before it worked
+			// from, which it inherits. Written here and not with the task's
+			// other text above because only now has the previous record been
+			// read.
+			r.recordRuling()
 		}
-		// The ruling this run works from, with the decisions it answers (OD1):
-		// its launch's own, or the pair the run before it worked from, which it
-		// inherits. Written here and not with the task's other text above
-		// because only now has the previous record been read.
-		r.recordRuling()
 	}
 	// The backing services this job's image provides, started now that the
 	// checkout and the agent's environment exist and before any stage runs
@@ -4188,9 +4246,21 @@ func (r *run) agentLoop(ctx context.Context) {
 		req.Prompt = followup.ImplementPrompt(r.promptData(), f.sel)
 		if f.restored.Resumed {
 			req.SessionID, req.Resume = f.restored.ID, true
-			// Claude Code may still not find the session it was given:
-			// that is a reason to start fresh, not a failed stage.
-			opts.Recoverable = func(err error) bool { return errors.Is(err, agent.ErrNoSession) }
+			// Claude Code may still not find the session it was given: for a
+			// follow-up that is a reason to start fresh, not a failed stage.
+			// A resumed run may not: the session it was given is the one its
+			// pause names, and a run that started a fresh one instead would be
+			// the start-afresh R18 refuses.
+			if f.resumedStage == "" {
+				opts.Recoverable = func(err error) bool { return errors.Is(err, agent.ErrNoSession) }
+			} else {
+				// The work chain of a resumed run is the session its pause
+				// named: a fix a review round asks for, and the writeback's own
+				// save, continue that conversation rather than starting one of
+				// their own (fix prefers r.sessionID over the session it was
+				// handed).
+				r.sessionID = f.restored.ID
+			}
 		}
 	}
 	skipImplement := false
@@ -4322,10 +4392,25 @@ func (r *run) agentLoop(ctx context.Context) {
 		}
 		skipImplement = true
 	}
+	// A resumed run enters the stage the paused run was in and not the first
+	// one (R18, D3185): a pause taken in the review loop skips implement
+	// altogether — the work is on the branch and in the restored session —
+	// and one taken in a fix round enters that stage, in the session that
+	// round was in, before the loop reviews what the branch carries.
+	resumedFix := r.follow != nil && r.follow.resumedStage == "fix"
+	if f := r.follow; f != nil && config.IsReviewStage(f.resumedStage) {
+		skipImplement = true
+	}
 	// "" until implement actually runs and starts one: a Fixed gate skips
 	// implement, so there is no session yet for fix (below) to resume.
 	var sessionID string
-	if !skipImplement {
+	switch {
+	case resumedFix:
+		var ok bool
+		if sessionID, ok = r.resumeFix(ctx, req, opts); !ok {
+			return
+		}
+	case !skipImplement:
 		// Rule 1's first call site. The block is taken once and rides in both
 		// this request and the fresh one a recovered stage is retried with:
 		// the retry is the same stage, and a second take would find the queue
@@ -4983,6 +5068,36 @@ func (r *run) seniorRound(ctx context.Context, round int, reviewPrompt string) (
 		r.d.Log.Warn("the review round produced no parseable verdict", "round", round, "attempt", attempt)
 	}
 	return Verdict{}, false, true
+}
+
+// resumeFix runs the fix stage a resumed run enters when the paused run
+// suspended in one (R18, D3185), in the session that round was in and with the
+// resuming prompt rather than FixPrompt: the findings that round was working
+// from are in the restored conversation, and this run has read no review of its
+// own. It reports the session to go on with and whether the loop may continue,
+// exactly as fix does, whose seams it keeps — the mode and the security
+// escalation are resolved again from the diff the work in progress carries.
+func (r *run) resumeFix(ctx context.Context, req agent.Request, opts stageOpts) (string, bool) {
+	const stage = "fix"
+	// Rule 1's third call site, as implement's is above: a message may stop
+	// this stage where it stands and resume it with the brief it was given
+	// and the message.
+	mb := r.messageBlock(ctx, stage)
+	brief := req.Prompt
+	if mb != "" {
+		req.Prompt += "\n\n" + mb
+	}
+	opts.Yield = &yieldOpts{Resume: func(block string) string { return brief + "\n\n" + block }}
+	res, ok, _ := r.stage(ctx, stage, req, opts)
+	r.noteSession(req, res)
+	r.countTokens(res)
+	if !ok || r.capReached() {
+		return req.SessionID, false
+	}
+	r.afterStage(ctx, stage)
+	r.roundRigor(ctx)
+	r.escalateSecurity(ctx, runstore.SecurityAtFix)
+	return req.SessionID, !r.pr.gone
 }
 
 // fix runs a fix stage for the findings a review round still blocks on, in the

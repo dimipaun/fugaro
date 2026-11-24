@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/required-cli.schema.json",
+  "title": "Fugaro required-CLI stamp",
+  "description": "The required-CLI stamp: the node a project publishes at config/policy/required_cli to say the oldest fugaro release that may act on it, written by that installation's own `fugaro update` and read by every project command of every later CLI. It is a fence and not a security boundary (IAM is the boundary), so it never falls, nothing lowers it (D3262) and a reader fails open on every failure except two: a stamp that is present and is not this shape, and a cached value above the running binary that is younger than fifteen minutes (D3264, bounded by D3268). The shape is closed at every level: a member outside these three is refused, because the node is the one thing a CLI below it obeys and a member nobody reads is a decision nobody made. A member is matched exactly, so another case is a member outside this shape and not the one it resembles, and a document carrying a member twice is refused by the decoder, which is the one refusal this schema cannot make. Only a published release writes it (D3269), so a `schema` a reader does not know means the reader is behind and its fix is an upgrade; nothing else here is written by any release, so anything else wrong with the node is a hand edit, whose last-resort recovery is correcting it in the Firebase console (T7). The Go half is internal/versionstamp's Stamp, SchemaVersion, Decode and Encode, and TestSchemaAgreesWithDecode holds the two together in both directions.",
+  "type": "object",
+  "required": [
+    "schema",
+    "min",
+    "set_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": 1,
+      "$comment": "SchemaVersion in internal/versionstamp/stamp.go. A reader refuses a version it does not know rather than reading what it recognises, so this const and that constant move together.",
+      "description": "The stamp's version."
+    },
+    "min": {
+      "type": "string",
+      "pattern": "^v?(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})$",
+      "description": "The oldest fugaro release that may act on this project, as the writer's own Version. Written plainly, without a `v` prefix (A3), and read back through updatecheck.Valid: an optional `v` is accepted here only so a hand edit that adds one is still a version, and Encode drops it. A dev build or a pre-release tag is not a version and is refused."
+    },
+    "set_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the installation's own `fugaro update` wrote the node, in UTC, for the refusal sentence's date. It is what the reader reports to the person as when the fence was raised. A node without it is a hand edit, not a release's write."
+    }
+  }
+}
