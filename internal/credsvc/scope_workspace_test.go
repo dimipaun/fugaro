@@ -2020,6 +2020,27 @@ func TestWorkspaceModeServesTheGrantAndTheClaim(t *testing.T) {
 // variable says so) — asked about the caller's own member (wsMemberA, the
 // project its verified identity names) and about nobody else.
 //
+// It also pins WHICH credential is served, which is the half of R7 a call can
+// get wrong while still answering 200: the person's own container, and not the
+// shared entry the fixture's list holds beside it (D2974, D3144). What that
+// assertion is worth, exactly: it reads the answer's own header, so a call path
+// that served the shared member where the person's own token can serve — the
+// failure I1's end-to-end test is the place for — fails here. It does NOT, on
+// this fixture's state, separate the exclusive marking from the offered order:
+// the person's token is offered first, so this fixture's tie-break reaches it
+// either way. What pins the marking is WC5's own two tests, which seed the
+// counter so that the offered order alone would answer a shared member
+// (TestThePersonalTokenWinsTheTieBreak, TestThePersonalTokenWinsARoundRobinRotation),
+// and `creds`' own Selector.Exclusive tests (select_test.go). What THIS test
+// pins is that the production-shaped scope reaches the candidate at all: its
+// half is handed out (Persons) rather than declared on the scope, which is the
+// path a workspace-mode call really takes.
+//
+// And with the switch turned off the same call is refused with R11's own
+// sentence, which is the class a workspace-mode run is told: the reader's
+// refusal travels out of the candidate list rather than being collapsed into a
+// sentence of the call path's.
+//
 // **What it does not prove is that the deployment's wiring exists.** The fixture
 // installs a scripted switch ON (newWSPerson says why ON), so the call is
 // answered by that reader whether or not I1's line is ever written, and this
@@ -2040,6 +2061,24 @@ func TestWorkspaceModeAnswersThePersonalSlipThroughTheSwitch(t *testing.T) {
 	}
 	if got := p.switchOn.projects(); len(got) != 1 || got[0] != wsMemberA {
 		t.Errorf("the personal switch was asked about %v, want the caller's own member %q alone: the switch is the MEMBER's, and the member is the project the caller's verified identity names", got, wsMemberA)
+	}
+	own, err := secretname.User(wsSub, creds.PersonTokenName)
+	if err != nil {
+		t.Fatalf("building the person's own container name: %v", err)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != own {
+		t.Errorf("the call was served %q, want the person's own token %q: a call under a slip naming one is served the person's container and not the shared entry it is also admitted to (R7, D2974)", got, own)
+	}
+
+	// And the answer a workspace run gets while the switch is off is R11's OWN
+	// sentence and not a house one: the reader's class travels out of the
+	// candidate list and is what the call is refused with. The fixture reads the
+	// process's variable per call, so turning it off here is the member's
+	// published policy turning it off there.
+	personalSwitch(t, false, nil)
+	resp, body = p.personCall(t, svc, id, secret, callBody("ws5-the-switch-off"))
+	if e := wantRefusal(t, resp, body, StatusUnavailable, ErrorStateUnavailable); e.Message != personalSwitchOff {
+		t.Errorf("the answer with the switch off = %q, want R11's own sentence: a workspace run is told the class its reader answered (R9, R11)", e.Message)
 	}
 }
 
