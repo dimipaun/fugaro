@@ -46,7 +46,7 @@ func TestDecide(t *testing.T) {
 	changes := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 3}
 	// A mode whose split blocks: one finding above Startup's floor, which is
 	// the half of the split the count's own reason is kept for (outcome.go).
-	blocked := findingsPolicyOf(rigor.Config{RepoBlock: true}, rigor.Startup, 2,
+	blocked := findingsPolicyOf(rigor.Config{RepoBlock: true}, "", rigor.Startup, 2,
 		[]rigor.Score{{Likelihood: 3, Impact: 3, FixCost: 1, Class: rigor.Correctness}}, "")
 	cases := []struct {
 		name    string

@@ -108,6 +108,9 @@ func TestManagedAllowedTypesGolden(t *testing.T) {
 		"google_compute_router_nat",
 		"google_firebase_database_instance",
 		"google_firebase_project",
+		// The run index's composite indexes (RI2, C-INDEX): the owner-run
+		// Firebase root's, and the deployer holds no datastore.indexes.*.
+		"google_firestore_index",
 		// The consumer's signing key and its grant (mobile-identity-pairing
 		// plan task J6; O17): the key is the installation's own — created in
 		// its project by the installation root, published to a node of its

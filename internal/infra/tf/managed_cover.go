@@ -28,7 +28,7 @@ import (
 // Two directions decide an entry, and leaving one out is the safe one: a
 // refused plan falls back to a confirmation, which is a working program, while
 // a permitted plan that should not have been is the failure this gate exists
-// to avoid. So the list is smaller than init's — the twenty entries in
+// to avoid. So the list is smaller than init's — the twenty-one entries in
 // managedDropped are Fugaro's own plumbing, the project-level IAM authority
 // the deployer must not hold, or a type whose resources GCP names on the
 // server's side, where no prefix condition can tell the agent's from Fugaro's.
@@ -107,6 +107,7 @@ var managedDropped = map[string]string{
 	"google_compute_router_nat":              "Fugaro's own compute-backend network (modules/compute/network.tf): the NAT is the runs' egress path, applied by the owner-run compute root; dropped on the merge of main into next-0.8.5 as the fail-closed default, keeping it is the owner's decision",
 	"google_firebase_project":                "the owner-run creating path (infra.AddFirebase) and the owner-run Firebase root own it, and adding Firebase is never by itself what makes a project managed (D73)",
 	"google_firebase_database_instance":      "the owner-run Firebase root owns it, as its project does",
+	"google_firestore_index":                 "the owner-run Firebase root owns the run index's composite indexes (docs/console-fixes/contract-index.md, C-INDEX; plan task RI2), which serve the whole installation's listings: a managed project's own plans are not what the console's lists read, and the deployer holds no datastore.indexes.* permission at all, so a plan containing one could not be applied anyway",
 	// The consumer's signing key (mobile-identity-pairing plan task J6; O17),
 	// dropped together and for one reason: it is the installation's own
 	// identity, created by the owner-run installation root (mailbox_key.tf),
@@ -201,7 +202,7 @@ var managedGrantRules = map[string]bool{
 //     object the change removes (tf.Approves), and only when the resource it
 //     removes or creates is one the rules below admit — neither the address nor
 //     the list alone admits one (NotCovered);
-//   - the type: managedTypes rather than allowedTypes, so the twenty
+//   - the type: managedTypes rather than allowedTypes, so the twenty-one
 //     entries of managedDropped ask for a confirmation instead;
 //   - the resource: every name a managed resource carries must carry
 //     ManagedPrefix, and the accounts a job or a scheduler runs as must be the

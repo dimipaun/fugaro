@@ -1,0 +1,54 @@
+{
+  "systemInstruction": {"parts": [{"text": "line one"}, {"text": "line two"}]},
+  "contents": [
+    {"role": "user", "parts": [{"text": "read a file"}]},
+    {
+      "role": "model",
+      "parts": [
+        {"text": "sure"},
+        {
+          "functionCall": {"name": "read_file", "args": {"path": "a.txt"}},
+          "thoughtSignature": "YSBmaXh0dXJlIHRob3VnaHQgc2lnbmF0dXJl"
+        },
+        {
+          "functionCall": {"name": "run_command", "args": {"argv": ["ls"]}},
+          "thoughtSignature": "YSBzZWNvbmQgZml4dHVyZSB0aG91Z2h0IHNpZ25hdHVyZQ=="
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {"functionResponse": {"name": "read_file", "response": {"output": "the file's text"}}},
+        {"functionResponse": {"name": "run_command", "response": {"error": "stdout: ok\nstderr: none"}}}
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "name": "read_file",
+          "description": "read a file",
+          "parametersJsonSchema": {
+            "type": "object",
+            "properties": {"path": {"type": "string", "description": "the path"}},
+            "required": ["path"]
+          }
+        },
+        {
+          "name": "run_command",
+          "description": "run a command",
+          "parametersJsonSchema": {
+            "type": "object",
+            "properties": {"argv": {"type": "array", "items": {"type": "string"}, "enum": ["ls", "pwd"]}},
+            "nullable": true,
+            "format": "json"
+          }
+        }
+      ]
+    }
+  ],
+  "toolConfig": {"functionCallingConfig": {"mode": "AUTO"}},
+  "generationConfig": {"maxOutputTokens": 512}
+}

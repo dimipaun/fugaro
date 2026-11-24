@@ -56,10 +56,10 @@ const modelsUseLayerAuth = "defaults:\n  agent:\n    auth: api-key\n"
 func TestModelsUseWritesEveryRole(t *testing.T) {
 	for _, role := range []string{"coder", "reviewer", "background", "vision", "diagnose"} {
 		t.Run(role, func(t *testing.T) {
-			modelsUseHome(t)
-			path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
+			modelsWriteHomeWith(t, modelsUseProjectExtra)
+			path := settingsWriteLayerFile(t, modelsUseLayerAuth)
 
-			out, _, err := execute(t, "models", "use", "owner/repo-a", role, "deepseek/deepseek-v4-pro")
+			out, _, err := execute(t, "models", "use", role, "deepseek/deepseek-v4-pro")
 			if err != nil {
 				t.Fatalf("%v\n%s", err, out)
 			}
@@ -75,37 +75,60 @@ func TestModelsUseWritesEveryRole(t *testing.T) {
 // the key is written now through the same edit and the same checks as the other
 // four.
 func TestModelsUseDiagnoseRole(t *testing.T) {
-	modelsUseHome(t)
-	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
+	path := modelsUseProjectHome(t, modelsUseLayerCommented)
+	before := readFileString(t, path)
 
-	out, _, err := execute(t, "models", "use", "owner/repo-a", "diagnose", "deepseek/deepseek-v4-pro")
+	out, _, err := execute(t, "models", "use", "diagnose", "deepseek/deepseek-v4-pro")
 	if err != nil {
 		t.Fatalf("the diagnose slot was refused: %v\n%s", err, out)
 	}
-	want := strings.Replace(modelsUseCommentedYAML,
-		"    reviewer: claude-sonnet-5-5\n",
-		"    reviewer: claude-sonnet-5-5\n    diagnose: deepseek/deepseek-v4-pro\n", 1)
+	want := strings.Replace(before,
+		"      reviewer: claude-sonnet-5-5\n",
+		"      reviewer: claude-sonnet-5-5\n      diagnose: deepseek/deepseek-v4-pro\n", 1)
 	if got := readFileString(t, path); got != want {
 		t.Errorf("the edit is not the one line, under the key it names:\ngot:\n%s\nwant:\n%s", got, want)
 	}
 }
 
-// TestModelsUseLayerFlag is T3's own rule at this command: --layer names where
-// the write lands, the repository's own file by default, the project layer with
+// TestModelsUseLayerFlag is T3's own rule at this command, with S4's default for
+// a lifted key: --layer names where the write lands, the project layer with
 // --layer project, and a layer the key does not have is refused naming the
-// layers it does have. No models key has a local layer — the four budget keys
-// are the whole of what the local config carries — so --layer local is always
-// that refusal.
+// layers it does have. The default is the layer the key belongs to — the
+// project's for a model (D3237), which no repository states any more, and a
+// repository's own file for the keys a repository still states. No models key
+// has a local layer — the four budget keys are the whole of what the local
+// config carries — so --layer local is always that refusal.
 func TestModelsUseLayerFlag(t *testing.T) {
-	t.Run("repo is the default", func(t *testing.T) {
-		modelsUseHome(t)
-		path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
+	t.Run("project is the default for a model key", func(t *testing.T) {
+		modelsWriteHomeWith(t, modelsUseProjectExtra)
+		layer := settingsWriteLayerFile(t, modelsUseLayerAuth)
+		repoFile := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
 
-		out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro")
+		out, _, err := execute(t, "models", "use", "coder", "deepseek/deepseek-v4-pro")
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
-		if !strings.Contains(readFileString(t, path), "coder: deepseek/deepseek-v4-pro") {
+		l, ps := config.ParseProjectLayer([]byte(readFileString(t, layer)), config.LayerAnchor{Project: "aurora", GCPProject: "aurora-gcp"})
+		if len(ps) > 0 {
+			t.Fatalf("the layer does not read back after the write: %s\n%s", ps[0].String(), readFileString(t, layer))
+		}
+		if got := l.Defaults.Agent.Models.Coder; got != "deepseek/deepseek-v4-pro" {
+			t.Errorf("defaults.agent.models.coder = %q, want deepseek/deepseek-v4-pro:\n%s", got, readFileString(t, layer))
+		}
+		if got := readFileString(t, repoFile); got != modelsUseCommentedYAML {
+			t.Errorf("the default write reached a repository's own file:\n%s", got)
+		}
+	})
+
+	t.Run("repo is the default for a repository's own key", func(t *testing.T) {
+		modelsUseHome(t)
+		path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
+
+		out, _, err := execute(t, "models", "use", "owner/repo-a", "agent.recipe", "solo")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !strings.Contains(readFileString(t, path), "recipe: solo") {
 			t.Errorf("the default write did not land in the checkout:\n%s", readFileString(t, path))
 		}
 	})
@@ -134,7 +157,7 @@ func TestModelsUseLayerFlag(t *testing.T) {
 		modelsWriteHomeWith(t, modelsUseProjectExtra)
 		settingsWriteLayerFile(t, "")
 
-		_, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro", "--layer", "project")
+		_, _, err := execute(t, "models", "use", "owner/repo-a", "agent.recipe", "solo", "--layer", "project")
 		if err == nil {
 			t.Fatal("a project-layer write took a repository")
 		}
@@ -274,11 +297,11 @@ func TestClaudeModelsRefusesARouteTheProjectDoesNotDefine(t *testing.T) {
 // reads the person's own stdin. The reader fails the assertion by recording the
 // read, which is the only thing a question would leave behind.
 func TestModelsUseReadsNoStdin(t *testing.T) {
-	modelsUseHome(t)
-	modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
+	modelsWriteHomeWith(t, modelsUseProjectExtra)
+	settingsWriteLayerFile(t, modelsUseLayerAuth)
 	stdin := &unreadStdin{}
 
-	out, _, err := executeStdinReader(t, stdin, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro")
+	out, _, err := executeStdinReader(t, stdin, "models", "use", "coder", "deepseek/deepseek-v4-pro")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -297,10 +320,10 @@ var modelsUseWriterKeys = []struct {
 	key     string
 	store   settings.Store
 }{
-	{"agent.model", "agent.model", settings.StoreRepo},
+	{"agent.model", "agent.model", settings.StoreProject},
 	{"agent.recipe", "agent.recipe", settings.StoreRepo},
-	{"agent.models.*", "agent.models.coder", settings.StoreRepo},
-	{"agent.levels.*.model", "agent.levels.l2.model", settings.StoreRepo},
+	{"agent.models.*", "agent.models.coder", settings.StoreProject},
+	{"agent.levels.*.model", "agent.levels.l2.model", settings.StoreProject},
 	{"agent.levels.*.effort", "agent.levels.l2.effort", settings.StoreRepo},
 	{"layer.defaults.agent.model", "layer.defaults.agent.model", settings.StoreProject},
 	{"layer.defaults.agent.recipe", "layer.defaults.agent.recipe", settings.StoreProject},
@@ -352,10 +375,10 @@ func TestModelsUseRegisteredArgvWritesTheKey(t *testing.T) {
 		path  []string
 		want  string
 	}{
-		{"agent.model", "deepseek/deepseek-v4-pro", settings.StoreRepo, []string{"agent", "model"}, "deepseek/deepseek-v4-pro"},
+		{"agent.model", "deepseek/deepseek-v4-pro", settings.StoreProject, []string{"defaults", "agent", "model"}, "deepseek/deepseek-v4-pro"},
 		{"agent.recipe", "solo", settings.StoreRepo, []string{"agent", "recipe"}, "solo"},
-		{"agent.models.coder", "deepseek/deepseek-v4-pro", settings.StoreRepo, []string{"agent", "models", "coder"}, "deepseek/deepseek-v4-pro"},
-		{"agent.levels.l2.model", "deepseek/deepseek-v4-pro", settings.StoreRepo, []string{"agent", "levels", "l2", "model"}, "deepseek/deepseek-v4-pro"},
+		{"agent.models.coder", "deepseek/deepseek-v4-pro", settings.StoreProject, []string{"defaults", "agent", "models", "coder"}, "deepseek/deepseek-v4-pro"},
+		{"agent.levels.l2.model", "deepseek/deepseek-v4-pro", settings.StoreProject, []string{"defaults", "agent", "levels", "l2", "model"}, "deepseek/deepseek-v4-pro"},
 		{"agent.levels.l2.effort", "high", settings.StoreRepo, []string{"agent", "levels", "l2", "effort"}, "high"},
 		{"layer.defaults.agent.model", "deepseek/deepseek-v4-pro", settings.StoreProject, []string{"defaults", "agent", "model"}, "deepseek/deepseek-v4-pro"},
 		{"layer.defaults.agent.recipe", "solo", settings.StoreProject, []string{"defaults", "agent", "recipe"}, "solo"},
@@ -408,8 +431,8 @@ func TestModelsUseArgvNamesTheKeyInEveryRow(t *testing.T) {
 		key  string
 		want []string
 	}{
-		{"agent.models.coder", []string{"models", "use", "agent.models.coder", "<value>", "--layer", "repo"}},
-		{"agent.models.diagnose", []string{"models", "use", "agent.models.diagnose", "<value>", "--layer", "repo"}},
+		{"agent.models.coder", []string{"models", "use", "agent.models.coder", "<value>", "--layer", "project"}},
+		{"agent.models.diagnose", []string{"models", "use", "agent.models.diagnose", "<value>", "--layer", "project"}},
 		{"layer.defaults.agent.models.coder", []string{"models", "use", "layer.defaults.agent.models.coder", "<value>", "--layer", "project"}},
 	} {
 		t.Run(c.key, func(t *testing.T) {
@@ -429,7 +452,7 @@ func TestModelsUseArgvNamesTheKeyInEveryRow(t *testing.T) {
 // key's own.
 func TestModelsUseVaryingArgvWritesTheKeyItNames(t *testing.T) {
 	modelsWriteHomeWith(t, modelsUseProjectExtra)
-	layer := settingsWriteLayerFile(t, "")
+	layer := settingsWriteLayerFile(t, modelsUseLayerAuth)
 	repoFile := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
 
 	w, ok := settings.WriterOf("agent.models.coder")
@@ -440,11 +463,15 @@ func TestModelsUseVaryingArgvWritesTheKeyItNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if agent := modelsUseAgentBlock(t, repoFile); !strings.Contains(agent, "coder: deepseek/deepseek-v4-pro") {
-		t.Errorf("the filled argv wrote no coder pin:\n%s", agent)
+	l, ps := config.ParseProjectLayer([]byte(readFileString(t, layer)), config.LayerAnchor{Project: "aurora", GCPProject: "aurora-gcp"})
+	if len(ps) > 0 {
+		t.Fatalf("the layer does not read back after the argv ran: %s\n%s", ps[0].String(), readFileString(t, layer))
 	}
-	if got := readFileString(t, layer); got != "version: 1\nproject: aurora\ngcp_project: aurora-gcp\n" {
-		t.Errorf("the repo-layer argv wrote the project layer:\n%s", got)
+	if got := l.Defaults.Agent.Models.Coder; got != "deepseek/deepseek-v4-pro" {
+		t.Errorf("the filled argv wrote defaults.agent.models.coder = %q, want deepseek/deepseek-v4-pro:\n%s", got, readFileString(t, layer))
+	}
+	if got := readFileString(t, repoFile); got != modelsUseCommentedYAML {
+		t.Errorf("the model row's argv wrote a repository's own file:\n%s", got)
 	}
 }
 

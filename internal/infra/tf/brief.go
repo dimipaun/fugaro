@@ -214,6 +214,7 @@ var nouns = map[string]string{
 	"google_compute_router_nat":                      "NAT",
 	"google_firebase_database_instance":              "Realtime Database",
 	"google_firebase_project":                        "Firebase project",
+	"google_firestore_index":                         "composite index",
 	// The consumer's signing key (J6): the phone reads a change here as the
 	// key its replies are signed with, not as a Cloud KMS resource type.
 	"google_kms_crypto_key":                   "consumer signing key",

@@ -3,8 +3,10 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -13,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // update_in_flight.go is what the update door says, and does not do, about the
@@ -68,6 +71,26 @@ import (
 // audit (docs/design/update-in-flight.md) and the gate function the line reads.
 // The count's own read is a step of the run, so the wait it can be is named
 // while it happens.
+//
+// Three of the lines under the count are not steps, and they are the facts the
+// count's line cannot carry: R5's, that a run which started with the budget off
+// holds its key already and finishes; MG3's, that this release keeps writing the
+// old access record, and that so many of the runs in flight are the runs it is
+// written for; and PR6's, how many of the count are paused runs. None is a reach
+// and none is gated on a step's own question, which is why they are printed
+// beside the steps rather than among them: a note saying no step reaches a run in
+// flight is about the steps alone, and these facts stand outside that list.
+//
+// The paused runs are the count's own fact and not a step's, and they are a line
+// of their own rather than a parenthesis inside the count (PR6): a run that
+// suspended itself has ended its execution and released its lease (R12), so the
+// registry the count otherwise reads holds no entry of it, and the pause's node
+// under paused/ plus the run's own record are what say it is in flight (C3, R26;
+// D3195). The count's sentence is the one the live checks and the owner's note
+// read, and nothing is inserted into it (`docs/gcp-live-checklist.md`, Check
+// 632) — so the paused figure is said under it, where the update also says that
+// it rewrites nothing such a run holds (its record, its node, its saved session,
+// its chain's ledger).
 
 // announceRunsInFlight prints the update door's note about the runs in flight —
 // the count's line and the steps under it. It prints nothing at all when no run
@@ -112,7 +135,16 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) error {
 	if r.rep != nil {
 		step = r.rep.Step("Checking for runs in flight")
 	}
-	n, err := runsInFlight(ctx, db, lc)
+	agents, err := inFlightRegistry(ctx, db, lc)
+	// The paused runs are counted beside the registry, and for the same read's
+	// sake: a suspended run's execution has ended (R12), so the registry holds
+	// no entry of it, and the node the credentials service wrote is the one
+	// place its chain's in-flightness is written (C3, R26).
+	paused := 0
+	if err == nil {
+		paused = e.pausedRuns(ctx, db)
+	}
+	n := runsCount(agents) + paused
 	if step != nil {
 		if err != nil {
 			// A count that could not be read is silence: a step abandoned
@@ -140,17 +172,99 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) error {
 	} else {
 		fmt.Fprintf(w, "%s, and no step reaches them\n", note)
 	}
-	// R5's own line, which is not a step and is the one fact the count's line
-	// cannot carry: a run that started with the budget off has no session and
-	// holds its key already, so nothing this update does reaches it and it
-	// finishes. It is printed while this machine's own config still says the
+	// PR6's own line, and the first of the facts that are not steps: the paused
+	// runs of the count. A paused chain is in flight the way a running one is
+	// (PR12, D3195), so it is in the count above, and what a person cannot read
+	// off the count is that some of these runs are held by a pause rather than
+	// working. The line says what the count read and no more: a pause that
+	// stands, which is what the node and the run's own record say — the contract
+	// marks no node resumed (C3), so a chain the orchestrator has already brought
+	// back is counted here too, and the line cannot say otherwise (pausedRuns).
+	// Nothing is inserted into the count's own sentence for it: that sentence is
+	// pinned whole (`docs/gcp-live-checklist.md`, Check 632).
+	if paused > 0 {
+		fmt.Fprintf(w, "  paused: %s among them, held by a pause that still stands\n", runsPhrase(paused))
+	}
+	// R5's own line, which is another fact that is not a step: a run that started
+	// with the budget off has no session and holds its key already, so nothing
+	// this update does reaches it and it finishes. It is printed while this
+	// machine's own config still says the
 	// word — the state in which such a run can exist, and the state this very
 	// update is about to end — and it is this release that owes it, because
 	// this is the release that removes the word.
 	if e.budgetOffRunFinishes() {
 		fmt.Fprintf(w, "  a run that started with the budget off holds its key and finishes\n")
 	}
+	// MG3's own line, and like R5's it is not a step: this release keeps writing
+	// the repository's old access record beside the routing table, and that
+	// record is what a run whose image predates the table resolves from (D3196,
+	// R25). The count is those runs, read out of the runs' own records, and the
+	// line is printed only when there is one: a note over a machine whose runs
+	// all carry the table has nothing to say about the record, and a read this
+	// door could not complete says nothing at all rather than naming a number
+	// nobody read (the count above it, and this note's own rule about a read
+	// that failed).
+	if old, err := e.runsOnTheOldRecord(ctx, agents); err == nil && old > 0 {
+		fmt.Fprintf(w, "  old access record: still written, so %d of these runs resolve from it\n", old)
+	}
 	return nil
+}
+
+// chainIntroduced is when the chain contract reached the integration branch
+// (C1, #3460, 2026-11-22 13:05:08 UTC), which is when a job image could first be
+// built from a checkout that carries it. A run's gateway is what asks the service
+// for the chain — the stage header, and the answer's source and fallback beside
+// the body (chain_wire.go) — so a job image built before this holds a gateway that
+// sends none of it, and the service has to answer that run out of the old access
+// record (MG3). The date is the same kind of fact sealRunnerIntroduced is
+// (recipes_skew.go), and this note is its only reader.
+var chainIntroduced = time.Date(2026, 11, 22, 13, 5, 8, 0, time.UTC)
+
+// runsOnTheOldRecord counts the runs in flight whose image predates the routing
+// table: the runs this release's old access record is written for, and the
+// number MG3's line under the note carries.
+//
+// The image a run is running is the run's own record, which the runner writes at
+// bootstrap out of the statement its container carries (runner.ImageInfo, the
+// image's own /etc/fugaro/image.json), and never the workflow's current build
+// record: an image rebuilt while a run flies leaves that run on the one it
+// started with, so the build record would answer about the next launch rather
+// than about this one. A record that cannot be read
+// and one that names no build time count as predating, which is the direction the
+// image gate takes for a job with no build record at all (checkImageSinceDev,
+// recipes_skew.go) and the one this note is for: its claim is that the runs in
+// flight are not the ones the table strands, and a run this door cannot place on
+// this release's image is one it cannot promise that about. A read that failed for
+// any other reason is returned, and the note then says nothing about the record.
+func (e *initEngine) runsOnTheOldRecord(ctx context.Context, agents map[string]map[string]budget.AgentEntry) (int, error) {
+	if e.lc == nil || len(agents) == 0 {
+		return 0, nil
+	}
+	// The same opener, over the same bucket, every other reader of a run's record
+	// uses (cloud.go's recordReadURL and openRecordBucket), which is also the pair
+	// a test replaces.
+	url := recordReadURL(e.lc)
+	if url == "" {
+		return 0, nil
+	}
+	b, err := openRecordBucket(ctx, url)
+	if err != nil {
+		return 0, err
+	}
+	defer b.Close()
+	old := 0
+	for slug, runs := range agents {
+		for runID := range runs {
+			rec, err := runstore.Open(b.Bucket, slug, runID).ReadRecord(ctx)
+			if err != nil && !errors.Is(err, runstore.ErrNotFound) {
+				return 0, err
+			}
+			if rec == nil || rec.Image == nil || rec.Image.BuiltAt == nil || rec.Image.BuiltAt.Before(chainIntroduced) {
+				old++
+			}
+		}
+	}
+	return old, nil
 }
 
 // budgetOffRunFinishes is whether this machine's local config says the word that
@@ -170,6 +284,76 @@ func runsPhrase(n int) string {
 		return "1 run"
 	}
 	return fmt.Sprintf("%d runs", n)
+}
+
+// pausedRuns counts the runs of this project a pause still holds: the runs that
+// ended `paused` and whose node under runstore.PauseNodeRoot the service has not
+// cancelled (C3, R26; D3195, D3197). It is the count of the note's paused line.
+//
+// A node on its own is not a paused run: the node is the service's record that a
+// pause was asked for, and the run's own record is what says the run ended
+// `paused`. That is the reading every guard makes of a pause (pauseInFlight,
+// runs_prstate.go) and the one a resume itself reads it by (PR4: a node whose run
+// has not ended paused is resumed no more than a cancelled one), so a node whose
+// run ended any other way — the `/pause` of a run that then failed, one whose run
+// ended before the service recorded the pause — is a pause that holds nothing,
+// and so is one whose record the bucket no longer has: a run's objects live in
+// the bucket for a window and age out together, which is what bounds this figure
+// over an installation's history.
+//
+// It is what the door can read, and not a promise that the orchestrator still has
+// this resume to do. The contract puts no resumed mark on the node (C3), and the
+// run a pause was resumed with is found in the chain instead — the run whose task
+// names `resumes` with the paused run's id (PR5) — which this count does not
+// walk. A pause that has already been resumed is therefore still counted while
+// its record ends `paused`, and the line under the count says what was read — a
+// pause that stands — rather than that one is still due.
+//
+// A suspended run's execution has ended and released its lease (R12), so the
+// registry the count otherwise reads holds no entry of it, and a node a launcher
+// cancelled is not in flight at all (D3197). A node this release cannot place
+// answers nothing: half a node is not a pause (ErrInvalidPauseNode). Every
+// failure here is silence — a read that could not be made says nothing rather
+// than naming a number nobody read, the rule this door's count is under.
+func (e *initEngine) pausedRuns(ctx context.Context, db *rtdb.Client) int {
+	var nodes map[string]map[string]json.RawMessage
+	if _, err := db.Get(ctx, runstore.PauseNodeRoot, &nodes); err != nil {
+		return 0
+	}
+	if len(nodes) == 0 {
+		return 0
+	}
+	url := recordReadURL(e.lc)
+	if url == "" {
+		return 0
+	}
+	b, err := openRecordBucket(ctx, url)
+	if err != nil {
+		return 0
+	}
+	defer b.Close()
+	n := 0
+	for slugKey, runs := range nodes {
+		slug, err := budget.Unkey(slugKey)
+		if err != nil {
+			continue
+		}
+		for runKey, raw := range runs {
+			node, err := runstore.ParsePauseNode(raw)
+			if err != nil || node.Cancelled {
+				continue
+			}
+			runID, err := budget.Unkey(runKey)
+			if err != nil {
+				continue
+			}
+			rec, err := runstore.Open(b.Bucket, slug, runID).ReadRecord(ctx)
+			if err == nil && rec != nil && rec.Status == runstore.StatusPaused {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // inFlightStep is one step of this update that can reach a run in flight: the
@@ -201,6 +385,10 @@ func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []inFli
 	if e.policyReadsLive(ctx, db) {
 		steps = append(steps, inFlightStep{
 			line: "policy: a cascade project's runs pick up the new policy at their next model call"})
+	}
+	if e.liftLowersCaps(ctx, db) {
+		steps = append(steps, inFlightStep{
+			line: "caps: a repository cap above the project's ceiling is lowered in place, and a lease compares against the lower figure from then on"})
 	}
 	if e.credentialsWindowOpens(ctx, db) {
 		steps = append(steps, inFlightStep{
@@ -251,6 +439,76 @@ func (e *initEngine) managedProjectRead(ctx context.Context) bool {
 	}
 	managed, err := r.managedProject(ctx, e.c)
 	return err == nil && managed
+}
+
+// liftLowersCaps is whether this run's lift stage can lower a repository cap
+// that a run in flight is compared against (B18): a repository node whose cap
+// stands above the project's ceiling is lowered in place, and from then on a
+// lease of that repository compares against the lower figure. The ceiling is
+// the global cap where one is set and the default for repositories with no node
+// of their own otherwise, which is the figure budget.Evaluate takes for the
+// repository — so a project with a global cap set has nothing to lower here,
+// because its runs already meet the lower figure.
+//
+// Like budgetModeBindsRuns it errs towards naming a step that may end up doing
+// nothing: the cap planner is registered by RC4, and a run whose planner cannot
+// read the repositories leaves the nodes alone.
+func (e *initEngine) liftLowersCaps(ctx context.Context, db *rtdb.Client) bool {
+	caps, err := readLiftCaps(ctx, db)
+	if err != nil {
+		return false
+	}
+	perRun := capsCeiling(
+		perRunOf(caps.Global), perRunOfDefaults(caps.Defaults))
+	daily := capsCeiling(
+		dailyOf(caps.Global), dailyOfDefaults(caps.Defaults))
+	for _, rc := range caps.Repos {
+		if rc.PerRunMicros != nil && perRun != nil && *rc.PerRunMicros > *perRun {
+			return true
+		}
+		if rc.DailyMicros != nil && daily != nil && *rc.DailyMicros > *daily {
+			return true
+		}
+	}
+	return false
+}
+
+// capsCeiling is the figure a repository's cap is judged against: the global
+// one where it is set, the default otherwise, and neither when neither is set —
+// a project with no ceiling has nothing above it to lower.
+func capsCeiling(globalBudget, fallback *budget.Micros) *budget.Micros {
+	if globalBudget != nil {
+		return globalBudget
+	}
+	return fallback
+}
+
+func perRunOf(g *budget.GlobalCaps) *budget.Micros {
+	if g == nil {
+		return nil
+	}
+	return g.PerRunMicros
+}
+
+func dailyOf(g *budget.GlobalCaps) *budget.Micros {
+	if g == nil {
+		return nil
+	}
+	return g.DailyMicros
+}
+
+func perRunOfDefaults(d *budget.DefaultCaps) *budget.Micros {
+	if d == nil {
+		return nil
+	}
+	return d.RepoPerRunMicros
+}
+
+func dailyOfDefaults(d *budget.DefaultCaps) *budget.Micros {
+	if d == nil {
+		return nil
+	}
+	return d.RepoDailyMicros
 }
 
 // budgetModeBindsRuns is whether this run's budget-mode step can put the

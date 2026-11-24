@@ -70,7 +70,7 @@ func TestEveryAllowedTypeIsClassifiedDataBearingOrNot(t *testing.T) {
 	if got, want := len(dataBearingTypes), 10; got != want {
 		t.Errorf("data-bearing types = %d, want %d", got, want)
 	}
-	if got, want := len(nonDataBearingTypes), 24; got != want {
+	if got, want := len(nonDataBearingTypes), 25; got != want {
 		t.Errorf("non-data-bearing types = %d, want %d", got, want)
 	}
 	if got, want := len(dataBearingTypes)+len(nonDataBearingTypes), len(allowedTypes); got != want {

@@ -433,18 +433,6 @@ func withGrant(after map[string]any, attr string, value any) map[string]any {
 	return out
 }
 
-// stringList is one planned attribute as a list of strings: a plan's own
-// permissions list, read without a panic on a shape that is not one.
-func stringList(v any) []string {
-	items, _ := v.([]any)
-	out := make([]string, 0, len(items))
-	for _, it := range items {
-		s, _ := it.(string)
-		out = append(out, s)
-	}
-	return out
-}
-
 // readMailboxModule is mailbox_key.tf's own text, out of the tree the binary
 // embeds — the same tree `fugaro update` writes into its workdir.
 func readMailboxModule(t *testing.T) string {
