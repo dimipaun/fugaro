@@ -556,7 +556,12 @@ func TestEachRefusalWritesOneAuditLine(t *testing.T) {
 			name: "a job the launcher never registered",
 			setup: func(t *testing.T, f *claimFixture, link *fakeVMLink) (string, func(*http.Request)) {
 				ticket, _ := f.batch(t, attestedJob, "")
-				link.runningJob(testAttestation, attestedJob, attestedJobID, f.now)
+				// The link's job holds the record's own id, which is the empty
+				// one, so the link would say YES if the route asked it: the
+				// record's missing id is the whole of what refuses here, and a
+				// route that asked the question instead of refusing it would
+				// sign a run whose job nothing registered.
+				link.runningJob(testAttestation, attestedJob, "", f.now)
 				return attestedClaimBody(t, ticket, testAttestation, testNonce), nil
 			},
 			status: StatusUnverified, code: identitywire.RefusalIdentityRefused, audit: ErrorUnverifiedRunIdentity,
