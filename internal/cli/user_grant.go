@@ -718,13 +718,13 @@ func userPairDone(out io.Writer, lc *localcfg.Config, member string, role access
 // terraform.budget_admins. It names them and the one command that settles it.
 //
 // On a MEMBER's roster (lc is nil, the caller being `fugaro workspace user`'s
-// door onto that member) the sentence names the workspace's door instead: a
-// member owner's `fugaro update --budget-admin` is one of the doors a linked
-// member refuses (WU10, D2813, R12), so pointing at it would point at a
-// refusal.
+// door onto that member) the sentence names the workspace's door instead. It
+// names no installation-level door at all -- not even to deny it -- because
+// naming one there would put the refused command in front of a person looking
+// for the one to run (WU10, D2813, R12).
 func userPairDenied(lc *localcfg.Config, grant bool) error {
 	if lc == nil {
-		return userErr("nothing was %s: this member's grants node cannot be written with your credentials, and writing it needs roles/firebasedatabase.admin on the member's own Firebase project, which its GCP owners and editors and its terraform.budget_admins hold. An admin stored in the member's grants node derives no database write of its own (finding F22, D1592), so it cannot grant either: a project Owner on the member runs fugaro update there, or adds you to the member's terraform.budget_admins; and the change itself is made through %s, the workspace's door, which writes this member's record with exactly those credentials (D2813, R11). `fugaro update --budget-admin` is not that door on a linked member: this installation-level command is what the workspace's own replaced",
+		return userErr("nothing was %s: this member's grants node cannot be written with your credentials, and writing it needs roles/firebasedatabase.admin on the member's own Firebase project, which its GCP owners and editors and its terraform.budget_admins hold. An admin stored in the member's grants node derives no database write of its own (finding F22, D1592), so it cannot grant either: a project Owner on the member runs fugaro update there, or adds you to the member's terraform.budget_admins; and the change itself is made through %s, the workspace's door, which writes this member's record with exactly those credentials (D2813, R11)",
 			pairPast(grant), installationMemberDoor("grant"))
 	}
 	return userErr("nothing was %s: the grants node cannot be written with your credentials, and writing it needs roles/firebasedatabase.admin, which the GCP project's owners and editors and terraform.budget_admins hold. An admin stored in the grants node derives no database write of its own (finding F22, D1592), so it cannot grant either: a project Owner runs fugaro update on this installation, or adds you to terraform.budget_admins (fugaro update --budget-admin)", pairPast(grant))

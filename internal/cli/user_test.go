@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/workspace"
 )
@@ -993,6 +994,95 @@ func TestUserCommandsRefuseOnALinkedMember(t *testing.T) {
 			// the two lists are byte for byte what they were.
 			r.unchanged(t)
 		})
+	}
+}
+
+// TestUserCommandsRefuseWhenTheMirrorIsUnreadable: the read that decides
+// whether this project is a linked member is what the doors above are refused
+// on, so a member whose own database will not answer is refused too — a remote
+// failure naming the member list that could not be read, and no door left open
+// (WU10, D2813, R11). Failing open here would hand a linked member's
+// `user add|rm|grant|revoke|offboard` back for the length of a database hiccup,
+// which is exactly the door the member's own copy of the list exists to close.
+func TestUserCommandsRefuseWhenTheMirrorIsUnreadable(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"add", []string{"add", "user:person-2@example.com", "--role", "operator"}},
+		{"rm", []string{"rm", "user:person-1@example.com", "--role", "operator"}},
+		{"grant", []string{"grant", "user:person-2@example.com", "--role", "operator", "--scope", "project"}},
+		{"revoke", []string{"revoke", "user:person-1@example.com", "--role", "operator", "--scope", "project"}},
+		{"offboard", []string{"offboard", "person-1@example.com"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ops := wu8Rig(t, wu10LinkedMirror(t))
+			ops.mirrorErr = rtdb.ErrPermission
+			r := wu10MemberRig(t, ops)
+			out, errOut, err := userCommand(t, tc.args...)
+			all := out + errOut
+			if err == nil {
+				t.Fatalf("fugaro user %s ran with the member's list unreadable:\n%s", tc.name, all)
+			}
+			if code := exitCode(t, err); code != ExitRemoteError {
+				t.Errorf("the refusal exits %d, want %d: the read failed, and that is not the person's to fix", code, ExitRemoteError)
+			}
+			for _, w := range []string{workspace.PathMemberMirror, "could not be read"} {
+				if !strings.Contains(ErrorText(err), w) {
+					t.Errorf("the refusal does not say %q:\n%s", w, ErrorText(err))
+				}
+			}
+			r.unchanged(t)
+		})
+	}
+}
+
+// TestMemberRosterHintsNameTheWorkspaceDoor: the two hints a MEMBER's roster
+// can reach — the refusal that would leave it with no project admin, and the
+// refusal of a write that member's own database did not allow — name the
+// workspace command that writes the member's record, and name no
+// installation-level door: `fugaro update --budget-admin` and
+// `fugaro update --admin` are doors a linked member refuses, so pointing at one
+// there would point at a refusal (WU10, D2813, R12). Both sentences are read
+// through `fugaro workspace user`, whose own tests (WU8's) judge what it writes
+// and not what it says.
+func TestMemberRosterHintsNameTheWorkspaceDoor(t *testing.T) {
+	// The member's roster with one project admin, the caller being them: the
+	// revoke is judged over the document that would be written (F17.2).
+	t.Run("the roster's last project admin", func(t *testing.T) {
+		ops := wu8Rig(t, []workspace.MirrorEntry{wu8Person(wu8Alice)},
+			wu8Stored(t, wu8Alice, accesslib.RoleAdmin, "project"))
+		all, err := wu8Run(t, ops, wu8As(t, wu8Alice), "revoke", wu8Alice, wu8Member, "admin")
+		if err == nil {
+			t.Fatalf("the member's last project admin revoked their own pair:\n%s", all)
+		}
+		memberRosterHint(t, all, "would hold no admin at project scope")
+	})
+	t.Run("a write the member's database refused", func(t *testing.T) {
+		ops := wu8Rig(t, []workspace.MirrorEntry{wu8Person(wu8Alice)})
+		ops.writeErr = rtdb.ErrPermission
+		all, err := wu8Run(t, ops, wu8Caller, "grant", wu8Alice, wu8Member, "operator")
+		if err == nil {
+			t.Fatalf("a write the member's database refused was reported as landed:\n%s", all)
+		}
+		memberRosterHint(t, all, "roles/firebasedatabase.admin")
+	})
+}
+
+// memberRosterHint is what both of those sentences owe the person reading them:
+// the rule they met (also), the workspace door, and no installation-level door
+// as the remedy.
+func memberRosterHint(t *testing.T, all, also string) {
+	t.Helper()
+	for _, w := range []string{also, installationMemberDoor("grant")} {
+		if !strings.Contains(all, w) {
+			t.Errorf("the refusal does not say %q:\n%s", w, all)
+		}
+	}
+	for _, w := range []string{"update --budget-admin", "update --admin"} {
+		if strings.Contains(all, w) {
+			t.Errorf("the refusal hands the person the installation-level door %q:\n%s", w, all)
+		}
 	}
 }
 
