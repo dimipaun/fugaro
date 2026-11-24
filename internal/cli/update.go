@@ -103,9 +103,13 @@ var updateDoor = convergeDoor{
 	long:  updateLong,
 	// The creating flags, in the order the flags are registered: each is
 	// fugaro setup's, and each is refused by name with the door that takes it.
-	// --provision-batch is here because it provisions the Batch backend's
-	// installation-level root — an apply that creates resources, and a first
-	// run's business, like the project and the billing link.
+	// --provision-batch is here because the FIRST provisioning of the Batch
+	// backend's installation-level root is a first run's business, like the
+	// project and the billing link. The root itself is not: where the published
+	// block carries the opt-in fact, update converges it with no flag at all
+	// (R2, D3110), which is the whole of what BR6 asks for — the flag stays
+	// refused because setup is what creates the root, not because nothing else
+	// touches it.
 	foreign: []foreignFlag{
 		{name: "create-project", owner: "fugaro setup", hint: "creating a GCP project is a first run's"},
 		{name: "display-name", owner: "fugaro setup", hint: "it names a project --create-project makes"},
