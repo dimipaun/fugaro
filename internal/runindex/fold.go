@@ -404,6 +404,7 @@ func (f *Fold) read(ctx context.Context, k runKey) (*Entry, error) {
 		Status:       statusOf(rec),
 		PlanTask:     row.PlanTask,
 		PR:           row.PR,
+		Branch:       row.Branch,
 		RequestedBy:  row.RequestedBy,
 		LaunchedBy:   row.LaunchedBy,
 		Batch:        row.Batch,

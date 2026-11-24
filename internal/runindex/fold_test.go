@@ -495,3 +495,36 @@ func TestFoldLeavesTheStampOnFailure(t *testing.T) {
 		t.Fatalf("a failed fold moved the stamp: %v became %v", stamp, got)
 	}
 }
+
+// TestFoldProjectsTheTaskBranch is run 1a21's deferred review finding, on the
+// writing side. indexRun rebuilt the coordinator view from the entry's two
+// records alone, so a run whose record is absent or unreadable lost the branch
+// coordinatorRun falls back to the task for. The fold is where that fallback is
+// preserved: the entry projects the branch runview.Join joins (the record's,
+// else the task's), so a reader of the index draws the same branch the bucket
+// read draws. A record-less run is the case that makes the projection
+// load-bearing, and the one asserted here.
+func TestFoldProjectsTheTaskBranch(t *testing.T) {
+	e := newFoldEnv(t)
+	branch := "fugaro/" + runTwo
+	spec := &task.Spec{
+		Version: 1, RunID: runTwo, Repo: foldRepo, Ref: "main", Workflow: "go",
+		Task: "# Task: a run in flight\n\nthe body", Title: "a run in flight",
+		Branch: branch, PR: 41, PreviousRun: runOne,
+	}
+	// A task and a launch, no record at all: the state whose branch nothing
+	// else in the entry can answer for.
+	e.agent(foldSlug, runTwo, foldNow.Add(-2*time.Minute))
+	e.objects(foldSlug, spec, foldLaunch(runTwo, foldNow.Add(-3*time.Minute)), nil)
+
+	if _, err := e.fold(); err != nil {
+		t.Fatal(err)
+	}
+	two := e.doc(runTwo)
+	if got := two["branch"]; got != branch {
+		t.Fatalf("branch = %#v, want the task's %s", got, branch)
+	}
+	if _, ok := two["record"]; ok {
+		t.Fatalf("a run that never finalized carries a record: %v", two)
+	}
+}

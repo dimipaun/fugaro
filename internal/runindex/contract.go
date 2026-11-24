@@ -117,6 +117,14 @@ type Entry struct {
 	// (runview.Row.PR): what `--pr` filters by and what a pull request's runs
 	// are grouped by.
 	PR int `json:"pr,omitempty"`
+	// Branch is the branch the run is on: the record's, else its task's
+	// (runview.Row.Branch), the same order coordinatorRun applies. It is
+	// projected beside the records rather than read from Record alone because
+	// a run whose record is absent or unreadable still carries the branch its
+	// task named, and the view derives a record's release from it
+	// (coordinator.finish): a reader of the index that took the branch from
+	// the record would draw that run differently from the bucket read.
+	Branch string `json:"branch,omitempty"`
 	// RequestedBy is the identity the run's task names, and LaunchedBy the
 	// identity its launch record names. They are two facts and not one: the
 	// task is written by whoever filed it and the launch by whoever started
