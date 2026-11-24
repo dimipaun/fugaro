@@ -3687,6 +3687,187 @@ func TestServesNoAPIKeyOrOAuthWithBudgetOff(t *testing.T) {
 	}
 }
 
+// TestWorkflowSecretsServedForVertex is IS9's own task, and D3326 as amended by
+// F17: a `vertex` repository of an installation whose credentials service is
+// deployed is handed the ADDRESS — its job accounts are granted
+// roles/run.invoker on the service and the launcher puts the URL on the
+// execution — while nothing of its credentials is served: the service's own
+// account is granted none of its containers and the job keeps every accessor
+// and every mount it has (G7). What the address is FOR on this auth is the
+// workflow secrets a run fetches instead of mounting (F17), which is why the
+// fact beside the block is false and not true.
+//
+// The switch is what the address is NOT read from, and the reason is
+// mechanical: localcfg.Repo.CredentialsServiceReady is documented as the
+// switch's own answer and is written from CredentialsServiceServes, which
+// answers false for `vertex` by construction — its model calls are the
+// project's own GCP service — so a root that waited for the switch would carry
+// no block and grant nothing.
+//
+// It was written red, and the red step is the first assertion: before
+// CredentialsServiceAddress, repoCredentialsService read
+// CredentialsServiceServes, and a vertex repository's root named no
+// google_cloud_run_v2_service_iam_member.credentials address at all.
+func TestWorkflowSecretsServedForVertex(t *testing.T) {
+	in := repoRootInputs(t, repoRootVertexAgent)
+	in.LC = parseLC(t, repoRootLC)
+	in.Installation.CredentialsService = credentialsService()
+	on, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The premise: the switch really does answer false for this repository, so
+	// what the assertions below pin is the address arm and not a switch that
+	// happened to be on (CredentialsServiceServes).
+	if CredentialsServiceServes(true, true, "vertex", config.BudgetEnforce) {
+		t.Fatal("CredentialsServiceServes(installed, ready, vertex, enforce) = true: the switch serves no vertex repository, and a change there would make the vertex arm below say nothing")
+	}
+
+	invoker := `google_cloud_run_v2_service_iam_member.credentials[0]`
+	if got := on.Installation.CredentialsService; got == nil {
+		t.Fatalf("a vertex repository's root carries no credentials service: D3326 hands it the address so its runs fetch their workflow secrets through the service, so the invoker grants below are the whole point (F17)")
+	} else if got.Name != credentialsService().Name || got.Region != credentialsService().Region {
+		t.Errorf("the vertex repository's credentials service is %+v, want name and region alone (%+v)", got, credentialsService())
+	}
+	if on.Installation.CredentialsServiceServes == nil || *on.Installation.CredentialsServiceServes {
+		t.Errorf("the vertex repository's root writes credentials_service_serves = %v, want a record that says false: the service serves none of this repository's credentials, and the module's drops hang on that fact (D3326, G7)", on.Installation.CredentialsServiceServes)
+	}
+	for _, key := range slices.Sorted(maps.Keys(on.Workflows)) {
+		if want := `module.repo.module.workflow[` + strconv.Quote(key) + `].` + invoker; !slices.Contains(on.Addresses(), want) {
+			t.Errorf("the vertex repository's addresses are missing %s: without the invoker grant the job account holds no roles/run.invoker on the service the launcher hands it the address of, and the run's own fetch is refused at the service's door (D3326, F17)", want)
+		}
+	}
+	// And the address is the whole of what this repository gained: every other
+	// address, and every job's mounts, are the ones it has with no service at
+	// all. That is G7's "model mounts and accessors are unchanged", asserted as
+	// a set difference rather than mount by mount.
+	offIn := in
+	offIn.Installation.CredentialsService = nil
+	off, err := Repo(offIn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gained []string
+	for _, a := range on.Addresses() {
+		if !slices.Contains(off.Addresses(), a) {
+			gained = append(gained, a)
+		}
+	}
+	var want []string
+	for _, key := range slices.Sorted(maps.Keys(on.Workflows)) {
+		want = append(want, `module.repo.module.workflow[`+strconv.Quote(key)+`].`+invoker)
+	}
+	slices.Sort(want)
+	if !slices.Equal(gained, want) {
+		t.Errorf("the vertex repository's root gained %v over the same repository with no service (missing: %v), want exactly the job invoker grants %v: the address is the one thing D3326 adds, and a vertex run reads no credential of the service's so nothing of its may move (F17, G7)", gained, missingFrom(want, gained), want)
+	}
+	if slices.ContainsFunc(on.Addresses(), func(a string) bool {
+		return strings.Contains(a, "google_secret_manager_secret_iam_member.service[")
+	}) {
+		t.Error("the vertex repository's addresses name a grant to the service's own account: the service serves none of this repository's credentials, so it is granted none of its containers (D2074 hangs on credentials_service_serves)")
+	}
+	for _, key := range slices.Sorted(maps.Keys(off.Workflows)) {
+		if got, before := modelMountsOf(on.Workflows[key]), modelMountsOf(off.Workflows[key]); !slices.Equal(got, before) {
+			t.Errorf("the vertex repository's %s job mounts %v, want %v, what it mounts with no service at all: a vertex run reads no model credential of the service's, so the address moves no mount (G7, F17)", key, got, before)
+		}
+	}
+}
+
+// TestModeOffRepoGetsNoAddress is F17's other half — "no other held-off
+// repository gains it": the address reaches the one auth D3326 names and no
+// other repository the switch holds off. The installation is the same one the
+// vertex test above uses, so the pair is about the auth and nothing else: same
+// block, same local config, same published mode, one word in the document.
+//
+// The address is what makes a repository proxied (proxiedRepo) and opens its
+// git provider keyless (internal/gitprov/providers/providers.go), so an
+// api-key or oauth repository handed it on a project whose budget the gateway
+// does not exist in would lose the path it has and get nothing in its place
+// (D2071). The rows walk both held-off states: the mode `off` (or no published
+// node) that holds the two served auths off, and the install-time absence of
+// the service itself.
+func TestModeOffRepoGetsNoAddress(t *testing.T) {
+	const invoker = `google_cloud_run_v2_service_iam_member.credentials[0]`
+	for name, tc := range map[string]struct {
+		agent string
+		lc    string
+		mode  string
+		want  bool
+	}{
+		"the vertex repository D3326 hands the address to": {repoRootVertexAgent, repoRootLC, config.BudgetOff, true},
+		"an api-key repository on a mode-off project":      {`agent: { auth: api-key }`, repoRootAPIKeyLC, config.BudgetOff, false},
+		"an api-key repository on an unpublished project":  {`agent: { auth: api-key }`, repoRootAPIKeyLC, "", false},
+		"an oauth repository on a mode-off project":        {repoRootOAuthAgent, repoRootLC, config.BudgetOff, false},
+		"an oauth repository on an unpublished project":    {repoRootOAuthAgent, repoRootLC, "", false},
+	} {
+		held := repoRootServed(t, tc.agent, tc.lc, tc.mode)
+		got := held.Installation.CredentialsService != nil
+		if got != tc.want {
+			t.Fatalf("%s: the repository root carries the credentials service = %v, want %v: the address is handed to `vertex` alone among the repositories the switch holds off, and every other one keeps the credential path it has (D3326 as amended by F17)", name, got, tc.want)
+		}
+		named := slices.ContainsFunc(held.Addresses(), func(a string) bool { return strings.Contains(a, invoker) })
+		if named != tc.want {
+			t.Errorf("%s: the addresses name an invoker grant = %v, want %v", name, named, tc.want)
+		}
+		if tc.want {
+			if held.Installation.CredentialsServiceServes == nil || *held.Installation.CredentialsServiceServes {
+				t.Errorf("%s: the root writes credentials_service_serves = %v, want false (the service serves a vertex repository nothing)", name, held.Installation.CredentialsServiceServes)
+			}
+			continue
+		}
+		if held.Installation.CredentialsServiceServes != nil {
+			t.Errorf("%s: a repository with no block carries credentials_service_serves = %v, want none: the fact belongs to the block above it, and Terraform reads an absent member as the idempotent default (D3326, RepoInstallation.CredentialsServiceServes)", name, held.Installation.CredentialsServiceServes)
+		}
+	}
+}
+
+// TestVertexRepoKeepsModelPath is G7 pinned where a reader would look for the
+// damage: the vertex repository's model path — whose credentials its job
+// mounts, which of them its account holds an accessor on, and what
+// model_secrets_served says — is exactly the one it has with no service at all.
+//
+// It matters more than the generic set difference above, because the vertex
+// repository is the one place the address and the switch disagree: everything
+// in the module and in Readiness that keys off "the service is on" would, if it
+// read the block's presence instead of the fact beside it, take this job's
+// model credential away and hand it an address to fetch one from — and a vertex
+// run reads no credential of the service's, so the run would simply lose it.
+func TestVertexRepoKeepsModelPath(t *testing.T) {
+	in := repoRootInputs(t, repoRootVertexAgent)
+	in.LC = parseLC(t, repoRootLC)
+	in.Installation.CredentialsService = credentialsService()
+	withService, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := repoRootSpec(t, repoRootVertexAgent)
+	if withService.Installation.CredentialsService == nil {
+		t.Fatal("the fixture carries no credentials service: this test is about a vertex repository of an installation that has one")
+	}
+	if got, want := withService.ModelSecretsServed, plain.ModelSecretsServed; got != want {
+		t.Errorf("the vertex repository plans model_secrets_served = %q, want %q, what it plans with no service at all: the drop of the job's model accessors hangs on the switch, which serves no vertex repository (G7, D3326)", got, want)
+	}
+	if got := len(withService.Secrets); got != len(plain.Secrets) {
+		t.Errorf("the vertex repository declares %d secret containers, want %d: the address adds none and takes none away (G7)", got, len(plain.Secrets))
+	}
+	for _, key := range slices.Sorted(maps.Keys(plain.Workflows)) {
+		before, after := plain.Workflows[key], withService.Workflows[key]
+		if got, want := modelMountsOf(after), modelMountsOf(before); !slices.Equal(got, want) {
+			t.Errorf("the vertex repository's %s job mounts %v, want %v: a vertex run reads no model credential of the service's, so the address may not move its mounts (G7, F17)", key, got, want)
+		}
+		if got := slices.Sorted(maps.Keys(after.SecretEnv)); !slices.Equal(got, slices.Sorted(maps.Keys(before.SecretEnv))) {
+			t.Errorf("the vertex repository's %s job declares the secret env vars %v, want %v (G7)", key, got, slices.Sorted(maps.Keys(before.SecretEnv)))
+		}
+		for _, logical := range uniqueSecrets(before) {
+			grant := "google_secret_manager_secret_iam_member.job[" + strconv.Quote(logical) + "]"
+			want := `module.repo.module.workflow[` + strconv.Quote(key) + `].` + grant
+			if !slices.Contains(withService.Addresses(), want) {
+				t.Errorf("the vertex repository's addresses are missing %s: its job account keeps every accessor the service would have taken, because the service serves it nothing (G7, F17)", want)
+			}
+		}
+	}
+}
+
 // TestFilledServiceServedAuthsDropsTheAnthropicMountsOnly is D2072's SECOND
 // step pinned where it holds: B2.7's flip list is filled, so an `api-key` or
 // `oauth` repository that IS on the switch plans `model_secrets_served =

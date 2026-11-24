@@ -1091,10 +1091,15 @@ func appliedRepoCredentialsService(ctx context.Context, c *infra.Clients, stateB
 // checkout of X, so there is no file to read and no ref to read one out of
 // (run.go's launchFileConfig) — which has no agent.auth to judge the switch's
 // third condition on. The root's own apply already made that decision: it
-// dropped the job's model mounts and granted its account roles/run.invoker
-// exactly when this key is there, and a job is handed the service's address to
-// match the containers it runs (run.go's credentialsServiceLaunchEnv call
-// site).
+// granted the job's account roles/run.invoker exactly when this key is there,
+// and a job is handed the service's address to match the containers it runs
+// (run.go's credentialsServiceLaunchEnv call site). For every auth but
+// `vertex` the key is there exactly when the apply also dropped the job's
+// model mounts (infra.CredentialsServiceServes); a `vertex` repository's root
+// carries it with nothing dropped, because the address is what its runner
+// fetches workflow secrets through and no credential of its moves (IS9,
+// D3326, F17) — and the launch this answer feeds is the one whose auth is
+// unknown, so it reads the address's own fact and not the drop's.
 //
 // The upgrade backfill used to read this too, and does not any more: it asks
 // about roots another machine or another checkout applied, and those wrote no

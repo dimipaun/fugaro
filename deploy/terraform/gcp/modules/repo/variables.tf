@@ -61,6 +61,17 @@ variable "installation" {
       region  = string
       account = optional(string, "")
     }))
+    # Whether that service serves THIS repository's credentials
+    # (infra.CredentialsServiceServes), which is the half every drop below is
+    # keyed on: the job's model-secret accessors and mounts and the build
+    # account's own accessor list go, and the service's account is granted each
+    # container the jobs still mount. Optional and TRUE, so a tfvars written
+    # before this input existed — which carried credentials_service only for a
+    # repository the switch served — plans exactly what it planned, and FALSE
+    # is the one repository handed the address without being served: a
+    # `vertex` one (D3326 as amended by F17), whose runs fetch workflow secrets
+    # through the service and give up nothing.
+    credentials_service_serves = optional(bool, true)
     # The project's catalog check job account (D1148), its email, or "" on an
     # installation whose project publishes no catalog. It is what
     # catalogcheck.tf grants actAs on this repository's build account to, so a

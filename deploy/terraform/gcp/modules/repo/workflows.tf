@@ -29,11 +29,18 @@ module "workflow" {
   operators        = var.installation.operators
   allow_job_delete = var.allow_job_delete
 
-  # The installation's credentials service, when it has one (D146, D147): the
-  # workflow module grants each job's account roles/run.invoker on it and drops
-  # that job's model-secret accessors. Null on an installation that has not
-  # opted in, which is every installation today, and then nothing changes.
+  # The installation's credentials service, when this repository is handed its
+  # address with it (D146, D147; infra.CredentialsServiceAddress): the workflow
+  # module grants each job's account roles/run.invoker on it, and, with the
+  # fact below, drops that job's model-secret accessors. Null on an
+  # installation that has not opted in and on a repository the switch holds off
+  # that is no `vertex` one, and then nothing changes.
   credentials_service = var.installation.credentials_service
+
+  # Whether that service serves THIS repository's credentials, which is what
+  # the workflow module's drop reads (D3326, F17): false for a `vertex`
+  # repository, handed the address with nothing of its job's taken away.
+  credentials_service_serves = var.installation.credentials_service_serves
 
   # Which model credentials each job of THIS repository gives its accessor up
   # for (D2072, G17), from the repository's own answer: the workflow module

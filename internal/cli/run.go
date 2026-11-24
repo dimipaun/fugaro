@@ -6696,6 +6696,17 @@ func servicesLaunchEnv(entry config.Entry) string {
 // service's revision does not exist yet (fillCredentialsAudience writes it on
 // the apply after the one that created the service).
 //
+// A VERTEX repository is the one repository told without being served
+// (D3326): the answer is infra.CredentialsServiceAddress's, which is the
+// switch for every other auth and the installation's own block for a vertex
+// one, so a vertex job is handed the service its runner fetches workflow
+// secrets from — and nothing of its moves, because a vertex run reads no
+// credential of the service's (F17, the arm below). The two sides of that
+// answer are one function on purpose: the root's tfvars and this launch read
+// it, so a job is never told about a service its account holds no
+// roles/run.invoker on, and never left to fetch from one its root granted it
+// but no launch named.
+//
 // The gate that judges whether a run is a proxied one asks this same function
 // — a job it writes the variable onto is a proxied run's job and no other's
 // (proxiedRepo) — so the two answers cannot drift apart.
@@ -6755,7 +6766,22 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, sharedProfile, repo, auth,
 		return []string{envCredentialsServiceURL + "=" + lc.CredentialsService.URL}
 	}
 	local, _ := lc.RepoFor(repo)
-	serves := infra.CredentialsServiceServes(installed, local.CredentialsServiceOn(), auth, mode)
+	// The plan's own predicate and not a second conjunction: the same answer
+	// the repository root's tfvars are built from (infra.CredentialsServiceAddress,
+	// read by infra's spec builder), so a job is handed an address exactly
+	// where its root granted it a call (D135).
+	//
+	// A VERTEX repository is the one arm the address reaches without the
+	// switch: its runs read no credential of the service's — its model calls
+	// go out on the job's own Google credentials and its git traffic on the
+	// App key its job still mounts — so the address cannot move either path
+	// (F17), and what it is for is the workflow secrets its runner fetches
+	// from the service at bootstrap (D3326). It is handed whenever the
+	// installation HAS the service and not only on a record's vouch, because
+	// the record describes the model switch and is false for a vertex
+	// repository by construction; the root's own tfvars say the same thing,
+	// so the two sides cannot disagree.
+	address := infra.CredentialsServiceAddress(installed, local.CredentialsServiceOn(), auth, mode)
 	if auth == "" {
 		// No document this launcher could read, so the switch's third
 		// condition is judged on the two answers that do not need one: the
@@ -6765,9 +6791,9 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, sharedProfile, repo, auth,
 		// roles/run.invoker, and a launch that withheld the address from a
 		// repository whose mounts are already gone would halt at the service's
 		// door (D143).
-		serves = installed && (local.CredentialsServiceOn() || deployed)
+		address = installed && (local.CredentialsServiceOn() || deployed)
 	}
-	if !serves {
+	if !address {
 		return nil
 	}
 	return []string{envCredentialsServiceURL + "=" + lc.CredentialsService.URL}

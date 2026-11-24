@@ -418,6 +418,54 @@ func CredentialsServiceServes(installed, ready bool, auth, mode string) bool {
 	return mode == config.BudgetObserve || mode == config.BudgetEnforce
 }
 
+// CredentialsServiceAddress answers whether this repository's root hands its
+// job accounts the installation's credentials service — the block in the
+// tfvars, which modules/workflow/sa.tf turns into each job account's
+// roles/run.invoker grant, and which the launcher puts on the execution as the
+// service's address — while CredentialsServiceServes above answers whether the
+// service serves this repository's CREDENTIALS (D3326 as amended by F17).
+//
+// The two come apart for exactly one repository, and that is the whole of what
+// this function exists for: a `vertex` one. A vertex repository's runs read no
+// credential of the service's — its model calls go out on the job's own Google
+// credentials through Vertex AI, and the provider key and the App key it
+// pushes with are mounted in its job — so the address cannot move its model
+// path (internal/runner's serviceSwitched, which admits `api-key` and `oauth`
+// alone, F17) and the block carries no drop with it: model_secrets_served stays
+// `none` for it (ModelSecretsServed), and the module's own drop is gated on the
+// serves fact this function's second answer travels beside
+// (RepoInstallation.CredentialsServiceServes). What the address IS for is the
+// workflow secrets its runner fetches from the service at bootstrap
+// (internal/runner's fetchWorkflowSecrets, D3326).
+//
+// It is handed whenever the installation HAS the service — and not only on a
+// record's vouch, which is the switch's second condition — because there is
+// nothing for the record to vouch for: the record says a root was applied with
+// the service serving this repository's credentials, which is false for a
+// vertex repository by construction, and a vertex run's fetch fails closed at
+// the service if no root has granted it a call yet (D143, internal/runner). So
+// a vertex repository is the one repository whose address follows the
+// installation's own block rather than the per-repository switch, and `ready`
+// is read for the other arms alone.
+//
+// It is one function, read by both the spec the root plans from and the
+// address the launcher puts on the execution, for CredentialsServiceServes'
+// reason: a second implementation would be a second answer, and the state
+// where the two disagree is a job granted a call the launcher never told it to
+// make, or one told to make a call its account holds no grant for.
+//
+// A repository the switch HOLDS OFF and that is not a vertex one answers false
+// here as it does there: an `api-key` or `oauth` repository on a mode-off
+// project, or one whose root was applied while its record said off, is handed
+// nothing — telling it where the service is would move its model path onto a
+// service it keeps its own mount instead of reading (F17, D2071).
+func CredentialsServiceAddress(installed, ready bool, auth, mode string) bool {
+	if CredentialsServiceServes(installed, ready, auth, mode) {
+		return true
+	}
+	return installed && auth == "vertex"
+}
+
 // ModelSecretsServed answers which model secrets the credentials service
 // serves to a job — the value of the repository root's model_secrets_served
 // input, and the one thing modules/workflow/sa.tf keys the model mount and
@@ -466,8 +514,8 @@ func ModelSecretsServed(serves bool, auth string) string {
 // REPOSITORY root reads it: the name, the region and the account the workflow
 // module turns into each job account's roles/run.invoker grant, the
 // per-container secretAccessor the service's own account gets (D2074), or nil
-// when the switch is held off for this repository
-// (CredentialsServiceServes). The URL is left behind because the module's
+// when this repository is handed no address at all
+// (CredentialsServiceAddress). The URL is left behind because the module's
 // variable carries no such attribute — an object conversion in Terraform
 // silently DROPS an extra attribute rather than refusing it, so passing it
 // would read as a value the repository root agreed on while nothing used it.
@@ -478,13 +526,22 @@ func ModelSecretsServed(serves bool, auth string) string {
 // plan until the installation itself is applied (outputs.tf carries it from
 // the service's own resource, so the next apply of that root does).
 //
-// nil is the whole of the switch's first flip, and it needs no Terraform
-// change: modules/workflow/sa.tf gates the mount drop on the variable being
-// null, so a held-off repository plans exactly what every repository planned
-// before the service existed — its job accounts keep the accessors and the
-// mounts, and none of them is granted roles/run.invoker.
-func repoCredentialsService(s *CredentialsService, on bool) *CredentialsService {
-	if s == nil || !on {
+// nil is the whole of the first flip, and for the repositories it holds off it
+// still needs no Terraform change: a repository the switch does not serve and
+// that is no vertex one is handed no address (CredentialsServiceAddress), so
+// it plans exactly what every repository planned before the service existed —
+// its job accounts keep the accessors and the mounts, and none of them is
+// granted roles/run.invoker.
+//
+// The block and the DROPS it used to carry are one value each since IS9
+// (D3326): the block is the address (an invoker grant and the launcher's
+// FUGARO_CREDENTIALS_SERVICE_URL), and RepoInstallation.CredentialsServiceServes
+// is the drop, because a vertex repository is handed the first without the
+// second — the module reads both, and the two answers travel together so a
+// plan cannot take an accessor away from a job whose credential the service
+// does not serve.
+func repoCredentialsService(s *CredentialsService, address bool) *CredentialsService {
+	if s == nil || !address {
 		return nil
 	}
 	return &CredentialsService{Name: s.Name, Region: s.Region, Account: s.Account}
@@ -661,10 +718,29 @@ type RepoInstallation struct {
 	Launchers               []string    `json:"launchers"`
 	Operators               []string    `json:"operators"`
 	// CredentialsService is the installation's credentials service, or absent
-	// while it has not opted in (D146, D147): the workflow module grants each
-	// job account roles/run.invoker on it and drops that job's model-secret
-	// accessors (D135, D145).
+	// while it has not opted in, and while this repository is handed no
+	// address at all (D146, D147, CredentialsServiceAddress): the workflow
+	// module grants each job account roles/run.invoker on it — that grant and
+	// the launcher's FUGARO_CREDENTIALS_SERVICE_URL are the whole of what this
+	// member means — and modules/repo/build.tf grants the build account the
+	// same on it (B4.4).
 	CredentialsService *CredentialsService `json:"credentials_service,omitempty"`
+	// CredentialsServiceServes is whether that service serves THIS
+	// repository's credentials (CredentialsServiceServes), which is the half
+	// of the switch the module's drop is keyed on: the job's model-secret
+	// accessors and mounts go, and the service's own account gets a
+	// secretAccessor on each secret the job mounts (D135, D145, D2074), while
+	// this is true.
+	//
+	// It is a pointer and omitted, and that is what keeps every tfvars written
+	// before this input existed planning exactly what it planned: the module
+	// declares it optional and TRUE, because a root applied then carried the
+	// block only for a repository the switch served and planned every drop
+	// with it. Written, it is the answer for the block beside it — false for
+	// the one repository handed the address without being served, a `vertex`
+	// one (D3326 as amended by F17) — and it is written whenever the block is,
+	// so a plan can never read the module's default where Go had an answer.
+	CredentialsServiceServes *bool `json:"credentials_service_serves,omitempty"`
 	// CatalogCheckServiceAccount is the project's catalog check job's account
 	// (D1148), its email, from the installation's outputs, or "" on an
 	// installation whose project publishes no catalog. It is what
@@ -859,6 +935,16 @@ type repoCtx struct {
 	// the switch takes away is a SECOND answer (ModelSecretsServed), read
 	// beside it wherever a mount is dropped.
 	credentialsServiceOn bool
+	// credentialsServiceAddressed is CredentialsServiceAddress's answer for
+	// this repository: whether its root hands the workflow module the service
+	// at all (RepoInstallation.CredentialsService, and the build account's own
+	// invoker grant with it). It is TRUE for every repository
+	// credentialsServiceOn is, and for a `vertex` one of an installation that
+	// has the service, whose runs reach it for their workflow secrets and no
+	// credential of theirs (D3326, F17). credentialsServiceOn stays the
+	// narrower answer and is the one every mount drop reads; the two are read
+	// apart and travel together into the tfvars.
+	credentialsServiceAddressed bool
 	// budgetMode is the mode the published node carries, read once by resolve
 	// from Inputs.Policy: the switch's fourth condition for an `api-key` or
 	// `oauth` repository (D2071). It is "" where the caller read no node.
@@ -969,9 +1055,29 @@ func resolve(in Inputs) (*repoCtx, error) {
 		c.budgetMode = in.Policy.Budget.Mode
 	}
 	c.credentialsServiceOn = CredentialsServiceServes(c.inst.CredentialsService != nil, local.CredentialsServiceOn(), in.Cfg.Agent.Auth, c.budgetMode)
+	c.credentialsServiceAddressed = CredentialsServiceAddress(c.inst.CredentialsService != nil, local.CredentialsServiceOn(), in.Cfg.Agent.Auth, c.budgetMode)
 	c.providerKeysServed = local.ProviderKeysServedOn()
 	c.stageAccountServed = local.StageAccountServedOn()
 	return c, nil
+}
+
+// credentialsServiceServesFact is RepoInstallation.CredentialsServiceServes as
+// this repository's tfvars carry it: this repository's own answer
+// (credentialsServiceOn) whenever the block above it is written, and nil
+// whenever it is not — because a tfvars with no block names no service the
+// drops could be about, and the module reads the member only through the block.
+//
+// Writing the answer beside the block rather than leaving it to the module's
+// default is what makes the two halves one document: the default is TRUE
+// (every tfvars written before this input existed meant "the block is the
+// switch"), so an omitted member beside a written block would plan the drop
+// for the one repository handed the address without being served (D3326).
+func (c *repoCtx) credentialsServiceServesFact() *bool {
+	if c.inst.CredentialsService == nil || !c.credentialsServiceAddressed {
+		return nil
+	}
+	serves := c.credentialsServiceOn
+	return &serves
 }
 
 // resolveBitbucketProxied decides the per-repository fact of the flip
@@ -2062,7 +2168,8 @@ func Repo(in Inputs) (RepoSpec, error) {
 			RoleIDs:                    RepoRoleIDs{JobRunner: c.inst.RoleIDs.JobRunner, BuildSubmitter: c.inst.RoleIDs.BuildSubmitter, TagMover: c.inst.RoleIDs.TagMover},
 			Launchers:                  c.inst.Launchers,
 			Operators:                  c.inst.Operators,
-			CredentialsService:         repoCredentialsService(c.inst.CredentialsService, c.credentialsServiceOn),
+			CredentialsService:         repoCredentialsService(c.inst.CredentialsService, c.credentialsServiceAddressed),
+			CredentialsServiceServes:   c.credentialsServiceServesFact(),
 			CatalogCheckServiceAccount: c.inst.CatalogCheckServiceAccount,
 		},
 		BitbucketProxied: c.bitbucketProxied,
@@ -2586,10 +2693,13 @@ func (rs RepoSpec) Addresses() []string {
 	add(root + "google_service_account_iam_member.build_self")
 	// The build account's own roles/run.invoker on the installation's
 	// credentials service (B4.4, modules/repo/build.tf), on the same switch
-	// the workflow module's job invoker grants read (D135): an installation
-	// that has not opted in plans no resource, so its address is not one this
-	// spec has.
-	if rs.Installation.CredentialsService != nil {
+	// the build's own drop is (D135, B4.9): an installation that has not opted
+	// in plans no resource, and neither does the one repository handed the
+	// address without being served — a `vertex` one, whose builds read their
+	// git credential and their build secrets from the accessors they keep, so
+	// the grant would be a call nothing of its makes (D3326, "any grant beyond
+	// the ones a task names").
+	if rs.credentialsServiceServes() {
 		add(root + "google_cloud_run_v2_service_iam_member.build_credentials[0]")
 	}
 	for _, member := range operators {
@@ -2636,7 +2746,7 @@ func (rs RepoSpec) Addresses() []string {
 			// that survives a retirement. The App key's half is inert until
 			// config.ServiceHeldSecretNames names it (C2.2's release, review
 			// finding F1).
-			if rs.Installation.CredentialsService != nil && mountsServiceHeldSecret(ws, logical, rs.BitbucketProxied, rs.ModelSecretsServed) {
+			if rs.credentialsServiceServes() && mountsServiceHeldSecret(ws, logical, rs.BitbucketProxied, rs.ModelSecretsServed) {
 				continue
 			}
 			add(p + "google_secret_manager_secret_iam_member.job[" + q(logical) + "]")
@@ -2657,7 +2767,7 @@ func (rs RepoSpec) Addresses() []string {
 		serviceNames = append(serviceNames, ws.VaultSecretNames...)
 		slices.Sort(serviceNames)
 		for _, logical := range slices.Compact(serviceNames) {
-			if serviceReadsSecret(rs.Installation.CredentialsService, logical, rs.BitbucketProxied) {
+			if serviceReadsSecret(rs.Installation.CredentialsService, rs.credentialsServiceServes(), logical, rs.BitbucketProxied) {
 				add(p + "google_secret_manager_secret_iam_member.service[" + q(logical) + "]")
 			}
 		}
@@ -2735,7 +2845,9 @@ func mountsServiceHeldSecret(ws WorkflowSpec, name string, proxied bool, served 
 // DropsBitbucketToken reports whether this root's plan takes the Bitbucket
 // token away from the repository's jobs: the job's mount of it (Readiness's
 // drop, and the module's job_mounts with it) and its account's secretAccessor
-// on it (the mirror in Addresses, and modules/workflow/sa.tf beside it).
+// on it (the mirror in Addresses, and modules/workflow/sa.tf beside it). It is
+// a drop, so it reads credentialsServiceServes and not the block alone: a
+// `vertex` repository handed the address keeps its token.
 //
 // It is Readiness's own two conditions, stated once for a caller that has to
 // decide BEFORE a plan runs: `fugaro update` refuses the drop while the
@@ -2754,8 +2866,25 @@ func mountsServiceHeldSecret(ws WorkflowSpec, name string, proxied bool, served 
 // TestDropsBitbucketTokenIsTheDropThePlanMakes holds this answer to that drop
 // on the same fixtures, so the two cannot part company without a test failing.
 func (rs RepoSpec) DropsBitbucketToken() bool {
-	return rs.Installation.CredentialsService != nil && rs.BitbucketProxied &&
+	return rs.credentialsServiceServes() && rs.BitbucketProxied &&
 		slices.Contains(config.ProxiedGitSecretNames, config.BitbucketSecret)
+}
+
+// credentialsServiceServes reports whether this root's plan carries the
+// service's DROP for this repository (RepoInstallation.CredentialsServiceServes,
+// written by credentialsServiceServesFact): the block is there AND the answer
+// beside it says the service serves this repository's credentials — which is
+// what modules/workflow/sa.tf's local.service_serves and
+// modules/repo/build.tf's two locals read out of var.installation, both of them
+// defaulting an ABSENT member to true for the same reason (a tfvars written
+// before the member existed carried the block only for a repository the switch
+// served). It is the mirror of a drop, so every predicate below that mirrors a
+// drop reads it; the ones that mirror an ADDRESS read the block alone.
+func (rs RepoSpec) credentialsServiceServes() bool {
+	if rs.Installation.CredentialsService == nil {
+		return false
+	}
+	return rs.Installation.CredentialsServiceServes == nil || *rs.Installation.CredentialsServiceServes
 }
 
 // BuildMountsServed reports whether this root's plan takes the BUILD's own
@@ -2768,10 +2897,10 @@ func (rs RepoSpec) DropsBitbucketToken() bool {
 // It is buildServes(config.BuildSecretClassBuild) for a caller that has to
 // decide from the finished spec rather than while building it — the guard's own
 // allowance for the flip's accessor deletes (BuildAccessorAllowDelete) — and it
-// is stated from the tfvars' side of the same switch: Installation's
-// credentials_service block is null for every repository the switch holds off
-// (repoCredentialsService), which is what modules/repo/build.tf's
-// local.build_mounts_served reads out of var.installation, so this answer and
+// is stated from the tfvars' side of the same switch: the block is there and
+// the fact beside it says the service serves this repository
+// (credentialsServiceServes, which is what modules/repo/build.tf's
+// local.build_mounts_served reads out of var.installation), so this answer and
 // the module's for_each are one answer about one plan.
 //
 // It is the class "build" alone and not either class: the check job's own mount
@@ -2779,7 +2908,7 @@ func (rs RepoSpec) DropsBitbucketToken() bool {
 // that mount is a container's secret_key_ref and no IAM member, so no plan
 // carries a delete of it for a guard to weigh.
 func (rs RepoSpec) BuildMountsServed() bool {
-	return rs.Installation.CredentialsService != nil && config.BuildServesClass(config.BuildSecretClassBuild)
+	return rs.credentialsServiceServes() && config.BuildServesClass(config.BuildSecretClassBuild)
 }
 
 // serviceReadsSecret reports whether the credentials service's own account is
@@ -2804,11 +2933,15 @@ func (rs RepoSpec) BuildMountsServed() bool {
 // own dropModelMounts takes the mount out of the spec — which is exactly the
 // tfvars the module reads.
 //
-// svc nil, or with no account in it, is the switch off and the installation
-// applied before the account existed: no grant at all, which is what makes
-// this release plan nothing new on such an installation.
-func serviceReadsSecret(svc *CredentialsService, name string, proxied bool) bool {
-	if svc == nil || svc.Account == "" {
+// svc nil, or with no account in it, is a repository handed no address and an
+// installation applied before the account existed: no grant at all, which is
+// what makes this release plan nothing new on such an installation. `serves`
+// is credentialsServiceServes, the fact the module's own service_secret_names
+// reads: a repository handed the address without being served — a `vertex` one
+// — is granted nothing here, because the service is handed no container of
+// that job's (D3326, F17).
+func serviceReadsSecret(svc *CredentialsService, serves bool, name string, proxied bool) bool {
+	if svc == nil || svc.Account == "" || !serves {
 		return false
 	}
 	if slices.Contains(config.ServiceHeldSecretNames, name) {
