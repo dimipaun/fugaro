@@ -70,6 +70,12 @@ workflows:
       # internal/e2e, about 12 and 6 minutes each, internal/image and images (the base-image builds), whose tests need
       # Docker and a git checkout the container doesn't have. A change to those packages
       # should run them (CI does).
+      # What runs is what the change can reach: the packages the diff against the base
+      # branch reaches through the reverse import graph and the read map
+      # (scripts/ci-affected, the same selector docs/ci-affected-tests plans for CI), so a
+      # run stops paying 15 minutes of tests for a one-package change. The whole tree below
+      # stays the answer for everything the selector cannot place -- and CI, which the merge
+      # waits on, still runs every package on every push.
       # One test is left out with them, and it is the one that made ./scripts too big for
       # this step: TestLiveCheckScripts, which runs the bash tests of scripts/live-checks,
       # each driving a check's own script against fake tools on PATH. It is the bulk of the
@@ -127,18 +133,50 @@ workflows:
           w() { shift 2; "$@"; }
           json=
         fi
-        # Three invocations at once: the tree without internal/cli (with the live-check bash
-        # tests skipped), and internal/cli in the two halves the comment above describes. The
-        # cli exclusion is anchored, so internal/clidoc and ee/clidoc stay in.
-        w --junitfile reports/tree.xml go test $json -timeout 15m -skip '^TestLiveCheckScripts$' $(go list ./... | grep -v -e /internal/runner -e /internal/e2e -e /internal/image -e /fugaro/images -e '/internal/cli$') &
-        tree=$!
-        w --junitfile reports/cli-update.xml go test $json -timeout 15m -run '^TestU' ./internal/cli/ &
-        cliU=$!
-        w --junitfile reports/cli-rest.xml go test $json -timeout 20m -run '^Test[^U]' ./internal/cli/ &
-        cliRest=$!
-        wait $tree || rc=$?
-        wait $cliU || rc=$?
-        wait $cliRest || rc=$?
+        # What this change can reach (scripts/ci-affected): the working tree's diff against
+        # the base branch, mapped through the reverse import graph and the committed read
+        # map. The packages it names are what runs; an empty answer is the whole tree, which
+        # is what this step ran before there was a selector. The empty answer is not an
+        # error, it is the doubt: one of R8's, a diff or a map that could not be read, a path
+        # no test is known to read, a tree too old to carry the program (a follow-up or
+        # review run reads commands.test from the base branch and checks out the pull
+        # request's own tree, internal/runner/followup.go, so a branch cut before the
+        # selector still gets the command below), or a change that reaches one of the four
+        # packages this step never runs. Those four are CI's, and this step answers for such
+        # a change by running everything it does run.
+        reached=$(go run ./scripts/ci-affected --base origin/main)
+        sel=
+        if [ -n "$reached" ]; then
+          sel=" $reached "
+          for p in ./internal/runner ./internal/e2e ./internal/image ./fugaro/images; do
+            case "$sel" in *" $p "*) sel= ;; esac
+          done
+        fi
+        if [ -z "$sel" ]; then
+          pkgs=$(go list ./... | grep -v -e /internal/runner -e /internal/e2e -e /internal/image -e /fugaro/images -e '/internal/cli$')
+          cli=1
+        else
+          # The cli exclusion is anchored, so internal/clidoc and ee/clidoc stay in.
+          case "$sel" in *" ./internal/cli "*) cli=1 ;; *) cli= ;; esac
+          pkgs=$(printf '%s\n' $sel | grep -v '^\./internal/cli$')
+        fi
+        # One invocation per family, at once: the tree without internal/cli (with the
+        # live-check bash tests skipped), and internal/cli in the two halves the comment
+        # above describes -- and only where the change reaches them. The cli package is
+        # still the whole package when it runs: the split is the 15m cap one `go test` puts
+        # on a package, and narrowing inside it by name is what flakes the update tests.
+        pids=
+        if [ -n "$pkgs" ]; then
+          w --junitfile reports/tree.xml go test $json -timeout 15m -skip '^TestLiveCheckScripts$' $pkgs &
+          pids="$pids $!"
+        fi
+        if [ -n "$cli" ]; then
+          w --junitfile reports/cli-update.xml go test $json -timeout 15m -run '^TestU' ./internal/cli/ &
+          pids="$pids $!"
+          w --junitfile reports/cli-rest.xml go test $json -timeout 20m -run '^Test[^U]' ./internal/cli/ &
+          pids="$pids $!"
+        fi
+        for pid in $pids; do wait "$pid" || rc=$?; done
         # The container's high-water memory since it started, the agent and the build cache
         # included (Cloud Run keeps the disk in memory): the number to size resources.memory by.
         for f in /sys/fs/cgroup/memory.peak /sys/fs/cgroup/memory/memory.max_usage_in_bytes; do
