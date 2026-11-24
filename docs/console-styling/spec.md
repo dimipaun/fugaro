@@ -962,8 +962,8 @@ row that used to repeat it went with the run list.
 
 Reached from a `live-run` row. The header, its status strip and its halt banner sit above
 the two columns: the main column (stages → spend by stage → tolerated by the mode →
-diagnosis → logs → replay) beside the aside (ledger → pull request), with the warnings
-after both. Two steps drew it — 3a the header, at a glance at the run, the timeline and
+review levels → diagnosis → logs → replay) beside the aside (ledger → pull request), with
+the warnings after both. Two steps drew it — 3a the header, at a glance at the run, the timeline and
 the log window, 3b the ledger, the pull request and the replay scrubber.
 
 | Group | Class hooks |
@@ -978,6 +978,7 @@ the log window, 3b the ledger, the pull request and the replay scrubber.
 | Spend splits | `run-split`, `run-split-word`, `run-split-caption`, `run-split-absent`, `run-route`, `run-route-name`, `run-route-usd`, `run-model`, `run-model-name`, `run-model-usd` |
 | Spend by stage | `run-spend-stages`, `run-spend-stage-list`, `run-spend-stage`, `run-spend-stage-name`, `run-spend-stage-duration`, `run-spend-stage-calls`, `run-spend-stage-agents`, `run-spend-stage-usd`, `run-spend-stage-notional`, `run-spend-stages-more`, `run-spend-stage-more` |
 | Tolerated by the mode | `run-tolerated`, `run-tolerated-total`, `run-tolerated-count`, `run-tolerated-list`, `run-tolerated-finding`, `run-tolerated-title`, `run-tolerated-label`, `run-tolerated-mode`, `run-tolerated-likelihood`, `run-tolerated-impact`, `run-tolerated-fix-cost`, `run-tolerated-class`, `run-tolerated-more`, `run-tolerated-dropped`, `run-tolerated-absent` |
+| Review levels | `run-levels`, `run-level-list`, `run-level`, `run-level-name`, `run-level-bar`, `run-level-bar-absent`, `run-level-cap-mark`, `run-level-figures`, `run-level-rounds`, `run-level-of`, `run-level-cap`, `run-level-rounds-word`, `run-levels-absent` |
 | Stages | `run-stages`, `run-stage-list`, `run-stage`, `run-stage-icon`, `run-stage-dot`, `run-stage-check`, `run-stage-cross`, `run-stage-name`, `run-stage-body`, `run-stage-passed`, `run-stage-bar`, `run-stage-track`, `run-stage-fill`, `run-stage-fill-failed`, `run-stage-count`, `run-stage-tests`, `run-stage-tests-word`, `run-stage-failures`, `run-stage-failures-word`, `run-stage-meta`, `run-stage-duration`, `run-stage-spend`, `run-stage-deadline` |
 | Pull request | `run-pr`, `run-pr-repo`, `run-pr-number`, `run-pr-sep`, `run-pr-url`, `run-pr-reason` |
 | Logs | `run-logs`, `run-log-list`, `run-log-line`, `run-log-time`, `run-log-severity`, `run-log-stage`, `run-log-message`, `run-log-note`, `run-log-dropped`, `run-log-of`, `run-log-total`, `run-log-refused`, `run-log-refused-count`, `run-log-link`, `run-log-link-note`, `run-log-tail`, `run-log-tail-line` |
@@ -1015,7 +1016,14 @@ be (`svg.run-ledger-bar` is absent when the total is not a measured figure above
 the model line is not billed money or when the compute is neither measured nor estimated);
 the reconciliation's difference drawn only when both figures were measured, in
 `p.run-recon-diff-warn` only when it is not zero; an empty or absent spend split as the
-console's `n/a` with its reason (`p.run-split-absent`); a pull
+console's `n/a` with its reason (`p.run-split-absent`); a review level's rounds against its
+cap (`div.run-level-bar`, its text the share or the console's `n/a` and its tone carried by
+the class `run-level-bar-absent` where there is no share to draw -- §2.9's rule holds here as
+everywhere on this screen: the availability of the figure is the text and, where there is no
+number, the reason in `title`, and the class only paints it), and **the cap's own edge on that
+track drawn only where the cap is a number** (`span.run-level-cap-mark` is absent for a level
+whose cap the record does not resolve, so a bar can never look full against a cap nobody set);
+a pull
 request with **no link at all** (`run.link` is typed `null`, and `PR_NO_LINK_REASON`
 explains why); logs bounded ("lines not drawn: N of M") and a count of refused lines; replay
 scrubbed / not scrubbed (`p.run-replay-scrubbed`), a window with fewer than two distinct
@@ -1026,7 +1034,9 @@ the position is what carries the fact and the tone is the second channel).
 Readings: money (`usd`) throughout the ledger (the hero, the two legend rows, the plan's
 part and the reconciliation's three lines), the spend-by-stage rows, the spend splits; counts for tests, failures, dropped lines,
 calls, sub-agents, tolerated findings and their score axes, follow-up PRs and comments,
-replay records; **seconds** for a stage's duration and the replay window.
+replay records, and **the review levels' rounds and their caps**; **seconds** for a stage's
+duration and the replay window; **percent** for the one share this screen draws, the
+iterations bar's fill, which is the CLI's own two figures divided and nothing else.
 
 **The ledger is one billed total and everything else read against it.** `p.run-ledger-hero`
 carries the caption `TOTAL CHARGED` and `total_usd` -- the dollars the table **billed**,
@@ -1230,11 +1240,11 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 | Kind | Unit | Where | Format |
 |---|---|---|---|
 | **Money** | `usd` | Live (spend, counted, cap, notional, burn rate, sparkline title), Spend (points, peaks, rows, totals, every cap), Projects (reserve, caps, job model/compute/total), Run (ledger, stage spend, reported, charged, routes, models), degraded (all totals) | `$` + grouping + **2 decimals**, sign before the `$` |
-| **Share** | `percent` | Live (cap percent, bar fills), Spend (`data-height`) | 1 decimal + `%` |
+| **Share** | `percent` | Live (cap percent, bar fills), Spend (`data-height`), Run (the iterations bar's fill, drawn as that bar's own text) | 1 decimal + `%` |
 | **Duration / time** | `seconds` | Live (connection age, silence), Run (stage duration, replay window), degraded (feed age) | 0 decimals + ` s` |
 | **A span, as a person says it** | `duration` | Live (**a run's age only**, the ELAPSED column of the runs table) | `21s`, `29m 21s`, `1h 02m` — the three scales, never a raw count |
 | **Time (money-shaped)** | `hours` | Spend (run hours, totals) | 2 decimals + ` h` |
-| **Count** | `count` | Live (the review inbox's three, the fleet panel's ACTIVE and QUEUED, and the `max_parallel` limit beside the runs cap bar), Spend (runs, tokens), Projects (counts, versions), Run (tests, lines, records), Coordinator (a repository's records, how many of them are in flight, its collisions, and what a bound left out), degraded (runs, searched) | 0 decimals + grouping |
+| **Count** | `count` | Live (the review inbox's three, the fleet panel's ACTIVE and QUEUED, and the `max_parallel` limit beside the runs cap bar), Spend (runs, tokens), Projects (counts, versions), Run (tests, lines, records, the review levels' rounds and caps), Coordinator (a repository's records, how many of them are in flight, its collisions, and what a bound left out), degraded (runs, searched) | 0 decimals + grouping |
 
 **Live's money, shares and durations are what its *run* rows are made of.** Its `count`
 readings are the review inbox's three (v2 plan Task V2.7.1), the fleet panel's `ACTIVE` and
@@ -1588,313 +1598,84 @@ figure animates anywhere (§3.9).
 
 ### 2.12 Coordinator — `console/src/renderer/screens/coordinator.ts`
 
-The Coordinator draws the project view: the action queue, the fleet's totals, and one panel
-per repository the installation's config lists, each with the sweep's own marker, the three
-counts beside the repository's name, the records with the pull request's own description and
-the runs behind them, the collisions,
-and the pull requests whose host state no sweep could read. Regions in tree order: the
-screen's source line → the console's sentence about the age the view does not carry →
-`section.coordinator-queue` (the head line: the count of what is waiting, the word it counts
-and, for a queue that holds nothing, the console's own sentence → one `coordinator-queue-part`
-per read, each holding its items, the note saying that read was not made, or — in the jobs'
-part until they are asked for — the queue's one control that is not an item's → the blind-spot
-line) → `section.coordinator-totals` (the fleet's strip) → `section.coordinator-jobs` (the job
-list: the window's own line → the rows the pages drawn so far hold → the one control the
-section offers at that moment) → one `section.coordinator-repo` per
-repository (the head row: the name and which view the node is → the marker → the counter strip
-→ what a bound left out → the records, each with the description block its own disclosure
-opens and the runs behind it → the collisions → the unreads) → `section.coordinator-transcript`
-(the pane, the frame's last region: its own heading, the console's sentence for what this page
-does not hold, and the host the entry fills — the line the declarations were read at, a
-refused read's own sentence, the declarations and the console's three questions). For an
-installation that lists no repository, the console's own empty sentence stands instead of the
-panels.
-**The screen reads six command lines** (`fugaro coordinator status --from-store --all
---json`, `runs ls --json --since 24h`, `plan status --all --json`, `budget show --json`,
-`coordinator intents --all --json` and `coordinator show --json --repo … --pr …`: one per
-independent document, and `report` is not read on this page at all). **Four of them are the
-tab's own first paint and go out together** — the stored view, the plans, the budget and the
-declarations (K5's pane) — **the fifth is the jobs, and rule 5 of §6.2's opening keeps jobs out
-of a first paint** — the part they fill carries the console's one control that is not an
-item's (`Load the jobs waiting on you`), and `runs ls` goes out on that press — and **the
-sixth is a description's**, read from the row whose disclosure was pressed (K3) and never with
-the tab. Otherwise the screen draws **one button per queue item** and nothing else: a control
-whose word is the console's own.
+The Coordinator draws the project's **active orchestrators**: a box per orchestrator, laid
+out by the same elk worker the Graph screen uses, with the coordinator's own health above it
+and one orchestrator's live tasks below it when a box is opened. It is **one section and one
+read** — `fugaro orchestrator map --json`, CG7a's document (C-ORCH's contract,
+`../console-fixes/contract-orchestrators.md`) — and D3210 removed the v2 tab this section
+replaces: the action queue, the fleet's totals, the job list and the transcript, with their
+four reads, are gone, and every hook this section used to carry for them
+(`coordinator-queue-*`, `coordinator-total*`, `coordinator-repo*`, `coordinator-record*`,
+`coordinator-jobs-*`, `coordinator-transcript-*`, `coordinator-description-*`) is deleted with
+the markup rather than left standing.
 
-**The action queue and the fleet's totals are console 0.118.0's K1**, and they are the two
-sections the screen gained above the panels: what is waiting for a person — a pull request
-open and not a draft, a halted or failed run, a plan task `ready` to launch, a budget alert —
-with **exactly one button each** (`Open run` opens the run; `Retry` and `Launch` open the
-launch confirmation of §2.13 with the item's repository and plan task filled in, which is
-rule 11's window and rule 11's argv and no second write; `Open Spend` navigates to the Spend
-screen, and nothing here calls `budget kill` or `budget resume`), and the fleet's own figures
-off the same three documents plus `budget show`. A pull request's number is **text** in K1 and
-never a link: the renderer builds no destination out of wire text. The screen's first
-paragraph above is 0.117.0's and stays — the source line and the console's age sentence are
-mounted in the frame the tab is opened in — and what K1 changes is that the drawing is no
-longer read-only, so the one transition in this block is the pair of properties a hover moves
-on a queue button, beside the focus ring the shared blocks give every control.
+Regions in tree order: header (`coordinator-header`: the heading `coordinator-title`, then the
+read's own command line `coordinator-source`) → the console's floor sentence
+(`coordinator-floor`, holding `coordinator-floor-word` and `coordinator-floor-version`) when
+the CLI is below the release the read needs → the health line (`coordinator-health`: one
+`coordinator-health-item` per reading, each a `coordinator-health-word` and a
+`coordinator-health-value`) and, inside it, one `coordinator-lease` row per node holding
+`coordinator-lease-name`, `coordinator-lease-word` and `coordinator-lease-age` → the
+sweep-off note (`coordinator-sweep-off` with
+`coordinator-sweep-off-word`, `coordinator-sweep-off-fix` and `coordinator-sweep-off-note`)
+→ the overlap warning (`coordinator-overlap-warning` with `coordinator-overlap-warning-count`
+and `coordinator-overlap-warning-word`) → the canvas `coordinator-graph`, or — for a map the
+worker did not place — the fallback list `coordinator-list` of `coordinator-row`, each row
+holding `coordinator-row-name`, the counts, the lease age and one `coordinator-row-edge` per
+connection → `coordinator-empty` or `coordinator-no-canvas` when there is nothing to draw →
+the drill-down `coordinator-tasks`, whose head is `coordinator-tasks-head` (the
+`coordinator-tasks-word` heading and the `coordinator-tasks-close` control), then
+`coordinator-tasks-empty` or the `coordinator-task-list` of `coordinator-task` rows holding
+`coordinator-task-title`, `coordinator-task-state` and `coordinator-task-repo`.
 
-**The job list is console 0.119.0's K4**, and it is the section rule 5 of §6.2's opening
-asks for, read the way the CLI can now answer it: `Load jobs` spawns `runs ls --json --since
-24h` with `--limit=50`, `Older 50` spawns the page after the one on screen with `--after` the
-**last row the console drew** (an id the CLI printed, never a page number the console
-counted), and neither read goes out on entry — opening the tab spawns no `runs ls` of this
-section's own. **The head is the window and the list is the page**: the two figures above the
-rows are the first page's own `totals`, which the CLI sums over everything it read, and they
-are never recomputed from the rows on screen — with `--limit` the two are different numbers by
-construction (C2, #1545). A row is a **real button** whose press reveals the body drawn under
-it and `hidden` until then, so the expansion is a toggle and never a rendering. **The head
-says when the list on screen was read** (`as of HH:MM`, `section.ts`'s stamp) with the one
-control that reads the window again from the top: a page of a moving `--since 24h` window is a
-snapshot, and a refresh drops the pages and the cursor with it, because a cursor belongs to the
-window those rows came from. **A first page the CLI refused is the one state with no time in
-that line**: the head draws the same `p.console-stamp` row with its one `Refresh` and no
-`as of` at all — no page was read to date it with, and the clock of a page that is not on
-screen is not this read's — and the CLI's own sentence stands in the list under it, so the
-section's one press is still there to ask again. A refusal of a **later** page keeps the
-stamp it had: the rows on screen are still that page's, and that is the clock they were read
-at. The paged read
-is gated on `RUNS_LIST_PAGE_CLI_FLOOR` (`0.16.0`, the first release carrying #1545): below it
-the section draws the console's own sentence naming the version it needs and spawns nothing,
-because in the 0.15 line `--after` is refused outright and `--limit` reads only the newest N —
-a page whose own `totals` would then be the page's.
+**The picture is geometry written as SVG attributes, never an inline style** (§5.5: the
+policy is `style-src 'self'`, which admits none). A box is `g.coordinator-node` — one per node, carrying
+`data-orchestrator` with the orchestrator's id — placed by a `transform` the engine's own
+answer is written into, holding `rect.coordinator-node-box` (the boundary),
+`coordinator-node-name` (the name, and the **project's** own name for the default
+orchestrator, whose `name` is `""`), `coordinator-node-driver` (the principal holding the
+lease, or the console's own word for a driver no read could answer) and two
+`coordinator-node-fact` runs, the active tasks and the running jobs. An edge is
+`path.coordinator-edge`, solid `--decor` for a dependency (`coordinator-edge-depends`) and
+dashed `--warn` for an overlap (`coordinator-edge-overlap`), with `data-warning="true"` on
+the overlap and the document's own reason as the path's `<title>`, which is a tooltip and not
+a label the line has to fit. **The boxes are the one control the tab draws**: a `g` carries
+`role="button"` and `tabindex="0"`, its press and its Enter and Space are answered by
+`entry.ts`, and the box the operator opened is marked with `aria-pressed="true"` — the
+selection is the boundary's width and tone, and the panel below repeats the name in its own
+heading, so the selection is readable without either.
 
-**The pull request's description is console 0.119.0's K3**, and it is the one read of this
-screen that is made from a row rather than from the tab: a record draws a disclosure between
-its head row and its runs, and **the press is what reads** (`coordinator show --json --repo
-… --pr …`, the row's own repository and number and no other word). The read is made **once
-per pull request per visit** — an expand/collapse cycle draws what the first press read,
-stamped `as of HH:MM` with the one control that reads it again — because a description is the
-one document here that costs the host a token of its own. **The description is drawn as plain
-text and never as markdown**: every line goes through `putText` in the `sentence` class
-(`src/shared/sanitize.ts`), so a `<script>` in it is the characters somebody typed and a
-`[click](…)` in it is not a link, and **no element and no attribute is built from anything
-inside it**. It is clipped to `COORDINATOR_DESCRIPTION_LINES` (20) lines with the console's
-own `Show all` under the clip, and a pull request whose body is empty draws the console's
-sentence rather than a block of nothing. A read that refuses draws its own sentence in the
-block, naming its own operation — the id `coordinator.show`, which is what
-`refusedScreen` draws in `span.unavailable-operation` for every refusal on every screen —
-and under the credentials service that sentence is the CLI's own — the console adds no words
-of its own to a refusal. The block is gated on the
-record's number and the panel's repository and **not** on the row's destination: a
-description needs no provider, so an installation whose CLI predates C1's `provider` field
-still gets it.
+**A box is a picture of now, and the age it draws is the document's own.** A node is on the
+map because a credential is driving it this second, so nothing here is a history and the box
+holds no run row. A lease age is `lease_age_seconds` — the document's number in the
+`duration` unit — and a node whose lease carries **no readable stamp** is `null`, which is
+**not `0`**: it is drawn as the console's `n/a` with its reason in the title, because a zero
+would be a claim about a beat this reader does not have. The health line is the sweep's own
+state and when it last woke, and it is drawn from the document and never from a clock: the
+console claims no age the read did not carry, exactly as the v2 tab did not.
 
-**The transcript pane is console 0.119.0's K5**, and it is the frame's last region:
-`coordinator intents --all --json` is one of the tab's own reads, started with the others and
-painted the moment it lands, and the pane draws what the store holds — one line per
-repository, one line per declaration, then the console's three questions answered from the
-stored view the body already read. **It holds no input control of any kind** (D827): the one
-control on it is the stamp's own `Refresh`, which reads the declarations again and nothing
-else, because the front door the questions are about is the terminal's to build. **A read that
-refused drops the pane's clock with the declarations it belonged to**: the CLI's own sentence
-is drawn under the same `p.console-stamp` row, with its one `Refresh` and no `as of` at all —
-a stamp still saying `as of 14:05` would date the refusal with the previous success's read,
-which has nothing to do with it. Every value the store wrote is drawn through the class its
-wire key declares (`putText`) — the declaration, the release and a service as labels, the
-branch as a branch, a path as the `path` class replaces it — so no declaration reaches the
-pane as markup, and the clock on the line is the writer's own and never an age this console
-derived.
+**With the sweep off, the tab says so and names the fix.** `health.sweep: false` means there
+is **no overlap information at all** — not that nothing overlaps — so the note is drawn with
+the console's own sentence and the one setting that turns it on, and the overlap warning is
+**not drawn**: a count of zero there would be a figure nobody measured. That is the same rule
+the lease age keeps, one field over.
 
-**The panel, the strip, the banner and the row are console redesign step 7.** The markup this
-step draws replaces the markup `screens.css`'s Coordinator block met, and that block is
-deleted with it, so every rule for this screen now lives in one section of `flight-deck.css`:
-the name and the source line are **one head row** rather than two stacked lines, the counts
-are a **strip** of three labelled cells whose collisions cell is marked when the repository
-has any, the sweep's marker is a **banner** rather than a line of prose, and a record is a
-**row** whose own head carries the number, the title, the branch, the release, the
-state-and-draft chip and the flight word, with the runs nested under it. Two hooks moved with
-the drawing: `coordinator-count-value` left §2.10's shared alignment rule for a rule of its
-own (the shape `run-number` already had after the Run step), and the runs behind a record are
-cut at `COORDINATOR_LIST_CAP` like a collision's file list — a pull request a hundred runs
-deep is not a row of a hundred lines, and the count left off is drawn rather than left
-silent.
+**Two readings take `--warn` and one takes `--live`, and each carries its own word** (§3.2's
+role cells, §3.5): an **overlap** is `--warn` — two orchestrators on the same files is the one
+reading on this screen a person has to look at — and so is the sweep-off note, which is the
+console's own sentence about a switch. A **dependency** is `--decor`: it is a fact about the
+order two orchestrators run in, and there is nothing to look at. The **selected** box is
+`--live`, the tone the rest of the console marks "this is the thing you opened" in. Every
+tone is drawn beside the sentence or the word that says what it is, so the tone is redundant
+by construction and **this screen adds no arm to the `forced-colors` block**: the one thing
+forced colors takes away is a colour, and the dash on an overlap edge is a second channel the
+system's own pass leaves alone — the same shape §2.11's blocked card keeps. **No rule paints
+`--danger` or `--ok`**: nothing on this screen is broken and nothing on it succeeded.
 
-**What is already known is drawn before the read** (0.117.0, kept): the source line and the
-console's age sentence are mounted in the frame the tab is opened in, and the body's own
-section is filled when the document arrives — the summary first, the per-PR and per-run
-detail after, in idle chunks or on the operator's expand. While the read is out the body
-carries `src/renderer/section.ts`'s busy mark, its `aria-busy` and a skeleton of the same
-shape, and a document this session has already read is drawn at once, stamped `as of
-HH:MM` with a Refresh control. **The declared-by rule is 0.117.0's too, and it stays**: the
-introducing word and the declaration itself are drawn only when the launch record wrote a
-nameable one (`nameableText`), because the phrase is a claim about a person and the record
-only ever says what it was told.
-
-| Hook | Drawn as | Note |
-|---|---|---|
-| `section.coordinator` | the screen's root | carries `data-theme` like every other screen's |
-| `coordinator-source` | `p` | the read's own command line, in the console's words |
-| `coordinator-age`, `coordinator-empty` | `p` | the console's two sentences: the age the stored view does not carry, and an installation that lists no repository |
-| `section.coordinator-queue`, `section.coordinator-totals` | the queue's section and the fleet strip's | the screen's two K1 sections, on the frame the redesign gives a panel (§2.12's `section.coordinator-repo` below) |
-| `coordinator-queue-head` | `div` | the queue's own line: the count of what is waiting, the word it counts, the console's sentence for a queue that holds nothing, and the slot the section's busy mark is put in |
-| `coordinator-queue-count` | `span` | the count the console counted off the items it drew — drawn only when the three reads the tab always makes have answered, and as nothing rather than a `0`; before the jobs are asked for it is a floor, not the whole, and a queue whose reads are still out, or refused, draws no count at all |
-| `coordinator-queue-word`, `coordinator-queue-empty` | `span`s | `items need you`, and the sentence a **whole** queue that holds nothing draws instead of a zero — whole meaning every read the queue makes, the jobs' included, so a queue whose reads are still out, refused, or not yet asked for draws neither: a part the console did not read is not an empty part |
-| `coordinator-queue-part` | `div` | one read's part of the queue: its items, the count the cap left off, or the note saying that read was not made. A host, and it holds no state: the section's mark says the part is still being read |
-| `coordinator-queue-items` | `ul` | one part's items, each drawn only when the part holds one |
-| `li.coordinator-queue-item` | `li` | one thing waiting for a person |
-| `coordinator-queue-kind` | `span` | which of the four kinds the item is, in the console's own word (`PR`, `JOB`, `PLAN`, `BUDGET`) |
-| `coordinator-queue-subject` | `span` | the item's own id — a pull request's number, a run's id, a task's id — and empty for a fleet-wide alert, which draws no not-available mark in its place |
-| `coordinator-queue-scope`, `coordinator-queue-repo`, `coordinator-queue-title` | `span`s | where the subject sits (a branch, the plan a task belongs to, the plan task a run recorded), the repository, and the untrusted title whoever wrote the thing wrote, each drawn only when the document carries one |
-| `coordinator-queue-why` | `span` | why it is waiting, in the console's own words: the rule the queue applied, and for a budget alert which of the three grounds it stands on |
-| `button.coordinator-queue-button` | `button` | **the item's one control**: `Open run`, `Retry`, `Launch` or `Open Spend`. A button and never an anchor |
-| `coordinator-queue-note` | `p` | the console's sentence where a read was not made at all: an installation that records no checkout, or the reduced mode's withheld caps |
-| `coordinator-queue-jobs` | `button` | the queue's one control that is not an item's: the button whose press is what reads `runs ls` for the jobs' part, drawn only while that part holds no items — a `button` with no tag in the selector, because the class reaches the drawing through a constant |
-| `coordinator-blind` | `p` | the line under the items: the console's own sentence and the two counts of what the page cannot reach |
-| `coordinator-blind-word` | `span` | the introducing sentence of that line |
-| `coordinator-blind-stale`, `coordinator-blind-unread` | the line's two cells | repositories the sweep has not reconciled since, and pull requests a sweep could not read — hook names only: the rule that lays the line out is written on `coordinator-blind`, on the cell `coordinator-count` and on the reading inside it |
-| `coordinator-total-repos`, `coordinator-total-inflight`, `coordinator-total-collisions`, `coordinator-total-plans`, `coordinator-total-counted`, `coordinator-total-cap` | the fleet strip's six cells | which figure each cell is — hook names only, like the two blind cells above |
-| `coordinator-window-slot` | `div` | the strip's **second** busy host: where `runs summary --json`'s mark goes (console 0.119.0), so the panel's two reads can be in flight at once without either taking the other's claim down |
-| `coordinator-window-runs`, `coordinator-window-succeeded`, `coordinator-window-failed`, `coordinator-window-halted`, `coordinator-window-cancelled`, `coordinator-window-infra`, `coordinator-window-other`, `coordinator-window-spent`, `coordinator-window-notional`, `coordinator-window-compute` | the fleet window's ten cells | which figure each cell is — hook names only, like the six above. The window's runs and their six states off `runs summary`, and its three money figures, which are three cells and never a sum |
-| `coordinator-window-unknown`, `coordinator-window-unknown-word`, `coordinator-window-unknown-day` | `p` and two `span`s | the days `days_unknown` names, under the window's figures: the console's own sentence, then one cell per day |
-| `coordinator-window-note`, `coordinator-window-floor-word`, `coordinator-window-floor-version` | `p` and two `span`s | the console's sentence where the window was not read at all: a CLI below the floor its command needs, or the reduced mode's withholding. `coordinator-jobs-note`'s shape, one panel higher |
-| `section.coordinator-repo` | the repository's panel | one per repository the config lists, on the frame the redesign gives a panel (§2.3's `section.live-fleet`, the same ground, hairline and radius) |
-| `coordinator-repo-head` | `div` | the panel's first element: the name and the source line on one line, which folds rather than shrinking either |
-| `h2.coordinator-repo-name` | `h2` | the repository's own name, read out of the local config, and the head row's first element |
-| `coordinator-repo-state` | `p` | which view the node is: `the last stored view`, or the runs-only fallback |
-| `coordinator-repo-stale` | `div` | the sweep's marker as an amber banner, drawn only when the document carries one |
-| `coordinator-stale-word`, `coordinator-stale-since`, `coordinator-stale-reason` | `span`s inside it | the introducing word — a filled chip at the head of the line — the stamp and the reason, drawn exactly as stored |
-| `coordinator-counts` | `div` | the counter strip: a repository's three counts, between two hairlines |
-| `coordinator-count` | `span` | one count's cell, holding the console's word for the count beside the reading |
-| `coordinator-count-word`, `coordinator-count-value` | `span`s inside the cell | the console's own word for the count, and the reading — which is the screen's number hook, the class the alignment rule of step 7's section in `flight-deck.css` names, because the figure is drawn in a span of its own and the word beside it is not a figure |
-| `coordinator-count-alert` | the collisions cell | the strip's one state: the cell of a repository whose collisions are above zero, drawn as a tinted cell. Selected **without a tag**, because the class arrives through `numberCell`'s `...classes` parameter |
-| `coordinator-omitted` | `p` | the bound that left records or collisions out, drawn only when the document says so |
-| `coordinator-omitted-word` | `span` | the console's sentence introducing them |
-| `coordinator-records`, `coordinator-collisions`, `coordinator-unreads` | `ul`s | a repository's three lists, each drawn only when it holds something |
-| `li.coordinator-record` | `li` | one record: a pull request with the runs behind it, or the in-flight runs alone |
-| `coordinator-record-head` | `div` | the record's head row, which carries every fact but the runs |
-| `coordinator-record-label` | `span` | the console's own name for the record, and the head row's first element |
-| `coordinator-record-title` | `span` | the untrusted title whoever opened the pull request wrote |
-| `coordinator-record-branch`, `coordinator-record-release` | `span`s | the branch and the release, monospaced like every other key this screen draws |
-| `coordinator-record-chip` | `span` | the host's word for the pull request with the console's own beside it: one chip, because the two are one fact |
-| `coordinator-record-state`, `coordinator-record-draft` | `span`s inside the chip | the host's state (`open`, `merged`, …) and the console's `draft`, and neither is drawn when the document has none |
-| `coordinator-record-flight`, `coordinator-record-noruns` | `span`s | the console's own words: `in flight` or `finished`, and `no run behind it` |
-| `coordinator-description-head` | the record's own disclosure | console 0.119.0's K3: the press that reads `coordinator show --json` for this pull request and reveals the block under it, carrying `aria-expanded` and `type="button"`, and labelled `Show description` or `Hide description` as it stands. Selected **without a tag**, because the class arrives through an exported constant |
-| `coordinator-description` | the block the disclosure opens | the description's own block, drawn with the row and `hidden` until the press — the attribute and the reset's own rule for it, never a `display` written in this block. Tagless for the reason above |
-| `coordinator-description-line` | `div` | one line of the description, drawn through `putText` in the `sentence` class: **plain text, never markdown**, and no line is joined to its neighbour. Tagless |
-| `coordinator-description-all` | `button` | `Show all`, drawn only where the description was longer than the console's own line count, and the console's own words: nothing of the document reaches it. Tagless |
-| `coordinator-description-empty` | `p` | the console's sentence for a pull request that carries no description at all. Tagless |
-| `coordinator-runs` | `ul` | the runs behind the record, nested under the head row behind the hairline a nested panel is separated with (§3.8), drawn only when the record has a run, and cut at the console's cap |
-| `li.coordinator-run` | `li` | one run |
-| `coordinator-run-id` | `span` | the run's id |
-| `coordinator-run-status`, `coordinator-run-outcome` | `span`s | the record's own words, each drawn only when it wrote one |
-| `coordinator-run-declared-word`, `coordinator-run-by` | `span`s | the introducing word and the declaration itself, which is unverified and is never an identity |
-| `coordinator-run-open`, `coordinator-run-short` | `span`s | `in flight`, and the store's own admission that the path set is short |
-| `li.coordinator-collision` | `li` | one pair of records in flight on the same files or services |
-| `coordinator-collision-a`, `coordinator-collision-b` | `span`s | the pair's two labels |
-| `coordinator-collision-word` | `span` | the console's sentence between them |
-| `coordinator-file`, `coordinator-service` | `span`s | one path and one service of the shared sets, each already cut to the console's cap |
-| `coordinator-more` | a `span` in a collision's row, an `li` at the end of a record's runs | how many of a cut list were not drawn |
-| `li.coordinator-unread` | `li` | one pull request a sweep could not read |
-| `coordinator-unread-word` | `span` | the introducing words, `state unread` |
-| `coordinator-unread-number` | `span` | the pull request's number |
-| `coordinator-unread-reason`, `coordinator-unread-retry` | `span`s | the reason a sweep gave, and when it may retry |
-| `coordinator-unread-carried` | `span` | the console's answer to whether the state shown is the last one a sweep did read |
-| `section.coordinator-jobs` | the job list's section | console 0.119.0's K4: the runs of the last day, drawn on the frame the other two sections take, and read only when the operator asks for them |
-| `coordinator-jobs-head` | `div` | the window's own line: the console's introducing word, the two figures the **first page's `totals`** carries, the slot the section's own busy mark is put in, and — once a page has landed — the `console-stamp` line saying when it was read, with the refresh control that reads the window again from the top. A **first** page that refused draws that line with its one control and **no time in it**: no page was read to date it with |
-| `coordinator-jobs-window-word` | `span` | the introducing words, `the window holds` |
-| `coordinator-jobs-window-runs`, `coordinator-jobs-window-spent` | the head's two cells | which figure each cell is — hook names only, like the strip's cells above: how many runs the window holds and what it spent, each drawn through `numberCell` and so already carrying `coordinator-count`'s cell and §2.10's reading |
-| `coordinator-jobs-list` | `div` | the host the rows are drawn into: what the pages read so far hold, and nothing of its own |
-| `li.coordinator-job` | `li` | one job: a button's line and the body that line opens |
-| `button.coordinator-job-head` | the row's own disclosure | the collapsed line — the run's id, the repository, the status, the outcome and the untrusted title — carrying `aria-expanded` and `type="button"`. It is a **real button** and not a `div` with a `role`, so Enter and Space do what a click does with no handler of this screen's own; its hit area is `--row-height` |
-| `coordinator-job-id` | `span` | the run's id, in the mono this screen draws every key in |
-| `coordinator-job-repo`, `coordinator-job-status`, `coordinator-job-outcome`, `coordinator-job-title` | `span`s on the row's line | where the job ran, the two words the CLI wrote for it and the untrusted title whoever wrote the task wrote, each drawn only when the document carries one |
-| `coordinator-job-detail` | `div` | the body the head's press reveals: drawn with the row and `hidden` until then, so the press is a toggle and never a rendering |
-| `coordinator-job-stage`, `coordinator-job-branch`, `coordinator-job-plan`, `coordinator-job-by`, `coordinator-job-created`, `coordinator-job-pr`, `coordinator-job-reason` | `span`s in the body | the stage the run stopped at, the branch, the plan task it recorded, the launch declaration — unverified, and never an identity — when it was created, the pull request's number and the reason the CLI wrote, each drawn only when the document carries one |
-| `coordinator-job-cost`, `coordinator-job-more`, `coordinator-job-file`, `coordinator-job-short` | the body's reading cells | what the run cost (through `numberCell`), how many changed paths a bound left off, one changed path each, and the store's own admission that the set is short |
-| `coordinator-jobs-controls` | `div` | the row the section's own control is drawn into, and it holds **exactly one** at a time |
-| `coordinator-jobs-load`, `coordinator-jobs-older` | the section's two controls | `Load jobs`, the press that reads the first page, and `Older 50`, the press that reads the page after the last row drawn; both are buttons carrying `aria-expanded`, and neither carries a value from a document — the cursor is the console's own |
-| `coordinator-jobs-empty` | `p` | the console's sentence for a window that holds no run: the only thing this list says in its own words |
-| `coordinator-jobs-note` | `p` | the note drawn **instead of** the list for a CLI older than `RUNS_LIST_PAGE_CLI_FLOOR`, where no control is drawn beside it at all |
-| `coordinator-jobs-floor-word`, `coordinator-jobs-floor-version` | `span`s in that note | the console's sentence naming the version the paged read needs, and the handshake's own version line drawn as text |
-| `section.coordinator-transcript` | the transcript pane's section | console 0.119.0's K5: what the fleet's orchestrators have declared, and the stored view's answers to three questions the console composes itself, drawn on the frame the other three sections take. It is **read only** and holds no input control of any kind (D827) |
-| `coordinator-transcript-host` | `div` | the host the entry fills: the stamp the declarations were read at, a refused read's own sentence, the declarations and the questions, in that order. It holds no state of its own — the section's mark is what says a read is still out. A refused read draws the stamp's row with its one control and no `as of`, for the K4 head's reason: the clock in hand is the previous read's |
-| `coordinator-transcript-word` | `p` | the pane's own heading, `transcript — read only` |
-| `coordinator-transcript-missing` | `p` | the console's sentence for what this page does not hold — no input is built, and the front door is the terminal's to build (D820) — naming where that decision is |
-| `coordinator-transcript-repo` | `p` | one repository's own line, above the declarations the store holds for it |
-| `coordinator-transcript-intent` | `p` | one stored declaration: the introducing word, the declaring side, the writer's clock and what was declared about, each drawn only when the record carries one |
-| `coordinator-transcript-declared-word` | `span` | the introducing words, `declared by` |
-| `coordinator-transcript-declaration` | `span` | the `declared_by` value **as a declaration**: unverified, and never an identity anything is admitted by (reconciliation finding #11) |
-| `coordinator-transcript-at` | `span` | the record's own `at`, which is the **writer's** clock and not this console's — no age is derived from it anywhere |
-| `coordinator-transcript-branch`, `coordinator-transcript-release`, `coordinator-transcript-file`, `coordinator-transcript-service` | `span`s in that line | the branch, the release, the changed paths (each drawn as the `path` class replaces it) and the services a declaration names |
-| `coordinator-transcript-question` | `div` | one of the three questions the console composes itself, with the answers drawn under it |
-| `coordinator-transcript-question-word` | `p` | the question's own words — the console's, and drawn whether the stored view answered or not |
-| `coordinator-transcript-answer` | `p` | one repository's answer to that question |
-| `coordinator-transcript-answer-repo` | `span` | the repository the answer is about |
-| `coordinator-transcript-none` | `p` | the console's sentence for a question the stored view answers with nothing, drawn only over a view that answered at all |
-| `coordinator-transcript-stale-word`, `coordinator-transcript-stale-since`, `coordinator-transcript-stale-reason` | `span`s in an answer | the sweep's marker under the question about repositories the sweep has not reconciled, drawn exactly as the store wrote it |
-
-**This screen emits no `data-*` of its own, so every rule for it is written against a
-class.** It holds no control, no state variant and no selection — the one attribute it
-stamps is the `data-theme` every screen's root carries — and a rule that wanted a `data-*`
-here would be inventing the state it keyed on. Thirty-six of the hooks above are selected
-**without a tag**, in five groups. The first four are the screen's own `listCell` and
-`countCell` parameters (`coordinator-file`, `coordinator-service` and `coordinator-more`) and
-`coordinator-count-alert`, which the strip's call to `numberCell` passes the same way: the
-scan that pairs a selector with the tag the renderer draws cannot read a class that arrives
-through a parameter, and a bare class selector is the shape `degraded-num` already has. The
-next four are K1's own (`coordinator-queue`, `coordinator-totals`,
-`coordinator-queue-head` and `coordinator-queue-jobs`), and the reason is the same one step
-along: the screen draws the queue and the totals, the queue's head and the queue's jobs control
-through exported constants (`COORDINATOR_QUEUE_CLASS` and its neighbours), which that scan
-reads as a parameter too, so `section.coordinator-queue` would be refused as a tag nothing
-draws. **K4's nine are the third group**, and they split the same two ways: the job list's
-section, its head, its list and its controls are drawn through exported constants
-(`COORDINATOR_JOBS_CLASS` and its neighbours), and `coordinator-jobs-load`,
-`coordinator-jobs-older`, `coordinator-job-detail`, `coordinator-job-cost` and
-`coordinator-job-more` arrive through a parameter — `jobsControl`'s own `className` and the
-`...classes` two of the screen's cells take. The nine class names are
-this screen's own, no rule competes for them and the tag would buy no specificity — the same
-ground `coordinator-count-alert` stands on. **K3's five are the fourth group**, and all five
-are the constant's case: the disclosure, the block, its lines, its `Show all` control and its
-empty sentence are all drawn through exported constants (`COORDINATOR_DESCRIPTION_*_CLASS`),
-because the entry is what wires the press and reads the block back by class. **K5's fourteen
-are the fifth group**, and they split the same two ways the first four do: the pane's section,
-the host the entry fills, its repository line, its declaration line, the declaration's own
-value and the writer's clock, its branch, release, paths and services, its questions, the
-question's words, its answers and its own sentence for a question the view answers with
-nothing are all drawn through exported constants (`COORDINATOR_TRANSCRIPT_CLASS` and its
-neighbours). The four hooks that block selects **with** their tag are the ones the screen
-draws with a literal class name — the heading, the sentence under it, the introducing words
-and the sweep's marker.
-
-**Twenty-two hooks the stylesheet does not select**, and §2's rule read the other way:
-`coordinator-count-records`, `coordinator-count-inflight`, `coordinator-count-collisions`,
-`coordinator-omitted-records` and `coordinator-omitted-collisions` say *which* count each
-cell is, and the rules that lay the counts out and colour the sentence that introduces them
-are written on the cell, on the reading inside it and on the sentence rather than on the
-five. K1's ten join them: `coordinator-queue-part` is the host one read's part of the queue is
-filled into, `coordinator-blind-host` is the host the blind-spot line is drawn into, and
-`coordinator-blind-stale`, `coordinator-blind-unread` and the fleet strip's six
-`coordinator-total-*` hooks say *which* reading each cell is. K4's four join them:
-`coordinator-jobs-window-runs` and `coordinator-jobs-window-spent` name the figure each of the
-head's two cells carries, and `coordinator-jobs-floor-word` and `coordinator-jobs-floor-version`
-are the two spans inside the note a CLI below the floor draws — the rules that lay the cells out
-and tone the note are written on the cell, on the reading inside it and on the note itself.
-K5's three join them: `coordinator-transcript-answer-repo` names the repository an answer is
-about, and `coordinator-transcript-stale-since` and `coordinator-transcript-stale-reason` are
-the two spans beside the sweep's marker — the rules that lay the answers out and tone them are
-written on the answer line and on the block that holds the question.
-They are the screen's own bookkeeping, and a rule that wants one adds it to the table above
-first.
-
-**Two readings take `--warn` and one takes `--danger`, and each carries its own word**: the
-sweep's stale marker and a pull request whose state no sweep could read are `--warn`, whose
-role cell is "attention" (§3.2), and a pair of records in flight on the same files or
-services — a collision — is `--danger`, drawn both as the strip's marked cell and as the
-callout around the row. A set the document's own bound left short is the third reading and
-the quietest: it keeps the `--warn` tone §2.11's `graph-not-shown` draws the same fact in.
-Every one of them is drawn beside the sentence that says what it is, so the tone is redundant
-by construction (§3.5) and this screen adds no arm to the `forced-colors` block: no rule here
-depends on colour alone. **No rule paints `--ok`**:
-§3.2 licenses that token to two readings, and no repository, record or run on this screen is
-either of them.
-
-**The screen claims no age, and the stylesheet does not add one.** The stored view carries
-no time by design, so the marker's stamp is drawn as the string the document holds and never
-reformatted into a date: the console's own sentence about the time it does not have is the
-`coordinator-age` paragraph, and it is drawn as prose.
+**The floor is a sentence and not a refusal.** `orchestrator map` is registered from `ee/`, so
+a CLI older than that release answers `unknown command`: the tab draws the release the read
+needs and **spawns nothing** (`ORCHESTRATOR_MAP_CLI_FLOOR`, `F40`), because a read that was
+never made has no refusal of its own. The same floor covers the drill-down's named scope.
 
 ### 2.13 The launch confirmation window — `console/src/renderer/confirm.html` + `console/src/renderer/confirm.ts`
 
@@ -2035,8 +1816,16 @@ body, and not as a `div`.
 | `tr.manage-row` | a row | one row the kind's `decode` answered with, `data-row` naming the row's own key. No rule selects it: the cells carry the density, and a rule against a row itself would be a rule about one kind's rows |
 | `div.manage-actions` | a kind's actions | the wrapping row of the controls a kind offers, drawn under the table whenever the kind's read landed — an empty list included, because an empty list is exactly when a person reaches for "add" — and never over a refusal |
 | `button.manage-copy` | a copy-command action | a `type="button"` whose label **is** the exact argv (`copyCommandText`, out of the action's parts), copying that text on click. Mono (§3.7), because its whole value is that a person compares it character by character with the command they are about to run |
+| `div.manage-copy-box` | a copy-command that states a consequence | the button of the row below and its sentence, drawn as one control in the `manage-actions` line — and **only** for a command whose `consequence` is not empty: a command that destroys nothing keeps the bare button (`CopyCommandAction` in `manage/types.ts`) |
+| `p.manage-copy-consequence` | that command's sentence | what the command does that has to be read before it is run, muted. It is the below-floor state's whole meaning: a kind under its CLI floor offers no write button, and this sentence is where the operator reads why, and what their CLI still needs (`manage/kinds/models.ts`, `manage/kinds/images.ts`). The console's own words, with only a named document value interpolated by the kind — never a document's sentence |
 | `button.manage-view` | an open-view action | a `type="button"` asking the console to show a view of the rail (D2909: the Budget kind opens Spend). Its label names the view it opens, and it is not mono — the words are this console's own |
-| `p.manage-refusal` | a refused read | the CLI's own sentence for that kind's read (`sanitizeRefusal` keeps the role, project and path words and drops the rest), with the helper's Retry drawn beside it. It is the one place CLI text is drawn as prose |
+| `button.manage-write` | a write action's control, and its submit | a `type="button"` drawn for a kind's write action (`WriteAction` in `manage/types.ts`): the control's label is the action's own words, and the same hook is the form's `Continue` once the form is open — the two presses are the two steps of one write, so they are one hook. The control is drawn through `disabledWrite` when the caller's role may not use it (RB4's sentence is its `title`), and a control drawn that way binds nothing: no listener, no form. The submit is `disabled` while a required box is empty |
+| `div.manage-write-box` | a write action's own box | the control and, once it is pressed, the form that replaces it — the write's whole drawing, so `Cancel` has somewhere to put the control back. It sits in the `manage-actions` line beside the copy and view controls |
+| `div.manage-write-form` | the values a write collects | a grid of one field per `WriteField` the action declared, revealed under the control. Nothing here decides anything: the values go to the action's **plan** operation, and the window that follows is main's |
+| `label.manage-write-field` | one field of that form | the console's own label for the box (`Model ID`, `Route`), wrapping the box so the two are one target. A field's label is not a document's string and passes no `TEXT_CLASSES` class: the operator reads what they are about to type |
+| `input.manage-write-input` | one value of that form | a `type="text"` box the operator types into. Every value is text this console sends to main, which holds each to its own grammar before any child exists; a value a document sent never reaches this element |
+| `button.manage-write-cancel` | a form's way out | the `Cancel` beside the submit, in the confirmation window's own word (`confirm.ts`'s `CANCEL_LABEL`), because it is the same fact: a form the operator has decided not to submit. It puts the control back exactly as it was drawn |
+| `p.manage-refusal` | a refused read, and a refused write's plan | the CLI's own sentence for that kind's read (`sanitizeRefusal` keeps the role, project and path words and drops the rest), with the helper's Retry drawn beside it. A **plan** that refused is the same hook inside the write's own box — the operation named rather than the kind, "no plan arrived for the write `models.add.plan`" when the refusal carried no sentence — and the values stay typed under it. It is the one place CLI text is drawn as prose |
 | `p.manage-empty` | a read that answered with nothing | the console's own single sentence (`Nothing listed yet`), muted, in the console's voice and never the CLI's: an empty answer is not a refusal, so it gets no CLI sentence and no reason to retry |
 
 - **The attributes are the shell's own bookkeeping.** `data-kind`, `data-operation`,
@@ -2050,6 +1839,17 @@ body, and not as a `div`.
   row's copy and no row's command a table could name — a per-row action is a descriptor member
   (the plan's MG0) and then a shell change, in that order. A kind whose rows need their own
   control draws it from its own `decode` today.
+- **A write action is the one action that opens a window, and its floor is the kind's.** A
+  `WriteAction` is drawn as a control and a form, and what the form submits is the kind's
+  **plan** operation (`models.add.plan`, `image.add.plan`): the dry run's document is main's,
+  the window that shows it is §2.13's, and the write that follows is main's on that window's
+  own yes — `manage.css` therefore draws no window and no document, and the section redraws
+  nothing when a plan lands. The **role** is asked here, once per control (`manage-write`'s
+  row above), and the **CLI version** is not: whether this console may show the write at all
+  is decided where the kind is built (`manage/kinds/models.ts`, `manage/kinds/images.ts`, and
+  `src/main/modelsadd.ts` on its own side), and a kind below its floor hands this shell a
+  copy-command instead of the write — so the two controls are never drawn for one kind at
+  once, and no rule of the theme is about a choice this shell does not make.
 - **The empty sentence is the shell's, and it is one sentence for every kind.** The console's
   own `renderEmpty` takes a closed union of sentences (`EMPTY_RUNS` today), so the shell draws
   its own line rather than widen a helper that belongs to the screens. A kind that wants its
@@ -2060,6 +1860,88 @@ body, and not as a `div`.
   `readKind(id)` are the caller's doors; `end()` stops the section's reads when the tab is
   left). Jobs are the other thing that is never in the first paint (§2.5), for the same
   reason: a read nobody asked for is a child process nobody asked for.
+
+### 2.16 The setup wizard — `console/src/renderer/wizard/wizard.ts`
+
+**The wizard is the first-run screen, and it replaces the command line §2.1 already lists.**
+With no installation the onboarding view draws it where `fugaro setup`'s command line used to
+stand (the console-improvements plan's task SW3b, D2904): the five questions of
+`src/shared/new-ops.ts`'s `SETUP_ANSWER_KEYS` with the CLI's own defaults, and then the
+`setup.plan` feed drawn line by line as it arrives. **It is one screen with no onboarding
+state**, so the rail's "Add project" opens the same module under its own heading — which is why
+it draws **no `h1`** and takes no title: the view that mounts it owns the heading, and the
+wizard drawing a second one with the same words would be a bug.
+
+**Every rule for it is the class alone.** The module draws through one helper,
+`make(factory, tag, className)`, whose tag is its caller's, so one class is drawn as more than
+one element: `console-wizard-command` is a `code` where a Copy stands beside it and a `p` where
+the line is displayed only, and `console-wizard-event-text` is a `span` beside its kind word
+and a `div` under it. A stylesheet that qualified these with a tag would be a stylesheet about
+the branch it happened to read, and the pairing a rule is written from cannot be read back out
+of such a helper — so these are the one part of §2 whose hooks stand unqualified, and the
+element column below is what the module draws today rather than what a rule may assume. **The
+only attributes any rule here keys on are `:disabled` and `aria-busy`** (all four of the
+module's own attributes — `data-wizard-question`, `data-wizard-event` and the two `aria-busy`
+marks — are licensed by §3.1's list and are named in the rows below; the `id` a box carries
+and the `for` its label does are not attributes a rule reads at all, they are the pairing
+that gives the box its accessible name); the screen deliberately
+sets **no `data-busy`**, because `flight-deck.css`'s rule for a busy section fades every child
+that is not the busy slot, and the operator's own typed answers fading for the up-to-an-hour a
+setup may take is not what a read in flight should look like here.
+
+| Hook | Element | What it is |
+|---|---|---|
+| `console-wizard` | the screen's root, a `section` | the questions and the attempts and nothing else. No heading, no card, no `h1`: the view that mounts it owns the title, and SW3c's dialog will draw its own. It carries `aria-busy="true"` while an attempt is in flight, and never `data-busy` |
+| `console-wizard-lead` | the sentence above the questions | the console's own words for what is about to happen, muted. It is `max-width`-capped like the prose below it rather than stretched across a wide window |
+| `console-wizard-questions` | the questions' column | the five questions as a grid, narrower than the events below them: a form is read in one column and a feed is read across |
+| `console-wizard-question` | one question, a `div` | the label and its box as one unit, with `data-wizard-question` naming the answer key it collects so the tree can be read back against `SETUP_ANSWER_KEYS` |
+| `console-wizard-label` | a question's label, a `label` | the question in the operator's words, drawn `for` its own control's id (`for` before the box, the way the launch window's form does it, `launch.ts`'s `field`), so every box has an accessible name. The pairing is a label and an id rather than nesting: a `select` inside a `label` is a target a click on the label opens, which is not what a click on a question should do |
+| `console-wizard-note` | a question's note, a `p` | the smaller line under a question — the default it takes when the operator types nothing, and why one question has none. Muted, and the console's words, never a document's |
+| `console-wizard-input` | a text question's box, an `input` | `type="text"`, with the CLI's default as its `value` and a placeholder naming that default. Its `id` is `console-wizard-field-` and the row's own answer key, which is the string its label's `for` carries; the box is typed into, never filled from a document |
+| `console-wizard-option` | a choice question's option, an `option` | one member of a `select`. The popup it opens is the platform's and is not styled here; the rule sets the closed state's colours so an option does not read as a native widget inside a themed panel |
+| `console-wizard-submit` | the one control that sends the answers, a `button` | a `type="button"` — the questions are drawn in a plain container and **not** in a `form`, so Enter is not a second way to send an answer. It is `disabled` for as long as the send it started is unanswered: this screen's answer can take up to an hour |
+| `console-wizard-follow` | the control that follows the run, a `button` | a `type="button"` in the same shape, asking for the run the confirmation window's yes started. Held `disabled` with the submit while an attempt is in flight, for the same reason |
+| `console-wizard-busy` | the line naming the attempt in flight, a `p` | one line for the screen rather than one per attempt: it is written when a send starts — `Planning the setup…`, `Following the run…`, in the register §2.5's busy marks already use — and cleared when its answer lands, on every path, a thrown bridge included |
+| `console-wizard-answer` | one answer line, a `p` | the console's own whole-sentence answers: the CLI's refusal for the attempt that refused, the done line, the hand-off line for a feed that left the operator something to run, and `STREAM_INTERRUPTED_WORD` for a read with no last line |
+| `console-wizard-attempts` | the column of attempts, a `div` | one block per send, in the order they were sent: a second attempt beside the first is what this screen draws for a read that stopped, so nothing is replaced |
+| `console-wizard-attempt` | one send's whole output, a `div` | the block its lines and its answer land in. It too carries `aria-busy="true"` while its own send is outstanding |
+| `console-wizard-lines` | one attempt's event lines, a `div` | the feed, in arrival order, one line per paint tick |
+| `console-wizard-event` | one event line, a `div` | a `step`, a `stage`, a `left_for_you`, a `done` or an `error`, with `data-wizard-event` naming its type. It is the row a person scans down, so the line is a block rather than a list item |
+| `console-wizard-event-kind` | the kind word, a `span` | the event's type in the console's own vocabulary (`working`, `stage`, `for you`, `done`, `failed`), uppercased and letter-spaced — the smallest thing read in this block |
+| `console-wizard-event-stage` | the stage's name, a `span` | which stage the CLI is on, in the medium step: the one word a person watching a long setup actually reads |
+| `console-wizard-event-state` | a stage's state, a `span` | the stage's own state word, and `undone` where the stage has not happened, muted |
+| `console-wizard-event-after` | the stage waited for, a `span` | the stage this one followed, so a feed out of order is legible, muted and small |
+| `console-wizard-event-text` | a line's document text, a `span` or a `div` | the CLI's own sentence, through the class its event declared in `TEXT_CLASSES` (`putText`): a value the class refuses never reaches the element. It is a `span` on the row of the kind words and a `div` under it where the line carries a command |
+| `console-wizard-command` | the command a `left_for_you` line names, a `code` or a `p` | the argv MG0's `manage/command.ts` assembled, drawn in a block of its own. It is a `code` beside a Copy and a `p` where the builder refused the line or where the line is the step's own text — a `command` step with no `commands` is itself its one command (`fugaro update`, `fugaro update-skills`, `fugaro orchestrator install`, the CLI's own `PrintedCommands` rule), and that line is drawn once, in this element, with its Copy beside it rather than repeated as a `code` under itself |
+| `console-wizard-copy` | that line's Copy, a `button` | a `type="button"` whose label **is** the joined argv, copying that text through the caller's seam. Mono (§3.7), for the same reason §2.15's `manage-copy` is: its whole value is that a person compares it character by character with the command they are about to run |
+| `console-wizard-copy-refusal` | a command the builder would not assemble, a `p` | the builder's own reason beside the displayed line, muted. The console never repairs a command it will not copy |
+
+- **The failed stage comes from the feed, not from the sentence.** An `error` line draws the stage
+  the run stopped at in `console-wizard-event-stage` and the CLI's sentence in
+  `console-wizard-event-text`; nothing here re-reads the sentence to guess a stage, and an error
+  that named none draws the sentence alone.
+- **A `left_for_you` line is displayed whichever way it goes.** A line whose first word is `fugaro`
+  or `gcloud` is assembled and gets the Copy; any other word is drawn as text with no control
+  beside it — a `left_for_you` line is the CLI telling the operator what is left, so dropping the
+  ones this console cannot act on would be dropping the answer. A builder refusal takes the Copy
+  away and keeps the line, with the builder's reason under it.
+- **A `command` step with no commands is its own command.** The CLI's `PrintedCommands`
+  (`initflow/stage.go`) answers the step's own text as its one command line, and that is the shape
+  of the steps a first setup leaves constantly (`fugaro update`, `fugaro update-skills`,
+  `fugaro orchestrator install`), so the line above is what gets the Copy. Every other kind's text
+  is a sentence — a step in a web console, a refusal — and keeps the console's own "no command to
+  run" note.
+- **No question carries a secret, and no control opens a prompt.** There is no `password` box, no
+  path, no flag and no second window: a question whose answer is a secret is asked by
+  `fugaro setup`'s own terminal prompt, which this screen never opens and never imitates.
+- **The busy line is one line for the screen, and the two controls it started are the ones it
+  holds.** The Retry a finished attempt drew is **not** held: a second attempt beside the first is
+  what this screen draws for a read that stopped, so holding it would deny the person the only way
+  forward.
+- **The wizard draws its own busy line rather than calling `sectionRead`.** The helper's mark, its
+  skeleton and its Retry belong to a section with one read and a refusal of its own (§2.15); this
+  screen draws a feed of lines from one child that answers once, so its mark is a sentence and an
+  `aria-busy` on the block whose send is outstanding.
 
 ## 3. The theme system
 

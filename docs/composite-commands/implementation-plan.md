@@ -115,7 +115,7 @@ enforcement, notes): AP7-AP10.
 
 | Check | Measures | Runner |
 | --- | --- | --- |
-| 390 | `fugaro image add` alone: the deployed job's image digest equals the built entry's digest, and `apply --status --json` lists nothing | owner, after AP4 |
+| 390 | `fugaro image add` alone: the entry is in the catalog with the build's digest, the repository's jobs are left on entries the catalog holds, and `apply --status --json` lists nothing | owner, after AP4 |
 | 391 | Three `--no-apply` changes then one `apply`: the `policy` and `repository` stages run once each | owner |
 | 392 | A forced `policy` stage failure leaves the change saved, the step pending, exit non-zero; `fugaro apply` finishes it | owner |
 | 393-399 | Reserved | |

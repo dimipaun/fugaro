@@ -39,8 +39,10 @@ func TestDocsStateTheProjectDefaultBaseBranch(t *testing.T) {
 		// §3's bullet: main is no longer the only branch a repository writes.
 		"`git.base_branch:` when the branch is not the project's default",
 		// §5's scope table: the row stays `repo`, and the project default is
-		// the owner's in the policy node rather than a project-layer key.
-		"| `git.base_branch` | repo | a project-wide base branch in the launcher-writable project layer would let a bucket writer point image builds at an unreviewed branch; the project's default base branch is the owner's, published to the policy node instead |",
+		// the owner's in the policy node rather than a project-layer key. The
+		// trailing citation is D3237's, which kept the key in the repository
+		// (docs/repo-override-rulings, task S0).
+		"| `git.base_branch` | repo | a project-wide base branch in the launcher-writable project layer would let a bucket writer point image builds at an unreviewed branch; the project's default base branch is the owner's, published to the policy node instead; approved by D3237 |",
 	} {
 		if !strings.Contains(layer, want) {
 			t.Errorf("docs/project-layer.md does not say %q", want)

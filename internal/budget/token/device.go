@@ -149,10 +149,21 @@ func deviceFold(s string) string {
 // deviceUIDPrefix and deviceClaim are M4's: a device's uid begins m~ — never
 // r~, the runs bucket's family, and never p~, a pairing session's — and the
 // one custom claim the token carries is mu, which rules.go's userClaim reads
-// and requires to equal auth.uid.
+// and requires to equal auth.uid. deviceRoleClaim is D2791's: the roster's
+// role for the device's address, which the phone reads off its own ID token to
+// show what it may do (F14's "the token's role claim is for display").
+//
+// The role claim is a two-letter name in mu's family and not `role`, and that
+// is the whole reason it is spelled here: a Firebase custom claim is copied
+// into the ID token beside the provider's own, and a name a provider could also
+// write is a claim two writers could disagree about. Nothing in this tree reads
+// it — the rules read the device node (userClaim) and the consumer resolves the
+// role from the roster again at every action (D2791) — so an edited claim
+// changes what a phone shows and nothing it may do.
 const (
 	deviceUIDPrefix = "m~"
 	deviceClaim     = "mu"
+	deviceRoleClaim = "mr"
 	// deviceUIDBytes is the random part: 128 bits, 22 unpadded base64url
 	// characters. It is drawn and never derived, so one device's name is not
 	// guessable from another's, and it stays far inside the 128 bytes a uid
@@ -181,21 +192,83 @@ func (d DeviceToken) GoString() string { return d.String() }
 // phone refreshes the token, and the device node, not the clock, is what
 // revokes a pairing (D166, decision 1).
 func MintDevice(ctx context.Context, signer Signer, now time.Time) (DeviceToken, error) {
-	email := signer.Email()
-	if email == "" {
-		return DeviceToken{}, errors.New("budget token: no signer")
-	}
 	uid, err := deviceNewUID()
 	if err != nil {
 		return DeviceToken{}, err
 	}
+	return deviceToken(ctx, signer, uid, "", now)
+}
+
+// MintDeviceForUID mints the custom token of a device that ALREADY holds its
+// uid (D2783): pairing draws the uid once (MintDevice) and the device node is
+// keyed by it, so the hourly refresh must answer a token for that same uid — a
+// freshly drawn one would be a token for a node nothing wrote, which the rules'
+// USER arm refuses (auth.token.mu == auth.uid *and* the device node).
+//
+// role is the roster's role for the device's address, written as
+// deviceRoleClaim for the phone's display alone (D2791, F14); an empty role
+// writes no role claim and is MintDevice's own shape. Every other claim is
+// MintDevice's, exp included, because a refresh's token is the same kind of
+// token as a pairing's.
+//
+// The uid is checked and never trusted, and this is the one function of this
+// package that mints for a uid it did not draw: a uid a caller chose is what
+// the public service's routes are built to never take (O8), so the shape is
+// re-derived here rather than assumed of a caller.
+func MintDeviceForUID(ctx context.Context, signer Signer, uid, role string, now time.Time) (DeviceToken, error) {
+	if err := checkDeviceUID(uid); err != nil {
+		return DeviceToken{}, err
+	}
+	return deviceToken(ctx, signer, uid, role, now)
+}
+
+// ErrDeviceUID means a string is not a device uid: not one of the m~<random>
+// names deviceNewUID draws, so it names no device node and no Firebase uid the
+// rules would admit. MintDeviceForUID is its reader, and the refusal is what
+// keeps a caller-chosen uid out of a minted session (O8).
+var ErrDeviceUID = errors.New("budget token: not a device uid")
+
+// ValidDeviceUID reports whether uid is one of the device uids this package
+// mints, and it is checkDeviceUID's answer for a caller that has a uid and no
+// token: the credentials service reads a device node by a uid it took from a
+// refresh token, and a uid that is not this shape is a node this tree never
+// wrote.
+func ValidDeviceUID(uid string) bool { return checkDeviceUID(uid) == nil }
+
+// checkDeviceUID refuses anything that is not a device uid: deviceUIDPrefix and
+// deviceUIDBytes bytes in the one spelling deviceNewUID writes, so the uid a
+// minted token carries is the key of the node the pairing wrote and not a
+// second name for it.
+func checkDeviceUID(uid string) error {
+	refuse := fmt.Errorf("%w: %q is not %q followed by one unpadded base64url string of %d bytes, the one spelling a device uid has (M4)", ErrDeviceUID, uid, deviceUIDPrefix, deviceUIDBytes)
+	body, ok := strings.CutPrefix(uid, deviceUIDPrefix)
+	if !ok {
+		return fmt.Errorf("%w: %q does not begin with %q, so it is not a device's name", ErrDeviceUID, uid, deviceUIDPrefix)
+	}
+	raw, err := deviceKeyEncoding.DecodeString(body)
+	if err != nil || len(raw) != deviceUIDBytes {
+		return refuse
+	}
+	return nil
+}
+
+// deviceToken is MintDevice's and MintDeviceForUID's one payload: the claims,
+// the signer's call and the read-back that holds the answer to the uid it was
+// minted for.
+func deviceToken(ctx context.Context, signer Signer, uid, role string, now time.Time) (DeviceToken, error) {
+	email := signer.Email()
+	if email == "" {
+		return DeviceToken{}, errors.New("budget token: no signer")
+	}
+	claims := map[string]any{deviceClaim: uid}
+	if role != "" {
+		claims[deviceRoleClaim] = role
+	}
 	payload, err := json.Marshal(map[string]any{
 		"iss": email, "sub": email, "aud": Audience,
 		"iat": now.Unix(), "exp": now.Add(Lifetime).Unix(),
-		"uid": uid,
-		"claims": map[string]any{
-			deviceClaim: uid,
-		},
+		"uid":    uid,
+		"claims": claims,
 	})
 	if err != nil {
 		return DeviceToken{}, err
@@ -207,14 +280,20 @@ func MintDevice(ctx context.Context, signer Signer, now time.Time) (DeviceToken,
 	// The signer is trusted, but a token that does not name the device it was
 	// minted for must never leave this function (MintAt's own read-back). Both
 	// halves are checked: the rules match mu against the token's uid, so a
-	// signer that moved either one hands the phone a token nothing admits.
+	// signer that moved either one hands the phone a token nothing admits. The
+	// role claim is checked the same way and for a smaller reason — it is what
+	// the phone shows, and a token whose display claim the signer dropped is a
+	// token this service did not mean to answer.
 	got, err := parseJWT(tok)
 	if err != nil {
 		return DeviceToken{}, errors.New("budget token: the signer returned something that is not a JWT")
 	}
-	claims, _ := got["claims"].(map[string]any)
-	if claimString(got, "uid") != uid || claimString(claims, deviceClaim) != uid {
+	gotClaims, _ := got["claims"].(map[string]any)
+	if claimString(got, "uid") != uid || claimString(gotClaims, deviceClaim) != uid {
 		return DeviceToken{}, fmt.Errorf("%w: the signer returned a device token for another uid", ErrTokenMismatch)
+	}
+	if role != "" && claimString(gotClaims, deviceRoleClaim) != role {
+		return DeviceToken{}, fmt.Errorf("%w: the signer returned a device token without the role claim it was asked for", ErrTokenMismatch)
 	}
 	return DeviceToken{UID: uid, Token: tok}, nil
 }

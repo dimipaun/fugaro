@@ -49,12 +49,24 @@ func rigorStdin(rigorAnswer string) string {
 // it (rigor/levels.go, rigor/rounds.go) and a test that spelled them out would
 // be a second copy of those tables rather than a check of this question.
 func rigorLine(out string, mode rigor.Rigor) string {
-	for _, line := range strings.Split(out, "\n") {
-		if strings.HasPrefix(line, "  "+string(mode)+": ") {
-			return line
-		}
+	at := rigorAt(out, mode)
+	if at < 0 {
+		return ""
 	}
-	return ""
+	rest := out[at+1:]
+	if end := strings.IndexByte(rest, '\n'); end >= 0 {
+		return rest[:end]
+	}
+	return rest
+}
+
+// rigorAt is where the question offers one mode's line, or -1: the mode at the
+// start of an indented line, then the space the padded column leaves. The
+// table is the question's own form (printRigorChoices) — the mode, its review
+// and rounds, then its note — so a line that said "  pro: …" is not one this
+// question prints.
+func rigorAt(out string, mode rigor.Rigor) int {
+	return strings.Index(out, "\n  "+string(mode)+" ")
 }
 
 // TestSetupAsksTheRigorModeWithNoSilentDefault is the plan's red step (task W):
@@ -93,15 +105,15 @@ func TestSetupAsksTheRigorModeWithNoSilentDefault(t *testing.T) {
 	}
 	// The recommendation is the order: pro first, and it is first because it is
 	// what a project that says nothing runs today (D19).
-	if at := strings.Index(printed, "  pro: "); at < 0 {
+	if at := rigorAt(printed, rigor.Pro); at < 0 {
 		t.Errorf("the question does not offer pro:\n%s", printed)
 	} else {
 		for _, after := range []rigor.Rigor{rigor.Startup, rigor.POC, rigor.Critical} {
-			if i := strings.Index(printed, "  "+string(after)+": "); i >= 0 && i < at {
+			if i := rigorAt(printed, after); i >= 0 && i < at {
 				t.Errorf("%s is listed above pro, and pro is the recommended answer:\n%s", after, printed)
 			}
 		}
-		if !strings.Contains(rigorLine(printed, rigor.Pro), "built-in default") {
+		if !strings.Contains(rigorLine(printed, rigor.Pro), "(default)") {
 			t.Errorf("pro's line does not say why it is the recommendation:\n%s", printed)
 		}
 	}
@@ -112,7 +124,7 @@ func TestSetupAsksTheRigorModeWithNoSilentDefault(t *testing.T) {
 	}
 	// The red step's own assertion: an empty line is refused and the question is
 	// asked again.
-	if !strings.Contains(printed, "  a value is needed") {
+	if !strings.Contains(printed, "  type one of the modes above (this is the one question with no suggestion)") {
 		t.Errorf("Enter answered the rigor question, and this is the one question of the wizard with no suggestion:\n%s", printed)
 	}
 	if r.o.rigor != string(rigor.Critical) {
@@ -360,7 +372,7 @@ func TestUpdateNeverAsksTheRigorQuestion(t *testing.T) {
 			if !strings.Contains(err.Error(), "--rigor") {
 				t.Errorf("the refusal does not name the flag it refuses: %v", err)
 			}
-			for _, asked := range []string{rigorQuestionLead, questionFor("--rigor").what, "Rigor mode"} {
+			for _, asked := range []string{rigorQuestionLead, askedPrompt("--rigor")} {
 				if strings.Contains(out+errOut, asked) {
 					t.Errorf("the run asked the rigor question (%q) on a project that already has a config:\n%s\n%s", asked, out, errOut)
 				}
@@ -415,7 +427,7 @@ func TestUpdateRefusesRigorOnAMachineWithNoProjectConfig(t *testing.T) {
 							t.Errorf("the refusal lacks %q: %v", want, err)
 						}
 					}
-					if asked := out + errOut; strings.Contains(asked, questionFor("--name").what) || strings.Contains(asked, rigorQuestionLead) {
+					if asked := out + errOut; strings.Contains(asked, askedPrompt("--name")) || strings.Contains(asked, rigorQuestionLead) {
 						t.Errorf("the run asked a question on its way to refusing the flag:\n%s", asked)
 					}
 				})
@@ -479,7 +491,7 @@ func TestRigorIsRefusedOnEveryWalkThatNeverReachesTheLayerStage(t *testing.T) {
 					t.Errorf("the refusal lacks %q: %v", want, err)
 				}
 			}
-			if asked := out + errOut; strings.Contains(asked, rigorQuestionLead) || strings.Contains(asked, questionFor("--rigor").what) {
+			if asked := out + errOut; strings.Contains(asked, rigorQuestionLead) || strings.Contains(asked, askedPrompt("--rigor")) {
 				t.Errorf("the run asked the rigor question on its way to refusing the flag:\n%s", asked)
 			}
 		})

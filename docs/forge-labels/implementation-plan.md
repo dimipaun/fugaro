@@ -16,6 +16,7 @@ The repository's rigor default is `startup` and `planning.decoupling` is on, so 
 - **Boundaries.** *Always:* hermetic tests (`internal/gitprov/fake`, `internal/gcpfake`, `httpfixture`, `t.TempDir()`), `gofmt -l .` empty, the targeted command named in each task, comments that say why. *Ask first:* a new dependency, a change to `PRSpec`, `ApplyReady` or `git.pr.labels`, any change under `.github/workflows/`, Terraform. *Never:* a prompt or a confirmation step (CLAUDE.md, "Fugaro asks for nothing"), a secret-shaped literal, a live cloud or forge call by an agent, a label write outside the namespaces, removing a label a person added.
 - The daemon's label failures never fail a tick: log one line per cause and continue (spec, "best-effort").
 - Documents are tested: after T6, `go test ./internal/cli/ -run Docs -count=1`. `website/content/security.md` is regenerated from `SECURITY.md` with `go run ./internal/clidoc`, never edited by hand.
+- Every task's `Command` runs its own tests with `-count=1`, so a cached result can never satisfy a red step.
 - A work-item field is additive: `schemas/orchestrator-state.schema.json` and `schemas/orchestrator-patch.schema.json` gain an optional property and no version bumps (CLAUDE.md, "A field never changes meaning"). *(Amended 2026-11-15, as T8 shipped: the **state** schema is the exception, and its own rule is the one that binds — it declares the document closed, every field modelled and a decoder that refuses a field it does not model, so `schema_version` moves whenever a field is added. `orchestrator.SchemaVersion` is 3 and `Migrate` has a 2 → 3 step that also rewrites stored digests, because `spec` is digested. A patch document carries no version of its own — it is read against the node's revision, and a CLI that does not model `spec` refuses a document carrying it rather than applying half of it.)*
 
 ## Global constraints and review focus
@@ -172,7 +173,7 @@ The repository's rigor default is `startup` and `planning.decoupling` is on, so 
 - L3: T7.
 - L4: CK.
 
-**Critical path:** T1, T3, T4, T7, CK. T9, T8, T5, T2 and T6 run beside it.
+**Critical path:** T1, T3, T4, T7, CK. T9, T8, T5, T2 and T6 run beside it. No task in the plan depends on T6 or CK.
 
 **Shared files:** only T1 writes `internal/gitprov/labels.go`; only T9 writes `internal/credsvc/server.go`, `audit.go` and the census pins; only T5 writes `internal/orchestrator/tick.go`; T8 writes `state.go`, `patch.go` and their tests and T5 does not; only T7 writes `internal/cli/orchestrator_run.go`; T6 owns the documents and the Docs test it adds. No level holds two writers of one file.
 

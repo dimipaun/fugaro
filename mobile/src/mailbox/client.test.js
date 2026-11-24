@@ -460,7 +460,7 @@ test('the client is frozen, and so are the paths it writes to', async () => {
   }, TypeError);
 });
 
-test('the client object is exactly its nine names, and nothing else is on it', async () => {
+test('the client object is exactly its ten names, and nothing else is on it', async () => {
   // `index.test.js` pins the DOOR's export set; the object the builder returns
   // is the other half of the same rule, and it is the one a screen holds. A
   // `raw(path, value)` added here "for one screen" would be a second write path
@@ -472,10 +472,13 @@ test('the client object is exactly its nine names, and nothing else is on it', a
   // `register` is P5.2.8's (§3.5 (b)): the push registration is a mailbox
   // message like any other, so it goes through THIS object and the key handling
   // stays here -- a `push/` module that signed and wrote its own record would be
-  // the second write path D113 forbids.
+  // the second write path D113 forbids. `sendJob` is J4's and it is a WRITE: a
+  // start or a cancel, composed by `shared/command/verbs.js` and written through
+  // this same object, which is exactly why the composition lives out there (it
+  // has no store, no gate and no key) and the write lives here.
   const h = await harness();
   assert.deepEqual(Object.keys(h.client).sort(),
-    ['flush', 'licenceRefusal', 'ok', 'paths', 'pending', 'poll', 'register', 'send', 'unsent']);
+    ['flush', 'licenceRefusal', 'ok', 'paths', 'pending', 'poll', 'register', 'send', 'sendJob', 'unsent']);
   for (const name of ['raw', 'write', 'read', 'store', 'keys', 'key', 'mac', 'database', 'ref']) {
     assert.equal(name in h.client, false, name);
   }
@@ -488,7 +491,7 @@ test('the mailbox is the account\'s uid, and the key is the account\'s id', asyn
   const h = await harness({ account: { ...ACCOUNT, id: 'desk', authUid: 'ZzYyXx0987654321abCDef' } });
   assert.equal(h.paths.inbox, 'mailbox/ZzYyXx0987654321abCDef/inbox');
   const sent = await h.client.send('run 42 finished');
-  assert.deepEqual(sent, { ok: true, id: 'm-1', at: T0 });
+  assert.deepEqual(sent, { ok: true, id: 'm-1', at: T0, text: 'run 42 finished' });
   assert.deepEqual(h.store.writes().map((entry) => entry.path), ['mailbox/ZzYyXx0987654321abCDef/inbox/m-1']);
   assert.equal(h.store.writes()[0].value.sender, 'ZzYyXx0987654321abCDef');
 });
@@ -499,9 +502,9 @@ test('the mailbox is the account\'s uid, and the key is the account\'s id', asyn
 
 test('one utterance is one message, with a fresh id each time', async () => {
   const h = await harness();
-  assert.deepEqual(await h.client.send('run 42 finished'), { ok: true, id: 'm-1', at: T0 });
+  assert.deepEqual(await h.client.send('run 42 finished'), { ok: true, id: 'm-1', at: T0, text: 'run 42 finished' });
   h.advance(1_000);
-  assert.deepEqual(await h.client.send('merge it'), { ok: true, id: 'm-2', at: T0 + 1_000 });
+  assert.deepEqual(await h.client.send('merge it'), { ok: true, id: 'm-2', at: T0 + 1_000, text: 'merge it' });
   assert.deepEqual(h.store.writes().map((entry) => entry.path), [`${INBOX}/m-1`, `${INBOX}/m-2`]);
   assertD113WriteSet(h.store, h.paths);
 });
@@ -567,7 +570,7 @@ test('a pairing key short enough to turn up inside its own tag still speaks', as
   const h = await harness({ key: SHORT_KEY });
   const tag = macOf({ id: 'm-1', sender: UID, text: 'run 42 finished', at: T0 }, SHORT_KEY, 'inbox');
   assert.equal(tag.includes(SHORT_KEY), true, 'the coincidence this test is about');
-  assert.deepEqual(await h.client.send('run 42 finished'), { ok: true, id: 'm-1', at: T0 });
+  assert.deepEqual(await h.client.send('run 42 finished'), { ok: true, id: 'm-1', at: T0, text: 'run 42 finished' });
   assert.equal(h.valueAt(`${INBOX}/m-1`).mac, tag, 'and the tag is the tag that key makes');
   assertD113WriteSet(h.store, h.paths);
   // A poll reads the consumer's reply with the same short key, so the fence
@@ -634,7 +637,7 @@ test('a text nobody can sign is refused as unsignable, and never as key-unreadab
   // Nothing was recorded as used either: the id source's first id is still
   // free, so the same sentence without the character is a message.
   const sent = await h.client.send('run 42 finished');
-  assert.deepEqual(sent, { ok: true, id: 'm-1', at: T0 });
+  assert.deepEqual(sent, { ok: true, id: 'm-1', at: T0, text: 'run 42 finished' });
   assert.equal(h.keys.asked().length, 1, 'the key is asked for once, by the send that could be signed');
   assert.deepEqual(h.store.writes().map((entry) => entry.path), [`${INBOX}/m-1`]);
   assertD113WriteSet(h.store, h.paths);
@@ -1020,7 +1023,7 @@ test('a send whose message is already there is landed, even after a restart', as
   const first = h.valueAt(`${INBOX}/m-1`);
   const restarted = await harness({ db: h.store.db, newId: () => 'm-1' });
   const sent = await restarted.client.send('run 42 finished');
-  assert.deepEqual(sent, { ok: true, id: 'm-1', at: T0 });
+  assert.deepEqual(sent, { ok: true, id: 'm-1', at: T0, text: 'run 42 finished' });
   assert.deepEqual(restarted.client.pending(), [
     { id: 'm-1', at: T0, text: 'run 42 finished', landed: true },
   ]);
@@ -1069,7 +1072,7 @@ test('a message whose id is `acked` is a message in both directions', async () =
   // suffix answered about neither, and this is that difference at the client's
   // own boundary: the same id, written and spoken, with D113's write set intact.
   const sent = await harness({ newId: () => 'acked' });
-  assert.deepEqual(await sent.client.send('run 42 finished'), { ok: true, id: 'acked', at: T0 });
+  assert.deepEqual(await sent.client.send('run 42 finished'), { ok: true, id: 'acked', at: T0, text: 'run 42 finished' });
   assert.equal(sent.valueAt(`${INBOX}/acked`).id, 'acked', 'the message lands under its own id');
   assertD113WriteSet(sent.store, sent.paths);
 
@@ -1782,7 +1785,7 @@ test('a connection that goes while the key is being read is caught at the write'
   // would be refused as `id-conflict` and the utterance would be lost.)
   goOff = null;
   h.connection.setOnline(true);
-  assert.deepEqual(await h.client.send('run 42 finished'), { ok: true, id: 'm-1', at: T0 });
+  assert.deepEqual(await h.client.send('run 42 finished'), { ok: true, id: 'm-1', at: T0, text: 'run 42 finished' });
   assert.deepEqual(h.store.writes().map((entry) => entry.path), [h.paths.inboxMessage('m-1')]);
 });
 
@@ -1913,7 +1916,7 @@ test('before anything has been observed the phone refuses, and then sends once i
   await plantHeartbeat(h);
   const polled = await h.client.poll();
   assert.equal(polled.presence.state, STATE.LIVE);
-  assert.deepEqual(await h.client.send('run 42 finished'), { ok: true, id: 'm-1', at: T0 });
+  assert.deepEqual(await h.client.send('run 42 finished'), { ok: true, id: 'm-1', at: T0, text: 'run 42 finished' });
 
   // ... and once the consumer has been observed and gone quiet, the refusal is
   // the offline one and not the unobserved one: the two are not the same news.
@@ -1929,7 +1932,7 @@ test('an action record is written once and never queued', async () => {
   // with a longer fuse.
   const h = await harness();
   const sent = await h.client.send('cancel the docs refactor', { action: actionRecord(T0) });
-  assert.deepEqual(sent, { ok: true, id: 'm-1', at: T0 });
+  assert.deepEqual(sent, { ok: true, id: 'm-1', at: T0, text: 'cancel the docs refactor' });
   assert.deepEqual(h.store.writes().map((entry) => entry.path), [`${INBOX}/m-1`]);
   assert.equal(h.store.writes()[0].value.kind, 'action');
   assert.deepEqual(h.store.writes()[0].value.action, actionRecord(T0));
@@ -2344,7 +2347,7 @@ test('after the grace a merge is refused, and a confirm of one, while a cancel i
   // must stay stoppable however the subscription stands. The verb handed in
   // beside the record is not consulted -- the record is what is being written.
   const cancelled = await h.client.send('cancel the docs refactor', { action: actionRecord(T0), verb: 'launch' });
-  assert.deepEqual(cancelled, { ok: true, id: 'm-1', at: T0 });
+  assert.deepEqual(cancelled, { ok: true, id: 'm-1', at: T0, text: 'cancel the docs refactor' });
   assert.equal(h.store.writes()[0].value.kind, 'action', 'written as D169’s record, not as a message');
   assert.deepEqual(h.store.writes()[0].value.action, actionRecord(T0));
 });
@@ -2355,12 +2358,12 @@ test('after the grace a message and the kill switch are kept, and the lapse is n
 
   // Ordinary chatter, and every read the app speaks, is a message like any
   // other at a lapse (T12 keeps the reads; §4.2 keeps the message).
-  assert.deepEqual(await h.client.send('how is it going'), { ok: true, id: 'm-1', at: T0 });
+  assert.deepEqual(await h.client.send('how is it going'), { ok: true, id: 'm-1', at: T0, text: 'how is it going' });
   // The kill switch is T12's third kept row. The app READS the kill state and
   // draws it as a job field (§4.1) and `shared/confirm` refuses `kill` and
   // `kill-switch` as verbs, so there is no kill action to send -- a verb
   // classified as one is a message here, and it is the kept class that says so.
-  assert.deepEqual(await h.client.send('stop everything', { verb: 'kill-switch' }), { ok: true, id: 'm-2', at: T0 });
+  assert.deepEqual(await h.client.send('stop everything', { verb: 'kill-switch' }), { ok: true, id: 'm-2', at: T0, text: 'stop everything' });
 
   // **And the store is never opened for either of them.** A kept write is kept
   // at every state, so there is nothing to read: the phone does not consult its
@@ -2381,12 +2384,12 @@ test('the no-key state, and every state but the lapse, refuses nothing at all (S
     const h = await harness({ licence: licenceIn(state).port });
     assert.deepEqual(
       await h.client.send('launch the docs task', { verb: 'launch' }),
-      { ok: true, id: 'm-1', at: T0 },
+      { ok: true, id: 'm-1', at: T0, text: 'launch the docs task' },
       `${state}: a launch goes out`,
     );
     assert.deepEqual(
       await h.client.send('merge it', { action: mergeRecord(T0) }),
-      { ok: true, id: 'm-2', at: T0 },
+      { ok: true, id: 'm-2', at: T0, text: 'merge it' },
       `${state}: so does a merge`,
     );
     assert.equal(h.store.writes().length, 2, `${state}: both were written`);
@@ -2402,7 +2405,7 @@ test('a client built with no licence port refuses nothing, which is the product 
   // today, and it is the one that would fail if the default were ever flipped to
   // a refusing port.
   const h = await harness();
-  assert.deepEqual(await h.client.send('launch the docs task', { verb: 'launch' }), { ok: true, id: 'm-1', at: T0 });
+  assert.deepEqual(await h.client.send('launch the docs task', { verb: 'launch' }), { ok: true, id: 'm-1', at: T0, text: 'launch the docs task' });
 });
 
 test('the port the licence state module builds fits this client, with no adapter between', async () => {
@@ -2419,7 +2422,7 @@ test('the port the licence state module builds fits this client, with no adapter
   const fresh = await harness({ licence: noKey });
   assert.deepEqual(
     await fresh.client.send('launch the docs task', { verb: 'launch' }),
-    { ok: true, id: 'm-1', at: T0 },
+    { ok: true, id: 'm-1', at: T0, text: 'launch the docs task' },
     'the store is empty: the no-key state, and nothing is refused',
   );
 
@@ -2443,4 +2446,114 @@ test('a licence port that cannot be asked is a wiring failure, like every other 
   for (const licence of [{}, null, { at: 'not a function' }]) {
     await assert.rejects(harness({ licence }), TypeError, `${JSON.stringify(licence)} is not a port`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// A job command from the phone: start and cancel through the mailbox (J4)
+// ---------------------------------------------------------------------------
+//
+// The composition is `shared/command`'s (`jobWrite`): which kind of record a
+// verb makes, and whether the session's role may make it. What these tests pin
+// is the half that is this file's -- that the composition is written through
+// the ONE write path, as D113 has it, and that a start is D162's plain launch
+// message while a cancel is D169's action record (D2787).
+
+/** The session value `sendJob` reads: the port's `role`, and nothing else. */
+const OPERATOR_SESSION = Object.freeze({ role: 'operator' });
+const VIEWER_SESSION = Object.freeze({ role: 'viewer' });
+
+test('a start is one plain launch message through the one write path', async () => {
+  const h = await harness();
+  assert.deepEqual(
+    await h.client.sendJob(OPERATOR_SESSION, { verb: 'launch', text: 'fix the flaky test' }),
+    { ok: true, id: 'm-1', at: T0, text: 'fix the flaky test' },
+  );
+  assert.deepEqual(h.store.writes().map((entry) => entry.path), [`${INBOX}/m-1`]);
+  assertD113WriteSet(h.store, h.paths);
+
+  // D162: a launch is an ordinary message -- the five fields, no `kind`, no
+  // action, no confirmation. It is only the caller's classification that makes
+  // it a launch at all, and that classification is not written to the record.
+  const written = h.valueAt(`${INBOX}/m-1`);
+  assert.deepEqual(Object.keys(written), ['id', 'sender', 'text', 'at', 'mac']);
+  assert.equal(written.text, 'fix the flaky test');
+  assert.equal(validateMessage(written).ok, true);
+  assert.equal(JSON.stringify(written).includes('launch'), false, 'the classification is not in the record');
+});
+
+test('a cancel is one action record, and it is never queued', async () => {
+  const h = await harness();
+  const record = actionRecord(T0);
+  assert.deepEqual(
+    await h.client.sendJob(OPERATOR_SESSION, { verb: 'cancel', text: 'Cancel run run-42.', record }),
+    { ok: true, id: 'm-1', at: T0, text: 'Cancel run run-42.' },
+  );
+  assert.deepEqual(h.store.writes().map((entry) => entry.path), [`${INBOX}/m-1`]);
+  assertD113WriteSet(h.store, h.paths);
+
+  // D169: the record the machine built travels as it was built, as an `action`
+  // -- and D167's "never queued at all" holds for it (it is in neither the
+  // outbox nor `unsent`, so nothing here will ever write it twice).
+  const written = h.valueAt(`${INBOX}/m-1`);
+  assert.equal(written.kind, 'action');
+  assert.deepEqual(written.action, record);
+  assert.equal(validateMessage(written).ok, true);
+  assert.deepEqual(h.client.pending(), []);
+  assert.deepEqual(h.client.unsent(), []);
+});
+
+test('a viewer sends nothing: the write is refused before the store is called', async () => {
+  for (const request of [
+    { verb: 'launch', text: 'fix the flaky test' },
+    { verb: 'cancel', text: 'Cancel run run-42.', record: actionRecord(T0) },
+  ]) {
+    const h = await harness();
+    assert.deepEqual(await h.client.sendJob(VIEWER_SESSION, request), {
+      ok: false,
+      code: 'not-permitted',
+      field: 'verb',
+    });
+    assert.deepEqual(h.store.writes(), [], request.verb);
+  }
+});
+
+test('a refusal from the composition is returned unchanged, and nothing is written', async () => {
+  const h = await harness();
+  // A record that is not a cancel of a run, and a verb outside the closed set:
+  // both are `jobWrite`'s refusals, and the screen gets them in the same shape
+  // `send` refuses in, so it switches on one vocabulary.
+  const merge = { id: 'a-2', verb: 'merge', target: { repo: 'fugaro', pr: 7 }, confirmation: { id: 'c-2', at: T0 } };
+  assert.deepEqual(await h.client.sendJob(OPERATOR_SESSION, { verb: 'cancel', text: 'x', record: merge }), {
+    ok: false,
+    code: 'bad-record',
+    field: 'record.verb',
+  });
+  assert.deepEqual(await h.client.sendJob(OPERATOR_SESSION, { verb: 'delete', text: 'x' }), {
+    ok: false,
+    code: 'unknown-verb',
+    field: 'verb',
+  });
+  assert.deepEqual(h.store.writes(), []);
+});
+
+test('a job command meets the same gate as every other write', async () => {
+  // The composition happens first and writes nothing; the gate is still `send`'s,
+  // so an offline phone writes no start and no cancel and is told why -- there is
+  // no second path around the gate for a job command either.
+  const h = await harness();
+  h.connection.setOnline(false);
+  const refused = await h.client.sendJob(OPERATOR_SESSION, { verb: 'launch', text: 'fix the flaky test' });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, GATE_CODES.NO_CONNECTION);
+  assert.deepEqual(h.store.writes(), []);
+});
+
+test('the role is a display claim: it is read, and it is not written anywhere', async () => {
+  // F14, D2791: the roster's authority is the consumer's. This side reads the
+  // role to decide whether to send at all, and the record that lands carries no
+  // trace of it -- a role in a message would be a grant the phone had made
+  // itself.
+  const h = await harness();
+  await h.client.sendJob(OPERATOR_SESSION, { verb: 'launch', text: 'fix the flaky test' });
+  assert.equal(JSON.stringify(h.store.writes()).includes('operator'), false);
 });

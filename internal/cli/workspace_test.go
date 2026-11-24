@@ -1,14 +1,20 @@
 package cli
 
 import (
+	"bytes"
+	"io"
+	"maps"
 	"os"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/dimipaun/fugaro/internal/apply"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
 // The workspace writes' fixture: project aurora in a config home of its own,
@@ -30,7 +36,7 @@ func workspaceWriteHomeWith(t *testing.T, extra string) (home, path string) {
 }
 
 // workspaceOwnerHome is the fixture with the workspace's own project config
-// beside aurora's: `member add` and `cap set` write the config of the project
+// beside aurora's: `project add` and `cap set` write the config of the project
 // the workspace is named after, so a test of either needs one.
 func workspaceOwnerHome(t *testing.T) (home, aurora, owner string) {
 	t.Helper()
@@ -74,11 +80,14 @@ func workspaceSameJobAccount(a, b localcfg.WorkspaceJobAccount) bool {
 	return a.Account == b.Account && slices.Equal(a.Repos, b.Repos)
 }
 
-// workspaceMemberAddArgsNoYes is the whole of one `member add` without its
-// --yes: the same invocation a script drives and the one the test that is about
-// the write asking nothing runs.
-func workspaceMemberAddArgsNoYes(extra ...string) []string {
-	return append([]string{"workspace", "member", "add", "workspace-alpha", "aurora",
+// workspaceProjectAddArgs is the whole of one `workspace project add`: the flags
+// `workspace member add` carried, unchanged (D2802), plus the workspace the
+// member is declared in (D2821). It is the invocation a test drives to reach a
+// refusal that is made before any seam is opened; the tests that need the write
+// to land run the command over WU5's own fakes instead
+// (workspaceProjectAddRun), because the add reaches the workspace's roster.
+func workspaceProjectAddArgs(extra ...string) []string {
+	return append([]string{"workspace", "project", "add", "aurora", "--workspace", "workspace-alpha",
 		"--job-service-account", "marker-job@aurora-gcp.iam.gserviceaccount.com",
 		"--job-repos", "marker-job@aurora-gcp.iam.gserviceaccount.com=marker-org/aurora",
 		"--firebase-project", "aurora-fb",
@@ -86,10 +95,46 @@ func workspaceMemberAddArgsNoYes(extra ...string) []string {
 		"--exchange-url", "https://exchange.example.com/v1"}, extra...)
 }
 
-// workspaceMemberAddArgs is the whole of one `member add`, so the tests that
-// vary one flag vary one flag.
-func workspaceMemberAddArgs(extra ...string) []string {
-	return append(workspaceMemberAddArgsNoYes(), append([]string{}, extra...)...)
+// workspaceProjectAddRun runs one `workspace project add` over WU5's own fakes
+// (workspace_project_test.go) on the fixture's configs, and answers the cloud
+// the fakes are read back from and what the command printed and returned. The
+// two things the add cannot be run without are here: a workspace whose roster
+// names this machine's caller as one of its admins, and the fakes for the roster,
+// the trail and the member's own database that keep the whole run hermetic.
+//
+// WU5's fixture passes --no-apply, because WU5's own tests are about the local
+// declaration and stop there. The tests here go on to the chain's own ending --
+// D1563's sentence and the non-zero exit that says the workspace's own project
+// is still owed (workspaceAssertSavedNotLive) -- so the fixture's flag is turned
+// off first. A caller that wants the save-and-return ending passes --no-apply
+// itself and wins, because pflag keeps the last occurrence of a flag.
+func workspaceProjectAddRun(t *testing.T, extra ...string) (*wu5Cloud, string, error) {
+	t.Helper()
+	cloud := wu5NewCloud()
+	cloud.store.node = wu5NodeDoc(t, wu5RosterDoc(t, workspace.Roster{
+		People: []workspace.Person{{Address: "owner@example.com", Kind: workspace.KindHuman}},
+		Admins: []string{"owner@example.com"},
+	}))
+	out, err := wu5Run(t, cloud.seams(t), wu5AddArgs(append([]string{"--no-apply=false"}, extra...)...)...)
+	return cloud, out, err
+}
+
+// workspaceProjectAddWholeRun is workspaceProjectAddRun for a test that names the
+// whole declaration itself. WU5's fixture already declares a job service account,
+// and a declaration is one statement per account: passing the fixture's flags
+// beside the test's own would name that account twice and list its repository
+// twice, which the table refuses. So this one passes none of them, and only the
+// member, the workspace and the caller's own flags.
+func workspaceProjectAddWholeRun(t *testing.T, flags ...string) (*wu5Cloud, string, error) {
+	t.Helper()
+	cloud := wu5NewCloud()
+	cloud.store.node = wu5NodeDoc(t, wu5RosterDoc(t, workspace.Roster{
+		People: []workspace.Person{{Address: "owner@example.com", Kind: workspace.KindHuman}},
+		Admins: []string{"owner@example.com"},
+	}))
+	args := append([]string{"aurora", "--workspace", "workspace-alpha"}, flags...)
+	out, err := wu5Run(t, cloud.seams(t), append(args, "--no-apply=false")...)
+	return cloud, out, err
 }
 
 // workspaceAddArgsNoYes is the whole of one `workspace add` without its --yes:
@@ -126,10 +171,11 @@ func TestWorkspaceAddAsksNothing(t *testing.T) {
 	}
 }
 
-// TestWorkspaceMemberAddAsksNothing, TestWorkspaceMemberRmAsksNothing and
-// TestWorkspaceCapSetAsksNothing are the rest of this family's D1540 half: the
-// three writes below the `workspace` root land with neither --yes nor a
-// terminal, and the sentence naming the edit stands where the y/N was.
+// TestWorkspaceCapSetAsksNothing is the rest of this family's D1540 half on the
+// write the fixture reaches: the cap is set with neither --yes nor a terminal,
+// and the sentence naming the edit stands where the y/N was. The member table's
+// two directions are `workspace project add` and `project rm`, whose own tests
+// carry this (WU5's workspace_project_test.go, WU6's workspace_project_rm_test.go).
 //
 // AP6 puts the change's own follow-up behind each of them (spec rule 1), and
 // the follow-up of the owner's half is the workspace's own project plus the
@@ -142,45 +188,6 @@ func TestWorkspaceAddAsksNothing(t *testing.T) {
 // (applyKeptLine's own branch). TestWorkspaceWritesChain is the other half of
 // this: a machine whose workspace's own root is already converged runs both
 // steps and ends with nothing owed.
-func TestWorkspaceMemberAddAsksNothing(t *testing.T) {
-	_, _, owner := workspaceOwnerHome(t)
-
-	out, _, err := execute(t, workspaceMemberAddArgsNoYes("--repo", "owner/repo-a")...)
-	assertNoPrompt(t, out)
-	workspaceAssertSavedNotLive(t, "workspace member add", out, err)
-	lc, err := localcfg.Parse([]byte(readFileString(t, owner)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if lc.WorkspaceMembers == nil || (*lc.WorkspaceMembers)["aurora"].FP != "aurora" {
-		t.Errorf("the member was not written:\n%s", readFileString(t, owner))
-	}
-}
-
-// TestWorkspaceMemberRmAsksNothing takes the member back out without --yes: the
-// entry and the empty table go, so the file is byte-identical to the one the
-// fixture wrote. The removal takes the last member out of the table, so this
-// project declares no workspace of its own afterwards and the change is live as
-// soon as the file is written — the two stages skip, and neither of them asks
-// anything (D1540).
-func TestWorkspaceMemberRmAsksNothing(t *testing.T) {
-	_, _, owner := workspaceOwnerHome(t)
-	before := readFileString(t, owner)
-	if _, _, err := execute(t, workspaceMemberAddArgsNoYes()...); err == nil {
-		t.Fatal("workspace member add reported the member live: this machine has never applied the workspace's own project")
-	}
-
-	out, _, err := execute(t, "workspace", "member", "rm", "workspace-alpha", "aurora")
-	if err != nil {
-		t.Fatalf("workspace member rm: %v\n%s", err, out)
-	}
-	assertNoPrompt(t, out)
-	workspaceAssertNoSecondCommand(t, "workspace member rm", out, "workspace-alpha", "ws-gcp")
-	if after := readFileString(t, owner); after != before {
-		t.Errorf("the removal did not restore the file:\n--- before\n%s--- after\n%s", before, after)
-	}
-}
-
 // TestWorkspaceCapSetAsksNothing writes the cap with no --yes and no terminal.
 func TestWorkspaceCapSetAsksNothing(t *testing.T) {
 	_, _, owner := workspaceOwnerHome(t)
@@ -330,7 +337,7 @@ func workspaceAssertNamesUpdate(t *testing.T, what, out, project, gcp string) {
 
 // workspaceAssertNoSecondCommand holds a write whose change is live the moment
 // the file is written to the shape AP6 gives it: no command is named as the
-// next thing to run, and nothing is left owed. `workspace member rm` is that
+// next thing to run, and nothing is left owed. `workspace project rm` is that
 // once the change takes the last member out of the table: the config then
 // declares no workspace of its own, both stages skip, and a skip that did
 // nothing is this stage's answer that there is nothing here to converge
@@ -469,11 +476,11 @@ func TestWorkspaceAddRefusesTheWorkspacesOwnProject(t *testing.T) {
 	}
 }
 
-// TestMemberAddWritesTheOwnersHalfInTheWorkspacesOwnConfig: `member add` is the
+// TestProjectAddWritesTheOwnersHalfInTheWorkspacesOwnConfig: project add is the
 // owner's side (spec §5). It writes the entry into the config of the project
 // the workspace is named after, and the member's own config is another
 // machine's file, which it does not touch.
-func TestMemberAddWritesTheOwnersHalfInTheWorkspacesOwnConfig(t *testing.T) {
+func TestProjectAddWritesTheOwnersHalfInTheWorkspacesOwnConfig(t *testing.T) {
 	_, aurora, owner := workspaceOwnerHome(t)
 	auroraBefore, ownerBefore := readFileString(t, aurora), readFileString(t, owner)
 
@@ -483,9 +490,9 @@ func TestMemberAddWritesTheOwnersHalfInTheWorkspacesOwnConfig(t *testing.T) {
 	// grant is confirmed only by a name typed at a terminal
 	// (workspaceAssertSavedNotLive holds both below). What this test reads the
 	// file for is the write, which happened either way.
-	out, _, chainErr := execute(t, workspaceMemberAddArgs("--repo", "owner/repo-a", "--repo", "owner/repo-b")...)
+	_, out, chainErr := workspaceProjectAddRun(t, "--repo", "owner/repo-a", "--repo", "owner/repo-b")
 	if got := readFileString(t, aurora); got != auroraBefore {
-		t.Errorf("member add wrote the member's own config:\n%s", got)
+		t.Errorf("the add wrote the member's own config:\n%s", got)
 	}
 	after := readFileString(t, owner)
 	rest := after
@@ -523,17 +530,17 @@ func TestMemberAddWritesTheOwnersHalfInTheWorkspacesOwnConfig(t *testing.T) {
 	if strings.Join(got.Repos, ",") != strings.Join(want.Repos, ",") {
 		t.Errorf("repos = %v, want %v", got.Repos, want.Repos)
 	}
-	workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
+	workspaceAssertSavedNotLive(t, "workspace project add", out, chainErr)
 }
 
-// TestMemberAddReplacesTheEntryItAlreadyDeclares: a member the table already
+// TestProjectAddReplacesTheEntryItAlreadyDeclares: a member the table already
 // declares is replaced whole, and not added to. AddListItem appends and leaves
 // what it finds alone, so a declaration that merged would keep every account
 // and every repository the earlier one named — and re-declaring a member is how
 // a retired or a compromised job service account leaves the table, so the
 // merged entry would leave that identity admitted as a caller of the
 // workspace's credentials while the confirmation named only the new one.
-func TestMemberAddReplacesTheEntryItAlreadyDeclares(t *testing.T) {
+func TestProjectAddReplacesTheEntryItAlreadyDeclares(t *testing.T) {
 	_, _, owner := workspaceOwnerHome(t)
 	workspaceAppend(t, owner, `workspace_members:
   aurora:
@@ -551,17 +558,20 @@ func TestMemberAddReplacesTheEntryItAlreadyDeclares(t *testing.T) {
     repos:
       - owner/repo-old
 `)
-	ours := []string{"workspace", "member", "add", "workspace-alpha", "aurora",
+	ours := []string{
 		"--job-service-account", "marker-new@aurora-gcp.iam.gserviceaccount.com",
 		"--job-repos", "marker-new@aurora-gcp.iam.gserviceaccount.com=marker-org/aurora",
 		"--firebase-project", "aurora-fb",
 		"--fp", "aurora",
 		"--exchange-url", "https://exchange.example.com/v2",
 		"--repo", "owner/repo-new"}
+	// The declaration is this test's own whole, so the fixture's flags stay out
+	// of it: the entry it writes is exactly what the assertions below read back.
+	//
 	// The replaced entry is the write, and it lands either way; what this
 	// returns is the chain's answer about the two steps that make it live
 	// (workspaceAssertSavedNotLive at the end of this test).
-	out, _, chainErr := execute(t, ours...)
+	_, out, chainErr := workspaceProjectAddWholeRun(t, ours...)
 	after := readFileString(t, owner)
 	// Nothing the replaced entry carried survives it: not the retired account,
 	// not the account that was still live, not the repository, not the exchange
@@ -607,26 +617,26 @@ func TestMemberAddReplacesTheEntryItAlreadyDeclares(t *testing.T) {
 	// The same declaration again is the same file: a replace writes the entry
 	// it is given and nothing else, so a re-run has nothing to do.
 	before := readFileString(t, owner)
-	if out, _, err := execute(t, ours...); err != nil {
-		t.Fatalf("workspace member add (again): %v\n%s", err, out)
+	if _, out, err := workspaceProjectAddWholeRun(t, ours...); err != nil {
+		t.Fatalf("workspace project add (again): %v\n%s", err, out)
 	} else if !strings.Contains(out, "no change") {
 		t.Errorf("a repeated declaration is not a no-op:\n%s", out)
 	}
 	if readFileString(t, owner) != before {
 		t.Errorf("a repeated declaration rewrote the file:\n%s", readFileString(t, owner))
 	}
-	workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
+	workspaceAssertSavedNotLive(t, "workspace project add", out, chainErr)
 }
 
-// TestMemberAddRefusesToDeclareADatabaseURL: the member's database is derived
+// TestProjectAddRefusesToDeclareADatabaseURL: the member's database is derived
 // from the Firebase project the verified `iss` names (finding 6), so it is not
 // a value the owner may set -- an owner that could would pair one member's
 // accounts with another's database. The flag is refused by name rather than by
 // pflag's bare "unknown flag".
-func TestMemberAddRefusesToDeclareADatabaseURL(t *testing.T) {
+func TestProjectAddRefusesToDeclareADatabaseURL(t *testing.T) {
 	_, _, owner := workspaceOwnerHome(t)
 	before := readFileString(t, owner)
-	_, _, err := execute(t, workspaceMemberAddArgs("--database-url", "https://aurora-fb.firebaseio.com")...)
+	_, _, err := execute(t, workspaceProjectAddArgs("--database-url", "https://aurora-fb.firebaseio.com")...)
 	if err == nil {
 		t.Fatal("--database-url was accepted")
 	}
@@ -638,14 +648,14 @@ func TestMemberAddRefusesToDeclareADatabaseURL(t *testing.T) {
 	}
 }
 
-// TestMemberAddWritesNoRunsBucket: O1's answer dropped the bucket grant, so the
+// TestProjectAddWritesNoRunsBucket: O1's answer dropped the bucket grant, so the
 // table carries no bucket and the flag is refused by name. The second half is
 // the written entry itself: nothing in it is bucket-shaped, so a later field
 // cannot be added back without this test failing first.
-func TestMemberAddWritesNoRunsBucket(t *testing.T) {
+func TestProjectAddWritesNoRunsBucket(t *testing.T) {
 	_, _, owner := workspaceOwnerHome(t)
 	before := readFileString(t, owner)
-	_, _, err := execute(t, workspaceMemberAddArgs("--runs-bucket", "fugaro-runs-aurora-gcp")...)
+	_, _, err := execute(t, workspaceProjectAddArgs("--runs-bucket", "fugaro-runs-aurora-gcp")...)
 	if err == nil {
 		t.Fatal("--runs-bucket was accepted")
 	}
@@ -657,11 +667,11 @@ func TestMemberAddWritesNoRunsBucket(t *testing.T) {
 	}
 	// The entry lands (the assertions below read it back). The chain ends with
 	// the owner's two steps owed in this fixture, which is D1563's sentence in
-	// out and a non-zero exit beside it — TestWorkspaceMemberAddAsksNothing
-	// holds that answer, and a refusal of the write is what this fails on.
-	out, _, err := execute(t, workspaceMemberAddArgs()...)
+	// out and a non-zero exit beside it — WU5's own tests hold that answer, and
+	// a refusal of the write is what this fails on.
+	_, out, err := workspaceProjectAddRun(t)
 	if err != nil && !strings.Contains(out, "saved, not live yet") {
-		t.Fatalf("workspace member add: %v\n%s", err, out)
+		t.Fatalf("workspace project add: %v\n%s", err, out)
 	}
 	// Only the entry, not the whole file: the config's own runs_bucket is the
 	// installation's, and it is none of this table's business.
@@ -674,46 +684,6 @@ func TestMemberAddWritesNoRunsBucket(t *testing.T) {
 		if strings.Contains(strings.ToLower(after[i:]), banned) {
 			t.Errorf("the member entry carries %q:\n%s", banned, after[i:])
 		}
-	}
-}
-
-// TestMemberRmRemovesTheEntryAndTheEmptyTable: the other direction, and the one
-// that shows DropEmptyParents: the last member removed takes the empty
-// workspace_members block with it, so a table declared and undeclared leaves
-// the file byte-identical.
-func TestMemberRmRemovesTheEntryAndTheEmptyTable(t *testing.T) {
-	_, _, owner := workspaceOwnerHome(t)
-	before := readFileString(t, owner)
-	out, _, err := execute(t, workspaceMemberAddArgs()...)
-	// As above: the entry lands, and the chain's own answer about the owner's
-	// two steps is the sentence in out rather than a refusal here.
-	if err != nil && !strings.Contains(out, "saved, not live yet") {
-		t.Fatalf("workspace member add: %v\n%s", err, out)
-	}
-	out, _, err = execute(t, "workspace", "member", "rm", "workspace-alpha", "aurora")
-	if err != nil {
-		t.Fatalf("workspace member rm: %v\n%s", err, out)
-	}
-	if after := readFileString(t, owner); after != before {
-		t.Errorf("the removal did not restore the file:\n--- before\n%s--- after\n%s", before, after)
-	}
-	// The last member removed leaves a config that declares no workspace of its
-	// own, so both stages behind the removal skip and the change is live the
-	// moment the file is written (workspaceAssertNoSecondCommand's own reason).
-	workspaceAssertNoSecondCommand(t, "workspace member rm", out, "workspace-alpha", "ws-gcp")
-}
-
-// TestMemberRmRefusesAnUndeclaredMember: nothing to remove is a refusal and not
-// an empty edit.
-func TestMemberRmRefusesAnUndeclaredMember(t *testing.T) {
-	_, _, owner := workspaceOwnerHome(t)
-	before := readFileString(t, owner)
-	_, _, err := execute(t, "workspace", "member", "rm", "workspace-alpha", "aurora")
-	if err == nil || !strings.Contains(err.Error(), "declares no member aurora") {
-		t.Fatalf("removing an undeclared member: %v", err)
-	}
-	if after := readFileString(t, owner); after != before {
-		t.Errorf("the refusal wrote the file:\n%s", after)
 	}
 }
 
@@ -793,8 +763,6 @@ workspace_shared:
 	}{
 		{"add", workspaceAddArgs()},
 		{"rm", []string{"workspace", "rm", "workspace-alpha"}},
-		{"member add", workspaceMemberAddArgs()},
-		{"member rm", []string{"workspace", "member", "rm", "workspace-alpha", "aurora"}},
 		{"cap set", []string{"workspace", "cap", "set", "--workspace", "workspace-alpha", "--monthly", "50"}},
 		// The owner's shared list is the fourth thing this family writes, and
 		// it is the one entry below the fixture already carries: unshare takes
@@ -962,15 +930,16 @@ func TestWorkspaceShowRefusesAWorkspaceThisMachineDoesNotKnow(t *testing.T) {
 	}
 }
 
-// TestMemberAddRefusesAWorkspaceThisMachineDoesNotHold: the owner's half lives
-// in the workspace's own project config, and a machine that has none is a
-// member's machine -- which writes neither the table nor the cap.
-func TestMemberAddRefusesAWorkspaceThisMachineDoesNotHold(t *testing.T) {
+// TestWorkspaceWritesRefuseAWorkspaceThisMachineDoesNotHold: the owner's half
+// lives in the workspace's own project config, and a machine that has none is a
+// member's machine -- which writes neither the table nor the cap. The removal is
+// the same fence said in its own words, and it is WU6's own test
+// (workspace_project_rm_test.go).
+func TestWorkspaceWritesRefuseAWorkspaceThisMachineDoesNotHold(t *testing.T) {
 	workspaceWriteHome(t)
 	for _, args := range [][]string{
-		workspaceMemberAddArgs(),
+		workspaceProjectAddArgs(),
 		{"workspace", "cap", "set", "--workspace", "workspace-alpha", "--monthly", "50"},
-		{"workspace", "member", "rm", "workspace-alpha", "aurora"},
 	} {
 		_, _, err := execute(t, args...)
 		if err == nil || !strings.Contains(err.Error(), "holds no config for workspace workspace-alpha's own project") {
@@ -1002,6 +971,122 @@ func TestWorkspaceKeysAreNeverPublished(t *testing.T) {
 	for _, want := range []string{"workspace", "never published", "fugaro update"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+}
+
+// TestWorkspaceCommandsRegistered is I1's pin on the family's tree: exactly the
+// commands the plan names, each mutating one wrapped with the reporter (D1354),
+// each reading one a listing, and `workspace member` gone -- its two verbs are
+// `workspace project add|rm` now (D2802), so a tree that still answers to the
+// name is a tree that kept the command this change exists to remove.
+//
+// The wrapping is checked through the census rather than through the command
+// object, because the census is what holds the name to the source:
+// TestEveryMutatingCommandWritesALog walks the syntax tree for the literal a
+// reporter constructor is called with, so a row here whose command is
+// registered without the wrapper is a row no call site backs.
+func TestWorkspaceCommandsRegistered(t *testing.T) {
+	parents := map[string][]string{
+		"workspace":         {"add", "cap", "domains", "init", "login", "ls", "project", "rm", "share", "show", "unshare", "user"},
+		"workspace project": {"add", "link", "ls", "reconcile", "rm", "save", "status", "unlink"},
+		"workspace user":    {"add", "grant", "ls", "revoke", "rm"},
+		"workspace domains": {"add", "ls", "rm"},
+	}
+	for _, path := range slices.Sorted(maps.Keys(parents)) {
+		parent := findCommand(strings.Fields(path)...)
+		if parent == nil {
+			t.Errorf("`fugaro %s` is not in the tree, so the commands under it cannot be reached", path)
+			continue
+		}
+		var got []string
+		for _, child := range parent.Commands() {
+			got = append(got, child.Name())
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, parents[path]) {
+			t.Errorf("`fugaro %s` runs %v, want %v", path, got, parents[path])
+		}
+	}
+
+	// Every command I1 registered is either on the reporter (it writes) or a
+	// listing (it reads): a command of this family that is neither is a command
+	// printing an account of its own, which is what the census admits of the
+	// five rows that predate this change and of nothing here.
+	mutating := []string{
+		"workspace init",
+		"workspace project add", "workspace project link", "workspace project reconcile",
+		"workspace project rm", "workspace project save", "workspace project unlink",
+		"workspace user add", "workspace user grant", "workspace user revoke", "workspace user rm",
+		"workspace domains add", "workspace domains rm",
+	}
+	listing := []string{
+		"workspace project ls", "workspace project status",
+		"workspace user ls", "workspace domains ls",
+	}
+	for _, path := range mutating {
+		name, ok := reporterCommands[path]
+		if !ok {
+			t.Errorf("`fugaro %s` writes and is not on the census's reporter set, so its run prints through nothing", path)
+			continue
+		}
+		if want := strings.ReplaceAll(path, " ", "-"); name != want {
+			t.Errorf("`fugaro %s` files its log under %q, want %q", path, name, want)
+		}
+		if findCommand(strings.Fields(path)...) == nil {
+			t.Errorf("`fugaro %s` is on the census and not in the tree", path)
+		}
+	}
+	for _, path := range listing {
+		if _, ok := exemptListings[path]; !ok {
+			t.Errorf("`fugaro %s` reads and is not on the census's listing set, so its stdout is claimed as an account", path)
+		}
+		if findCommand(strings.Fields(path)...) == nil {
+			t.Errorf("`fugaro %s` is on the census and not in the tree", path)
+		}
+	}
+
+	if findCommand("workspace", "member") != nil {
+		t.Error("`fugaro workspace member` is still in the tree: project add|rm carry its verbs now (D2802)")
+	}
+	for _, path := range []string{"workspace member add", "workspace member rm", "workspace member ls"} {
+		if _, ok := reporterCommands[path]; ok {
+			t.Errorf("the census still carries a reporter row for %q", path)
+		}
+	}
+}
+
+// TestAmbientSidesPrintWhereTheCommandDoes pins the one wiring the state
+// writer's own report depends on. `project rm`, `save` and `reconcile` carry no
+// config flags: their side selects the ambient config while the tree is built,
+// and the tree holds that side as a fixed value. A side built without a writer
+// discards what WU15 prints through it -- the file it wrote and, before a push,
+// the repository the snapshot was aimed at and the layer that aimed it (D2824),
+// which is the one thing nothing can read back afterwards -- so each of the
+// three commands points the side at its own output when it runs.
+func TestAmbientSidesPrintWhereTheCommandDoes(t *testing.T) {
+	for _, what := range []string{
+		"fugaro workspace project rm",
+		"fugaro workspace project save",
+		"fugaro workspace project reconcile",
+	} {
+		side := workspaceAmbientSide(what)
+		if side.out != io.Discard {
+			t.Errorf("%s is built with a writer already (%v), so the side is pinned to the tree's build rather than to the command's own output", what, side.out)
+			continue
+		}
+		cmd := &cobra.Command{Use: "save"}
+		buf := &bytes.Buffer{}
+		cmd.SetOut(buf)
+		if err := workspaceAmbientPoint(side)(cmd); err != nil {
+			t.Errorf("%s: pointing the side at the command failed: %v", what, err)
+			continue
+		}
+		if side.out != buf {
+			t.Errorf("%s: the side still writes where the command does not (%v), so its report is discarded", what, side.out)
+		}
+		if got := (workspaceSaveWriter{out: side.out}).out; got != buf {
+			t.Errorf("%s: the state writer prints through %v, want the command's own output", what, got)
 		}
 	}
 }

@@ -99,8 +99,8 @@ export type StreamSource = 'stream' | 'whole' | 'none'
 /** StreamWhole is the whole-document read's answer as this module needs it: the
  * rows the caller's own reader kept, or the sentence it refused with. The caller
  * builds it from its own `documentOf` and its own decoder, because which rows a
- * screen keeps and what a refusal says are the screen's business (`coordinator
- * .ts`'s `queueRuns` is the Coordinator's). */
+ * screen keeps and what a refusal says are the screen's business (`projects
+ * .ts`'s `readBudgetStream` and `spend.ts`'s report read are the callers). */
 export type StreamWhole<Row> =
   | { readonly ok: true; readonly rows: readonly Row[] }
   | { readonly ok: false; readonly sentence: string }

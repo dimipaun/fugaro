@@ -36,6 +36,7 @@ func TestRunSecurityFlagRaisesTheLevel(t *testing.T) {
 func TestRunWithoutSecurityWritesNoField(t *testing.T) {
 	f := newCloudFixture(t)
 	configSkewCheckout(t, f, configSkewHead+configSkewWorkflow)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseSeal)
 	const id = "20261112-120000-abcd"
 	if _, _, err := execute(t, "run", "--run-id", id, "A task"); err != nil {
 		t.Fatal(err)

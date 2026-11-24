@@ -160,6 +160,22 @@ const (
 	// landing it; the stage's position is what makes the guard's answer a
 	// state the same run has already fixed.
 	CredentialsCopy = "credentials-copy"
+	// VersionStamp is the required-CLI stamp's stage
+	// (internal/cli/update_version_stamp.go, D3260, R1): the node
+	// config/policy/required_cli, which says the oldest fugaro release that may
+	// act on the project, raised to this release once the installation has
+	// converged on it. Nothing else writes that node, and it is never lowered
+	// (D3262).
+	//
+	// It sits immediately AFTER the credentials copy, and with nothing between
+	// them that the stamp's own fence would refuse: the stage raises the node
+	// only once every other stage of the run — the policy and rules it needs
+	// among them — has converged, and the credentials copy is the last of the
+	// stages that writes a document a deployed service reads (R1). A stamp
+	// raised before one of them left an installation whose own `fugaro update`
+	// could not finish: an older binary is refused by this node, so the run
+	// holding the half-finished installation has to be this release's.
+	VersionStamp = "version-stamp"
 	// Workspace is the workspace OWNER's published record
 	// (internal/cli/update_workspace.go, D1292): `workspaces/<name>` in the
 	// workspace's own database, built from the record this installation
@@ -200,6 +216,24 @@ const (
 	// workspace registers it and skips it, so a member's project and a plain one
 	// never carry the account.
 	WorkspaceProject = "workspace-project"
+	// Lift is the L8 migration of the repositories' own values into the
+	// project (internal/cli/update_lift.go, docs/repo-override-rulings D3305,
+	// D3306): the stage runs every registered planner over the repositories
+	// update can list, prints every line of every change before any write,
+	// and writes what the planners decided — the edits into the local layer
+	// file, the recipe objects into the runs bucket, the cap nodes into the
+	// budget database — each behind the same confirmation every other
+	// writer of this door passes, and records each repository it migrated in
+	// the runs bucket once that record is due.
+	//
+	// It comes BEFORE the layer stage, and the order is the whole of the
+	// hand-off: the layer FILE is this stage's write and the published
+	// OBJECT is the layer stage's (D830/D831), so a stage that edits the
+	// file has to run before the one that publishes it, and the record of a
+	// repository whose edits the layer stage never published is not written
+	// at all (the stage forgets its read so the layer stage plans again
+	// after this one's write).
+	Lift = "lift"
 	// Layer is the published project layer and the one local layer file the
 	// owner edits (internal/cli/init_layer_stage.go, D830/D831): the stage
 	// seeds the file from the published object when it is absent, publishes
@@ -324,6 +358,16 @@ var order = []slot{
 	// the stage before this one is the run's one move of that service's image
 	// (CredentialsCopy's own comment has the window).
 	{name: CredentialsCopy, needs: []string{CredentialsService}},
+	// The required-CLI stamp is raised last of the stages that write anything
+	// a deployed reader sees (R1, D3267): it names this release as the oldest
+	// that may act on the project, so a stamp raised before the run had
+	// converged would refuse that same run's own remaining work — an older
+	// binary is what the node stops, but a run holding a half-finished
+	// installation is one the person would have to finish by hand. It needs
+	// the policy node and the rules it is read under, which are the two the
+	// stage names as its own reason for waiting (needs records why, and F2's
+	// gating is linear: these do not gate anything themselves).
+	{name: VersionStamp, needs: []string{Policy, Rules}},
 	// The workspace's own project's root, before the record it serves: what it
 	// creates is the identity the workspace's own service runs as, and the
 	// record stage publishes the node that service reads. It needs the
@@ -345,6 +389,13 @@ var order = []slot{
 	// installation's own stages for the database it writes into — the same
 	// two the workspace record needs and for the same reason.
 	{name: CredentialsRoute, needs: []string{Installation2, Policy}},
+	// The L8 migration edits the local layer file, and the layer stage is
+	// what publishes it: the two are one hand-off in one order, so the
+	// migration comes first and a repository's record is written only once
+	// that publish has landed (docs/repo-override-rulings D3305, M2). It
+	// reads the published policy's admits for the repositories it can name,
+	// so it waits for the policy stage like the two documents beside it do.
+	{name: Lift, needs: []string{Repository, Policy}},
 	// The layer is what the checkout's images are built from, so it is
 	// published before the refresh that reads it: the checkout stage's cloud
 	// step builds this checkout's images off the layer that applies, and a

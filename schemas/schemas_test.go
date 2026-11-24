@@ -578,6 +578,97 @@ func TestTaskSchemaTierMatchesTheGoRules(t *testing.T) {
 	}
 }
 
+// TestRecipeNamePatternsMatchTheGoRule is the same tie for R19's name rule,
+// which three schemas carry: the recipe schema's own `name`, and the
+// `recipe.name` a task and a run record hold. The rule is recipe.IsNameOrCopy —
+// a recipe name, or the project's copy of one (PR0's grammar, D3302) — and the
+// two records' schemas are the surface a repository's CI and every external
+// reader check a run against, so a copy the launcher embeds in a task.json and
+// the runner writes into a run record has to be a name they accept; a schema
+// left on the flat name would refuse a migrated repository's own records. The
+// three are the same grammar as schemas/recipe.schema.json, held to it name by
+// name so they cannot drift apart.
+//
+// Mutation (put any of the three patterns back to the flat name): the copy
+// names below are refused by that schema and this test fails.
+func TestRecipeNamePatternsMatchTheGoRule(t *testing.T) {
+	patternOf := func(file string, path ...string) string {
+		t.Helper()
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		}
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatal(err)
+		}
+		raw, ok := doc.Properties[path[0]]
+		if !ok {
+			t.Fatalf("%s has no %s property", file, path[0])
+		}
+		for _, key := range path[1:] {
+			var step struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			}
+			if err := json.Unmarshal(raw, &step); err != nil {
+				t.Fatal(err)
+			}
+			if raw, ok = step.Properties[key]; !ok {
+				t.Fatalf("%s's %s has no %s property", file, strings.Join(path[:len(path)-1], "."), key)
+			}
+		}
+		var prop struct {
+			Pattern string `json:"pattern"`
+		}
+		if err := json.Unmarshal(raw, &prop); err != nil {
+			t.Fatal(err)
+		}
+		if prop.Pattern == "" {
+			t.Fatalf("%s's %s property carries no pattern", file, strings.Join(path, "."))
+		}
+		return prop.Pattern
+	}
+	maxCopy := recipe.CopyName(strings.Repeat("n", 40), "github", "acme/"+strings.Repeat("m", 60))
+	bounds := []struct {
+		name string
+		ok   bool
+	}{
+		{"solo", true},
+		{recipe.CopyName("review", "github", "acme/app-web"), true},
+		{maxCopy, true},
+		{"Review.acme-app-web-12345678", false},
+		{"review.acme-app-web", false},
+		{"review..acme-app-web-12345678", false},
+		{"solo.acme-app-web-12345678.yaml", false},
+		{strings.Repeat("n", 41) + ".acme-app-web-12345678", false},
+		{maxCopy + "m", false},
+	}
+	want := patternOf("recipe.schema.json", "name")
+	for _, h := range []struct {
+		file string
+		path []string
+	}{
+		{"recipe.schema.json", []string{"name"}},
+		{"task.schema.json", []string{"recipe", "name"}},
+		{"result.schema.json", []string{"recipe", "name"}},
+	} {
+		got := patternOf(h.file, h.path...)
+		if got != want {
+			t.Errorf("%s's %s pattern %q is not the recipe schema's name pattern %q", h.file, strings.Join(h.path, "."), got, want)
+			continue
+		}
+		pattern := regexp.MustCompile(got)
+		for _, b := range bounds {
+			if recipe.IsNameOrCopy(b.name) != b.ok || pattern.MatchString(b.name) != b.ok {
+				t.Errorf("%s's %s pattern says %v of %q, want %v (recipe.IsNameOrCopy says %v)",
+					h.file, strings.Join(h.path, "."), pattern.MatchString(b.name), b.name, b.ok, recipe.IsNameOrCopy(b.name))
+			}
+		}
+	}
+}
+
 // TestTaskSchemaInputs: the attached-files list a launcher writes (design
 // artifact-runs.md §4, plan Task 6) is an array of closed {name, bytes,
 // sha256} objects, and an absent list stays absent. The name's own shape
@@ -954,6 +1045,16 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			},
 			At:       runstore.RigorAtFinalize,
 			Revision: "origin/main"},
+		// And the plan (docs/review-levels-ab-jobmax V1.3): one entry per
+		// step of the loop after implement, each the rounds resolved for it
+		// -- the figures the Run screen draws a level's bar against. It
+		// rides the fully-populated record so a schema that did not name it
+		// would reject a record the runner writes.
+		Plan: &runstore.PlanRecord{Steps: []runstore.PlanStepRecord{
+			{Kind: "first_line", Rounds: 3},
+			{Kind: "review", Rounds: 2},
+			{Kind: "adversarial", Rounds: 2},
+		}},
 		// And the escalation (docs/security-classification SC6, D1509): the
 		// row of the list in force whose match turned review level 3 on for
 		// the run, and the seam it was decided at.
@@ -3520,6 +3621,61 @@ func TestProjectLayerSchemaRigorMembers(t *testing.T) {
 		if strings.Contains(msg, wrong) {
 			t.Errorf("the schema refuses the fixture as %q rather than as a member path leaving its repository: %s", wrong, msg)
 		}
+	}
+}
+
+// TestProjectLayerSchemaABRepos keeps the layer's per-repository sampling rate
+// (D3297) in step with the Go reader, the way TestProjectLayerSchemaRigorMembers
+// keeps LD4's shapes: the schema an editor validates against must accept the
+// map, refuse a key that is no repository name and a value over the block's
+// ceiling, and the Go decoder must refuse the same three. The relational half of
+// the rule is the one a schema of this shape cannot state — [0, ab.rate] needs
+// the block's own rate — so a value over the block's rate but inside 0.1 is
+// pinned below as the asymmetry it is, judged by the decoder alone.
+func TestProjectLayerSchemaABRepos(t *testing.T) {
+	sch := compile(t, "project-layer.schema.json")
+	const head = "version: 1\nproject: aurora\ngcp_project: proj-1234\nab:\n"
+	anchor := config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
+	for _, c := range []struct {
+		name string
+		body string
+		ok   bool
+	}{
+		{"a rate per repository", "  rate: 0.05\n  repos:\n    acme/web: 0.02\n    acme/legacy: 0\n", true},
+		{"an empty map", "  rate: 0.05\n  repos: {}\n", true},
+		{"a map that is null", "  repos: null\n", true},
+		{"a key that is a bare name", "  rate: 0.05\n  repos:\n    console-web: 0.01\n", false},
+		{"a key with three segments", "  rate: 0.05\n  repos:\n    acme/web/api: 0.01\n", false},
+		{"a negative value", "  rate: 0.05\n  repos:\n    acme/web: -0.01\n", false},
+		{"a value over the ceiling", "  rate: 0.05\n  repos:\n    acme/web: 0.11\n", false},
+	} {
+		text := head + c.body
+		schemaOK := sch.Validate(yamlInstance(t, []byte(text))) == nil
+		_, ps := config.ParseProjectLayer([]byte(text), anchor)
+		if schemaOK != (len(ps) == 0) {
+			t.Errorf("%s: the schema says ok=%v and config.ParseProjectLayer gives %v", c.name, schemaOK, ps)
+		}
+		if schemaOK != c.ok {
+			t.Errorf("%s: the schema says ok=%v; want %v", c.name, schemaOK, c.ok)
+		}
+	}
+	// A key with three segments: the schema's propertyNames pattern and the
+	// decoder's rigor.Member rule refuse it for the same reason, and the fixture
+	// the corpus carries is the two-segment case beside it.
+	bad := head + "  rate: 0.05\n  repos:\n    acme/web/api: 0.01\n"
+	if err := sch.Validate(yamlInstance(t, []byte(bad))); err == nil {
+		t.Fatal("the schema accepts a key that is no repository name")
+	} else if !strings.Contains(err.Error(), "invalid propertyName 'acme/web/api'") {
+		t.Errorf("the schema refuses the key as something other than a property name no repository pattern matches: %v", err)
+	}
+	// The decoder's bound is the block's own rate; the schema's is the shipped
+	// ceiling. Both halves are asserted so the looseness is a pinned fact.
+	over := head + "  rate: 0.02\n  repos:\n    acme/web: 0.05\n"
+	if _, ps := config.ParseProjectLayer([]byte(over), anchor); len(ps) == 0 {
+		t.Error("the decoder accepted a rate above the block's own ab.rate")
+	}
+	if err := sch.Validate(yamlInstance(t, []byte(over))); err != nil {
+		t.Errorf("the schema refused it, and it is the looser side here: %v", err)
 	}
 }
 

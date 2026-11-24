@@ -74,7 +74,12 @@ import type { SpawnLogWriter } from '../main/spawnlog'
 import type { OperationName, ValidatedArguments } from '../main/ipc'
 import { graphScopeIsNamed } from '../main/ipc'
 import { MAX_TEXT_INPUT_LENGTH } from '../shared/sanitize'
-import { licenceKeySupported, noApplySupported, orchestratorMapSupported } from '../shared/version'
+import {
+  licenceKeySupported,
+  noApplySupported,
+  orchestratorMapSupported,
+  planStatusNoMergesSupported,
+} from '../shared/version'
 import {
   SourceRefusal,
   refusalFrom,
@@ -83,6 +88,7 @@ import {
   NO_NAMED_SCOPE,
   NO_ORCHESTRATOR_MAP,
   NO_PLAN_CHECKOUT,
+  NO_PLAN_NO_MERGES,
   NO_ROADMAP_NODE,
   NO_ROADMAP_READ,
   NO_ROADMAP_RELEASE,
@@ -1310,6 +1316,42 @@ function graphSourcesOf(document: JSONDoc): readonly string[] {
   return found
 }
 
+/** ORCHESTRATOR_SCOPE_PREFIX is the part of a graph scope before the id of the
+ * orchestrator it names -- `orchestrator:<id>`, `ee/graph/key.go`'s
+ * `Scope.String()`, and the spelling `src/main/ipc.ts`'s `GRAPH_SCOPE_RE` admits
+ * up to `MAX_GRAPH_SCOPE_LENGTH`. It is here rather than imported by both ends
+ * because the two ends cannot share it: the Coordinator's drill-down builds the
+ * same string in the renderer bundle (`src/renderer/entry.ts`), which is not
+ * allowed to require this module's process. The value is the CLI's, so neither
+ * spelling is this console's to choose. */
+const ORCHESTRATOR_SCOPE_PREFIX = 'orchestrator:'
+
+/** orchestratorMapScopesOf is the scopes one **map** document says exist: one
+ * graph scope per `nodes[].id` of the answer, which is the map's half of
+ * `graphSourcesOf` above and exists for the same reason. The drill-down reads one
+ * box's own live tasks through `graph.read --source orchestrator:<id>`, and a
+ * scope no answer of this installation listed is refused (`NO_GRAPH_SCOPE`) --
+ * so the map read that drew the box is what admits the press on it.
+ *
+ * A member that is not an object, or whose `id` is not a string, is skipped, and
+ * a document with no `nodes[]` teaches nothing, exactly as `graphSourcesOf`
+ * treats a document with no `sources[]`: the decode happens in the renderer, and
+ * a value this function cannot read is one that must not become an admitted
+ * scope. Nothing is validated here -- `nodes[].id` is checked against C-ORCH's
+ * rule where the document is decoded, and an id the map carried is a scope the
+ * CLI that produced it can read. */
+function orchestratorMapScopesOf(document: JSONDoc): readonly string[] {
+  const nodes = document['nodes']
+  if (!Array.isArray(nodes)) return []
+  const found: string[] = []
+  for (const member of nodes) {
+    const node = memberOf(member)
+    const id = node === null ? undefined : node['id']
+    if (typeof id === 'string') found.push(`${ORCHESTRATOR_SCOPE_PREFIX}${id}`)
+  }
+  return found
+}
+
 /** memberOf is one array member of a raw document, when it is an object at all.
  * Every `[]` read out of a CLI answer is walked through this, so the four
  * shapes a JSON array can hold that are not an object are refused in one place
@@ -1548,6 +1590,19 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
    * one installation's project lists says nothing about another's.
    */
   const graphScopes = new Map<string, Set<string>>()
+
+  /** teachGraphScopes records what one answer of a binding listed, as the union
+   * the doc above describes: every caller adds to the set rather than replacing
+   * it, and a read that answered nothing adds nothing. Both reads that teach --
+   * `graphRead` out of a document's `sources[]`, `orchestratorMap` out of its
+   * `nodes[].id` -- come through here, so the two cannot record on different
+   * terms. */
+  const teachGraphScopes = (binding: string, scopes: readonly string[]): void => {
+    if (scopes.length === 0) return
+    const listed = graphScopes.get(binding) ?? new Set<string>()
+    for (const scope of scopes) listed.add(scope)
+    graphScopes.set(binding, listed)
+  }
 
   /** nowMs is the console's own clock in milliseconds, the one the sources are
    * built with (`options.clock`), so a test that moves the clock moves this
@@ -1928,12 +1983,24 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * directory is `src/main/ipc.ts`'s guarantee, stated there; this is the
      * other half, where the console refuses to guess one.
      *
+     * **The second precondition is the version floor on `--no-merges`** (IR4):
+     * the flag is newer than the oldest CLI this console supports, so an
+     * installation below `PLAN_STATUS_NO_MERGES_CLI_FLOOR` is refused with
+     * `NO_PLAN_NO_MERGES` before `resolve`, on `orchestratorMap`'s terms -- an
+     * older CLI handed the word answers `unknown flag: --no-merges` and fails
+     * the whole read, which is a failure the operator can do nothing about.
+     * `merges_read: false` is the contract's own answer for the read, so serving
+     * the merges-included document under this argument would be a screen told
+     * the merges were not read when they were.
+     *
      * The cadence is `PLAN_STATUS_MIN_INTERVAL_MS`, keyed by the binding *and*
      * the argv the arguments become (`--all` is a different document, not a
-     * wider one; `all: false` is the same argv as no `all`). The entry is the
-     * read itself, **in flight** as well as answered, so calls that arrive while
-     * the child runs share it rather than each spawning one, and a refused read
-     * holds the floor like an answered one. The `at` recorded is the clock
+     * wider one; `all: false` is the same argv as no `all`, and `--no-merges` is
+     * a third document -- the same canvas with no merge state read -- so it must
+     * not be served the merges-included read for up to a minute). The entry is
+     * the read itself, **in flight** as well as answered, so calls that arrive
+     * while the child runs share it rather than each spawning one, and a refused
+     * read holds the floor like an answered one. The `at` recorded is the clock
      * reading **after** the child finished, so the interval is a floor on the
      * time between two spawns rather than on the time between a spawn and the
      * next request.
@@ -1942,7 +2009,11 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
       const installation = deps.installation()
       if (installation === null) throw noInstallation()
       if (installation.checkout === undefined) throw new SourceRefusal(NO_PLAN_CHECKOUT)
-      const key = `${bindingKey(installation)}\u0000${args['all'] === true ? '--all' : ''}`
+      if (args['noMerges'] === true && !planStatusNoMergesSupported(installation.version ?? '')) {
+        throw new SourceRefusal(NO_PLAN_NO_MERGES)
+      }
+      const words = `${args['all'] === true ? '--all' : ''}\u0000${args['noMerges'] === true ? '--no-merges' : ''}`
+      const key = `${bindingKey(installation)}\u0000${words}`
       const cached = planReads.get(key)
       if (cached !== undefined && (cached.at === null || nowMs() - cached.at < PLAN_STATUS_MIN_INTERVAL_MS)) {
         return cached.reading
@@ -2018,13 +2089,7 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
       }
       reading.then(settled, settled)
       void reading.then(
-        (snapshot) => {
-          for (const source of graphSourcesOf(snapshot.document)) {
-            const listed = graphScopes.get(binding) ?? new Set<string>()
-            listed.add(source)
-            graphScopes.set(binding, listed)
-          }
-        },
+        (snapshot) => teachGraphScopes(binding, graphSourcesOf(snapshot.document)),
         () => undefined,
       )
       return reading
@@ -2066,6 +2131,15 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * directory on this machine to refuse for, and the map is rebuilt from the
      * leases on every call -- a minimum interval between two calls would only
      * delay the picture a screen opened to see.
+     *
+     * **What the answer drew is recorded, exactly as `graphRead` records what its
+     * answer listed** (CG7b): every `nodes[].id` of the document becomes an
+     * admitted `orchestrator:<id>` scope. The press that opens one box is
+     * `graph.read --source orchestrator:<id>`, and the membership rule admits a
+     * scope only once an answer of this installation has named it -- the map
+     * carries no `sources[]`, so without this the drill-down the map's own
+     * drawing invites would be refused `NO_GRAPH_SCOPE`. A refused read records
+     * nothing, on `graphRead`'s terms: there is no document to read ids out of.
      */
     orchestratorMap: async (args) => {
       const installation = deps.installation()
@@ -2073,7 +2147,12 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
       if (!orchestratorMapSupported(installation.version ?? '')) {
         throw new SourceRefusal(NO_ORCHESTRATOR_MAP)
       }
-      return read('orchestrator.map', (source) => source.orchestratorMap(args))
+      const reading = read('orchestrator.map', (source) => source.orchestratorMap(args))
+      void reading.then(
+        (snapshot) => teachGraphScopes(bindingKey(installation), orchestratorMapScopesOf(snapshot.document)),
+        () => undefined,
+      )
+      return reading
     },
     /**
      * roadmapMove is the record's one write (GV3.2). It goes through `read`'s
