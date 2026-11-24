@@ -4,15 +4,15 @@
 // (docs/repo-override-rulings, D3306, R12).
 //
 // The list is D3306's real list: the local config's repositories and every
-// concrete owner/name the published policy admits. An admit that is a pattern
-// ("*", "github/acme/*") cannot be expanded into names and is answered beside
-// the repositories, never guessed at, so `update` prints it and the owner can
-// list the repository by name (release A's notes say the same).
+// canonical "provider/owner/name" the published policy admits. An admit that is
+// a pattern ("*", "github/acme/*") cannot be expanded into names and is
+// answered beside the repositories, never guessed at, so `update` prints it and
+// the owner lists the repository by name (release A's notes say the same).
 //
-// Nothing here reads a working directory and nothing here refuses: a
-// repository the reader cannot read is one entry carrying the one sentence
-// why, and the update goes on for the rest (the HARD RULE's own shape). The
-// error is the caller's own cancellation alone.
+// Nothing here reads a working directory and nothing here refuses: a repository
+// the reader cannot read is one entry carrying the one sentence why, and the
+// migration goes on for every other (D3306, R12). The error is the caller's own
+// cancellation alone.
 //
 // The provider is the caller's seam (gitprov.Opener), so a read is made with
 // the credential the caller already holds for that repository and no new
@@ -38,10 +38,10 @@ import (
 // YAML is the file a repository writes its own overrides in.
 const YAML = "fugaro.yaml"
 
-// MaxRecipeFiles bounds one repository's recipes folder, and the read's byte
-// ceiling is recipe.MaxBytes for each of them: a folder over either is a read
-// that fails rather than one carried whole, which names the repository rather
-// than paying for a folder no repository has.
+// MaxRecipeFiles bounds one repository's recipes folder, and each file in it is
+// bounded by recipe.MaxBytes: a folder over either is answered as a repository
+// that could not be read rather than carried whole, so nothing ever plans from
+// a partial folder.
 const MaxRecipeFiles = 64
 
 // Listed is a repository the caller can name: its owner/name, and the git
