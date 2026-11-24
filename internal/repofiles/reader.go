@@ -38,11 +38,13 @@ import (
 // YAML is the file a repository writes its own overrides in.
 const YAML = "fugaro.yaml"
 
-// MaxRecipeFiles bounds one repository's recipes folder by count, and the read
-// carries at most recipe.MaxBytes in all — the bound one recipe has, which
-// recipe.Parse refuses a file over — so no file this reader returns can be
-// larger than a recipe may be. A folder over either is answered as a repository
-// that could not be read rather than carried in part.
+// MaxRecipeFiles bounds one repository's recipes folder by count, and
+// MaxRecipeFiles*recipe.MaxBytes by size in all: a tree read's ceiling is the
+// folder's, so one recipe's own bound times the number of files a folder may
+// hold is what an ordinary repository's recipes fit in. A folder over either is
+// answered as a repository that could not be read rather than carried in part.
+// One file larger than a recipe may be is recipe.Parse's to refuse (R12): this
+// read carries bytes and paths, and judging them is the parser's.
 const MaxRecipeFiles = 64
 
 // Listed is a repository the caller can name: its owner/name, and the git
@@ -235,7 +237,7 @@ func readOne(ctx context.Context, n Listed, open gitprov.Opener) (Repo, error) {
 	}
 	files, err := tree.Tree(ctx, recipe.RepoDir, commit, gitprov.TreeLimit{
 		MaxFiles: MaxRecipeFiles,
-		MaxBytes: recipe.MaxBytes,
+		MaxBytes: MaxRecipeFiles * recipe.MaxBytes,
 	})
 	switch {
 	case err == nil:

@@ -158,6 +158,44 @@ func TestReadEveryListedRepo(t *testing.T) {
 	}
 }
 
+// TestReadCarriesAFolderOverOneRecipesBytes: a tree read's ceiling is the
+// folder's, not one file's, so a repository whose recipes are ordinary in size
+// but add up to more than one recipe may hold is read like any other — its
+// fugaro.yaml with it. A ceiling of one recipe's own bound would answer the
+// whole repository unread, which D3306 leaves unmigrated: it would keep its
+// ab.rate opt-out and its rigor, and its recipes would go unrenamed (R12).
+func TestReadCarriesAFolderOverOneRecipesBytes(t *testing.T) {
+	ctx := context.Background()
+	// Each recipe is under recipe.MaxBytes; the two together are over it.
+	one, two := strings.Repeat("a", recipe.MaxBytes-1), strings.Repeat("b", recipe.MaxBytes-1)
+	if int64(len(one)+len(two)) <= recipe.MaxBytes {
+		t.Fatalf("the fixture holds %d bytes, want more than one recipe's %d", len(one)+len(two), recipe.MaxBytes)
+	}
+	app := githubFixture(t, []byte("ab:\n  rate: 0\n"), []ghEntry{
+		{Path: "one.yaml", Mode: "100644", Data: one},
+		{Path: "two.yaml", Mode: "100644", Data: two},
+	})
+	got, _, err := Read(ctx, Input{Repos: []Listed{{Repo: "acme/app", Provider: "github"}}},
+		opens(map[string]gitprov.Provider{"github/acme/app": app}))
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("Read answered %d repositories, want 1", len(got))
+	}
+	r := got[0]
+	if r.Unread != "" {
+		t.Fatalf("acme/app: Unread = %q, want a repository whose recipes add up to more than one recipe", r.Unread)
+	}
+	if string(r.YAML) != "ab:\n  rate: 0\n" {
+		t.Errorf("acme/app fugaro.yaml = %q, want it carried", r.YAML)
+	}
+	want := []File{{Path: "one.yaml", Data: []byte(one)}, {Path: "two.yaml", Data: []byte(two)}}
+	if !slices.EqualFunc(r.Recipes, want, sameFile) {
+		t.Errorf("acme/app recipes = %d files, want both", len(r.Recipes))
+	}
+}
+
 // TestReadNamesAnUnreadableRepo: a repository the reader cannot read is one
 // line naming why, and never a read that answers half a repository — the
 // migration moves nothing for it (D3306). Every case here is a way a read can
@@ -221,8 +259,11 @@ func TestReadNamesAnUnreadableRepo(t *testing.T) {
 			m: map[string]gitprov.Provider{"github/acme/app": &fake.Provider{
 				Repo: "acme/app",
 				State: fake.State{Files: map[string]string{
-					YAML:                          "agent: {}\n",
-					recipe.RepoDir + "/huge.yaml": strings.Repeat("x", recipe.MaxBytes+1),
+					YAML: "agent: {}\n",
+					// The ceiling is the folder's, so one folder over it is the
+					// one whose files together hold more than a folder may
+					// (MaxRecipeFiles recipes' worth).
+					recipe.RepoDir + "/huge.yaml": strings.Repeat("x", MaxRecipeFiles*recipe.MaxBytes+1),
 				}},
 			}},
 			want: []string{"its .fugaro/recipes/ could not be read", "larger than a tree read returns"},
