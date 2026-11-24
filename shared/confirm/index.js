@@ -89,6 +89,19 @@
 import { CONFIRMATION_PHRASES, isConfirmation, routeUtterance } from '../command/index.js';
 import { MAX_TIMESTAMP } from '../lease/index.js';
 import { TARGET_MAX } from '../mailbox-schema/index.js';
+import { DEFAULT_BIOMETRIC_ON_COSTLY, DEFAULT_COSTLY_MODES, MAX_COSTLY_MODES, MAX_MODE_LENGTH, costlyStart } from './policy.js';
+
+// The confirmation ruling's policy half (D2786) is its own module, and it is
+// re-exported here because this file is the module's only entry point: a
+// surface that reads the session's policy calls this, not `./policy.js`.
+export {
+  DEFAULT_BIOMETRIC_ON_COSTLY,
+  DEFAULT_COSTLY_MODES,
+  MAX_COSTLY_MODES,
+  MAX_MODE_LENGTH,
+  costlyStart,
+  isCostlyStart,
+} from './policy.js';
 
 /**
  * The three phases. Nothing else is a phase: a state carrying an unlisted one is
@@ -129,6 +142,12 @@ export const TARGET_KIND = Object.freeze({
   MERGE: 'merge',
   /** A repository and a PR with no head: the other thing a confirm may confirm (P6.3 refuses a head SHA on a confirm). */
   PR: 'pr',
+  /**
+   * A mode: what a confirmed *start* binds (D2786). A launch has no run id yet,
+   * so the one thing there is to read back and to bind is the mode the start
+   * would run in.
+   */
+  MODE: 'mode',
 });
 
 /**
@@ -154,7 +173,13 @@ export const VERB = Object.freeze({
  */
 export const DESTRUCTIVE_VERBS = Object.freeze(['cancel', 'confirm', 'merge']);
 
-/** The verbs that go straight through: D162's launch, and nothing else. */
+/**
+ * The verbs that go straight through: D162's launch, and nothing else. D2786
+ * amends that answer for a **start in a costly mode**, which is read back like a
+ * cancel while every other start still passes through -- so a launch is here,
+ * and it is the one verb whose read-back depends on the session's policy rather
+ * than on the verb alone.
+ */
 export const PASS_THROUGH_VERBS = Object.freeze(['launch']);
 
 /**
@@ -270,6 +295,10 @@ export const COMMAND_FIELDS = Object.freeze([
   'utteranceId',
   'text',
   'verb',
+  // The mode a *launch* would start in, resolved by the router (D2786). It is
+  // this event's own field and not a target: a launch carries no target at all,
+  // and the mode is what says whether it is read back.
+  'mode',
   'target',
   'actionId',
 ]);
@@ -295,6 +324,11 @@ export const STATE_FIELDS = Object.freeze([
   'timeoutMs',
   'maxPending',
   'maxLedger',
+  // The session's own two policy values (C2's `costly_modes` and
+  // `biometric_on_costly`, in this module's spelling): they ride the state
+  // because D2786's answer is a function of them, exactly as the timeout is.
+  'costlyModes',
+  'biometricOnCostly',
   'pending',
   'ledger',
 ]);
@@ -601,7 +635,17 @@ const VERB_TARGET_KINDS = Object.freeze({
   [VERB.CANCEL]: Object.freeze([TARGET_KIND.RUN]),
   [VERB.CONFIRM_ACTION]: Object.freeze([TARGET_KIND.RUN, TARGET_KIND.PR]),
   [VERB.MERGE]: Object.freeze([TARGET_KIND.MERGE]),
+  // A costly start's target is its mode (D2786). The table is what a pending
+  // read-back and a confirmation are read against, so a launch read back is
+  // confirmed by asserting the same mode, and nothing else.
+  [VERB.LAUNCH]: Object.freeze([TARGET_KIND.MODE]),
 });
+
+/**
+ * The verbs a pending read-back may hold: the destructive ones and D2786's
+ * costly start, which is read back without being destructive.
+ */
+const PENDING_VERBS = Object.freeze([...DESTRUCTIVE_VERBS, VERB.LAUNCH]);
 
 const VERB_VALUES = Object.freeze([...DESTRUCTIVE_VERBS, ...PASS_THROUGH_VERBS, ...REFUSED_VERBS]);
 
@@ -624,7 +668,11 @@ export function initialState(options) {
 }
 
 function initialStateUnguarded(options) {
-  const read = readFields(options, ['now', 'timeoutMs', 'maxPending', 'maxLedger'], 'options');
+  const read = readFields(
+    options,
+    ['now', 'timeoutMs', 'maxPending', 'maxLedger', 'costlyModes', 'biometricOnCostly'],
+    'options',
+  );
   if (!read.ok) return read;
   const values = read.values;
 
@@ -644,10 +692,54 @@ function initialStateUnguarded(options) {
     return refuse(REFUSAL.INVALID_MAX_LEDGER, 'maxLedger');
   }
 
+  // The session's policy: absent means the project's own default (P6's
+  // `mobile.costly_modes` and `mobile.biometric_on_costly`), which is what a
+  // caller with no session to read wants -- and a caller *with* one hands in
+  // what the port gave it.
+  const costlyModes = readPolicyModes(values.costlyModes === undefined ? DEFAULT_COSTLY_MODES : values.costlyModes);
+  if (costlyModes.bad) return costlyModes.bad;
+  const biometricOnCostly =
+    values.biometricOnCostly === undefined ? DEFAULT_BIOMETRIC_ON_COSTLY : values.biometricOnCostly;
+  if (typeof biometricOnCostly !== 'boolean') return refuse(REFUSAL.WRONG_TYPE, 'biometricOnCostly');
+
   return {
     ok: true,
-    state: buildState(PHASE.IDLE, values.now, timeoutMs, maxPending, maxLedger, [], []),
+    state: buildState(
+      PHASE.IDLE,
+      values.now,
+      timeoutMs,
+      maxPending,
+      maxLedger,
+      costlyModes.value,
+      biometricOnCostly,
+      [],
+      [],
+    ),
   };
+}
+
+/**
+ * readPolicyModes reads the modes a session calls costly: a bounded list of
+ * bounded single-line names, read with the same reader an id or a text gets. The
+ * list is copied and frozen, so a caller that hands in an array and then edits
+ * it cannot change the machine's answer.
+ *
+ * A list that names one mode twice is **not** refused: membership is the whole
+ * of what the list means, so the second entry answers what the first did. The
+ * port that builds the list from the project policy is the one that refuses a
+ * duplicate (C2's `checkPolicy`), and this module is not the reader of a
+ * session.
+ */
+function readPolicyModes(value) {
+  if (!Array.isArray(value)) return { bad: refuse(REFUSAL.WRONG_TYPE, 'costlyModes') };
+  if (value.length > MAX_COSTLY_MODES) return { bad: refuse(REFUSAL.TOO_LONG, 'costlyModes') };
+  const modes = [];
+  for (const mode of value) {
+    const read = stringField(mode, 'costlyModes', MAX_MODE_LENGTH);
+    if (read.bad) return read;
+    modes.push(read.value);
+  }
+  return { value: Object.freeze(modes) };
 }
 
 /**
@@ -738,7 +830,7 @@ function command(state, values) {
   const fields = readCommandFields(values);
   if (!fields.ok) return fields;
 
-  const { utteranceId, text, verb, actionId } = fields.values;
+  const { utteranceId, text, verb, actionId, mode } = fields.values;
   const target = values.target;
 
   if (carriesConfirmToken(text)) {
@@ -756,11 +848,35 @@ function command(state, values) {
   }
 
   const kinds = VERB_TARGET_KINDS[verb];
-  if (kinds === undefined) {
-    // A pass-through verb takes no target and no action id: a launch is not read
-    // back, so carrying either is a caller that thinks it is.
+  // D162's launch is the one verb whose answer is not the verb's alone: D2786
+  // reads it back when the mode the router resolved is a costly one, and lets it
+  // through otherwise. `mode` is that verb's own field, and a target is not a
+  // field it has at all -- a start has no run id yet, so what there is to read
+  // back and to bind is the mode.
+  const isStart = verb === VERB.LAUNCH;
+  if (isStart) {
     if (target !== undefined) return refuse(REFUSAL.VERB_TARGET_MISMATCH, 'target');
-    if (actionId !== undefined) return refuse(REFUSAL.VERB_TARGET_MISMATCH, 'actionId');
+  } else if (mode !== undefined) {
+    // A mode is the launch's field alone: a cancel that carries one is a caller
+    // that thinks a mode changes what cancelling means.
+    return refuse(REFUSAL.VERB_TARGET_MISMATCH, 'mode');
+  }
+
+  // The costly start, resolved from the mode and the session's policy before
+  // anything else is spent. A mode this machine cannot read is refused as the
+  // value it is, in the same place and with the same codes as any other field.
+  let resolved = null;
+  let biometric = false;
+  if (isStart) {
+    if (mode !== undefined) {
+      const readMode = stringField(mode, 'mode', MAX_MODE_LENGTH);
+      if (readMode.bad) return readMode.bad;
+      const costly = costlyStart(readMode.value, state.costlyModes, state.biometricOnCostly);
+      if (costly.costly) {
+        resolved = Object.freeze({ kind: TARGET_KIND.MODE, mode: readMode.value });
+        biometric = costly.biometric;
+      }
+    }
   } else if (actionId === undefined) {
     // A destructive verb must carry the action id the confirmation will name:
     // without it there is no id for "one confirmation authorises exactly one
@@ -769,14 +885,24 @@ function command(state, values) {
     return refuse(REFUSAL.MISSING_FIELD, 'actionId');
   }
 
+  if (isStart) {
+    // A costly start is read back, so it carries the action id the confirmation
+    // will name; a start that names no mode, or one the session does not call
+    // costly, is not read back and carries no action id either -- one there is a
+    // caller that thinks a plain start is confirmed.
+    if (resolved === null) {
+      if (actionId !== undefined) return refuse(REFUSAL.VERB_TARGET_MISMATCH, 'actionId');
+    } else if (actionId === undefined) {
+      return refuse(REFUSAL.MISSING_FIELD, 'actionId');
+    }
+  }
+
   // P6.2: an unresolved target is refused and cannot be read back, so it can
   // never be confirmed. Ambiguity is the same refusal: the router resolves
   // against the configured lists and hands in nothing when it cannot.
   // readResolvedTarget is the one place that says so, so a command and a
   // confirmation cannot disagree about what "no target" means.
-
-  let resolved = null;
-  if (kinds !== undefined) {
+  if (resolved === null && !isStart) {
     const readTarget = readResolvedTarget(target, kinds);
     if (!readTarget.ok) return readTarget;
     resolved = readTarget.target;
@@ -785,17 +911,18 @@ function command(state, values) {
   if (hasLedgerId(state, LEDGER_KIND.UTTERANCE, utteranceId)) {
     return refuse(REFUSAL.REPLAYED_UTTERANCE, 'utteranceId');
   }
-  if (kinds !== undefined && hasLedgerId(state, LEDGER_KIND.ACTION, actionId)) {
+  if (resolved !== null && hasLedgerId(state, LEDGER_KIND.ACTION, actionId)) {
     // Two commands under one action id are an ambiguity about which action a
     // confirmation authorised, so the second is refused rather than allowed to
     // overwrite the first.
     return refuse(REFUSAL.REPLAYED_ACTION, 'actionId');
   }
 
-  if (kinds === undefined) {
-    // D162: a launch goes straight through. Its utterance is still spent, so
-    // "one utterance, one event" holds for it too -- a pass-through authorises
-    // nothing, but its id is not a second utterance later.
+  if (resolved === null) {
+    // D162: a plain start goes straight through, and D2786 leaves every start
+    // that is not in a costly mode exactly there. Its utterance is still spent,
+    // so "one utterance, one event" holds for it too -- a pass-through
+    // authorises nothing, but its id is not a second utterance later.
     if (state.ledger.length + 1 > state.maxLedger) return refuse(REFUSAL.LEDGER_FULL, 'ledger');
     return Object.freeze({
       ok: true,
@@ -804,12 +931,15 @@ function command(state, values) {
       verb,
       actionId: null,
       readBack: null,
+      biometric: false,
       state: buildState(
         state.phase,
         values.now,
         state.timeoutMs,
         state.maxPending,
         state.maxLedger,
+        state.costlyModes,
+        state.biometricOnCostly,
         state.pending,
         spend(state.ledger, [{ kind: LEDGER_KIND.UTTERANCE, id: utteranceId, at: values.now }]),
       ),
@@ -840,12 +970,15 @@ function command(state, values) {
     at,
     deadline,
     readBack: readBack(verb, resolved),
+    biometric,
     state: buildState(
       phaseOf(pendings),
       at,
       state.timeoutMs,
       state.maxPending,
       state.maxLedger,
+      state.costlyModes,
+      state.biometricOnCostly,
       pendings,
       spend(state.ledger, [
         { kind: LEDGER_KIND.UTTERANCE, id: utteranceId, at },
@@ -942,6 +1075,8 @@ function confirm(state, values) {
       state.timeoutMs,
       state.maxPending,
       state.maxLedger,
+      state.costlyModes,
+      state.biometricOnCostly,
       pendings,
       spend(state.ledger, [
         { kind: LEDGER_KIND.UTTERANCE, id: utteranceId, at: values.now },
@@ -984,6 +1119,8 @@ function abort(state, values) {
       state.timeoutMs,
       state.maxPending,
       state.maxLedger,
+      state.costlyModes,
+      state.biometricOnCostly,
       [],
       spend(state.ledger, [{ kind: LEDGER_KIND.UTTERANCE, id: utteranceId, at: values.now }]),
     ),
@@ -1000,7 +1137,11 @@ function abort(state, values) {
 function actionRecord(entry, confirmationId, confirmedAt) {
   const t = entry.target;
   const target =
-    t.kind === TARGET_KIND.RUN ? Object.freeze({ run: t.runId }) : Object.freeze({ repo: t.repo, pr: t.pr });
+    t.kind === TARGET_KIND.RUN
+      ? Object.freeze({ run: t.runId })
+      : t.kind === TARGET_KIND.MODE
+        ? Object.freeze({ mode: t.mode })
+        : Object.freeze({ repo: t.repo, pr: t.pr });
   return Object.freeze({
     id: entry.actionId,
     verb: entry.verb,
@@ -1039,7 +1180,12 @@ export function readBack(verb, target) {
     if (!read.ok) return null;
     const resolved = read.target;
     let what;
-    if (resolved.kind === TARGET_KIND.MERGE) {
+    if (resolved.kind === TARGET_KIND.MODE) {
+      // D47's Rule, for a start: there is no run id yet, so what the speaker
+      // must hear again is the mode the start would run in -- the one value
+      // D2786 makes the difference about.
+      what = `Start a run in ${resolved.mode} mode.`;
+    } else if (resolved.kind === TARGET_KIND.MERGE) {
       what = `Merge ${resolved.repo}#${resolved.pr} at head ${resolved.headSha}.`;
     } else if (verb === VERB.CANCEL) {
       what = `Cancel run ${resolved.runId}.`;
@@ -1103,6 +1249,12 @@ export function pending(state, now) {
             at: one.at,
             deadline: one.deadline,
             readBack: readBack(one.verb, one.target),
+            // Recomputed from the state's policy, like the read-back: the
+            // screen asks the speaker for the biometric because *this* session
+            // says so, never because a stored flag did.
+            biometric:
+              one.verb === VERB.LAUNCH &&
+              costlyStart(one.target.mode, current.state.costlyModes, current.state.biometricOnCostly).biometric,
           }),
         ),
       ),
@@ -1153,17 +1305,28 @@ function readCommandFields(values) {
   if (text.bad) return text.bad;
   const verb = stringField(values.verb, 'verb', ID_MAX);
   if (verb.bad) return verb.bad;
+  // The mode is read here, once, with the same reader every other bare string
+  // gets: it is a launch's field, and whether the verb is a launch is not known
+  // until the verb has been read -- which is why the shape is read for every
+  // verb and the *use* is refused in `command` for the verbs it does not belong
+  // to.
+  let mode;
+  if (values.mode !== undefined) {
+    const readMode = stringField(values.mode, 'mode', MAX_MODE_LENGTH);
+    if (readMode.bad) return readMode.bad;
+    mode = readMode.value;
+  }
   if (values.actionId === undefined) {
     return {
       ok: true,
-      values: { utteranceId: utteranceId.value, text: text.value, verb: verb.value, actionId: undefined },
+      values: { utteranceId: utteranceId.value, text: text.value, verb: verb.value, mode, actionId: undefined },
     };
   }
   const actionId = keyIdField(values.actionId, 'actionId');
   if (actionId.bad) return actionId.bad;
   return {
     ok: true,
-    values: { utteranceId: utteranceId.value, text: text.value, verb: verb.value, actionId: actionId.value },
+    values: { utteranceId: utteranceId.value, text: text.value, verb: verb.value, mode, actionId: actionId.value },
   };
 }
 
@@ -1225,10 +1388,18 @@ function readResolvedTarget(value, kinds) {
       ? RUN_TARGET_FIELDS
       : kind === TARGET_KIND.MERGE
         ? MERGE_TARGET_FIELDS
-        : PR_TARGET_FIELDS;
+        : kind === TARGET_KIND.MODE
+          ? MODE_TARGET_FIELDS
+          : PR_TARGET_FIELDS;
   const read = readFields(value, names, 'target');
   if (!read.ok) return read;
   const target = read.values;
+
+  if (kind === TARGET_KIND.MODE) {
+    const mode = stringField(target.mode, 'target.mode', MAX_MODE_LENGTH);
+    if (mode.bad) return mode.bad;
+    return { ok: true, target: Object.freeze({ kind, mode: mode.value }) };
+  }
 
   if (kind === TARGET_KIND.RUN) {
     const runId = keyIdField(target.runId, 'target.runId');
@@ -1258,6 +1429,7 @@ function readResolvedTarget(value, kinds) {
 const RUN_TARGET_FIELDS = Object.freeze(['kind', 'runId']);
 const MERGE_TARGET_FIELDS = Object.freeze(['kind', 'repo', 'pr', 'headSha']);
 const PR_TARGET_FIELDS = Object.freeze(['kind', 'repo', 'pr']);
+const MODE_TARGET_FIELDS = Object.freeze(['kind', 'mode']);
 
 // repoField validates `owner/name`.
 function repoField(value) {
@@ -1323,6 +1495,14 @@ function readState(value) {
     return refuse(REFUSAL.INVALID_MAX_LEDGER, 'maxLedger');
   }
 
+  // The session's policy is read here rather than at the point it is used, so a
+  // state carrying a value this module cannot read is refused as a state and not
+  // answered around: every step that reads it would otherwise answer with the
+  // lenient reading of a defect.
+  const costlyModes = readPolicyModes(values.costlyModes);
+  if (costlyModes.bad) return costlyModes.bad;
+  if (typeof values.biometricOnCostly !== 'boolean') return refuse(REFUSAL.WRONG_TYPE, 'biometricOnCostly');
+
   const pendings = readPending(values.pending, values.maxPending);
   if (!pendings.ok) return pendings;
   const ledger = readLedger(values.ledger, values.maxLedger);
@@ -1338,6 +1518,8 @@ function readState(value) {
       values.timeoutMs,
       values.maxPending,
       values.maxLedger,
+      costlyModes.value,
+      values.biometricOnCostly,
       pendings.entries,
       ledger.entries,
     ),
@@ -1356,7 +1538,7 @@ function readPending(value, maxPending) {
     const entry = read.values;
     if (
       !isKeyId(entry.actionId) ||
-      !DESTRUCTIVE_VERBS.includes(entry.verb) ||
+      !PENDING_VERBS.includes(entry.verb) ||
       !isKeyId(entry.by) ||
       !isIntegerInRange(entry.at, 1, TIME_MAX) ||
       !isIntegerInRange(entry.deadline - entry.at, MIN_CONFIRM_TIMEOUT_MS, MAX_CONFIRM_TIMEOUT_MS) ||
@@ -1446,6 +1628,9 @@ function sameTarget(left, right) {
   if (left.kind !== right.kind) return false;
   if (left.kind === TARGET_KIND.RUN) return left.runId === right.runId;
   if (left.kind === TARGET_KIND.PR) return left.repo === right.repo && left.pr === right.pr;
+  // A start's target is its mode: a confirmation asserting another mode heard a
+  // different read-back, so it authorises nothing (D2786 with D47's Rule).
+  if (left.kind === TARGET_KIND.MODE) return left.mode === right.mode;
   return left.repo === right.repo && left.pr === right.pr && left.headSha === right.headSha;
 }
 
@@ -1496,14 +1681,16 @@ function spend(ledger, entries) {
   return ordered([...ledger, ...entries.map((entry) => Object.freeze({ ...entry }))], compareLedger);
 }
 
-/** buildState freezes the seven fields, in the one order they are read in. */
-function buildState(phase, now, timeoutMs, maxPending, maxLedger, pendings, ledger) {
+/** buildState freezes the nine fields, in the one order they are read in. */
+function buildState(phase, now, timeoutMs, maxPending, maxLedger, costlyModes, biometricOnCostly, pendings, ledger) {
   return Object.freeze({
     phase,
     now,
     timeoutMs,
     maxPending,
     maxLedger,
+    costlyModes,
+    biometricOnCostly,
     pending: Object.freeze([...pendings]),
     ledger: Object.freeze([...ledger]),
   });
