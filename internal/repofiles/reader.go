@@ -38,10 +38,11 @@ import (
 // YAML is the file a repository writes its own overrides in.
 const YAML = "fugaro.yaml"
 
-// MaxRecipeFiles bounds one repository's recipes folder, and each file in it is
-// bounded by recipe.MaxBytes: a folder over either is answered as a repository
-// that could not be read rather than carried whole, so nothing ever plans from
-// a partial folder.
+// MaxRecipeFiles bounds one repository's recipes folder by count, and the read
+// carries at most recipe.MaxBytes in all — the bound one recipe has, which
+// recipe.Parse refuses a file over — so no file this reader returns can be
+// larger than a recipe may be. A folder over either is answered as a repository
+// that could not be read rather than carried in part.
 const MaxRecipeFiles = 64
 
 // Listed is a repository the caller can name: its owner/name, and the git
@@ -234,7 +235,7 @@ func readOne(ctx context.Context, n Listed, open gitprov.Opener) (Repo, error) {
 	}
 	files, err := tree.Tree(ctx, recipe.RepoDir, commit, gitprov.TreeLimit{
 		MaxFiles: MaxRecipeFiles,
-		MaxBytes: MaxRecipeFiles * recipe.MaxBytes,
+		MaxBytes: recipe.MaxBytes,
 	})
 	switch {
 	case err == nil:
@@ -274,18 +275,31 @@ func cannotRead(kind, what string) string {
 }
 
 // absent reports whether err is the host's answer that what was asked for is
-// not there, which for a recipes folder is the ordinary repository and not a
-// read that failed.
+// not there: a fugaro.yaml, for a repository that overrides nothing, or a
+// recipes folder, which most repositories keep none of. Neither is a repository
+// nobody could read.
 //
-// The two adapters answer the case differently: GitHub's tree listing is the
-// whole repository's, so a folder it does not hold is simply no entries, while
-// Bitbucket's src listing is of the folder itself and answers 404. Reading
-// that as a repository nobody could read would leave every Bitbucket
-// repository without a recipes folder unmigrated, and reading a refused
-// credential or a listing over the ceiling as an empty folder would lose a
-// repository's recipes without a word — so the two are told apart by the
-// status the transport carries rather than by the sentence around it.
+// The two adapters answer it differently, and only one of them types it:
+// GitHub's calls and Bitbucket's listing carry httpjson.StatusError, while
+// Bitbucket's src file read answers a plain error whose first field is the
+// status ("GET: HTTP 404: ..."), which is the only handle that read gives. So
+// the status is read off the error when it is typed and off that field when it
+// is not — the same thing internal/gitprov/github's launcher reader does with
+// GitHub's own untyped "Not Found" body (fileread.go's confirmAbsent), and for
+// the same reason that reader confirms the repository first: a repository this
+// credential cannot reach was refused by the repository read the caller has
+// already made, so what is left here is a path this repository does not hold.
+//
+// Which way a mistake would fall is why it is worth deciding at all. A failure
+// read as absence leaves a repository's own keys unlifted, which is D3306's
+// outcome for a repository update could not read and never a value moved out of
+// a repository nobody read; absence read as a failure would leave every
+// repository without a fugaro.yaml unmigrated, its recipes unrenamed, and its
+// launches refused by R16's gate with no `fugaro update` able to clear them.
 func absent(err error) bool {
 	var se *httpjson.StatusError
-	return errors.As(err, &se) && se.Status == http.StatusNotFound
+	if errors.As(err, &se) {
+		return se.Status == http.StatusNotFound
+	}
+	return strings.Contains(err.Error(), "HTTP 404:")
 }

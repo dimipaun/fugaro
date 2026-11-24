@@ -60,27 +60,35 @@ type fileHost struct {
 // one's default-branch fugaro.yaml and its recipes folder, from the provider
 // that repository is on.
 //
-// The GitHub fixture's folder holds a symbolic link beside a recipe (U3):
-// TreeFile carries no mode, so the read answers the link as a file — its bytes
-// are the target's path, and the recipe's own parse is what judges it. One
-// Bitbucket repository keeps no recipes folder at all, which its src listing
-// answers as 404: that is the ordinary repository, not one nobody could read.
+// Both fixtures' folders hold a symbolic link beside a recipe (U3, R12):
+// TreeFile carries no mode, so each adapter's read answers the link as a file
+// whose bytes are the target's path — GitHub's listing says so with the git
+// mode 120000, and Bitbucket's src listing has no type of its own for a link —
+// and the recipe's own parse is what judges it. One Bitbucket repository keeps
+// no recipes folder at all, which its src listing answers as 404: that is the
+// ordinary repository, not one nobody could read.
 func TestReadEveryListedRepo(t *testing.T) {
 	ctx := context.Background()
 	appYAML := "agent:\n  model: claude-x\n"
-	app := githubFixture(t, appYAML, []ghEntry{
+	app := githubFixture(t, []byte(appYAML), []ghEntry{
 		{Path: "review.yaml", Mode: "100644", Data: "name: review\n"},
 		{Path: "link.yaml", Mode: "120000", Data: "review.yaml"},
 	})
 	webYAML := "ab:\n  rate: 0\n"
 	webSrv := newBitServer(t, "acme/web")
-	webSrv.repo(webYAML, nil)
+	webSrv.repo([]byte(webYAML), nil)
 	webSrv.noFolder()
 	apiYAML := "rigor:\n  default: startup\n"
 	apiSrv := newBitServer(t, "acme/api")
-	apiSrv.repo(apiYAML, []ghEntry{
+	apiSrv.repo([]byte(apiYAML), []ghEntry{
 		{Path: "review.yaml", Data: "name: review\n"},
 		{Path: "nested/poc.yaml", Data: "name: poc\n"},
+		// A symbolic link, which the src endpoint reports the way its listing
+		// can: a commit_file whose bytes are the target's path. The adapter's
+		// srcEntry reads path/type/size and drops directories, so the link
+		// reaches the reader as a file — the other half of U3 is GitHub's mode
+		// 120000 entry above.
+		{Path: "link.yaml", Data: "review.yaml"},
 	})
 	extra := &fake.Provider{Repo: "acme/extra", State: fake.State{Files: map[string]string{
 		YAML:                         "ab:\n  rate: 5\n",
@@ -137,7 +145,7 @@ func TestReadEveryListedRepo(t *testing.T) {
 	if a := at["acme/api"]; string(a.YAML) != apiYAML {
 		t.Errorf("acme/api fugaro.yaml = %q, want %q", a.YAML, apiYAML)
 	}
-	if want := []File{{Path: "nested/poc.yaml", Data: []byte("name: poc\n")}, {Path: "review.yaml", Data: []byte("name: review\n")}}; !slices.EqualFunc(at["acme/api"].Recipes, want, sameFile) {
+	if want := []File{{Path: "link.yaml", Data: []byte("review.yaml")}, {Path: "nested/poc.yaml", Data: []byte("name: poc\n")}, {Path: "review.yaml", Data: []byte("name: review\n")}}; !slices.EqualFunc(at["acme/api"].Recipes, want, sameFile) {
 		t.Errorf("acme/api recipes = %v, want %v", at["acme/api"].Recipes, want)
 	}
 	// The canonical admit adds the repository, with the kind the admit is
@@ -214,7 +222,7 @@ func TestReadNamesAnUnreadableRepo(t *testing.T) {
 				Repo: "acme/app",
 				State: fake.State{Files: map[string]string{
 					YAML:                          "agent: {}\n",
-					recipe.RepoDir + "/huge.yaml": strings.Repeat("x", MaxRecipeFiles*recipe.MaxBytes+1),
+					recipe.RepoDir + "/huge.yaml": strings.Repeat("x", recipe.MaxBytes+1),
 				}},
 			}},
 			want: []string{"its .fugaro/recipes/ could not be read", "larger than a tree read returns"},
@@ -241,13 +249,61 @@ func TestReadNamesAnUnreadableRepo(t *testing.T) {
 	// ordinary repository) and 500 for the file.
 	t.Run("a fugaro.yaml the host refuses", func(t *testing.T) {
 		f := newBitServer(t, "acme/app")
-		f.repo("agent: {}\n", nil)
+		f.repo([]byte("agent: {}\n"), nil)
 		f.fail(f.yaml(), http.StatusInternalServerError, `{"error": {"message": "boom"}}`)
 		r := read(t, Listed{Repo: "acme/app", Provider: "bitbucket"}, map[string]gitprov.Provider{"bitbucket/acme/app": f.provider(t)})
 		if !strings.Contains(r.Unread, "its fugaro.yaml could not be read") || !strings.Contains(r.Unread, "500") {
 			t.Errorf("Unread = %q, want the refused file named", r.Unread)
 		}
 	})
+}
+
+// TestReadHoldsNoYAML: a repository whose default branch holds no fugaro.yaml
+// overrides nothing, which is not a repository nobody could read — the
+// distinction that separates "nothing to migrate" from "could not read"
+// (D3306), and one the two adapters answer differently: the contents API's own
+// 404 is typed, while Bitbucket's src read carries its status as text.
+//
+// Its recipes are read all the same, which is the point of the distinction: a
+// repository that writes no fugaro.yaml still sends the recipes it keeps
+// (D3301), and one left unmigrated keeps theirs under names R16's gate refuses
+// with a `fugaro update` that could never clear them.
+func TestReadHoldsNoYAML(t *testing.T) {
+	ctx := context.Background()
+	recipeFile := []ghEntry{{Path: "poc.yaml", Data: "name: poc\n"}}
+	app := githubFixture(t, nil, recipeFile)
+	web := newBitServer(t, "acme/web")
+	web.repo(nil, recipeFile)
+	got, _, err := Read(ctx, Input{Repos: []Listed{
+		{Repo: "acme/app", Provider: "github"},
+		{Repo: "acme/web", Provider: "bitbucket"},
+	}}, opens(map[string]gitprov.Provider{
+		"github/acme/app":    app,
+		"bitbucket/acme/web": web.provider(t),
+	}))
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("Read answered %d repositories, want 2", len(got))
+	}
+	// Every file the folder holds is the point of the read, so its exchange is
+	// asserted to have happened: a reader that skipped the folder would answer
+	// the same way with no listing at all.
+	for _, r := range got {
+		if r.Unread != "" {
+			t.Errorf("%s: Unread = %q, want a repository that overrides nothing", r.Repo, r.Unread)
+		}
+		if r.YAML != nil {
+			t.Errorf("%s: fugaro.yaml = %q, want none", r.Repo, r.YAML)
+		}
+		if want := []File{{Path: "poc.yaml", Data: []byte("name: poc\n")}}; !slices.EqualFunc(r.Recipes, want, sameFile) {
+			t.Errorf("%s recipes = %v, want %v", r.Repo, r.Recipes, want)
+		}
+	}
+	if asked := web.asked(); !slices.Contains(asked, web.listing()) {
+		t.Errorf("acme/web asked for %q, want the recipes folder listed", asked)
+	}
 }
 
 // TestReadNamesAPatternItCannotList: an admit that is a pattern cannot be
@@ -323,7 +379,10 @@ const ghSHA = "3f2b1c0d9e8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c"
 // time — the exchanges the adapter's own tests record, in the order the reader
 // makes them. The replay is strict, so a read the fixture did not record fails
 // the test whichever side of it did not happen.
-func githubFixture(t *testing.T, yaml string, files []ghEntry) *github.Provider {
+//
+// A nil yaml leaves the file's exchange out, which is the contents API's own
+// 404 — a repository that holds no fugaro.yaml at all.
+func githubFixture(t *testing.T, yaml []byte, files []ghEntry) *github.Provider {
 	t.Helper()
 	tok := "ghs_fixture-not-a-credential"
 	blobSHA := func(i int) string { return fmt.Sprintf("%040x", i+1) }
@@ -331,10 +390,14 @@ func githubFixture(t *testing.T, yaml string, files []ghEntry) *github.Provider 
 		`{"method": "GET", "path": "/repos/acme/app/installation", "status": 200, "response": {"id": 777}}`,
 		fmt.Sprintf(`{"method": "POST", "path": "/app/installations/777/access_tokens", "status": 201, "response": {"token": %q, "expires_at": "2026-09-27T11:00:00Z"}}`, tok),
 		fmt.Sprintf(`{"method": "GET", "path": "/repos/acme/app", "auth": "Bearer %s", "status": 200, "response": {"private": true}}`, tok),
-		fmt.Sprintf(`{"method": "GET", "path": "/repos/acme/app/contents/%s", "status": 200, "response": {"type": "file", "encoding": "base64", "size": %d, "content": %q}}`,
-			YAML, len(yaml), base64.StdEncoding.EncodeToString([]byte(yaml))),
-		fmt.Sprintf(`{"method": "GET", "path": "/repos/acme/app/commits/HEAD", "status": 200, "response": {"sha": %q}}`, ghSHA),
 	}
+	if yaml != nil {
+		x = append(x, fmt.Sprintf(`{"method": "GET", "path": "/repos/acme/app/contents/%s", "status": 200, "response": {"type": "file", "encoding": "base64", "size": %d, "content": %q}}`,
+			YAML, len(yaml), base64.StdEncoding.EncodeToString(yaml)))
+	} else {
+		x = append(x, fmt.Sprintf(`{"method": "GET", "path": "/repos/acme/app/contents/%s", "status": 404, "response": {"message": "Not Found", "documentation_url": "https://docs.github.com/rest"}}`, YAML))
+	}
+	x = append(x, fmt.Sprintf(`{"method": "GET", "path": "/repos/acme/app/commits/HEAD", "status": 200, "response": {"sha": %q}}`, ghSHA))
 	var listed []string
 	for i, f := range files {
 		listed = append(listed, fmt.Sprintf(`{"path": "%s/%s", "type": "blob", "mode": %q, "size": %d, "sha": %q}`,
@@ -443,14 +506,17 @@ func (f *bitServer) asked() []string {
 
 // repo registers the read of one repository: its object, its default-branch
 // fugaro.yaml, the commit that branch resolves to, and one listing for the
-// files it holds.
-func (f *bitServer) repo(yaml string, files []ghEntry) {
+// files it holds. A nil yaml leaves the file's route out, which is the src
+// endpoint's own 404 — a repository that holds no fugaro.yaml at all.
+func (f *bitServer) repo(yaml []byte, files []ghEntry) {
 	// The repository object is read once for the visibility, once for the
 	// default branch the file is read at, and once for the branch the commit
 	// is resolved from: the adapter asks for it rather than assuming a name.
 	f.routes[f.at("")] = bitReply{status: 200, ctype: "application/json",
 		body: `{"is_private": true, "mainbranch": {"name": "main"}}`}
-	f.routes[f.yaml()] = bitReply{status: 200, ctype: "application/octet-stream", body: yaml}
+	if yaml != nil {
+		f.routes[f.yaml()] = bitReply{status: 200, ctype: "application/octet-stream", body: string(yaml)}
+	}
 	f.routes[f.at("/commit/main")] = bitReply{status: 200, ctype: "application/json", body: `{"hash": "` + bitSHA + `"}`}
 	var values []string
 	for _, file := range files {
