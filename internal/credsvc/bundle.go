@@ -1563,8 +1563,8 @@ func providerFactsFrom(entryKey string, v *yaml.Node, withSource bool) (*provide
 // providerSourceValue reads a named entry's source marker (D3014): a mapping of
 // exactly the two fields ProviderKeySource names — the container and the version
 // — each a non-empty string within the per-credential bound. Neither is a
-// credential: a container's logical name and a version's number are names of
-// secrets, so an error about one may name the ENTRY and never a field's content,
+// credential: a container's Secret Manager name and a version's number are names
+// of secrets, so an error about one may name the ENTRY and never a field's content,
 // as every refusal in this file does.
 //
 // A marker with a field missing is refused rather than read as half an answer.

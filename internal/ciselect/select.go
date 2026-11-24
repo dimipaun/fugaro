@@ -290,10 +290,18 @@ func Select(ctx context.Context, in Input) (Output, error) {
 		}
 	}
 	chosen := choose(files, m, g, module)
+	buildable, err := buildablePackages(ctx, in, root, module)
+	if err != nil {
+		return full(ctx, in, root, ReasonNoGraph+": "+err.Error())
+	}
+	// The terraform and rules jobs are chosen from every package the change
+	// reaches, tag-gated ones included; only the default-tag legs are narrowed.
+	runTerraform, runRules := jobRuns(chosen, files, terraformTrees), jobRuns(chosen, files, rulesTrees)
+	chosen = dropGated(chosen, gatedPackages(g.packages(module), buildable))
 	reason := fmt.Sprintf("selected %d packages from %s since %s",
 		len(chosen), selectCount(len(files), "changed file", "changed files"), short(base))
 	return selected(Pack(chosen, timings(ctx, in, root, run, runErr), legBudget(chosen, in.MaxLegs)), reason,
-		jobRuns(chosen, files, terraformTrees), jobRuns(chosen, files, rulesTrees)), nil
+		runTerraform, runRules), nil
 }
 
 // full is the answer to every doubt: the whole matrix and every job (R8).
@@ -332,7 +340,12 @@ func fullLegs(ctx context.Context, in Input, root string) ([]Leg, error) {
 			chosen = append(chosen, pkg)
 		}
 	}
+	buildable, err := buildablePackages(ctx, in, root, module)
+	if err != nil {
+		return nil, err
+	}
 	chosen = packChosenPackages(chosen)
+	chosen = dropGated(chosen, gatedPackages(chosen, buildable))
 	return Pack(chosen, "", legBudget(chosen, in.MaxLegs)), nil
 }
 
@@ -386,6 +399,51 @@ func graphOf(ctx context.Context, in Input, root string) (*Graph, string, error)
 		return nil, "", err
 	}
 	return g, module, nil
+}
+
+// buildablePackages is the packages of the module `go test` can be handed under
+// the default tags. `go list ./...` skips a directory whose every Go file is
+// behind a build tag, where a package named to `go test` explicitly is a setup
+// failure ("build constraints exclude all Go files"); the legs name their
+// packages, so a package missing here must not reach one.
+func buildablePackages(ctx context.Context, in Input, root, module string) (map[string]bool, error) {
+	out, err := command(in).Output(ctx, root, "go", "list", "-f", "{{.ImportPath}}", "./...")
+	if err != nil {
+		return nil, err
+	}
+	set := map[string]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		if pkg, ok := repoPath(module, strings.TrimSpace(line)); ok {
+			set[pkg] = true
+		}
+	}
+	return set, nil
+}
+
+// gatedPackages is the packages of known that the default tags leave without a
+// buildable file. A package the listing never saw is not one of them: the read
+// map may name a path the graph does not own, and that is the map's to answer.
+func gatedPackages(known []string, buildable map[string]bool) map[string]bool {
+	gated := map[string]bool{}
+	for _, pkg := range known {
+		if !buildable[pkg] {
+			gated[pkg] = true
+		}
+	}
+	return gated
+}
+
+// dropGated takes the tag-gated packages out of the default-tag legs. What such
+// a package's tests need is a job that runs with the tag, which the terraform
+// and rules jobs are for the trees they own.
+func dropGated(chosen []string, gated map[string]bool) []string {
+	out := make([]string, 0, len(chosen))
+	for _, pkg := range chosen {
+		if !gated[pkg] {
+			out = append(out, pkg)
+		}
+	}
+	return out
 }
 
 // modulePath is the module line of the checkout's go.mod.

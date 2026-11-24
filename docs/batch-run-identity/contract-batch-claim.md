@@ -24,10 +24,12 @@ first write, which is the ticket route's because the ticket route is what writes
 
 **This contract does not touch the merged key-release wire.** `internal/credsvc/sealkey_wire.go`
 and [contract-key-release.md](contract-key-release.md) are [BR23](implementation-plan.md)'s to
-retire, and nothing here reads them. Two things moved out of them and are declared here instead —
-the job's name (`JobName`, the release wire's `validBatchJobNameRE`) and the run reference's
-splitting (`checkRunRef`) — so that the shapes the launcher, the record and the registration agree
-on are said once while both wires are in the tree.
+retire, and nothing here reads them. Two of the shapes that wire carries are declared here as well —
+the job's name (`JobName`, the same rule as the release wire's `validBatchJobNameRE`) and the run
+reference's splitting (`checkRunRef`, which the release wire declares too) — so that the launcher,
+the record and the registration are held to a rule of this contract's own rather than to one the
+file BR23 retires carries. The two copies the release wire holds are BR23's to remove with that
+file, and until then the rule is spelled in both.
 
 **BR1** (the launcher), **BR2** (the claim's attestation and the route that serves it), **BR3**
 (the link from a VM to its job), **BR4** (the runner's claim, merged), **BR12** (the documents),

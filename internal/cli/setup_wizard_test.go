@@ -20,10 +20,11 @@ import (
 
 // setup_wizard_test.go pins the wizard task W1.3 of
 // docs/setup-wizard/implementation-plan.md gives `fugaro setup`, as the owner's
-// ruling of 2026-10-23 reshaped it: Fugaro only starts fresh, so there is no
-// question about the project — a first run creates it, the project stage
-// (init_project.go) refuses an ID that already exists, and the creation is
-// never covered by --yes (D12).
+// rulings of 2026-10-23 and 2026-11-22 reshaped it: there is no question about
+// the project — a first run makes it Fugaro's, creating it or adopting one that
+// is already there and holds nothing of Fugaro's, the project stage
+// (init_project.go) refuses an ID that holds anything of Fugaro's, and the
+// creation is never covered by --yes (D12).
 //
 // The question list itself is setup.go's `setupQuestions`, and
 // TestEveryWizardQuestionHasAFlag is the contract on it: every question has a
@@ -136,6 +137,9 @@ func optionsFor(flags ...string) *initOptions {
 			// the flag is one answer, and the pair is what the installation's
 			// alert is created with.
 			o.budget, o.budgetCurrency = managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency
+			// A creating run with a budget needs the account the alert is
+			// created with, and these fixtures have no installation state.
+			o.billingAccount = "000000-000000-000000"
 		case "--bake-repos":
 			// The value the flag names, and the fact that it was passed: a run that
 			// answers the question with the flag is the run whose answer the local
@@ -245,11 +249,12 @@ func TestEveryWizardQuestionHasAFlag(t *testing.T) {
 	})
 }
 
-// TestSetupAsksNoCreateOrAdoptQuestion: Fugaro only starts fresh, so a first
-// run of `setup` asks for the new project's ID, the region and the name, and
-// nothing about whether to create the project or use another: the answer is
-// creation, recorded on --create-project's own field without a question, and
-// the project stage is registered for every first run.
+// TestSetupAsksNoCreateOrAdoptQuestion: a first run of `setup` asks for the
+// project's ID, the region and the name, and nothing about whether to create
+// the project or use another: the answer is creation, recorded on
+// --create-project's own field without a question, and a run whose ID is
+// already there and holds nothing of Fugaro's adopts it without asking. The
+// project stage is registered for every first run.
 func TestSetupAsksNoCreateOrAdoptQuestion(t *testing.T) {
 	r, out := wizardRun(t, stdinFor(""), nil)
 	if err := r.gatherInputs(t.Context()); err != nil {
@@ -327,6 +332,17 @@ func TestTheCreationIsHeldToTheFlagsChecks(t *testing.T) {
 			name: "--firebase-project names another project",
 			o:    &initOptions{door: setupDoor.name, cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}, firebase: "proj-9999"},
 			want: "--firebase-project",
+		},
+		{
+			// The carry has nothing to take the account from on a run that
+			// creates the project, and check() sees the creation only where
+			// --create-project is explicit: without this the run reaches the
+			// project stage and only the installation stage's state read
+			// refuses, after the project, Firebase, billing and the APIs are
+			// made (R7).
+			name: "a budget with no billing account",
+			o:    &initOptions{door: setupDoor.name, cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}, budget: 7, budgetCurrency: "USD"},
+			want: "--billing-account",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -426,7 +442,8 @@ func TestSetupOnAnExistingInstallationConvergesAndSaysSo(t *testing.T) {
 
 // TestSetupRefusesAnIDThatHoldsAnInstallation: a first run of `setup` whose ID
 // already holds a Fugaro installation (the runs bucket's marker names it) is
-// refused before the name is asked — Fugaro only starts fresh — and the
+// refused before the name is asked — fugaro setup adopts only a project that
+// holds nothing of Fugaro's (the owner's ruling of 2026-11-22) — and the
 // refusal names the one command that uses that installation from this machine
 // instead. --create-project changes nothing about it. `update` on the same
 // machine is that command: it takes the installation's own name and asks for
@@ -447,7 +464,7 @@ func TestSetupRefusesAnIDThatHoldsAnInstallation(t *testing.T) {
 			if err == nil || ExitCode(err) != ExitUserError {
 				t.Fatalf("setup went on with an ID that holds an installation: %v\n%s", err, out)
 			}
-			for _, want := range []string{"Fugaro only starts fresh: proj-1234 already exists; pick another id", "fugaro update --gcp-project proj-1234 --region " + defaultRegion} {
+			for _, want := range []string{"proj-1234 already exists and holds the Fugaro project", "fugaro update --gcp-project proj-1234 --region " + defaultRegion} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("the refusal lacks %q: %v", want, err)
 				}
@@ -541,6 +558,7 @@ func TestSetupAsksBakeDefaultYes(t *testing.T) {
 	only := func() *initOptions {
 		o := &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject, region: defaultRegion}, rigor: string(rigor.Pro)}
 		o.budget, o.budgetCurrency = managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency
+		o.billingAccount = "000000-000000-000000"
 		return o
 	}
 	ask := func(stdin string) (*initRun, *strings.Builder) {

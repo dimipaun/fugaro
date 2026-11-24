@@ -305,7 +305,7 @@ func secretsIntakeSet(cmd *cobra.Command, o secretsIntakeOptions, scope intake.S
 	if err := secretsIntakeRefusal(os.Getenv, "stored"); err != nil {
 		return err
 	}
-	serviceURL, err := secretsIntakeServiceURL(ctx, o.cloud)
+	serviceURL, err := secretsIntakeServiceURL(ctx, o.cloud, "stored")
 	if err != nil {
 		return err
 	}
@@ -343,7 +343,7 @@ func secretsIntakeLs(cmd *cobra.Command, o secretsIntakeOptions, scope intake.Sc
 	if err := secretsIntakeRefusal(os.Getenv, "listed"); err != nil {
 		return err
 	}
-	serviceURL, err := secretsIntakeServiceURL(ctx, o.cloud)
+	serviceURL, err := secretsIntakeServiceURL(ctx, o.cloud, "listed")
 	if err != nil {
 		return err
 	}
@@ -368,7 +368,7 @@ func secretsIntakeRm(cmd *cobra.Command, o secretsIntakeOptions, scope intake.Sc
 	if err := secretsIntakeRefusal(os.Getenv, "removed"); err != nil {
 		return err
 	}
-	serviceURL, err := secretsIntakeServiceURL(ctx, o.cloud)
+	serviceURL, err := secretsIntakeServiceURL(ctx, o.cloud, "removed")
 	if err != nil {
 		return err
 	}
@@ -545,6 +545,19 @@ func intakeRefusal(serviceURL, path string, status int, body []byte) error {
 		if e.Message != "" {
 			msg += ": " + oneLine(e.Message)
 		}
+		// The workspace's half of the launcher refusal (WC3): a workspace's
+		// intake admits the people on the workspace's roster, and the service's
+		// own sentence says only that the caller is not a launcher. This client
+		// cannot tell a workspace's project from an ordinary installation's —
+		// the key that says so (workspace_members) is the owner's own and is
+		// stripped from every config another person receives — so the sentence
+		// is a rule and its two readings, and never a diagnosis. The roster the
+		// intake admits from is the one the workspace owner's `fugaro update`
+		// publishes, which is why a person added since that update is the
+		// second reading and waits for the next one (D2971).
+		if e.Error == intake.ErrorUnverifiedLauncher {
+			msg += "; the intake of a workspace's project admits the people on the workspace's roster, so a person refused here is either not on that roster yet or was added since the workspace's owner last ran `fugaro update`"
+		}
 		if e.Error == intake.ErrorStateUnavailable {
 			return remote(errors.New(msg))
 		}
@@ -594,7 +607,7 @@ func checkIntakeServiceURL(raw string) error {
 }
 
 // secretsIntakeServiceURL answers the installation's intake address from the
-// selected project's own config.
+// selected project's own config file.
 //
 // WHERE THE ADDRESS COMES FROM, AND WHY NOT FROM CONFIG. The local config
 // carries the installation's credentials service (credentials_service.url) and
@@ -609,13 +622,33 @@ func checkIntakeServiceURL(raw string) error {
 // is named something else) answers 404, which intakeRefusal names with the
 // command that deploys it.
 //
+// WHY THE PUBLISHED SHARED CONFIG IS NOT A SOURCE. The address is a plain
+// https URL whose host nothing in this tree can check: Cloud Run's host carries
+// the project NUMBER, which no configuration holds, so
+// localcfg's own shape check says outright that it cannot check the host. The
+// shared config is published to the runs bucket, where anyone who can write
+// that bucket may edit it (the fence sharedcfg.go's sharedForbidden builds is
+// about what a command reads out of it, never about who may write it), so a
+// selection that fell back to the published file would let a launcher of the
+// project name the service that every roster person's Google ID token and
+// stored value go to. A person's token goes only to an address read from the
+// project's own config file, which the installation's owner writes and which
+// reaches a person the way any project's config does (R13, threat model §11
+// finding 3); a selection that fell back to the shared one is refused by name.
+// For a workspace's project that file is the workspace's admins' — the person
+// who runs the workspace's `fugaro update`.
+//
 // A test may reach this through the seam alone; the one place to change if
 // DS2.2 or DS4.1 gives the intake an address of its own in config is this
 // function.
-func secretsIntakeServiceURL(ctx context.Context, o cloudOptions) (string, error) {
-	_, lc, err := selectProject(ctx, o)
+func secretsIntakeServiceURL(ctx context.Context, o cloudOptions, did string) (string, error) {
+	sel, lc, err := selectProject(ctx, o)
 	if err != nil {
 		return "", err
+	}
+	if sel.From == "shared config" {
+		return "", userErr("nothing was %s: this command sends your own Google ID token, carrying the value, to the address it reads out of %s's own config file, and the config selected here is the one published to its runs bucket — a document anyone who can write that bucket can edit, credentials_service.url included, and that key is the whole of where your token and your value go. Ask the project's owner for its config file (for a workspace's project, the workspace's owner, who has it from that installation's own `fugaro update`) and select it with `--config <file>`",
+			did, pluginwire.Printable(sel.Name))
 	}
 	return intakeURLOf(lc)
 }

@@ -34,7 +34,8 @@
  *      **`fugaro setup` asks, so the page does not list what it asks**: the new GCP project's
  *      ID, the region and the installation's name are the wizard's own prompts (the three
  *      questions `internal/cli/setup.go` asks on a first run, with `--gcp-project`, `--region`
- *      and `--name` as their flags; Fugaro only starts fresh, so it creates the project), and the
+ *      and `--name` as their flags; Fugaro creates the project, adopting one that is already there
+ *      and holds nothing of Fugaro's), and the
  *      billing link, the API enabling and the secrets are confirmations it takes, not steps a
  *      reader does first. The two commands the steps name are rendered from `install.yaml`'s
  *      plugin path, so a rename there moves the steps with it.
@@ -76,7 +77,7 @@
  * Three things this page is written to say, and not to say:
  *
  *   - **The plugin path is a first-class path**, in `#details` rather than in a box: `fugaro
- *     setup`, `/fugaro:setup` and `fugaro upgrade --local` are rendered with their own note,
+ *     setup`, `/fugaro:setup` and `fugaro update` are rendered with their own note,
  *     and the setup steps above them are where a reader meets the first two as steps
  *     (finding 22).
  *   - **The cosign verification is the archive's own facts, and it is a path in `#details`**

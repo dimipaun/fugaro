@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/place"
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -93,8 +94,9 @@ func noInstallation(t *testing.T) {
 // project named after this one — "fugaro-" + the Fugaro project's name (D4,
 // reconciliation F3) — and Enter takes it. The default is a name to *create*
 // (D4, answered 2026-10-20 as recommended), which is why it is not
-// suggestGCPProject()'s answer: that project already exists, and Fugaro only
-// starts fresh.
+// suggestGCPProject()'s answer: that project is one this machine happens to be
+// working in, and the name suggested here is the installation's own — a run
+// that finds it already there and holding nothing of Fugaro's adopts it.
 func TestProjectIDDefaultIsFugaroName(t *testing.T) {
 	dir := firstRunEnv(t)
 	noInstallation(t)
@@ -140,8 +142,8 @@ func TestProjectIDDefaultIsFugaroName(t *testing.T) {
 
 // TestProjectIDSuggestionIsTheCredentialProjectSecond: the project this
 // machine is already working in — GOOGLE_CLOUD_PROJECT or the credentials'
-// quota project — exists, so `fugaro setup`, which only starts fresh, never
-// offers it. `fugaro update` on a new machine asks for an installation that
+// quota project — exists, so `fugaro setup`, whose suggestion is the project
+// the installation will live in and nothing else, never offers it. `fugaro update` on a new machine asks for an installation that
 // exists, and offers it as the **second** suggestion, after the fugaro-<name>
 // default and with the line saying why (D4). Enter takes the first; the second
 // is an answer a person types.
@@ -282,16 +284,18 @@ func TestProjectIDDefaultIsSanitised(t *testing.T) {
 
 // TestProjectIDDefaultIsNotTakenWhenItExists: the ID the wizard suggests is a
 // name to create, and a project that already carries it is not created twice.
-// The run reads the ID before anything is created — availability and ownership,
-// the check the creation has always rested on — refuses the project it
-// found, since Fugaro only starts fresh, before anything is created.
+// The read is where availability and ownership are settled, before anything is
+// created, and what it finds decides the run: a project holding nothing of
+// Fugaro's is adopted (the owner's ruling of 2026-11-22), and one holding
+// anything of Fugaro's is refused, with the one line that says to pick another
+// ID.
 func TestProjectIDDefaultIsNotTakenWhenItExists(t *testing.T) {
 	r := newProjectRig(t)
 	id := defaultGCPProject(initProjectName)
 	if id == "" {
 		t.Fatalf("the wizard suggests no id for the project name %q", initProjectName)
 	}
-	// There and readable, with no Firebase.
+	// There and readable, with no Firebase and nothing else of Fugaro's.
 	r.crm.AddProject(id, 424242)
 	r.gcs.AddProject(id, 424242)
 	r.bill.SetBilling(id, true)
@@ -304,21 +308,34 @@ func TestProjectIDDefaultIsNotTakenWhenItExists(t *testing.T) {
 			w: out, in: bufio.NewReader(strings.NewReader(id + "\n")), cmd: cmd},
 		lc: &localcfg.Config{GCPProject: id, Region: defaultRegion, Name: initProjectName, RunsBucket: "fugaro-runs-" + id},
 	}
-	e.lc.Endpoints = localcfg.Endpoints{ResourceManager: r.crm.URL + "/", FirebaseManagement: r.fb.URL + "/", CloudBilling: r.bill.URL + "/", NoAuth: true}
+	// The rig's own endpoints: the footprint read builds a full client set,
+	// which under no_auth needs every endpoint a run has.
+	rig, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.lc.Endpoints = rig.Endpoints
 	s := newProjectStage(e)
-	// First the read, which is where availability and ownership are settled —
-	// before anything is created — and it finds the project there, created by
-	// nobody's run of fugaro setup: Fugaro only starts fresh, so the check is
-	// the refusal, with the one line that says to pick another ID.
-	_, err := s.Check(t.Context())
-	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "Fugaro only starts fresh: "+id+" already exists; pick another id") {
+	// The project is there, created by nobody's run of fugaro setup, and holds
+	// nothing of Fugaro's: the stage adopts it rather than creating it or
+	// refusing it.
+	st, err := s.Check(t.Context())
+	if err != nil {
 		t.Fatalf("the check of an existing default id: %v\n%s", err, out)
+	}
+	if st.State != initflow.Todo || !strings.Contains(st.Detail, "adopt existing project "+id) {
+		t.Errorf("the check of an existing empty default id = %s %q, want the adoption:\n%s", st.State, st.Detail, out)
 	}
 	if n := len(r.crm.Creates()); n != 0 {
 		t.Errorf("the id already exists and %d project(s) were created:\n%s", n, out)
 	}
-	if adds := r.fb.Adds(); len(adds) != 0 {
-		t.Errorf("Firebase was added to a project setup did not create: %v\n%s", adds, out)
+
+	// The same ID holding an installation is refused: what a run of fugaro
+	// setup created is not adopted.
+	r.gcs.AddBucket("fugaro-runs-"+id, 424242, map[string]string{"fugaro": "managed"})
+	_, err = newProjectStage(e).Check(t.Context())
+	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), id+" already exists and holds something of Fugaro's") {
+		t.Fatalf("the check of a default id holding an installation: %v\n%s", err, out)
 	}
 }
 

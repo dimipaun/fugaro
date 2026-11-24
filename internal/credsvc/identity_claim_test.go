@@ -47,6 +47,7 @@ package credsvc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -97,6 +98,11 @@ type claimIssuance struct {
 	// necessarily the one Get answered. LM1's Put is that writer (R6). nil is a
 	// store nothing moved under, which is every other test here.
 	moved func(*identitywire.Record)
+	// getErr is the store's own failure on a read, which the service answers as
+	// its own and never as a decision about the ticket (R16's ScopeFault rule).
+	// nil is a store that reads, which is every test but the one that states
+	// that answer.
+	getErr error
 }
 
 func newClaimIssuance() *claimIssuance {
@@ -145,6 +151,9 @@ func (f *claimIssuance) Put(_ context.Context, slug, run string, rec identitywir
 func (f *claimIssuance) Get(_ context.Context, slug, run string) (identitywire.Record, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.getErr != nil {
+		return identitywire.Record{}, false, f.getErr
+	}
 	rec, ok := f.records[issuanceNode(slug, run)]
 	return rec, ok, nil
 }
@@ -152,7 +161,14 @@ func (f *claimIssuance) Get(_ context.Context, slug, run string) (identitywire.R
 // Claim is the fence (R5) and the retry rule (R2), in one atomic step as the
 // real store's is: a record claimed by this account with THIS nonce digest is
 // the same claim answered again, and every other claim on a claimed record is
-// refused.
+// refused. Both comparisons fold as the real store's do (identity_record.go,
+// sameAccount), so the two spellings of one address are one account here too.
+//
+// The real store's own ExpectedAccount floor (ErrAnotherCaller,
+// identity_record.go) is deliberately NOT repeated here: the route decides that
+// on the record this returns, and TestClaimChecksTheRecordTheStoreReturns drives
+// that decision through moved below, which a double that refused first would
+// make unreachable.
 func (f *claimIssuance) Claim(_ context.Context, slug, run string, claim identitywire.Claim) (identitywire.Record, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -169,7 +185,7 @@ func (f *claimIssuance) Claim(_ context.Context, slug, run string, claim identit
 		rec.Claimed = claim
 		f.records[issuanceNode(slug, run)] = rec
 		return rec, nil
-	case rec.Claimed.Account == claim.Account && rec.Claimed.NonceHash == claim.NonceHash:
+	case sameAccount(rec.Claimed.Account, claim.Account) && rec.Claimed.NonceHash == claim.NonceHash:
 		return rec, nil
 	default:
 		return identitywire.Record{}, identitywire.ErrClaimed
@@ -604,6 +620,66 @@ func TestClaimOfATicketTheTicketRouteMinted(t *testing.T) {
 	}
 	if want := identitywire.Digest(issued.Ticket); held.TicketHash != want {
 		t.Errorf("the record's ticket digest is not the digest of the ticket the route answered")
+	}
+}
+
+// TestClaimOfATicketThatNamedTheAccountInAnotherCase is the review of LM2's
+// finding held end to end: the ticket route admits the account an ask names
+// folded and writes the ask's OWN spelling on the record
+// (ticketAccountAdmitted, identity_ticket.go), while the claim's account is the
+// CONFIGURED spelling the verifier answers (auth.go's verifyJob) — so the two
+// spellings of one account reach the claim's match and it has to see them as
+// one. Each half of that fold is a different comparison with its own test: the
+// route's admission is the one this test drives (a lookup of the raw account in
+// the jobs map, unfolded, would refuse the ask below and answer no ticket), and
+// the store's own floor is TestTicketRecordClaimFoldsTheAccount
+// (identity_record_test.go). The claim's match here is reached with the record
+// still unclaimed, so it is the route's admission that carries the case
+// difference; a byte-for-byte comparison in either half would refuse a ticket
+// the route itself admitted, which is a run that could never claim its identity.
+func TestClaimOfATicketThatNamedTheAccountInAnotherCase(t *testing.T) {
+	f := newClaimFixture(t)
+	ask := identitywire.TicketRequest{
+		Slug:              f.slug,
+		Run:               f.run,
+		Account:           strings.ToUpper(testJobSA),
+		Launcher:          testLauncherAccount,
+		Branch:            "fugaro/" + f.run,
+		MaxRuntimeSeconds: int(testAskRuntime / time.Second),
+	}
+	body, err := json.Marshal(ask)
+	if err != nil {
+		t.Fatalf("building the ask: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, identitywire.TicketPath, strings.NewReader(string(body)))
+	f.server.identityTicket(context.Background(), rec, IdentityCaller{Address: testLauncherAccount, Class: identitywire.ClassPerson}, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the ticket ask is answered %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var issued identitywire.TicketResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &issued); err != nil {
+		t.Fatalf("the ticket's answer is not one this contract reads: %v", err)
+	}
+
+	// The record holds the ASK's spelling and not the configured one, which is
+	// the value the claim's match is made against.
+	if held := f.issuance.record(t, f.slug, f.run); held.ExpectedAccount != strings.ToUpper(testJobSA) {
+		t.Fatalf("the record's expected account is %q, want the ask's own spelling %q", held.ExpectedAccount, strings.ToUpper(testJobSA))
+	}
+
+	// The claim's account is the configured spelling the verifier answers, so a
+	// byte-for-byte match would refuse this ticket.
+	ans := f.claimOK(t, identityClaimBody(t, issued.Ticket, testNonce))
+	if ans.Token == "" {
+		t.Fatal("the claim answered no token")
+	}
+	held := f.issuance.record(t, f.slug, f.run)
+	if held.Claimed.Account != testJobSA {
+		t.Errorf("the record is claimed by %q, want the job's own account %q", held.Claimed.Account, testJobSA)
+	}
+	if want := identitywire.Digest(testNonce); held.Claimed.NonceHash != want {
+		t.Errorf("the record's claim carries the nonce digest %q, want the digest of the nonce the claim carried, %q", held.Claimed.NonceHash, want)
 	}
 }
 
@@ -1070,6 +1146,76 @@ func TestClaimOnAServiceWithNoIssuerAnswersNotServed(t *testing.T) {
 	}
 	if s.audit.Len() != 0 {
 		t.Errorf("a service with no issuer wrote an audit line, and it verified no caller: %s", s.audit.String())
+	}
+}
+
+// TestClaimWithNoStoreRefusesOnlyAVerifiedCaller is the audit rule's floor on
+// the wiring-fault path. A service with a signer and no issuance store refuses
+// every claim as its own failure — the store is not one that answers "no
+// record" — but the refusal's audit line belongs to a VERIFIED caller, so the
+// store check sits after the bearer and the job's own token were read
+// (identityClaim). Run before them, as the review of LM2 found, an
+// unauthenticated caller was answered through refuseIdentityCall and wrote a
+// line naming an act by a caller this service never admitted.
+func TestClaimWithNoStoreRefusesOnlyAVerifiedCaller(t *testing.T) {
+	f := newClaimFixture(t)
+	f.server.cfg.Identity.Store = nil
+	ticket := f.ticket(t, f.slug, f.run)
+
+	// No bearer at all: refused as the caller's own, with no line, and the store
+	// is never reached.
+	resp, body := f.claimCall(t, identityClaimBody(t, ticket, testNonce), func(r *http.Request) {
+		r.Header.Del("Authorization")
+	})
+	wantRefusal(t, resp, body, StatusUnverified, identitywire.RefusalCallerNotAdmitted)
+	if f.audit.Len() != 0 {
+		t.Errorf("an unauthenticated claim on a store-less service wrote an audit line, and it verified no caller: %s", f.audit.String())
+	}
+
+	// The job's own verified account: the missing store is still the service's
+	// own failure, and the verified caller's refusal owes the one line the rule
+	// gives it — with no run and no repository, because no record was read.
+	resp, body = f.claimCall(t, identityClaimBody(t, ticket, testNonce))
+	wantRefusal(t, resp, body, StatusUnavailable, ErrorStateUnavailable)
+	lines := f.identityLines(t)
+	if len(lines) != 1 {
+		t.Fatalf("the verified caller's refusal wrote %d audit lines, want exactly one", len(lines))
+	}
+	wantIdentityLine(t, lines[0], "", "", ErrorStateUnavailable)
+	f.wantNothingSigned(t)
+}
+
+// TestClaimStoreFailureCarriesNothingTheCallerTyped: the store's own failure
+// (R16's ScopeFault rule) is on the operator's line as the cause's Go type and
+// never as its text. The error a read fails with is an *identitywire.StoreError,
+// whose message spells the path it read — creds/issuance/<slug>/<run> — and both
+// halves of that path are what the caller typed into the ticket, so a line that
+// passed err itself would put two values the caller chose back on the operator's
+// log before any record at that path had been read. That is the rule this
+// package keeps for every store failure (refusallog.go).
+func TestClaimStoreFailureCarriesNothingTheCallerTyped(t *testing.T) {
+	f := newClaimFixture(t)
+	ticket := f.ticket(t, f.slug, f.run)
+	f.issuance.getErr = &identitywire.StoreError{
+		Path: "creds/issuance/" + f.slug + "/" + f.run,
+		Err:  errors.New("the node could not be read"),
+	}
+
+	resp, body := f.claimCall(t, identityClaimBody(t, ticket, testNonce))
+	wantRefusal(t, resp, body, StatusUnavailable, ErrorStateUnavailable)
+	lines := f.identityLines(t)
+	if len(lines) != 1 {
+		t.Fatalf("the refusal wrote %d audit lines, want exactly one", len(lines))
+	}
+	wantIdentityLine(t, lines[0], "", "", ErrorStateUnavailable)
+	f.wantNothingSigned(t)
+
+	logged := f.logs.String()
+	if !strings.Contains(logged, "error_class") {
+		t.Errorf("the service's line does not carry the cause by its Go type, so an operator has nothing to read it by: %s", logged)
+	}
+	if strings.Contains(logged, f.slug) || strings.Contains(logged, f.run) {
+		t.Errorf("the service's line hands the operator the names the caller typed into the ticket: %s", logged)
 	}
 }
 

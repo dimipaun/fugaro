@@ -1598,9 +1598,21 @@ var hopByHop = map[string]bool{
 // between the two binaries rather than part of any answer the agent is handed.
 // A refusal is not relayed at all (D143), so the drop is the belt to that brace
 // — a 2xx that carried the header would still not reach the agent with it.
+//
+// The chain wire's three answer members (chainwire.go: the source that served
+// the call, the fallback flag and the served model) are dropped for the
+// credential headers' reason: they are the run's own accounting of which of the
+// project's sources served a call, which is the set of credentials D143 keeps
+// from the agent, and they are read into the step's record hook before this
+// copy (serviceAnswer). They join the list for every upstream kind and not
+// only a chain-serving one, which is what the list is for: the drop is what
+// makes the answer safe to relay, so it does not depend on the run's own
+// option, and a service that wrote them to a gateway that asked for nothing
+// still does not reach the agent with them.
 var dropResponseHeaders = map[string]bool{
 	"Anthropic-Organization-Id": true, "Set-Cookie": true, "Set-Cookie2": true,
 	HeaderTier: true, HeaderCredential: true, HeaderCredentialOwner: true, HeaderSwitch: true, HeaderProbe: true,
+	HeaderSource: true, HeaderFallback: true, HeaderModel: true,
 	WorkspaceHeadroomHeader: true, WorkspaceRefusalHeader: true,
 }
 

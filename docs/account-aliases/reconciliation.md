@@ -115,7 +115,7 @@ request's follow-ups stay on the old account unless `--token` names the alias (D
 **F13 — Exists: the read surfaces.** `fugaro accounts ls --json` (`accountsListDoc`,
 `internal/cli/accounts.go:65`) is spawned by the console (`console/src/main/spawn.ts:988`); an additive
 member is admitted by the "a field never changes meaning" rule. The settings registry carries one row
-per choice key (`internal/settings/registry.go:770`, `:771`, `:991`), and `settings set` writes them
+per choice key (`internal/settings/registry.go:789`, `:790`, `:1010`), and `settings set` writes them
 (`internal/cli/settings_set.go:129`). *Consequence:* D2099 and AL3's registry row.
 
 **F14 — Exists (and keeps): the auto walk is accounts-only.** `stageAccountCandidates`

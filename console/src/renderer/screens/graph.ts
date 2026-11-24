@@ -238,10 +238,10 @@ const GRAPH_ESTIMATE_RANGE = '–'
  * `entry.ts`, exactly as it asks it for the Live screen's caps.
  *
  * It is the family's own sentence, the one `live.ts`'s `LIVE_CAPS_HIDDEN_WORD`
- * and `coordinator.ts`'s `COORDINATOR_WINDOW_HIDDEN_WORD` end with: one console
- * with one reduced mode withholding figures in three places under three shapes
- * would read as three modes. It is a second copy rather than an import for the
- * reason those two are: the screens are siblings and none owns the others.
+ * ends with: one console with one reduced mode withholding figures in two
+ * places under two shapes would read as two modes. It is a second copy rather
+ * than an import for the reason that one is: the screens are siblings and none
+ * owns the others.
  *
  * **The ready-by range is not withheld.** Minutes are not money and no mode
  * hides them, so a reduced console still says when the plan's work is ready.

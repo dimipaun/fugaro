@@ -375,8 +375,11 @@ export function locationsFor(platform: string = process.platform): PlatformLocat
  * -- git, the tools `doctor` finds with `LookPath`, `gcloud`, and their
  * plugins -- which is the leak F41 exists to forbid, and the same "a credential
  * handed over for no reader" the WSL route below leaves the key out for.
- * Nothing reaches that state yet, only because `PRODUCTION_KEYRING` is empty
- * and every paste is refused until S2.9. **A real installation must not be
+ * Nothing reaches that state, and it is the floor below that keeps it out rather
+ * than the ring: `PRODUCTION_KEYRING` is held empty (S2.9 publishes the key in
+ * `ee/licence/keys/production.pub` and the release that closes this hand-off
+ * fills the ring), and the floor hands a key to no child at all in the meantime.
+ * **A real installation must not be
  * handed the key before the child can take it back out**, so the hand-off asks a
  * floor on the child's version -- `LICENCE_KEY_CLI_FLOOR`
  * (`src/shared/version.ts`), the release that carries the registration point --
@@ -1594,6 +1597,35 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // provider is opened and nothing is sent anywhere.
     operation: 'coordinator.intents',
     words: ['coordinator', 'intents', '--all', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
+    // The orchestrator map (the console-fixes plan's CG7a; C-ORCH's document,
+    // D3221): `fugaro orchestrator map --json`, the project's active
+    // orchestrators, their connections and the coordinator's heartbeat, which is
+    // what the Coordinator tab draws. It is `coordinator status`'s shape rather
+    // than `coordinator show`'s -- `words` carries the whole argv and `args` is
+    // empty -- and that is the security answer here too: there is no field a
+    // renderer could fill, so no word of the argv is caller-influenced at all.
+    //
+    // **The command is registered from `ee/`** (`ee/orchestrator/cli/map.go`) and
+    // no released CLI carries it, so the row is unreachable today: the read is
+    // behind `ORCHESTRATOR_MAP_CLI_FLOOR` (`src/shared/version.ts`), and below
+    // it the tab names the CLI version it needs instead of spawning this row.
+    // The row is declared now because it is the allow-list's entry, and the one
+    // independent review it needs is this task's.
+    //
+    // It takes `--project`/`--config` like every other read of a project (rule
+    // 3) -- the command resolves the project's own database the way the stored
+    // view does -- and it carries no `--dir`: the map is built from the
+    // caller's database and needs no checkout. Nothing else is fixed here and
+    // nothing else is reachable: no `--repo`, no `--since` and no `--source`,
+    // because the map is already the project's active set and this console
+    // draws no control that narrows it.
+    operation: 'orchestrator.map',
+    words: ['orchestrator', 'map', '--json'],
     takesProject: true,
     args: [],
     dirFlag: false,

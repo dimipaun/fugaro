@@ -315,31 +315,26 @@ func TestInterruptedAttemptsCountTowardsTheRunTotal(t *testing.T) {
 // violation fails the stage, named, whatever else arrived during it (C1.17).
 func TestViolationWinsOverTheExhaustedAnswer(t *testing.T) {
 	const violation = "model claude-x is not pinned for stage implement"
-	var mu sync.Mutex
-	var handle *runner.RunHandle
-	runner.OnRun(t, func(rh *runner.RunHandle) {
-		mu.Lock()
-		handle = rh
-		mu.Unlock()
-		rh.SetStageExtra(func(stage string) ([]string, int64) {
-			if stage == "implement" {
-				return []string{violation, "and another"}, 0
-			}
-			return nil, 0
-		})
-	})
 	h := newHarness(t, "", nil)
+	handle := watchRun(t)
 	runner.SetCredsWait(t, func(ctx context.Context, d time.Duration) error {
 		t.Errorf("the runner waited %s for a credential after a violation; the violation decides the stage", d)
 		return nil
 	})
 	stage := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
-		mu.Lock()
-		rh := handle
-		mu.Unlock()
+		rh := handle()
 		if rh == nil {
 			t.Error("the run has not started")
 			return agent.Result{}, nil
+		}
+		// The violations are the gateway's own, as they are in a run: two
+		// calls it refuses — a model the stage is not pinned for — and then
+		// the credentials service's answer, so the runner meets both in the
+		// order this case is about.
+		for _, model := range []string{"claude-x", "claude-y"} {
+			if status, body := post(t, req, model, 100); status != 400 {
+				t.Errorf("a call for %s: status %d %s, want the gateway's refusal", model, status, body)
+			}
 		}
 		rh.NoteExhausted(time.Now().Add(3 * time.Minute))
 		<-ctx.Done() // the answer ends the stage

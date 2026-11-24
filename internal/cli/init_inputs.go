@@ -30,7 +30,9 @@ import (
 //
 // The GCP project's ID (D4): `fugaro setup`'s suggestion is a project to
 // create, named after this one — `fugaro-<name>`, defaultGCPProject — and
-// nothing else, because Fugaro only starts fresh. `fugaro update` on a new
+// nothing else. That name is one to create, or to adopt where a project
+// already carries it and holds nothing of Fugaro's (the owner's ruling of
+// 2026-11-22). `fugaro update` on a new
 // machine asks for an installation that already exists, so it also offers the
 // project this machine is already working in (suggestGCPProject:
 // GOOGLE_CLOUD_PROJECT or the quota project of the application default

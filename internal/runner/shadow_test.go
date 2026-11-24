@@ -637,6 +637,15 @@ func TestShadowBudgetBackendFailureIsInfraError(t *testing.T) {
 	t.Run("unwritable managed settings", func(t *testing.T) {
 		g, _ := armGW(t, armCfg(t), "50", challengerModel, armLayer)
 		g.deps.ManagedSettingsPath = filepath.Join(t.TempDir(), "absent", "managed-settings.json")
+		// The directory is the image's, so the run that takes the precondition
+		// is a cloud one: a local invocation has no image, holds no such
+		// directory to require, and takes neither the check nor the write
+		// (AB1b, D149; the #3481 finding, and
+		// TestALocalRunNeedsNoManagedSettingsDirectory).
+		g.deps.Local = false
+		g.deps.Project = "aurora"
+		g.deps.Execution = cloudRunExecution(fixtureJob())
+		g.deps.Env = append(g.deps.Env, "CLOUD_RUN_EXECUTION=exec-1")
 		pushes := countPushes(t, g.harness)
 		rec, err := g.run(t)
 		if err == nil || rec == nil || rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone {
