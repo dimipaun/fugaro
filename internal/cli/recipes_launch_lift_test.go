@@ -58,10 +58,11 @@ func TestLaunchEmbedsTheCopy(t *testing.T) {
 		testutil.IsolateGit(t)
 		t.Chdir(t.TempDir())
 
-		if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261124-120000-a001", "Add a feature"); err != nil {
+		id := wallRunIDAt(0, "120000", "a001")
+		if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", id, "Add a feature"); err != nil {
 			t.Fatalf("a launch of a repository whose ref names a repository recipe: %v", err)
 		}
-		got := readSpec(t, f.cloudFixture, "20261124-120000-a001").Recipe
+		got := readSpec(t, f.cloudFixture, id).Recipe
 		want := strings.Replace(repoRecipe, "name: mine", "name: "+copied, 1)
 		if got == nil || got.Name != copied || got.Source != string(recipe.SourceProject) || got.YAML != want {
 			t.Fatalf("task recipe = %+v, want the project's copy of mine (%s) embedded: agent.recipe was read from the ref's file, so what it names has to reach the run as its copy (R7)", got, copied)
@@ -170,10 +171,11 @@ func TestNoTaskCarriesARepoRecipe(t *testing.T) {
 				projectRecipesFixture(t, f, map[string]string{"mine": repoRecipe})
 				recipeCheckout(t, f, "", map[string]string{recipe.RepoPath("mine"): repoRecipe})
 				writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseSeal)
-				if _, _, err := execute(t, "run", "--run-id", "20261124-120000-b001", "--recipe", "mine", "A task"); err != nil {
+				id := wallRunIDAt(0, "120000", "b001")
+				if _, _, err := execute(t, "run", "--run-id", id, "--recipe", "mine", "A task"); err != nil {
 					t.Fatal(err)
 				}
-				return f, readSpecOf(t, f, mustSlug("github", "acme/other"), "20261124-120000-b001")
+				return f, readSpecOf(t, f, mustSlug("github", "acme/other"), id)
 			},
 		},
 		{
@@ -184,10 +186,11 @@ func TestNoTaskCarriesARepoRecipe(t *testing.T) {
 				publishCopy(t, f, "acme/other", "mine", repoRecipe)
 				recipeCheckout(t, f, "  recipe: mine\n", map[string]string{recipe.RepoPath("mine"): repoRecipe})
 				writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseSeal)
-				if _, _, err := execute(t, "run", "--run-id", "20261124-120000-b002", "A task"); err != nil {
+				id := wallRunIDAt(0, "120000", "b002")
+				if _, _, err := execute(t, "run", "--run-id", id, "A task"); err != nil {
 					t.Fatal(err)
 				}
-				return f, readSpecOf(t, f, mustSlug("github", "acme/other"), "20261124-120000-b002")
+				return f, readSpecOf(t, f, mustSlug("github", "acme/other"), id)
 			},
 		},
 		{
