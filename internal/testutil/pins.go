@@ -54,9 +54,11 @@ func TakeFilePins(cfg string) (file, layer string) {
 	if root.Kind != yaml.MappingNode {
 		return cfg, ""
 	}
-	if agent := mapGet(root, "agent"); agent == nil || agent.Kind != yaml.MappingNode {
-		// A layer or a fragment: nothing here is a repository's own file, and a
-		// test that hands one to a harness is testing something else.
+	if mapGet(root, "defaults") != nil || projectOf(root) == "" {
+		// A project layer's own text (its defaults: block), or a fragment
+		// naming no project for a layer to apply to: neither is a repository's
+		// own file, and a test that hands one to a harness is testing
+		// something else.
 		return cfg, ""
 	}
 	moved := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
@@ -346,13 +348,13 @@ func encodeNode(doc *yaml.Node) string {
 // own is priced by: the three roles a run must name, in the roles' own shape.
 // It is what the two runner harnesses install so that a test handed the bare
 // fixture still runs a stage at all, and it answers "" for the configurations
-// those harnesses leave alone: a file with no agent block, which is a layer or
-// a fragment rather than a repository's own file; one that names a model or a
-// models block at all — even an empty one, which is how a test about the pins
-// rule asks for a run that pins nothing; one the gateway does not carry, which
-// is every oauth run (D3026, R12), the only ones with no pins to price; one
-// that does not parse, which is the config under test in tests of their own;
-// and one that names no project, which is a file no layer applies to.
+// those harnesses leave alone: a project layer's own text, which is not a
+// repository's file at all; one that names a model or a models block at all —
+// even an empty one, which is how a test about the pins rule asks for a run
+// that pins nothing; one the gateway does not carry, which is every oauth run
+// (D3026, R12), the only ones with no pins to price; one that does not parse,
+// which is the config under test in tests of their own; and one that names no
+// project, which is a file no layer applies to.
 func PinsLayerText(cfg string) string {
 	var doc yaml.Node
 	if err := yaml.Unmarshal([]byte(cfg), &doc); err != nil || len(doc.Content) != 1 {
@@ -362,15 +364,17 @@ func PinsLayerText(cfg string) string {
 	if root.Kind != yaml.MappingNode || projectOf(root) == "" {
 		return ""
 	}
+	if mapGet(root, "defaults") != nil {
+		return ""
+	}
 	agent := mapGet(root, "agent")
-	if agent == nil || agent.Kind != yaml.MappingNode {
-		return ""
-	}
-	if mapGet(agent, "model") != nil || mapGet(agent, "models") != nil {
-		return ""
-	}
-	if auth := mapGet(agent, "auth"); auth != nil && auth.Value == "oauth" {
-		return ""
+	if agent != nil && agent.Kind == yaml.MappingNode {
+		if mapGet(agent, "model") != nil || mapGet(agent, "models") != nil {
+			return ""
+		}
+		if auth := mapGet(agent, "auth"); auth != nil && auth.Value == "oauth" {
+			return ""
+		}
 	}
 	models := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	for role, model := range roleModels {

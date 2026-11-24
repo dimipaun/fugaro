@@ -67,7 +67,7 @@ func TestFixturePinsLeavesTheFilesThatAskForNoPins(t *testing.T) {
 	for name, cfg := range map[string]string{
 		"empty models": strings.Replace(fixture, "agent:\n", "agent:\n  models: {}\n", 1),
 		"oauth":        strings.Replace(fixture, "auth: api-key", "auth: oauth", 1),
-		"no agent":     "version: 1\nproject: aurora\nworkflows: {}\n",
+		"a layer":      "version: 1\nproject: aurora\ngcp_project: " + PinsGCPProject + "\ndefaults: {}\n",
 		"no project":   strings.Replace(fixture, "project: aurora\n", "", 1),
 		"not a config": "project: [\n",
 	} {
@@ -76,7 +76,7 @@ func TestFixturePinsLeavesTheFilesThatAskForNoPins(t *testing.T) {
 			if layer != "" {
 				t.Errorf("a layer was installed over %q:\n%s", name, layer)
 			}
-			if !strings.Contains(file, "agent:") && name != "no agent" && name != "not a config" {
+			if !strings.Contains(file, "agent:") && name != "a layer" && name != "not a config" {
 				t.Errorf("the file was emptied rather than left alone:\n%s", file)
 			}
 		})
