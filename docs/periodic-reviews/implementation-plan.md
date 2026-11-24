@@ -1921,8 +1921,9 @@ aggregate at `<dir>/<YYYY>/<key>.md` beside them, and the index regenerated over
 a second run with nothing new in the store ends without a pull request; and a file the folder holds
 and the store does not is still there, named in the run's record. **The script is
 `scripts/live-checks/check343.sh`** (its own test `scripts/live-checks/check343_test.sh`), whose one
-command makes the check's three launches, the third only when `--stray <path>` names the folder-only
-file. Unlike 340 it creates no account, writes no IAM and needs no teardown, because the read is the
+command makes the check's two launches — three when the base branch already holds the store's
+reports, the one the second-run criterion is read on — and the last of them only when `--stray
+<path>` names the folder-only file. Unlike 340 it creates no account, writes no IAM and needs no teardown, because the read is the
 launcher's existing bucket-wide `objectViewer` and the write is the ordinary push path. Owner-run,
 **NOT RUN**.
 

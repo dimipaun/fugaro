@@ -64,7 +64,13 @@ printf 'fugaro %s\n' "$*" >>"${FAKE343_STATE:?}/calls"
 case "${1:-} ${2:-}" in
 "doctor --json") cat "$FAKE343_STATE/doctor.json" ;;
 "project policy") cat "$FAKE343_STATE/policy.json" ;;
-"run --recipe") cat "$FAKE343_STATE/launch$(( $(grep -c '^fugaro run ' "$FAKE343_STATE/calls") )).json" ;;
+"run --recipe")
+  # The run a launch answers for, in the order the case's base state lets the
+  # check make them: a base that still lacks a stored report never reaches step
+  # 4's launch, so the case's own order is what the check sees.
+  n=$(grep -c '^fugaro run ' "$FAKE343_STATE/calls")
+  pick=$(awk -v n="$n" '{print $n; exit}' "$FAKE343_STATE/launch_order")
+  cat "$FAKE343_STATE/launch${pick:-$n}.json" ;;
 "runs ls") cat "$FAKE343_STATE/ls.json" ;;
 "logs "*) cat "$FAKE343_STATE/logs.txt" ;;
 *)
@@ -151,6 +157,7 @@ reset_state() {
   rm -rf "$state"
   mkdir -p "$state" "$work/tmp"
   : >"$state/calls"
+  echo "1 2 3" >"$state/launch_order"
   echo "git@github.com:acme/reports-mirror.git" >"$state/origin"
   cat >"$state/doctor.json" <<'EOF'
 {"ok":true,"checks":[],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
@@ -231,6 +238,11 @@ run_check() { # run_check [args...] -> sets $out $status $err
 
 calls() { cat "$state/calls" 2>/dev/null || true; }
 
+# The runs a case's base state lets the check launch: over a base that still
+# lacks a stored report the check makes step 2's launch and step 5's, and step
+# 4's is not judged.
+launches() { echo "$*" >"$state/launch_order"; }
+
 # ---------------------------------------------------------------------- cases
 test_the_help_lists_the_one_command() {
   reset_state
@@ -303,19 +315,40 @@ test_stops_when_the_store_holds_nothing() {
   expect_absent "$(calls)" "fugaro run " "nothing was launched"
 }
 
-test_the_whole_check_passes() {
+test_the_commit_run_passes_and_the_empty_case_waits_for_the_merge() {
   reset_state
+  launches 1 3
   run_check --stray "$STRAY"
-  expect_status "$status" 0 "every criterion holds"
-  expect_contains "$out" "CHECK 343 RESULT: PASS (exit 0)" "the block's verdict"
+  expect_status "$status" 3 "step 4 is not judged over a base that still lacks a stored report"
+  expect_contains "$out" "CHECK 343 RESULT: INCOMPLETE (exit 3)" "the block's verdict"
   expect_contains "$out" "FACT designation: PASS" "the designation is the checkout's repository"
   expect_contains "$out" "FACT store: PASS" "the store's listing reads back"
   expect_contains "$out" "FACT mirror: PASS" "the store and the checkout's folder are compared"
   expect_contains "$out" "FACT files: PASS" "the pull request carries exactly what the commit had to"
-  expect_contains "$out" "FACT nothing-new: PASS" "the second run opened no pull request"
+  expect_contains "$out" "FACT nothing-new: UNVERIFIED" "step 4 says it was not judged here"
+  expect_contains "$out" "not judged here" "and that the base is why"
+  expect_contains "$out" "merge pull request #41" "with the line that reaches it"
   expect_contains "$out" "FACT stray: PASS" "the folder's own file survives and is named"
   expect_contains "$out" "FACT restore: PASS" "nothing the check creates has to be put back"
   expect_absent "$out" "not reached" "every row was reached"
+  [ "$(grep -c '^fugaro run ' "$state/calls")" = 2 ] ||
+    fail "a base behind the store costs step 2's run and step 5's, and step 4's was not launched: calls: $(calls)"
+}
+
+test_the_empty_case_passes_over_a_base_that_holds_the_reports() {
+  reset_state
+  cat >"$state/base.txt" <<EOF
+$DIR/acme-sandbox/2026/2026-11-22.md
+$DIR/2026/2026-W46.md
+$DIR/README.md
+EOF
+  ls_doc "$RUN1 ready 0" "$RUN2 ready 0"
+  run_check
+  expect_status "$status" 3 "step 3 verifies nothing over a base that already holds the reports"
+  expect_contains "$out" "FACT nothing-new: PASS" "the run over a store with nothing new opened no pull request"
+  expect_contains "$out" "FACT files: UNVERIFIED" "step 3 says the commit had nothing to do"
+  [ "$(grep -c '^fugaro run ' "$state/calls")" = 2 ] ||
+    fail "a base that holds the reports costs step 2's run and step 4's: calls: $(calls)"
 }
 
 test_fails_on_a_file_the_store_does_not_hold() {
@@ -343,18 +376,16 @@ test_fails_when_the_first_run_opens_no_pull_request() {
   expect_status "$status" 1 "a checked-out-behind mirror with no pull request is a finding"
   expect_contains "$out" "FACT files: FAIL" "the row fails"
   expect_contains "$out" "opened no pull request" "and says so"
+  expect_contains "$out" "FACT nothing-new: UNVERIFIED" "and step 4 is still not judged over this base"
+  expect_contains "$out" "bring origin/main up to the store yourself" "with a line that does not name a pull request there is none of"
+  [ "$(grep -c '^fugaro run ' "$state/calls")" = 1 ] || fail "step 4's run is not launched: calls: $(calls)"
 }
 
 test_a_rewritten_report_is_not_a_file_the_store_does_not_hold() {
   reset_state
-  cat >"$state/base.txt" <<EOF
-$DIR/acme-sandbox/2026/2026-11-22.md
-$DIR/2026/2026-W46.md
-$DIR/README.md
-EOF
-  pr_doc 41 "$DIR/README.md modified" "$DIR/acme-sandbox/2026/2026-11-22.md modified"
+  pr_doc 41 "$DIR/README.md modified" "$DIR/acme-sandbox/2026/2026-11-22.md modified" "$DIR/2026/2026-W46.md added"
   run_check
-  expect_status "$status" 0 "a report the store overwrote is a report the store holds"
+  expect_status "$status" 3 "a report the store overwrote is a report the store holds"
   expect_contains "$out" "FACT files: PASS" "the row passes"
 }
 
@@ -369,11 +400,17 @@ EOF
   run_check
   expect_status "$status" 3 "a caught-up checkout verifies nothing, and says so"
   expect_contains "$out" "FACT files: UNVERIFIED" "the row says the check could not see the commit"
+  expect_contains "$out" "FACT nothing-new: PASS" "and the run over it opened no pull request"
 }
 
 test_fails_when_the_second_run_opens_a_pull_request() {
   reset_state
-  ls_doc "$RUN1 ready 41" "$RUN2 ready 43"
+  cat >"$state/base.txt" <<EOF
+$DIR/acme-sandbox/2026/2026-11-22.md
+$DIR/2026/2026-W46.md
+$DIR/README.md
+EOF
+  ls_doc "$RUN1 ready 0" "$RUN2 ready 43"
   run_check
   expect_status "$status" 1 "a second run over nothing new is a finding"
   expect_contains "$out" "FACT nothing-new: FAIL" "the row fails"
@@ -390,6 +427,7 @@ test_fails_when_the_stray_file_is_not_on_the_base_branch() {
 
 test_fails_when_the_run_deletes_the_stray_file() {
   reset_state
+  launches 1 3
   cat >"$state/pr42.diff" <<EOF
 diff --git a/$STRAY b/$STRAY
 deleted file mode 100644
@@ -407,6 +445,7 @@ EOF
 
 test_is_unverified_when_the_run_log_does_not_answer() {
   reset_state
+  launches 1 3
   : >"$state/logs.txt"
   run_check --stray "$STRAY"
   expect_status "$status" 3 "a log that answered nothing is UNVERIFIED, not a finding"
@@ -415,6 +454,7 @@ test_is_unverified_when_the_run_log_does_not_answer() {
 
 test_fails_when_the_run_does_not_name_the_stray_file() {
   reset_state
+  launches 1 3
   echo "fugaro: committed docs/fugaro-reviews-mirror/README.md" >"$state/logs.txt"
   run_check --stray "$STRAY"
   expect_status "$status" 1 "a folder-only file the run leaves unnamed is a finding"
@@ -425,7 +465,7 @@ test_fails_when_the_run_does_not_name_the_stray_file() {
 test_records_step_five_as_not_run_without_a_stray_file() {
   reset_state
   run_check
-  expect_status "$status" 0 "steps 2 to 4 hold"
+  expect_status "$status" 3 "steps 2 to 4 ran, with step 4 not judged over this base"
   expect_contains "$out" "FACT stray: INFO" "step 5 is recorded as not run"
   expect_contains "$out" "step 5 was not run" "with how to run it"
 }
@@ -493,7 +533,8 @@ t test_refuses_another_installation
 t test_refuses_when_no_reports_commit_is_designated
 t test_refuses_a_designation_that_names_another_repository
 t test_stops_when_the_store_holds_nothing
-t test_the_whole_check_passes
+t test_the_commit_run_passes_and_the_empty_case_waits_for_the_merge
+t test_the_empty_case_passes_over_a_base_that_holds_the_reports
 t test_fails_on_a_file_the_store_does_not_hold
 t test_fails_on_a_report_the_checkout_lacked
 t test_fails_when_the_first_run_opens_no_pull_request

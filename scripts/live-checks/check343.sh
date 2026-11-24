@@ -3,9 +3,9 @@
 # `reports_commit` designated, ONE
 #   fugaro run --recipe commit-reports --commit-reports "commit the stored reports"
 # in that repository's checkout carries the project's stored reports into it, a
-# second run of the same command with nothing new in the store ends WITHOUT a
-# pull request, and a file the folder holds and the store does not is left where
-# it is, named in the run's own record and not taken away.
+# run of the same command over a base branch that already holds them ends
+# WITHOUT a pull request, and a file the folder holds and the store does not is
+# left where it is, named in the run's own record and not taken away.
 #
 # The periodic-reviews plan's §P8 (R9, D2750–D2754) and the failures none of the
 # hermetic tests can take of a real repository: what the store holds, what the
@@ -15,8 +15,8 @@
 # Usage:      bash scripts/live-checks/check343.sh [--stray <path>] [--preflight]
 #             bash scripts/live-checks/check343.sh --help
 #             --stray <path>   a file the folder holds and the store does not, committed and pushed
-#                              on the base branch (the check's third run: see step 5 below). Without
-#                              it the check runs steps 2 to 4 and records step 5 as not run.
+#                              on the base branch (the check's last run: see step 5 below). Without
+#                              it the check records step 5 as not run.
 #             --preflight      reads every precondition and prints the blockers; launches nothing.
 # Needs:      bash, mktemp, python3, git, gcloud (the store's listing, with your
 #             own launcher account: the read is the launcher's existing
@@ -27,10 +27,11 @@
 #             EdgeWeb or EdgeServer, in the designated repository's checkout.
 #             The check refuses a doctor that names another installation or
 #             project, and a designation that names another repository.
-# Costs:      THREE runs of a commit-reports recipe. Each is a real Cloud Run
-#             job: a clone, the store's objects downloaded, a commit and one
-#             senior review — the run's own budget, the policy's ordinary one,
-#             and no model but the review's. Every launch spends money.
+# Costs:      TWO runs of a commit-reports recipe — THREE when the base branch
+#             already holds every stored report. Each is a real Cloud Run job: a
+#             clone, the store's objects downloaded, a commit and one senior
+#             review — the run's own budget, the policy's ordinary one, and no
+#             model but the review's. Every launch spends money.
 # Runs:       by YOU. No agent runs any step of it; its own test
 #             (check343_test.sh) drives it against fake fugaro, gcloud, gh and
 #             git on PATH and never touches a bucket, a cloud or a repository.
@@ -73,6 +74,7 @@ POLL_SECONDS=${CHECK343_POLL_SECONDS:-20}
 REPO=""
 DIR=""
 RUN1="" RUN2="" RUN3=""
+RUN1_PR=0
 FACTS=""
 SCRATCH=""
 SCRATCH_REMOVED=no
@@ -390,6 +392,7 @@ step_commit() {
     ;;
   esac
   fact settled1 PASS "run $run settled $RUN_STATUS"
+  RUN1_PR=$RUN_PR
   local missing
   missing=$(wc -l <"${SCRATCH}/missing.txt" | tr -d ' ')
   if [ "$RUN_PR" = 0 ]; then
@@ -436,8 +439,23 @@ PY
   fact pr1 INFO "the pull request the commit run opened: #$RUN_PR $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8")).get("url",""))' "${SCRATCH}/pr1.json")"
 }
 
+# Step 4: the same launch over a base that already holds the store, which is the
+# only checkout a run opens no pull request on. A launch clones the base branch
+# again and is handed every stored report, so over a base that still lacks them
+# the second run opens a pull request by construction: the criterion is read on
+# the run the owner makes after the first one's pull request is in.
 step_nothing_new() {
-  local run
+  local run missing how
+  missing=$(wc -l <"${SCRATCH}/missing.txt" | tr -d ' ')
+  if [ "$missing" != 0 ]; then
+    if [ "$RUN1_PR" != 0 ]; then
+      how="merge pull request #$RUN1_PR into ${BASE}"
+    else
+      how="bring origin/${BASE} up to the store yourself (the first run opened no pull request)"
+    fi
+    fact nothing-new UNVERIFIED "not judged here: origin/${BASE} still lacks $missing of the store's report(s), so a second run over it opens a pull request by construction. $how, then run the check again — this step is read on a run over a base that holds them"
+    return 0
+  fi
   run=$(launch launch2)
   [ -n "$run" ] || { fact launch2 FAIL "the second launch answered no run id"; return 0; }
   RUN2=$run
@@ -478,16 +496,16 @@ step_stray() {
   run=$(launch launch3)
   [ -n "$run" ] || { fact launch3 FAIL "the third launch answered no run id"; return 0; }
   RUN3=$run
-  fact launch3 PASS "the third commit run is $run"
+  fact launch3 PASS "step 5's commit run is $run"
   wait_for_run "$run"
   case "$RUN_STATUS" in
   ready | succeeded) ;;
   timeout)
-    fact stray FAIL "the third run $run did not settle within ${SETTLE_SECONDS}s: read it with $FUGARO watch $run"
+    fact stray FAIL "step 5's run $run did not settle within ${SETTLE_SECONDS}s: read it with $FUGARO watch $run"
     return 0
     ;;
   *)
-    fact stray FAIL "the third run $run settled as $RUN_STATUS: read it with $FUGARO watch $run"
+    fact stray FAIL "step 5's run $run settled as $RUN_STATUS: read it with $FUGARO watch $run"
     return 0
     ;;
   esac
