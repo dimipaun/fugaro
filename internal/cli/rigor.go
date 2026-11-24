@@ -450,33 +450,32 @@ func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
 	//
 	// The area form carries the two baselines that resolution cannot see: the
 	// mode of the rule the edit addresses, for a glob that does not match its own
-	// literal text (rigorRuleLowered), and the layer's own default, for a rule it
-	// does not carry yet (rigorRuleIsNew).
+	// literal text (rigorRuleLowered), and the level the write's own repository
+	// resolves to, for a rule it does not carry yet (rigorRuleIsNew).
 	baseline := rigorResolve(prev.block, repo, o.area)
 	after := rigorResolve(edited.block, repo, o.area)
-	// The mode every path of the layer falls back to: the same resolution with
-	// no repository and no glob, which is the baseline a rule the layer does not
-	// carry yet is compared against.
-	projectDefault := rigorResolve(prev.block, "", "")
 	typed, lowered, why := false, "", ""
 	switch {
 	case after.Rank() < baseline.Rank():
 		typed = true
 		lowered = fmt.Sprintf("%s from %s to %s", rigorModeSubject(repo), baseline, after)
-	case o.area != "" && rigorRuleIsNew(prev.block.areas, o) && mode.Rank() < projectDefault.Rank():
+	case o.area != "" && rigorRuleIsNew(prev.block.areas, o) && mode.Rank() < baseline.Rank():
 		// A rule the layer does not carry yet is the one lowering the two cases
-		// around this one cannot see. Adding a rule never lowers a resolution —
-		// it can only raise or keep it — so the resolution over the glob reads
-		// the same before and after, and an area rule REPLACES the default for
-		// the paths it matches (rigor.Resolve's own precedence): with the layer's
-		// default at `critical`, `--area docs/** poc` is a real lowering that
-		// neither the resolution above nor the rule's own mode (there is no rule
-		// yet) reports. The default is the floor every resolution falls back to,
-		// so a new rule below it is the safe direction: a new rule whose paths a
-		// stricter existing rule already covers is flagged too, and no real
-		// lowering is missed.
+		// around this one cannot see. Where the new rule is added to one rank
+		// beside whatever already matches — the project-wide form, and the member
+		// form for a rule the layer carries — adding it never lowers a resolution,
+		// since the strictest of the rank's rules decides: with the layer's default
+		// at `critical`, `--area docs/** poc` is a real lowering that neither the
+		// resolution above nor the rule's own mode (there is no rule yet) reports.
+		// A MEMBER rule is the exception, and it is read at the rank that replaces
+		// the project's entry for the repository (D3294): a new member below that
+		// entry lowers this repository's paths even where the project's own default
+		// is below the mode written, which is why the baseline here is what THIS
+		// repository resolves to and not the layer's default. The baseline is the
+		// level those paths fall back to today, so a new rule a stricter existing
+		// rule already covers is flagged too, and no real lowering is missed.
 		typed = true
-		lowered = fmt.Sprintf("the new rule %s, which sets %s where %s resolves to %s today", safetext.Field(o.area), mode, rigorWhere(repo), projectDefault)
+		lowered = fmt.Sprintf("the new rule %s, which sets %s where %s resolves to %s today", safetext.Field(o.area), mode, rigorWhere(repo), baseline)
 	case o.area != "" && rigorRuleLowered(prev.block.areas, o, mode):
 		// The resolution above reads the glob as a PATH, so a glob that does not
 		// match its own text — `docs/{a,b}/**`, `docs/[ab]*` — resolves to the

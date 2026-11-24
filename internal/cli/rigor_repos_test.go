@@ -216,6 +216,75 @@ func TestRigorSetRepoWritesRigorRepos(t *testing.T) {
 	}
 }
 
+// TestRigorSetMemberFormFence pins the sensitive direction of both forms the
+// member write takes, and the baseline it is read against: the level a member
+// sets decides the paths it names for one repository, and a rule naming that
+// repository is read at the rank that REPLACES the project's entry for the whole
+// of it (D3294). So the fence reads the write against the level that repository
+// resolves to today — never against the project's own default, which may sit
+// below it — and a mode between the two is a lowering of that repository's paths
+// that a coding agent's session may not make (D832, D1180). The two globs are
+// the two shapes the resolution sees: one that matches its own literal text, and
+// one that does not.
+func TestRigorSetMemberFormFence(t *testing.T) {
+	settingsWriteHome(t)
+	noTerminal(t)
+
+	// The layer's default is poc and owner/repo-a is held at critical by the
+	// map, so startup — the mode written below — is a raise for the project and a
+	// lowering for that repository.
+	const held = "defaults:\n  rigor:\n    default: poc\n    repos:\n      owner/repo-a: critical\n"
+	for _, area := range []string{"docs/**", "docs/{a,b}/**"} {
+		path := rigorReposFile(t, held)
+		before := readFileString(t, path)
+		agentSession(t)
+		out, _, err := execute(t, "rigor", "set", "startup", "--area", area, "--name", "docs", "--repo", "owner/repo-a")
+		if err == nil || !strings.Contains(err.Error(), "coding agent's session") {
+			t.Fatalf("--area %s: a coding agent's session lowered a repository's paths: %v\n%s", area, err, out)
+		}
+		if readFileString(t, path) != before {
+			t.Fatalf("--area %s: the refused write changed the layer file", area)
+		}
+		noAgentSession(t)
+		out, _, err = execute(t, "rigor", "set", "startup", "--area", area, "--name", "docs", "--repo", "owner/repo-a")
+		if err != nil {
+			t.Fatalf("--area %s: the owner's own terminal was refused a lowering: %v\n%s", area, err, out)
+		}
+		assertNoPrompt(t, out)
+		if !strings.Contains(out, "lowers") || !strings.Contains(out, "critical") {
+			t.Errorf("--area %s: the write does not say what it lowers from the level this repository resolves to:\n%s", area, out)
+		}
+		rule := rigorLayerRule(t, path, "docs")
+		if rule.Level != rigor.Startup {
+			t.Errorf("--area %s: the rule reads level %q, want %q:\n%s", area, rule.Level, rigor.Startup, readFileString(t, path))
+		}
+		if member := rigorMemberOf(t, rule, "owner/repo-a"); len(member.Paths) != 1 || member.Paths[0] != area {
+			t.Errorf("--area %s: the member's paths read %v:\n%s", area, member.Paths, readFileString(t, path))
+		}
+		if got := rigorLayerRigor(t, path).Repos["owner/repo-a"]; got != rigor.Critical {
+			t.Errorf("--area %s: the write moved the repository's own entry to %q:\n%s", area, got, readFileString(t, path))
+		}
+		rigorReadsBack(t, readFileString(t, path))
+	}
+
+	// The other direction: at or above the level owner/repo-a resolves to there is
+	// nothing the sensitive direction has to say, and the write is the ordinary
+	// one — the same class the project-wide form gives a mode at or above the
+	// layer's default.
+	path := rigorReposFile(t, "defaults:\n  rigor:\n    default: poc\n    repos:\n      owner/repo-a: startup\n")
+	noAgentSession(t)
+	out, _, err := execute(t, "rigor", "set", "critical", "--area", "docs/{a,b}/**", "--name", "docs", "--repo", "owner/repo-a")
+	if err != nil {
+		t.Fatalf("the owner's own terminal was refused a raise: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "lowers") {
+		t.Errorf("a raise is printed as a lowering:\n%s", out)
+	}
+	if got := rigorLayerRule(t, path, "docs").Level; got != rigor.Critical {
+		t.Errorf("the rule reads level %q, want %q:\n%s", got, rigor.Critical, readFileString(t, path))
+	}
+}
+
 // TestRigorSetLayerRepoRefused is R15's other half (F23): a repository's own
 // fugaro.yaml states neither key any more, so the layer this command used to
 // write them into is refused — with the one sentence C1 holds for the key in
