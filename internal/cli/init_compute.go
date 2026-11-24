@@ -316,8 +316,8 @@ func (s *computeStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outc
 // with what it costs.
 //
 // A Batch run in flight is named in one line and changes nothing: the update is
-// safe while runs fly, always (the owner's requirement of 2026-11-09), and this
-// step is one of the ones that can still reach one (docs/design/update-in-flight.md).
+// safe while runs fly, always (the owner's requirement of 2026-11-09). The count
+// is the runs on this backend, read the way the update's own note reads them.
 func (s *computeStage) updateApply(ctx context.Context) (initflow.Outcome, error) {
 	r := s.e.r
 	plan, err := s.plan(ctx)
