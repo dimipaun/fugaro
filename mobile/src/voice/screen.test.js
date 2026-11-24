@@ -875,6 +875,7 @@ test('the screen shows what it is doing, in one frozen snapshot', async () => {
   const state = h.screen.state();
   assert.equal(Object.isFrozen(state), true);
   assert.deepEqual(Object.keys(state).sort(), [
+    'conversation',
     'indicator',
     'lease',
     'leaseRefused',
@@ -903,6 +904,9 @@ test('the screen shows what it is doing, in one frozen snapshot', async () => {
     speaking: false,
     turn: false,
     transcript: null,
+    // No transcript is wired in this harness, so there is no conversation to
+    // show and the snapshot says so rather than guessing at one (X1, D2788).
+    conversation: [],
     refused: null,
   });
   // The indicator has its place and is never blank (P5.3.7, design §4.2): one

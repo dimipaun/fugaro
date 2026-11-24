@@ -162,14 +162,14 @@ React, which is also how "the screen draws no secret" stays a fact in CI.
 return it, and it is drawn **verbatim and once**: the read-back already ends in
 the typed cue (see above), so the screen adds no second instruction under it.
 
-It takes `{ installations, confirmation, unsent, notice, draft, onChangeText }`
-and draws, per installation, its id (D114's label), its waiting questions in
-P6.5's listing order with the destructive ones marked, and its recent summaries
-newest first and capped at `RECENT_SUMMARY_LIMIT`. **Per installation and never
-summed** (D170): nothing counts across sections, and `screen.test.js` asserts
-that no total appears on screen. P6.5's `stage` (the reminder escalation) is
-**not** drawn — nothing here reads it, and the header says so rather than
-implying it.
+It takes `{ installations, conversation, confirmation, unsent, notice, draft,
+onChangeText }` and draws, per installation, its id (D114's label), its waiting
+questions in P6.5's listing order with the destructive ones marked, and its
+recent summaries newest first and capped at `RECENT_SUMMARY_LIMIT`. **Per
+installation and never summed** (D170): nothing counts across sections, and
+`screen.test.js` asserts that no total appears on screen. P6.5's `stage` (the
+reminder escalation) is **not** drawn — nothing here reads it, and the header
+says so rather than implying it. `conversation` is the one transcript below.
 
 The unsent text from `client.pending()` is drawn too — D167's first half is
 that it is *shown* rather than queued by the SDK, so a user who typed into a
@@ -190,3 +190,49 @@ caller's, and there is no element in the tree that could write anything.
 **What is not here.** No answer buttons and no launch button: matching a typed
 line to the question it answers ("the active installation's oldest question",
 §3.4) is the caller's, because it is state this screen does not hold.
+
+## One transcript for voice and text
+
+X1 (mobile identity and pairing plan; **D2788**, the spec's *"one session, two
+modes"*). Voice and text are two views of one conversation with the operator's
+session, and `transcript.js` is the conversation: an append-only list of lines a
+view can be built, torn down and built again around without losing one.
+
+```js
+import { createTranscript, recordingMailbox, transcriptSpeaker } from './index.js';
+
+const transcript = createTranscript({ session, now, newId });   // one per project session
+
+createVoiceScreen({ pipeline, client, now, holder, transcript });   // the voice view records
+const typed = createTypedInput({ mailbox: recordingMailbox({ transcript, mailbox: client }), now, newId });
+
+// the reply, through the client's own speaker port: the mailbox outbox, and no other door
+createMailboxClient({ ..., speaker: transcriptSpeaker({ transcript, speaker: pipelineSpeaker }) });
+
+// and the text view draws the same list
+TextScreen({ conversation: transcript.entries() });
+```
+
+A line is `{ id, at, who, source, text, engine }`, closed and checked fail-closed
+the way the session port is: `who` is `operator` or `agent`, `source` is `voice`,
+`text` or `outbox`, `engine` is the tag of the engine that produced a spoken line
+(`null` for a typed one), and an unknown field is refused rather than ignored.
+The store carries the session's opaque project id and **ends at `signedOut`**: a
+later line is refused, and the lines already there stay — the conversation
+happened.
+
+**What is a line, and what is not.** A line is what reached the session: a send
+the client refused appends nothing (D167's `unsent` is where refused text stays
+visible), and a reply the speaker could not speak appends nothing either (the
+client leaves the message unacked and the next poll says it again). The
+transcript is not a history of what the owner attempted.
+
+**Who writes it, and why there are four seams and not one.** The voice view
+records its own spoken words (the engine tag is a fact only it holds at that
+moment); `recordingMailbox` wraps the client handed to `input.js`, so the typed
+door needs no change and the write is still the client's (D113); `transcriptSpeaker`
+wraps the port the client speaks replies through; and the voice screen's snapshot
+carries `conversation` beside the text view's `conversation` prop. Nothing here
+writes anything anywhere: the transcript holds what a view or the client
+produced, and a refused line is a refusal, not an append.
+

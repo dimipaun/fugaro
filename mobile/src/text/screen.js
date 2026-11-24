@@ -42,19 +42,45 @@
 // screen does not own. What the section does with the entry is: draw its
 // sentence, and mark it when it is destructive.
 //
+// **The one conversation** (mobile identity and pairing plan, Task X1; D2788).
+// The spec's sentence is *"one session, two modes"*: voice and text are two
+// views of the same conversation with the operator's session, and the list of
+// lines is `transcript.js`'s. This screen draws it, above the installation
+// sections, from the `conversation` prop -- a value it is handed, like every
+// other line on it (`transcript.entries()`, or any list shaped like one). It
+// subscribes to nothing and holds nothing: a screen that kept the conversation
+// would be a second copy of it, and the second copy is the one that loses a
+// line when the owner switches views.
+//
+// The lines are drawn in the order the store holds them -- the order they were
+// said -- and the most recent `CONVERSATION_LIMIT` of them: a conversation has
+// no natural end and a phone has one screenful, so the cap is named here rather
+// than left to whichever list the caller happens to pass. Unlike `recentSummaries`,
+// this function does **not** sort: the transcript's order is chronological by
+// construction, and a second ordering that disagreed with it by a millisecond
+// would draw the reply above the words it answers.
+//
 // **What is not here.** No answer buttons: a typed answer goes through the
 // caller's queue (`shared/prompts`' `answer`) and this screen is handed the
 // keyboard's text, not the prompt it answers -- matching a typed line to a
 // waiting question is the caller's, because the matching rule ("the active
 // installation's oldest question", §3.4) is state this screen does not hold.
 // No launch button either: a launch is D162's pass-through and belongs to the
-// action it starts.
+// action it starts. And no write: a conversation line reaches this screen
+// already accepted by the mailbox, and this screen cannot add one.
+
+import { TRANSCRIPT_WHO } from './transcript.js';
 
 /** The element type names the screen uses, in one place so a test can name
  * them too. They are the react-native primitives the entry passes in. */
 export const SCREEN = Object.freeze({
   ROOT: 'fugaro.text',
   TITLE: 'fugaro.text.title',
+  CONVERSATION: 'fugaro.text.conversation',
+  CONVERSATION_LABEL: 'fugaro.text.conversation.label',
+  LINE: 'fugaro.text.conversation.line',
+  LINE_WHO: 'fugaro.text.conversation.line.who',
+  LINE_TEXT: 'fugaro.text.conversation.line.text',
   INSTALLATION: 'fugaro.text.installation',
   INSTALLATION_NAME: 'fugaro.text.installation.name',
   PROMPT: 'fugaro.text.prompt',
@@ -83,6 +109,33 @@ export const DESTRUCTIVE_WORD = 'needs confirmation';
 
 /** The label above a section's recent summaries. */
 export const RECENT_LABEL = 'Recent';
+
+/** The label above the one conversation voice and text share (D2788). */
+export const CONVERSATION_LABEL = 'Conversation';
+
+/** What the conversation says when nothing has been said in this session yet. */
+export const NO_CONVERSATION = 'Nothing said yet.';
+
+/**
+ * Who said it, one word each. Both views draw the same lines, so a line has to
+ * say whose it is or the conversation reads as one voice: the owner's own words
+ * and the agent's reply are the two halves D2788's "one transcript" joins. The
+ * words are keyed by the transcript's own `who` values rather than written
+ * twice, so a third one cannot be drawn by accident -- `conversationLines`
+ * refuses a line whose `who` is not one of these.
+ */
+export const SPEAKER_WORD = Object.freeze({
+  [TRANSCRIPT_WHO.OPERATOR]: 'You',
+  [TRANSCRIPT_WHO.AGENT]: 'Agent',
+});
+
+/**
+ * How many lines of the conversation one screen shows: the most recent ones, in
+ * the order they were said. The transcript itself keeps every line -- a lost
+ * line is the one thing it may not do -- so this is the screen's bound and not
+ * the store's, named here so "what is on screen" is a fact a test states.
+ */
+export const CONVERSATION_LIMIT = 50;
 
 /** What the input is for, in one line, so an empty screen is not a puzzle. */
 export const INPUT_HINT = 'Type a message, or "Fugaro, …" for a command.';
@@ -130,6 +183,37 @@ export function recentSummaries(summaries, limit = RECENT_SUMMARY_LIMIT) {
 }
 
 /**
+ * The conversation lines this screen will draw: the most recent `limit`, oldest
+ * first, and nothing else.
+ *
+ * The same rule `recentSummaries` applies, for the same reason and with one
+ * difference: a line is drawn only when it carries a non-empty string and a
+ * `who` this screen has a word for, so a malformed value cannot reach the tree
+ * as a blank row or an unnamed speaker -- and an empty production here is an
+ * **empty list**, never a guess, which is what makes "the view shows the one
+ * transcript and invents nothing" checkable.
+ *
+ * `limit` is a tail and not a head: the newest lines are the ones the owner is
+ * looking for after a switch, and a conversation that grew past the screen's
+ * bound must not show the start of the session and hide the reply. A `limit` of
+ * zero is nothing at all, which is a value the caller may ask for.
+ */
+export function conversationLines(entries, limit = CONVERSATION_LIMIT) {
+  if (!Array.isArray(entries)) return Object.freeze([]);
+  if (!Number.isSafeInteger(limit) || limit < 0) return Object.freeze([]);
+  if (limit === 0) return Object.freeze([]);
+  const rows = entries.filter(
+    (one) =>
+      one !== null &&
+      typeof one === 'object' &&
+      typeof one.text === 'string' &&
+      one.text !== '' &&
+      Object.hasOwn(SPEAKER_WORD, one.who),
+  );
+  return Object.freeze(rows.slice(-limit));
+}
+
+/**
  * The entries the section will draw, and nothing else.
  *
  * A P6.5 listing entry is `{ prompt, destructive, safe, announcedAt, stage,
@@ -169,11 +253,21 @@ function promptLine(entry) {
  * reason `createRoot` checks its own: a screen built without the primitives
  * fails at the first render with an error a long way from the cause.
  *
- * The component takes `{ installations, confirmation, unsent, notice }`:
+ * The component takes `{ installations, conversation, confirmation, unsent,
+ * notice }`:
  *
  *   * `installations` -- `[{ account, pending, summaries }]`, one section each,
  *     in the caller's order (P6.5's `pendingAcross` accounts and the app's
  *     summaries). Nothing is summed across them;
+ *   * `conversation` -- the one transcript's lines (`transcript.entries()`),
+ *     oldest first: `{ id, at, who, source, text, engine }` as `transcript.js`
+ *     records them. The most recent `CONVERSATION_LIMIT` of them are drawn, and
+ *     the source of a line (voice, text, the outbox) is **read by nothing
+ *     here**: which door the words came through is D2788's record and not a
+ *     difference the owner should see, because the whole point of one
+ *     transcript is that a line is a line. The screen is handed a list rather
+ *     than the transcript, so it stays a pure function of its props -- the
+ *     caller appends and re-renders;
  *   * `confirmation` -- `null`, or the read-back to show (`{ readBack,
  *     deadline }`, as `input.js`'s `awaiting()` and `propose()` return it). It
  *     is drawn **verbatim and once**: the read-back that module hands out
@@ -252,8 +346,36 @@ export function createTextScreen({ React, View, Text, TextInput }) {
 
   return function TextScreen(props = {}) {
     const installations = Array.isArray(props.installations) ? props.installations : [];
+    const conversation = conversationLines(props.conversation);
     const unsent = Array.isArray(props.unsent) ? props.unsent : [];
     const children = [el(Text, { key: 'title', type: SCREEN.TITLE }, TEXT_TITLE)];
+
+    // The one conversation, first: it is what the owner came back to after
+    // switching from the voice view, and it is the same list the voice view
+    // draws (D2788). One line says who said it and then the words, in the
+    // transcript's own order -- never re-sorted, never filtered by where the
+    // line came from.
+    const lines = [
+      el(Text, { key: 'conversation:label', type: SCREEN.CONVERSATION_LABEL }, CONVERSATION_LABEL),
+    ];
+    if (conversation.length === 0) {
+      lines.push(el(Text, { key: 'conversation:nothing', type: SCREEN.NOTHING }, NO_CONVERSATION));
+    } else {
+      conversation.forEach((one, index) => {
+        lines.push(
+          el(
+            View,
+            // The transcript's ids are its own, and a caller may hand this
+            // screen a list it built; the position is the one key that is
+            // always here and always unique within one render.
+            { key: `conversation:${index}`, type: SCREEN.LINE, who: one.who },
+            el(Text, { key: 'who', type: SCREEN.LINE_WHO }, SPEAKER_WORD[one.who]),
+            el(Text, { key: 'text', type: SCREEN.LINE_TEXT }, one.text),
+          ),
+        );
+      });
+    }
+    children.push(el(View, { key: 'conversation', type: SCREEN.CONVERSATION }, ...lines));
 
     installations.forEach((one) => {
       if (one === null || typeof one !== 'object') return;
