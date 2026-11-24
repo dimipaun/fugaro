@@ -76,10 +76,15 @@ func (m Mark) Available() bool { return m.State == "" || m.State == StateAvailab
 //
 // The names are copied rather than kept: the caller's slice is usually the one
 // it built while walking an answer's headers, and a mark that held it would
-// share its backing array with whatever that caller does next. An empty list is
-// written as the empty list — "the last answer carried no rate-limit header" is
-// what Check 880 reads as a fact about the source, and it must not be the same
-// record as "no answer has been seen".
+// share its backing array with whatever that caller does next.
+//
+// An observation that found no rate-limit header writes no field at all
+// (omitempty), so a node with no "headers" reads as "this credential's last
+// recorded answer named no rate-limit header, or none has been recorded since
+// this release" — one reading of two, and the reason the field is optional: the
+// four members a selection reads keep their exact set on the wire
+// (TestModelCredentialMarksUnchanged), and Check 880 treats a source with no
+// record as a source it cannot yet answer for, never as a positive.
 func Observed(prev Mark, names []string) Mark {
 	prev.Headers = append([]string(nil), names...)
 	return prev
