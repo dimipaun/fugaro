@@ -1773,8 +1773,13 @@ test_a_deletion_that_keeps_failing_is_said_with_its_uid() {
   RUN96_ENV=(FAKE96_DELETE_FAIL=always FAKE96_SURVIVOR=yes)
   run96
   expect_status "$status" 1 "a deletion that keeps failing"
-  expect_contains "$(cat "$dir/err")" "the run identity user r~$SANDBOX_SLUG~ was NOT deleted" \
-    "a deletion that keeps failing: the line that names the user"
+  # The uid and the verdict are two needles and not one: the run id follows the
+  # uid in the line ("… r~<slug>~<run> was NOT deleted"), so a needle that glued
+  # a space to the uid would match nothing at all.
+  expect_contains "$(cat "$dir/err")" "was NOT deleted" \
+    "a deletion that keeps failing: the line that says so"
+  expect_contains "$(cat "$dir/err")" "r~$SANDBOX_SLUG~" \
+    "a deletion that keeps failing: the line names the user"
   expect_contains "$(cat "$dir/err")" "500" "a deletion that keeps failing: the status it answered"
   expect_contains "$out" "FACT survivors: FAIL — " "a deletion that keeps failing: the read-back finds the user"
   expect_contains "$out" "0 of 2 deletions answered 200" "a deletion that keeps failing: the restore line counts what really answered"
@@ -1791,10 +1796,15 @@ test_a_run_that_stops_before_its_last_step_deletes_its_users() {
   RUN96_ENV=(FAKE96_EXCHANGE_LOST=yes)
   run96
   expect_status "$status" 2 "a run that stopped before its last step"
-  expect_contains "$(cat "$dir/state/calls")" "accounts:delete" \
-    "a run that stopped before its last step: the deletion the trap made"
+  # The deletion URL travels in the `--config -` stdin and not in curl's argv, so
+  # the calls log (argv only) cannot show it: what says the trap deleted is the
+  # fake's own record of the uids it was asked to delete, and the count of the
+  # attempts — exactly one, the trap's, the last step never having run.
   expect_contains "$(cat "$dir/state/deleted")" "r~$SANDBOX_SLUG~" \
     "a run that stopped before its last step: the uid deleted"
+  attempts=$(grep -c . "$dir/state/delete-attempts" || true)
+  [ "$attempts" = 1 ] \
+    || fail "a run that stopped before its last step: the trap made $attempts deletion attempts for the one uid this run created"
   expect_contains "$(cat "$dir/err")" "deleted the run identity user r~$SANDBOX_SLUG~" \
     "a run that stopped before its last step: the line that says so"
   expect_contains "$out" "FACT survivors: FAIL — not reached" \
@@ -1967,6 +1977,7 @@ t test_a_config_that_is_not_fugaro_dev_stops
 t test_another_installation_on_fugaro_dev_stops
 t test_a_repository_with_one_job_too_few_stops
 t test_a_repository_with_several_jobs_of_its_own_is_not_read_as_none
+t test_a_repository_with_one_workflow_of_its_own_and_one_of_a_named_account
 t test_the_workflow_flag_selects_that_workflows_job
 t test_an_unknown_workflow_is_refused_with_the_workflows_found
 t test_a_workflow_of_the_belong_account_is_refused
@@ -2004,11 +2015,16 @@ t test_a_mint_that_answers_other_than_200_is_a_fail
 t test_a_mint_that_answers_200_with_no_token_stops
 t test_a_pairing_that_is_answered_is_the_finding
 t test_a_refusal_with_no_audit_line_is_the_finding
+t test_a_log_whose_status_is_a_number_does_not_stop_the_reader
+t test_the_diagnosis_beside_a_refusal_is_not_an_audited_act
 t test_a_mint_that_answered_and_left_no_line_is_a_fail
 t test_a_log_that_has_not_caught_up_is_read_again
 t test_a_log_line_that_never_arrives_still_fails_the_row
 t test_an_outsider_that_is_answered_is_the_finding
 t test_a_user_that_survived_the_deletions_is_a_fail
+t test_a_deletion_that_failed_is_taken_again
+t test_a_deletion_that_keeps_failing_is_said_with_its_uid
+t test_a_run_that_stops_before_its_last_step_deletes_its_users
 t test_a_user_list_that_cannot_be_read_back_stops_the_run
 t test_a_read_back_without_a_token_is_not_a_pass
 t test_a_user_list_whose_second_page_holds_the_survivors_is_read_through
