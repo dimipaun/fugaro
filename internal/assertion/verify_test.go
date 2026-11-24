@@ -80,7 +80,8 @@ func jwkOf(kid string, pub ed25519.PublicKey) mobilesession.JWK {
 
 // goodClaims is the claim set A1 signs for this project: the eleven claims of
 // C1's Claims, unexpired at testNow, for the audience and challenge a caller
-// binds a verification to.
+// binds a verification to, and with a life of exactly the contract's: an
+// assertion that has been alive for ten seconds of AssertionLifetime.
 func goodClaims() map[string]any {
 	return map[string]any{
 		"iss":            testIssuer,
@@ -92,7 +93,7 @@ func goodClaims() map[string]any {
 		"auth_time":      testNow.Add(-time.Minute).Unix(),
 		"jti":            "test-jti-1",
 		"iat":            testNow.Add(-10 * time.Second).Unix(),
-		"exp":            testNow.Add(mobilesession.AssertionLifetime).Unix(),
+		"exp":            testNow.Add(-10 * time.Second).Add(mobilesession.AssertionLifetime).Unix(),
 		"challenge":      testChallenge,
 	}
 }
@@ -420,8 +421,10 @@ func TestVerifyRefusesAReplayedAssertion(t *testing.T) {
 	// skew, so a store that forgot at exp would admit the replay the moment the
 	// assertion lapsed -- and a store that remembered for a day would be a table
 	// of every id every caller ever sent.
-	if want := mobilesession.AssertionLifetime + ClockSkew; store.ttl != want {
-		t.Errorf("the jti was claimed for %s, want %s (the assertion's life plus the skew)", store.ttl, want)
+	fresh := goodClaims()
+	want := time.Unix(fresh["exp"].(int64), 0).Sub(testNow) + ClockSkew
+	if store.ttl != want {
+		t.Errorf("the jti was claimed for %s, want %s (the assertion's own life plus the skew)", store.ttl, want)
 	}
 }
 
@@ -498,6 +501,14 @@ func TestVerifyRefusesEveryRowOfTheTable(t *testing.T) {
 			name: "an expiry that is not after its issue", field: "exp",
 			mutate: func(c map[string]any) { c["exp"] = c["iat"].(int64) },
 			why:    "a zero-length assertion is not one, and reading it as an unexpired one would be reading two claims as one",
+		},
+		{
+			name: "a life longer than the contract allows", field: "exp",
+			mutate: func(c map[string]any) {
+				c["iat"] = testNow.Unix()
+				c["exp"] = testNow.Add(mobilesession.AssertionLifetime + time.Second).Unix()
+			},
+			why: "the contract gives an assertion a two-minute life, and a signer that says its assertion lives longer is not minting this contract's document",
 		},
 		{
 			name: "no jti at all", field: "jti",
@@ -623,6 +634,40 @@ func TestVerifyRefusesEveryRowOfTheTable(t *testing.T) {
 				t.Errorf("%s was refused with a message carrying the assertion: a refusal reaches a log line and an answer body, and the assertion is a document a stranger sent", tc.name)
 			}
 		})
+	}
+}
+
+// The finding behind the table's last row, at the size that makes it bite: a
+// signer that dates its assertion three hundred years ahead. The jti is
+// remembered for the assertion's life plus the skew, and that life is read as
+// exp minus now -- so an exp far enough ahead for the subtraction to saturate is
+// a jti forgotten after one minute while the assertion verifies for centuries,
+// which is a replay the store never gets the chance to refuse. The refusal names
+// exp, and the jti is never claimed: an assertion refused for its life must not
+// spend the id of a claim set that was never answered.
+func TestVerifyRefusesAnAssertionThatOutlivesTheContract(t *testing.T) {
+	rootPub, _ := testKey(t)
+	signPub, signPriv := testKey(t)
+	srv := &keySetServer{}
+	claims := goodClaims()
+	claims["iat"] = testNow.Unix()
+	claims["exp"] = testNow.AddDate(300, 0, 0).Unix()
+	assertion := signAssertion(t, signPriv, testSignKID, claims)
+
+	store := newMemoryClaims()
+	v := newTestVerifier(t, pins(rootPub, 7, pinned(testSignKID, signPub)), srv, store, &memorySeq{})
+	_, err := verify(t, v, assertion)
+	if err == nil {
+		t.Fatal("an assertion dated three hundred years ahead was accepted: the contract's life is two minutes, and the id of an assertion that outlives the store's memory of it is an id that can be replayed for as long as the assertion verifies")
+	}
+	if field := refusalField(t, err); field != "exp" {
+		t.Errorf("the refusal names %q, want \"exp\"", field)
+	}
+	if store.ttl != 0 {
+		t.Errorf("the jti was claimed for %s, and an assertion refused for its life must not spend one", store.ttl)
+	}
+	if got := srv.reads(); got != 0 {
+		t.Errorf("the assertion was refused after %d read(s) of the key endpoint, want 0: the key is pinned and the claims are what failed", got)
 	}
 }
 
@@ -1665,6 +1710,58 @@ func TestVerifyAcceptsTheCurrentKeySetInTheInstanceNextDoor(t *testing.T) {
 	secondV := newTestVerifier(t, p, srv, newMemoryClaims(), second)
 	if _, err := verify(t, secondV, signAssertion(t, signPriv, "signing-rotated", claims)); err != nil {
 		t.Fatalf("the instance next door refused the key set the first one accepted: %v", err)
+	}
+}
+
+// A withdrawn pinned key must end on an instance that has read nothing. The
+// rotation is what says so, and the durable mark is where this instance learns
+// that a rotation happened at all: without it, a fresh Cloud Run instance whose
+// cache is empty verifies with the pinned key the project has withdrawn -- a
+// leaked one included -- with no fetch, for as long as its build is deployed.
+// The mark is the store's rather than the cache's, so "somewhere, a set above
+// the floor has been kept" is enough to make this instance go and hold the set
+// before it uses a pin.
+func TestVerifyRefusesAWithdrawnPinnedKeyOnAnInstanceThatNeverReadASet(t *testing.T) {
+	rootPub, rootPriv := testKey(t)
+	keptPub, keptPriv := testKey(t)
+	gonePub, gonePriv := testKey(t)
+	srv := &keySetServer{}
+	_, store := seqFloorDB(t)
+	const path = "assertion/key-set-seq"
+	// The build pins the key the project has rotated out, and its floor is the
+	// sequence of the set it was released against. The document served now is
+	// above that floor and holds the key the rotation left behind.
+	p := pins(rootPub, 8, pinned("signing-gone", gonePub))
+	srv.set(keySetDoc(t, rootPriv, 9, validUntil(), jwkOf("signing-kept", keptPub)))
+
+	first, err := NewSeqFloor(store, path)
+	if err != nil {
+		t.Fatalf("building the first instance's floor: %v", err)
+	}
+	claims := goodClaims()
+	claims["jti"] = "test-jti-first-instance"
+	// An assertion the build does not pin is what moves the mark above the floor.
+	if _, err := verify(t, newTestVerifier(t, p, srv, newMemoryClaims(), first), signAssertion(t, keptPriv, "signing-kept", claims)); err != nil {
+		t.Fatalf("the first instance refused the current key set: %v", err)
+	}
+
+	// The instance next door: its own key set cache, which has read nothing, its
+	// own floor object, the same durable node.
+	second, err := NewSeqFloor(store, path)
+	if err != nil {
+		t.Fatalf("building the second instance's floor: %v", err)
+	}
+	claims = goodClaims()
+	claims["jti"] = "test-jti-second-instance"
+	_, err = verify(t, newTestVerifier(t, p, srv, newMemoryClaims(), second), signAssertion(t, gonePriv, "signing-gone", claims))
+	if err == nil {
+		t.Fatal("an instance whose cache had read nothing accepted an assertion signed by a pinned key the project had rotated out: the durable mark is what says a set above the floor was kept, and an instance that ignores it verifies with a withdrawn key -- a leaked one included -- until the release that pins the next one")
+	}
+	if field := refusalField(t, err); field != "kid" {
+		t.Errorf("the refusal names %q, want \"kid\"", field)
+	}
+	if reads := srv.reads(); reads != 2 {
+		t.Errorf("the key endpoint was read %d time(s), want 2 -- one for each instance: the instance that had read nothing holds the set before it uses a pin the store says has moved", reads)
 	}
 }
 

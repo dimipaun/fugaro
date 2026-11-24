@@ -115,17 +115,47 @@ func newKeySetCache(pins Pins, client *http.Client, now func() time.Time, seq Se
 	return &keySetCache{pins: pins, client: client, now: now, seq: seq, fetchTimeout: keySetFetchTimeout}
 }
 
-// omitsPinned reports whether the held set is a valid one -- at or above the
-// build's floor, root-signed, inside its validity when it was accepted -- that
-// does not hold the key id. It is how a pinned key ends before its not-after
-// date: the project rotated it out, and the rotation is authority over the pin.
+// endsPin reports whether a key set this verifier can hold is a valid one -- at
+// or above the build's floor, root-signed, inside its validity when it was
+// accepted -- that does not hold the key id. It is how a pinned key ends before
+// its not-after date: the project rotated it out, and the rotation is authority
+// over the pin.
+//
+// The held set answers the ordinary case and the store answers the one that
+// makes this durable: a fresh instance whose cache is empty has to know that a
+// set above the build's floor has been kept somewhere, or it verifies with a
+// pinned key the project has withdrawn -- a leaked one included -- and never
+// looks. The store is asked with the build's own floor, so the answer "nothing
+// at or above this build's floor has been kept" is exactly "the pins are still
+// the whole story here", and offering the floor also seeds a node nothing has
+// written with the lowest sequence this build could accept. A store that cannot
+// answer is ErrStore and never a pin that stands: a key this verifier cannot
+// check must not verify. A set that cannot be read ends nothing, because the
+// refusal is conditioned on a set that omits the key id and a document nobody
+// could read is not one.
 //
 // The answer does not lapse with the held set's validity. A set that was valid
 // when it was read said what the project published, and that a key is no longer
 // published is not something an outage un-says. It is also the safe direction:
 // the set cannot be *un*-seen, and the alternative -- trusting a withdrawn key
 // again because the endpoint went down -- is exactly what a rotation is for.
-func (c *keySetCache) omitsPinned(kid string) bool {
+func (c *keySetCache) endsPin(ctx context.Context, kid string) (bool, error) {
+	kept, err := c.seq.Observe(ctx, c.pins.SeqFloor)
+	if err != nil {
+		return false, fmt.Errorf("%w: the key set's sequence could not be read before a pinned key was used: %v", ErrStore, err)
+	}
+	if !kept {
+		// A set above this build's floor has been kept, so a rotation has happened
+		// that this process has not seen: hold the set the project publishes now
+		// -- rate-limited like every other read -- and check the pin against it.
+		c.read(ctx, false)
+	}
+	return c.heldOmits(kid), nil
+}
+
+// heldOmits is endsPin's second half: whether the set this process holds omits
+// the key id. A process holding nothing omits nothing.
+func (c *keySetCache) heldOmits(kid string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.held == nil {

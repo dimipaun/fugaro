@@ -419,6 +419,15 @@ func (v *Verifier) Verify(ctx context.Context, assertion string, want mobilesess
 	if claims.ExpiresAt <= claims.IssuedAt {
 		return mobilesession.Claims{}, refuse("exp", "the assertion's expiry is not after its issue, so its life is not a life")
 	}
+	// The contract gives an assertion a life (AssertionLifetime), and a signer
+	// that says its assertion lives longer is not minting this contract's
+	// document. The bound is also what keeps the arithmetic that remembers the
+	// jti inside the range it can hold: the jti's life is read as exp minus now,
+	// and an exp far enough ahead for that subtraction to saturate would be a
+	// jti forgotten long before the assertion stopped verifying.
+	if time.Unix(claims.ExpiresAt, 0).Sub(time.Unix(claims.IssuedAt, 0)) > mobilesession.AssertionLifetime {
+		return mobilesession.Claims{}, refuse("exp", "the assertion's life is longer than the %s this contract allows", mobilesession.AssertionLifetime)
+	}
 	if err := v.spend(ctx, claims, now); err != nil {
 		return mobilesession.Claims{}, err
 	}
@@ -434,18 +443,24 @@ func (v *Verifier) Verify(ctx context.Context, assertion string, want mobilesess
 // project had withdrawn would be a build that cannot be recovered from a key
 // that leaked. A set is only ever known here when some other assertion made this
 // process read one, so a build that only ever sees pinned keys never reads
-// anything -- which is O7's whole point.
+// anything -- which is O7's whole point -- unless C1's compare-and-set store
+// says a set above the floor has been kept somewhere, which is a rotation this
+// process has not seen and cannot be allowed to ignore.
 func (v *Verifier) keyFor(ctx context.Context, kid string) (ed25519.PublicKey, error) {
 	for _, pinned := range v.pins.Keys {
 		if pinned.KID != kid {
 			continue
 		}
-		// A pinned kid is checked against the held set before the pin is used:
-		// a set that omits it ends it. Only a kid this build pins is checked
-		// that way -- for any other kid the set is where the key comes from in
-		// the first place, and a set that does not hold it yet is the rotation
-		// this path is here to pick up.
-		if v.keys.omitsPinned(kid) {
+		// A pinned kid is checked against a set the verifier can hold before the
+		// pin is used: a set that omits it ends it. Only a kid this build pins is
+		// checked that way -- for any other kid the set is where the key comes
+		// from in the first place, and a set that does not hold it yet is the
+		// rotation this path is here to pick up.
+		ended, err := v.keys.endsPin(ctx, kid)
+		if err != nil {
+			return nil, err
+		}
+		if ended {
 			return nil, refuse("kid", "a valid key set at or above this build's sequence floor no longer holds this key id")
 		}
 		if !v.now().Before(pinned.NotAfter) {
