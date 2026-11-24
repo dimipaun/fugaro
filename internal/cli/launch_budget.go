@@ -93,10 +93,11 @@ func budgetBackendOn(lc *localcfg.Config) (bool, error) {
 // else that asks budgetBackendOn) on an installation whose config names no
 // budget database: what is missing, what it costs — no identity, so nothing is
 // launched — and the one command that fixes it, with who runs it.
+//
+// It names the project, so it reads the config rather than taking a nil one:
+// budgetBackendOn, its only caller, has already read the block by the time it
+// gets here.
 func noBudgetDatabaseRefusal(lc *localcfg.Config) error {
-	if lc == nil {
-		return userErr("this installation has no budget database (budget.rtdb_url is not set in its project config), and every run has a budget identity, so nothing is launched: a project owner runs fugaro update once, which creates the database")
-	}
 	return userErr("project %s has no budget database (budget.rtdb_url is not set in its config), and every run has a budget identity, so nothing is launched: a project owner runs fugaro update --firebase-project %s --name %s once, which creates the database",
 		lc.Name, firebaseProjectIDWord(lc.GCPProject), lc.Name)
 }
@@ -1384,9 +1385,13 @@ const pairHeadroomCaps = 5
 // the champion's single pre-check is skipped below (skipBudget), so this is
 // the launch's one budget reading.
 func (e *cloudEnv) pairBudgetPrecheck(ctx context.Context, slug string, spec *task.Spec, warn io.Writer) string {
-	// A launch on an installation with no database never reaches a pair
-	// (AB4, F7): budgetMintOn refuses it earlier, so the only answer here
-	// that is not a headroom figure is a refused launch's own reason.
+	// An installation that cannot mint never reaches a pair (AB4, F7): the
+	// launch is refused by the mint, before anything is started. This runs
+	// ahead of that refusal (sampledPair judges the pair before the launch
+	// block does), so the answer here is the refusal's own reason and not a
+	// headroom figure — a figure this read could only take from a database the
+	// installation does not have, or from a block that cannot sign what it
+	// would mint.
 	if _, err := budgetBackendOn(e.lc); err != nil {
 		return oneLine(err.Error())
 	}

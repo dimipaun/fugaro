@@ -233,28 +233,34 @@ func doctorBatchArtifactBoundary() doctorCheck {
 // cloud-run has no such pair, and this check reads nothing for it.
 //
 // Since AB4 every launch of an installation with a budget database mints, so
-// the answer is the database's (and the signer's): an installation that names
-// one selects this backend and is refused here. An installation that names
-// none mints nothing -- no launch of it happens at all, the launcher refusing
-// it with the fix -- and this check has no pair to report for it, so it passes
-// and the state is named where it belongs: the launch's own refusal, which
-// says who creates the database, and doctor's other lines about the
-// installation's budget.
+// the answer is the database's own: an installation that names one selects
+// this backend and is refused here, whatever its mode, its published policy or
+// its signer. A missing signer is deliberately not read as an answer -- it
+// refuses every launch of the installation whichever backend it selects, so it
+// is another check's subject, and reading it here would make doctor disagree
+// with `fugaro validate`'s offline arm (validate_batch.go) about a config
+// shape both of them hold. An installation that names no database mints
+// nothing -- no launch of it happens at all, the launcher refusing it with the
+// fix -- and this check has no pair to report for it, so it passes and the
+// state is named where it belongs: the launch's own refusal, which says who
+// creates the database, and doctor's other lines about the installation's
+// budget.
 func doctorBatchBudgetSeal(ctx context.Context, lc *localcfg.Config) []doctorCheck {
 	const id = "batch-budget-seal"
 	if lc.Backend() != backend.CloudBatch {
 		return nil
 	}
-	mints, err := (&cloudEnv{lc: lc}).budgetMintOn(ctx)
-	if !mints || err != nil {
-		// This installation mints nothing, so the pair has nothing to report:
-		// its launches never reach this backend, because budgetBackendOn
-		// refuses them first (no budget database, or no signer account to mint
-		// with) and says so with the fix. Passing here is not a silent pass --
-		// what is missing is named where it bites, by the launch's own refusal
-		// and by doctor's lines about the installation's budget -- and a
-		// finding here would put the Batch gate in the way of an installation
-		// whose problem is another one entirely.
+	// The flag alone is the answer, exactly as it is in `fugaro validate`'s
+	// offline arm; the error beside it is the signer's refusal, which is not
+	// about this backend.
+	if mints, _ := (&cloudEnv{lc: lc}).budgetMintOn(ctx); !mints {
+		// This installation has no database, so the pair has nothing to report:
+		// no launch of it reaches this backend at all, because budgetBackendOn
+		// refuses them first and says so with the fix. Passing here is not a
+		// silent pass -- what is missing is named where it bites, by the
+		// launch's own refusal and by doctor's lines about the installation's
+		// budget -- and a finding here would put the Batch gate in the way of an
+		// installation whose problem is another one entirely.
 		return []doctorCheck{{ID: id, OK: true}}
 	}
 	return []doctorCheck{batchProblem(lc, id,
