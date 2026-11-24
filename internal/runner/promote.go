@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"fmt"
 	"path"
 	"regexp"
@@ -36,11 +37,26 @@ import (
 // is read the branch: the items that were open at bootstrap and are closed at
 // finalize were closed by this run (only this run writes on this branch), and
 // each is judged against the one rule a diff can hold — the area is the one
-// being promoted, and the run's own diff changed the code the item names.
-// An item closed outside that rule is named in the pull request's status
-// section rather than reopened: D31's own honest rule beside the pin is "a run
-// may not close an item it did not fix", and it is a review rule, stated so a
-// reviewer can ask.
+// being promoted, and the code the item names changed in the diff the close is
+// held against. An item closed outside that rule is named in the pull
+// request's status section rather than reopened: D31's own honest rule beside
+// the pin is "a run may not close an item it did not fix", and it is a review
+// rule, stated so a reviewer can ask.
+//
+// **Which diff holds the close.** The pull request's, not the last run's. D31's
+// unit is the pull request — "the pull request that fixes an item flips its
+// status" — and a first promote run cannot close at all: its draft pull request
+// is opened after the implement stage (prflow.go's afterStage), so it has no
+// number to name in an item's `## Closed by` while its agent works, and its
+// brief sends it on to the next promote run on the pull request instead. That
+// second run closes what the first paid down, and its own diff is not the fix:
+// a follow-up's ChangedFiles is what it changed since the pull request's head
+// when it started (refused.go's workBase), and the fix is behind that commit —
+// so a close judged against it alone is a stray for the one flow the brief
+// describes. A run on a pull request is therefore judged against the branch's
+// own diff from the base the pull request targets (promoteChanged), and a
+// first run — not on a pull request, its branch cut from its base — against
+// its own.
 //
 // **Where an item lives.** `docs/backlog/` is the store this pass both reads and
 // writes, and it is the folder D2716 retired for everything else: the project's
@@ -216,10 +232,10 @@ func itemNamesArea(it backlog.Item, area string) bool {
 //
 // before is the area's open items as the run's first brief read them, after is
 // the folder as the run's own commits left it (every item in it, the closed
-// ones included), and changed are the run's own changed files,
-// repository-relative, exactly as runstore.Record.ChangedFiles holds them. An
-// item that was open before and is closed after was closed by this run: it is
-// the only writer on its own branch.
+// ones included), and changed is the diff the close is held against,
+// repository-relative: the pull request's own for a run on one, the run's own
+// changed files otherwise (promoteChanged). An item that was open before and is
+// closed after was closed by this run: it is the only writer on its own branch.
 func promoteVerdict(before, after []backlog.Item, area string, changed []string) (closed, stray, kept []backlog.Item) {
 	allowed := map[string]bool{}
 	for _, it := range promoteCloses(before, area, changed) {
@@ -414,16 +430,25 @@ func promoteBrief(area, level, runID string, items, morning []backlog.Item, audi
 	level = safetext.OneLine(level)
 	var b strings.Builder
 	fmt.Fprintf(&b, "PROMOTE: raise the %s area to %s.\n\n", area, level)
-	closing := "This run has no pull request to name yet: an item's `## Closed by` names the pull request that closed it, and this run's is opened after it finishes, so close nothing in this pass — list what you paid down in your hand-back, and the next promote run on the pull request closes them."
+	// closing is the recipe for an item's `## Closed by` line, and rule names
+	// the diff that line is held against. The two differ by whether this run
+	// can name a pull request at all: a first run's draft is opened after the
+	// implement stage, so it has none while its agent works, closes nothing,
+	// and the pull request's next promote run closes what it paid down — which
+	// is why that run's rule is the pull request's whole diff and not its own
+	// (promoteChanged).
+	closing := "Close nothing in this pass: this run has no pull request to name yet — an item's `## Closed by` names the pull request that closed it, and this run's is opened after it finishes — so list what you paid down in your hand-back, and the next promote run on the pull request closes them."
+	rule := "your diff"
 	if pr > 0 {
-		closing = fmt.Sprintf("This run is on pull request #%d: that is the number to name.", pr)
+		closing = fmt.Sprintf("This run is on pull request #%d, which is the number to name, and an item an earlier run on it paid down without closing it is this run's to close: set the item's `status: closed`, add a `## Closed by` line naming pull request #%d, and run `fugaro backlog index` so the folder's index moves with it — the flip and the fix it names in one commit where the fix is this run's", pr, pr)
+		rule = "the pull request's diff (every commit of the branch since the base it targets counts, not this run's alone)"
 	}
 	if audit {
 		fmt.Fprintf(&b, "No item of this area is open: nothing has been recorded as left open in it, which is what a source first run at a lower level leaves behind. So this pass is the AUDIT — work out what the area is missing at the level of %s (the tests, the error paths, the hardening, the review the level demands) and write each gap you find down as an item of this area, before any fix, one item per gap.\n\n"+
 			"An item is a file of the folder `docs/backlog/`, in the shape docs/backlog/FORMAT.md states: its name is `<id>-<slug>.md`, where the id is the day you write it and the next free two-digit number for that day (`20261122-01`) and the slug is the title's letters and digits, cut to 60 characters; its first block is the nine front-matter fields `id`, `title` (one line), `level: %s`, `kind: deferred` (`open-risk` for something that stays a risk rather than a debt), `area: %s`, `status: open`, `filed-by: unknown` (a run records the login that launched it, and this brief carries none), `filed-in: run:%s` and `date: ` the day in `YYYY-MM-DD`; and its body carries the headings `## What was left open` and `## Why` over what the gap is and why it is one. Name the code each gap is about by its repository-relative path in backticks (`internal/payments/charge.go`): the next pass closes an item only when its diff changed the code the item names, so an item that names none is one nothing can ever pay down. Run `fugaro backlog index` in the same commit, so the folder's index moves with the items.\n\n"+
 			"A run that cannot write the folder puts the same list in the hand-back instead, one item per gap with its title and its brief, and reports that it could not write them. Make no fix in this pass: the items are the next promote run's work.\n\n", level, level, area, runID)
 	} else {
-		fmt.Fprintf(&b, "Raise the area's code to the level of %s, and pay down the recorded debt below. To close an item you paid down, in the same commit as the fix that pays it down: set its `status: closed`, add a `## Closed by` line naming the pull request, and run `fugaro backlog index` so the folder's index moves with it. %s Close an item only when your diff changed the code it names — the runner reads your branch at the end and names in the pull request's status section every item closed that the rule does not admit — and work on nothing outside this area.\n\n", level, closing)
+		fmt.Fprintf(&b, "Raise the area's code to the level of %s, and pay down the recorded debt below. %s. Close an item only when %s changed the code it names — the runner reads your branch at the end and names in the pull request's status section every item closed that the rule does not admit — and work on nothing outside this area.\n\n", level, closing, rule)
 	}
 	if len(items) == 0 && len(morning) == 0 {
 		return b.String()
@@ -548,7 +573,7 @@ func promoteField(v string, redact func(string) string, neutralize func(string) 
 // failing the run: the pull request's status section then says what the brief
 // found and nothing about what the branch did with it, and the run's ordinary
 // record and reviews are unaffected.
-func (r *run) readPromote() {
+func (r *run) readPromote(ctx context.Context) {
 	p := r.promote
 	if p == nil || p.audit {
 		return
@@ -558,7 +583,39 @@ func (r *run) readPromote() {
 		r.d.Log.Warn("reading the backlog folder at finalize failed; what this run closed is not reported", "err", r.redact(err.Error()))
 		return
 	}
-	p.closed, p.stray, p.kept = promoteVerdict(p.items, after, p.area, r.changedPaths())
+	p.closed, p.stray, p.kept = promoteVerdict(p.items, after, p.area, r.promoteChanged(ctx))
+}
+
+// promoteChanged is the diff a promote run's closes are held against: the pull
+// request's own for a run that is on one, and the run's own changed files for
+// every other.
+//
+// A follow-up's ChangedFiles is the diff since the pull request's head when it
+// started (refused.go's workBase), which is this run's work and not the pull
+// request's: the item a first run paid down without closing — it had no number
+// to name (promoteBrief) — was fixed in a commit behind that, so judging the
+// close against the follow-up's own diff alone reports the one close the brief
+// asks for as a stray. The branch's diff from the base the pull request targets
+// is the pull request's own, which is D31's unit. A first run is not on a pull
+// request and its branch is cut from the base, so its own diff is the pull
+// request's already — and the run's own diff is the fail-closed reading for a
+// run cut from another ref, whose branch would carry that ref's divergence from
+// the base and could admit a close this run never made.
+//
+// A read that fails leaves the run's own diff in place rather than refusing:
+// the run's status section is a report, and a git call that failed at finalize
+// must not cost the pass the reading it can still make.
+func (r *run) promoteChanged(ctx context.Context) []string {
+	changed := r.changedPaths()
+	if r.follow == nil || r.repo == nil {
+		return changed
+	}
+	paths, err := r.repo.ChangedFiles(ctx, "origin/"+r.diffBase())
+	if err != nil {
+		r.d.Log.Warn("reading the pull request's own diff failed; the closes are judged against this run's own", "err", r.redact(err.Error()))
+		return changed
+	}
+	return paths
 }
 
 // promotePart is the pull request status section a promote run owes its

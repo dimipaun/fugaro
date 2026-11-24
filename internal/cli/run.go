@@ -879,6 +879,19 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 				if cmd.Flags().Changed("owner-ruled") {
 					return userErr("--owner-ruled answers the findings a run on a pull request left, and --recipe %s reviews a pull request instead of fixing one", rr.Name)
 				}
+				// --promote is refused here for the same reason, and this is
+				// the only launch shape it could be dropped on: reviewSpec
+				// builds a spec of its own, and the promote block is not a
+				// field of it — a review run reviews a pull request rather
+				// than raising an area's code, and there is no pass for it to
+				// reach the runner through. Accepted, the flag would write no
+				// field anywhere and the area the person named would vanish
+				// without a word. Every other shape that carries the flag
+				// carries the block: newSpec and the follow-up's own builder
+				// both write it, and --retry refuses the flag outright.
+				if o.promote != "" {
+					return userErr("--promote raises an area of the repository's own code, and --recipe %s reviews a pull request instead of raising one (fugaro run --promote <area> --mode <level> launches the promote pass, with no --recipe)", rr.Name)
+				}
 				if lo, hi, ok := recipe.ReviewPRRange(rr.Name); ok {
 					if n := len(o.pr); n < lo || n > hi {
 						if lo == hi {

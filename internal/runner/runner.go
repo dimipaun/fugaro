@@ -6719,7 +6719,7 @@ func (r *run) finalize(ctx context.Context) error {
 	// commits left. It writes nothing — the agent closed what it paid down, in
 	// its own commits — and the pull request's status section reports what it
 	// read (promotePart, promote.go).
-	r.readPromote()
+	r.readPromote(ctx)
 	// Nothing is written after the commit the suite ran on. The run used to
 	// file the findings it left open as backlog items here, which committed
 	// after that suite run and was not verified: a test that pins a fact

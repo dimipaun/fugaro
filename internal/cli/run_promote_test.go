@@ -3,8 +3,11 @@ package cli
 import (
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // areaPromoteYAML is a repository whose two areas are the ones a promote launch
@@ -158,8 +161,11 @@ func TestRunPromoteRefusesHotfixAndAModeOfItsOwn(t *testing.T) {
 // an image that passes the rigor-request gate (promoteSince is newer than
 // rigorRequestSince): the refusal has to be the promote block's, or a person
 // reads a message about the mode they passed beside the flag instead of the
-// flag itself. Mutation (drop the Promote gate in either branch of the launch,
-// or gate it on rigorRequestSince): this test's row stops being refused.
+// flag itself. Mutation (drop the Promote gate from the launch's built-image
+// branch, or gate it on rigorRequestSince): this test's row stops being
+// refused. The clone branch's half of the same gate is
+// TestRunPromoteIsGatedOnACloneWorkflow's, and neither test covers the other's
+// branch: this one judges a build record, and that one has no record to judge.
 func TestRunPromoteRefusesAJobImageThatPredatesTheBlock(t *testing.T) {
 	f := newCloudFixture(t)
 	older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, promoteSince, -1)
@@ -173,6 +179,55 @@ func TestRunPromoteRefusesAJobImageThatPredatesTheBlock(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q:\n%v", want, err)
 		}
+	}
+}
+
+// TestRunPromoteIsGatedOnACloneWorkflow: a checkout: clone workflow has no
+// build record to judge, so the promote block's gate is judged against
+// base_images.base itself — the other half of the check, and the half a
+// mutation can drop without the test above noticing.
+//
+// Mutation (drop the Promote block from finishLaunch's clone branch): the
+// launch goes through on an image whose runner refuses the whole task at
+// bootstrap, which is the failure the gate exists to prevent.
+func TestRunPromoteIsGatedOnACloneWorkflow(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, "base_images: {base: ghcr.io/dimipaun/fugaro-base:0.7.5}\n")
+	testutil.IsolateGit(t)
+	other := mustSlug("github", "acme/other")
+	f.run.AddJob(gcp.JobName(other, "svc"), "2", "4Gi")
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nworkflows:\n" +
+		"  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n" + areaPromoteYAML})
+	t.Chdir(dir)
+	_, _, err := execute(t, "run", "--run-id", "20261122-130600-abcd", "--promote", "ledger", "--mode", "critical")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the job image refused", err)
+	}
+	for _, want := range []string{"--promote ledger", "the promote block", "fugaro " + promoteSince + " or later", "ghcr.io/dimipaun/fugaro-base:0.7.5, release 0.7.5"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q:\n%v", want, err)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// TestRunPromoteRefusesAReviewRecipe: a review-mode recipe builds its spec in
+// reviewSpec, which has no promote field at all — so `--promote` beside one
+// would validate, launch, and raise nothing. Refused where the recipe's mode is
+// known, the way --review-run and --owner-ruled are.
+func TestRunPromoteRefusesAReviewRecipe(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	writeBuildRecord(t, f, appSlug, "web", release0160)
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261122-130700-abcd",
+		"--promote", "payments", "--mode", "critical", "--recipe", "review-only", "--pr", "7")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--promote") || !strings.Contains(err.Error(), "review-only") {
+		t.Fatalf("err = %v, want the review recipe to refuse the flag", err)
 	}
 }
 

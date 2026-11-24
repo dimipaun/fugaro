@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -475,7 +476,7 @@ func TestPromoteSeamsDeliverThePass(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.rec.ChangedFiles = &runstore.ChangedFiles{Paths: []string{"internal/payments/charge.go"}}
-	r.readPromote()
+	r.readPromote(context.Background())
 	if len(p.closed) != 1 || p.closed[0].ID != "20261120-01" || len(p.stray) != 0 || len(p.kept) != 0 {
 		t.Fatalf("the finalize reading = closed %+v stray %+v kept %+v, want the paid-down item closed", p.closed, p.stray, p.kept)
 	}
