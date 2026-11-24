@@ -146,7 +146,7 @@ func (f *fakeStore) Create(_ context.Context, id string, annotations, labels map
 		f.containers[id] = s
 		return ErrExists
 	}
-	f.containers[id] = Secret{ID: id, Annotations: annotations}
+	f.containers[id] = Secret{ID: id, Annotations: annotations, Labels: labels}
 	f.labels[id] = labels
 	f.created = append(f.created, id)
 	return nil
@@ -849,6 +849,199 @@ func TestRefusesASharedContainerItDidNotCreate(t *testing.T) {
 		if _, ok := f.store.containers[id]; !ok {
 			t.Fatalf("a shared container with %s was removed", tc.what)
 		}
+	}
+}
+
+// workflowBody is a create or a version that asks for the workflow-secret
+// marker: the same document with the request's own member set (F18, G2).
+func workflowBody(scope Scope, name, value string) string {
+	return `{"scope":"` + string(scope) + `","name":"` + name + `","value":"` + b64(value) + `","workflow_secret":true}`
+}
+
+// TestIntakeAcceptsWorkflowSecretName (U2): the intake admits the names a
+// workflow declares, and it admits them because it never filters names by the
+// class they are stored for — the grammar is the whole of what a name is put
+// to, and the marker is what says a container holds a workflow's own secret.
+// The names a workflow declares are ordinary credential names, so nothing here
+// had to be widened for them; what the test holds is that the class the marker
+// names is not a namespace, which is the reading a "workflow names only" filter
+// would give the credentials service's per-secret read and the workflow's own
+// `secrets:` list.
+func TestIntakeAcceptsWorkflowSecretName(t *testing.T) {
+	for _, name := range []string{"npm-token", "deploy-key", "db-password-2", "openrouter-api-key"} {
+		f := member(t)
+		w := f.post(t, CreatePath, f.token(t, testAdminEmail, testAdminSub), workflowBody(ScopeShared, name, testValue))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s with the marker: got %d %s, want 200", name, w.Code, w.Body.String())
+		}
+		id := secretname.ProjectPrefix + name
+		if !slices.Equal(f.store.created, []string{id}) {
+			t.Fatalf("%s made the containers %v, want %v", name, f.store.created, []string{id})
+		}
+		if line := audit(t, f); line["op"] != OpCreate || line["id"] != id || line["scope"] != string(ScopeShared) {
+			t.Fatalf("%s: the line is %v, want the create of %s under the shared scope", name, line, id)
+		}
+	}
+	// The marker belongs to the project's prefix and to nothing else: a
+	// per-user call asking for it is refused by the request, before the value
+	// is decoded, because a person's own container has no workflow to be
+	// shared with (F18, R3).
+	f := member(t)
+	w := f.post(t, CreatePath, f.token(t, testOwnerEmail, testOwnerSub), workflowBody(ScopeUser, "npm-token", testValue))
+	if w.Code != http.StatusBadRequest || errorType(t, w) != ErrorRequestRefused {
+		t.Fatalf("a per-user call with the marker: got %d %s, want 400 %s", w.Code, errorType(t, w), ErrorRequestRefused)
+	}
+	if len(f.store.created) != 0 || len(f.store.values) != 0 {
+		t.Fatalf("a refused call made %v and wrote %v", f.store.created, f.store.values)
+	}
+}
+
+// TestIntakeMarksWorkflowSecret (F18, G2): the container a workflow's own
+// secret is stored in carries the marker, and a project-shared credential's
+// does not. The marker is written at create and read from the container after
+// that — no later call can set or clear it, since neither this service nor the
+// credentials service holds secrets.update — so a rotated workflow secret
+// keeps its class, and the two classes cannot converge on one container.
+func TestIntakeMarksWorkflowSecret(t *testing.T) {
+	f := member(t)
+	tok := f.token(t, testAdminEmail, testAdminSub)
+	id := secretname.ProjectPrefix + "npm-token"
+	if w := f.post(t, CreatePath, tok, workflowBody(ScopeShared, "npm-token", testValue)); w.Code != http.StatusOK {
+		t.Fatalf("the workflow secret's create: got %d %s", w.Code, w.Body.String())
+	}
+	if got := f.store.labels[id]; got[LabelWorkflowSecret] != WorkflowSecretMarker || got[LabelScope] != string(ScopeShared) {
+		t.Fatalf("the container's labels are %v, want the shared scope and the workflow-secret marker", got)
+	}
+	// A second store of the same name is a rotation into the marked container:
+	// the class check passes it, and the marker is still what the container
+	// carries afterwards.
+	if w := f.post(t, VersionPath, tok, workflowBody(ScopeShared, "npm-token", testValue)); w.Code != http.StatusOK {
+		t.Fatalf("the rotation into the marked container: got %d %s", w.Code, w.Body.String())
+	}
+	if got := f.store.labels[id][LabelWorkflowSecret]; got != WorkflowSecretMarker {
+		t.Fatalf("the marker after a rotation is %q, want %q", got, WorkflowSecretMarker)
+	}
+	if got := f.store.values[id]; len(got) != 2 {
+		t.Fatalf("the container holds %v, want the two versions the two calls wrote", got)
+	}
+	// The other class's container is unmarked, and it is the state the two
+	// refusals below are about.
+	plain := secretname.ProjectPrefix + "openrouter-key"
+	if w := f.post(t, CreatePath, tok, createBody(ScopeShared, "openrouter-key", testValue)); w.Code != http.StatusOK {
+		t.Fatalf("the project-shared credential's create: got %d %s", w.Code, w.Body.String())
+	}
+	if got := f.store.labels[plain]; len(got) == 0 || got[LabelWorkflowSecret] != "" {
+		t.Fatalf("a project-shared container's labels are %v, want no workflow-secret marker", got)
+	}
+	// A marked container is removable by the name its own class spells: a
+	// delete is not a write into it, and removing it is the one way back from
+	// a value stored under a name that was meant for something else.
+	if w := f.post(t, DeletePath, tok, `{"scope":"shared","name":"npm-token"}`); w.Code != http.StatusOK {
+		t.Fatalf("removing a marked container: got %d %s", w.Code, w.Body.String())
+	}
+	if _, ok := f.store.containers[id]; ok {
+		t.Fatal("the marked container was not removed")
+	}
+}
+
+// TestIntakeRefusesUnmarkedExistingContainer (F18, G2): a workflow's value is
+// refused over a container a project-shared credential already holds, and the
+// refusal names the container's class and what to do about it. The container
+// is one this intake made — the shape check passes it — and what refuses it is
+// the marker's absence, which is the only witness of the class a container was
+// made for: without the refusal the workflow's jobs would mount the credential
+// that is in it, and the value stored here would be read by every repository
+// the shared name reaches.
+func TestIntakeRefusesUnmarkedExistingContainer(t *testing.T) {
+	f := member(t)
+	tok := f.token(t, testAdminEmail, testAdminSub)
+	id := secretname.ProjectPrefix + "npm-token"
+	f.store.containers[id] = Secret{
+		ID:          id,
+		Annotations: map[string]string{AnnotationCreatedBy: testAdminEmail},
+		Labels:      map[string]string{LabelScope: string(ScopeShared)},
+	}
+	for _, route := range []struct{ path, body string }{
+		{CreatePath, workflowBody(ScopeShared, "npm-token", testValue)},
+		{VersionPath, workflowBody(ScopeShared, "npm-token", testValue)},
+	} {
+		w := f.post(t, route.path, tok, route.body)
+		if w.Code != http.StatusConflict || errorType(t, w) != ErrorForeignContainer {
+			t.Fatalf("%s of a workflow secret over an unmarked container: got %d %s, want 409 %s", route.path, w.Code, errorType(t, w), ErrorForeignContainer)
+		}
+		msg := errorMessage(t, w)
+		for _, want := range []string{LabelWorkflowSecret, "fugaro secrets shared rm npm-token"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("the refusal over an unmarked container does not name %q: %q", want, msg)
+			}
+		}
+	}
+	if len(f.store.values) != 0 {
+		t.Fatalf("a refused call wrote %v", f.store.values)
+	}
+	if len(f.store.deleted) != 0 {
+		t.Fatalf("a refused call removed %v", f.store.deleted)
+	}
+
+	// The same class check leaves the shape check where it was: a container
+	// carrying the marker AND something the intake never writes is refused for
+	// the shape, and refused for it first — the marker is a fact about the
+	// class, and the shape is the fact that makes a container another writer's
+	// (R12, F35).
+	f = member(t)
+	marked := secretname.ProjectPrefix + "npm-token"
+	f.store.containers[marked] = Secret{
+		ID:          marked,
+		Annotations: map[string]string{AnnotationCreatedBy: testAdminEmail},
+		Labels:      map[string]string{LabelScope: string(ScopeShared), LabelWorkflowSecret: WorkflowSecretMarker},
+		Shape:       Shape{TTL: "86400s"},
+	}
+	w := f.post(t, CreatePath, tok, workflowBody(ScopeShared, "npm-token", testValue))
+	if w.Code != http.StatusConflict || errorType(t, w) != ErrorForeignContainer {
+		t.Fatalf("a marked container with a TTL: got %d %s, want 409 %s", w.Code, errorType(t, w), ErrorForeignContainer)
+	}
+	if msg := errorMessage(t, w); !strings.Contains(msg, "which the intake never writes") {
+		t.Errorf("the refusal of a marked container with a TTL does not name the shape: %q", msg)
+	}
+	if len(f.store.values) != 0 {
+		t.Fatalf("a refused call wrote %v", f.store.values)
+	}
+}
+
+// TestSharedSetRefusesAMarkedContainer (G2): the project's shared prefix
+// refuses a container a workflow's own secret holds, so the two classes never
+// share one in either direction. The request here is the exact one `fugaro
+// secrets shared set NAME` sends — the shared scope, no marker — and the
+// refusal names the class the container is and the way back for a credential
+// stored under a name a workflow declares.
+func TestSharedSetRefusesAMarkedContainer(t *testing.T) {
+	f := member(t)
+	tok := f.token(t, testAdminEmail, testAdminSub)
+	id := secretname.ProjectPrefix + "npm-token"
+	// The container a workflow's own store writes.
+	if w := f.post(t, CreatePath, tok, workflowBody(ScopeShared, "npm-token", testValue)); w.Code != http.StatusOK {
+		t.Fatalf("the workflow secret's create: got %d %s", w.Code, w.Body.String())
+	}
+	for _, route := range []struct{ path, body string }{
+		{CreatePath, createBody(ScopeShared, "npm-token", testValue)},
+		{VersionPath, createBody(ScopeShared, "npm-token", testValue)},
+	} {
+		w := f.post(t, route.path, tok, route.body)
+		if w.Code != http.StatusConflict || errorType(t, w) != ErrorForeignContainer {
+			t.Fatalf("%s of a project-shared credential over a marked container: got %d %s, want 409 %s", route.path, w.Code, errorType(t, w), ErrorForeignContainer)
+		}
+		msg := errorMessage(t, w)
+		for _, want := range []string{LabelWorkflowSecret, WorkflowSecretMarker, "fugaro secrets shared rm npm-token"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("the refusal over a marked container does not name %q: %q", want, msg)
+			}
+		}
+	}
+	if got := f.store.values[id]; len(got) != 1 {
+		t.Fatalf("the workflow's container holds %v, want only the one version its own store wrote", got)
+	}
+	if _, ok := f.store.containers[id]; !ok {
+		t.Fatal("a refused call removed the marked container")
 	}
 }
 

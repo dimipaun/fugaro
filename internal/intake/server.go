@@ -158,7 +158,22 @@ const (
 	// is a copy of what the name says and never a claim: the name is the
 	// truth (R12), and this narrows a list to one member's containers.
 	LabelOwnerSub = "fugaro_owner_sub"
+	// LabelWorkflowSecret marks a container that holds a secret a workflow
+	// declares — a project's own application secrets, stored once for the
+	// project (F18, G2) — rather than a project-shared credential of the
+	// credential classes. It is written at create alone and read on every
+	// write into a container that exists, and it is a label rather than an
+	// annotation because one filter answers for it: the credentials service
+	// serves only the names whose container carries it (G2, DS3.3), and
+	// `fugaro secrets shared ls` is a list call over this same label set.
+	LabelWorkflowSecret = "fugaro_workflow_secret"
 )
+
+// WorkflowSecretMarker is the value LabelWorkflowSecret is written with: one
+// word, so the marker is one filter's answer and cannot be spelled two ways
+// (the scope label's rule above). A container carrying it holds a workflow's
+// own secret; a container the intake wrote without it does not.
+const WorkflowSecretMarker = "true"
 
 // The audit line's acts: what the call asked for. A closed set, for the reason
 // the scopes are one.
@@ -213,6 +228,16 @@ type CreateRequest struct {
 	Scope Scope  `json:"scope"`
 	Name  string `json:"name"`
 	Value string `json:"value"`
+	// WorkflowSecret asks for the workflow-secret marker (F18, G2): the
+	// caller is storing a secret a workflow declares, so the container this
+	// writes carries LabelWorkflowSecret and no other class of value is
+	// stored in it afterwards. It is set at create alone — neither this
+	// service nor the credentials service holds secrets.update, so a label
+	// written once is the whole of what a marker can be — and it is the
+	// shared prefix's: a workflow's own secret is stored once for the
+	// project, and a per-user container has no workflow to share with, so a
+	// call asking for it there is refused.
+	WorkflowSecret bool `json:"workflow_secret,omitempty"`
 }
 
 // SecretAnswer is the answer to a create, a version or a delete: which
@@ -271,6 +296,11 @@ type Secret struct {
 	// Annotations are the container's annotations, whole: the intake holds
 	// them to its own set before it writes (R12).
 	Annotations map[string]string
+	// Labels are the container's labels, whole: they are how this intake
+	// finds a container again (the label constants above), and one of them is
+	// the workflow-secret marker, which a write compares against the class it
+	// is storing (F18, G2).
+	Labels map[string]string
 	// Shape is what the container carries beyond what the intake writes.
 	Shape Shape
 }
