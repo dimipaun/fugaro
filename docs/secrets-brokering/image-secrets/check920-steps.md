@@ -115,7 +115,8 @@ recorded; read them for what each row settles. This file is the commands and wha
    reduced to a short plain-word shape before they are printed), and credential-shaped text in any message is
    redacted besides.
 
-3. **And the catalog half** — Check 921, which launches nothing:
+3. **And the catalog half** — Check 921, which launches nothing, reviews nothing and reads no checkout, so it runs
+   from any directory (none of the knobs above is needed):
 
    ```sh
    bash scripts/live-checks/check920.sh --catalog --dry-run   # calls nothing
@@ -123,9 +124,10 @@ recorded; read them for what each row settles. This file is the commands and wha
    ```
 
    Both modes print the same kind of block; the two carry **different** rows, so one block is never read as the
-   other (`MODE:` says which). Check 920's own three runs are named from today's UTC date and time plus `-0920`
-   (the repository under test), `-0921` (the review) and `-0922` (the repository not allowed the secret); set
-   `CHECK920_RUN_ID` to reuse a base.
+   other (`MODE:` says which). The **two runs** the check launches are named from today's UTC date and time plus
+   `-0920` (the repository under test) and `-0922` (the repository not allowed the secret); set `CHECK920_RUN_ID`
+   to reuse a base. The **review's** id is not one of them: `fugaro review` has no flag to set a run id, it mints
+   its own, and the check reads it out of the launch document and names it in the block.
 
 ## What each row means
 
@@ -140,14 +142,18 @@ recorded; read them for what each row settles. This file is the commands and wha
   workflow secret, and to name **both** secrets under test; a record that is absent, unreadable or short of them
   leaves this row **UNVERIFIED** with the reason, and every row below still runs.
 - **`jobs`** — `gcloud run jobs list`: **no** deployed run job of the installation mounts a container the record
-  names (the flip, **G6**). A job mounting a `fugaro_p_` container the record does **not** name is a shared
-  credential and the row says so rather than failing; a `fugaro_p_` mount whose class could not be settled (the
-  record was not read) leaves the row UNVERIFIED, because a prefix alone is not a reading.
+  names (the flip, **G6**) — in **any** spelling a deployment mounts one under: the delivery grammar's
+  `fugaro_p_<name>` **and** the project copy `fugaro-project-fugaro-<name>-<16 hex>` (`gcp.ProjectSecretID`) a job
+  mounted **before** the flip, which is what **G4** keeps alive after the release and what **U4** asks about, so a
+  row keyed on the prefix alone would pass an installation that still mounts one. A job mounting a `fugaro_p_`
+  container the record does **not** name is a shared credential and the row says so rather than failing; a mount
+  whose class could not be settled (the record was not read) leaves the row UNVERIFIED, because a name's prefix
+  alone is not a reading.
 - **`run-one`** — the run of the **vertex** repository succeeded, with a pull request. A run that could not finish
   is the fetch failing, and a run with no pull request leaves the review row unmeasured.
-- **`run-mounts`** — the job the run ran on **and** the execution it ran on: neither feeds any variable from
-  `fugaro_p_<CHECK920_SECRET>` or `fugaro_p_<CHECK920_FILE_SECRET>`, and neither runs as the installation's build
-  identity. The execution's own account is read as well as the job template's, because Cloud Run overrides it. The
+- **`run-mounts`** — the job the run ran on **and** the execution it ran on: neither feeds any variable from a
+  container of `<CHECK920_SECRET>` or `<CHECK920_FILE_SECRET>` in any spelling (the delivery grammar's or the
+  project copy's), and neither runs as the installation's build identity. The execution's own account is read as well as the job template's, because Cloud Run overrides it. The
   two together with `run-one` are the whole of "the value reached the run from the service and from nowhere else".
 - **`run-verify`** — the run's own last verify record out of its `result.json`: `passed`, on a **clean** tree. The
   steps' `test:` command fails unless the file secret arrived as a **`0400` non-empty file** at the path its

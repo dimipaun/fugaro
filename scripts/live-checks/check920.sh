@@ -107,7 +107,8 @@
 #   unset, the newest build that ran as the build identity);
 # CHECK920_CONFIG (the installation's local config, when it is not
 #   $XDG_CONFIG_HOME/fugaro/projects/fugaro.yaml), CHECK920_RUN_ID (the base of
-#   this check's own run ids, default `date -u +%Y%m%d-%H%M%S`),
+#   the two run ids this check launches, default `date -u +%Y%m%d-%H%M%S`; the
+#   review's id is `fugaro review`'s own and cannot be set),
 # CHECK920_RUN_SECONDS (how long a run is waited for; default 2400),
 # CHECK920_POLL_SECONDS (20), CHECK920_LOG_WAIT_SECONDS (60),
 # CHECK920_LOG_POLL_SECONDS (5), CHECK920_LOG_AGE (1h), CHECK920_LOG_LIMIT
@@ -558,6 +559,20 @@ elif cmd == "run":
         break
     else:
         print("found=no")
+elif cmd == "launch":
+    # argv: `fugaro review --json`'s launch document. The run id is the CLI's
+    # own — this command has no flag to set one — so it is read from here and
+    # every row below polls it. `run_id` is the field the shared launch shape
+    # carries; a document without one launched no run this can be read about.
+    doc = load(sys.argv[2])
+    if not isinstance(doc, dict):
+        print("found=no")
+        sys.exit(0)
+    print("found=yes")
+    for key in ("run_id", "run", "repo", "status", "job", "account", "execution"):
+        v = doc.get(key)
+        if isinstance(v, str) and v:
+            print("%s=%s" % (key, word(v, 120)))
 elif cmd == "slug":
     # argv: `gcloud run jobs list --format=json`'s file, a repository
     # (owner/name). Prints the key the repository's own runs are stored under in
@@ -840,6 +855,10 @@ guard_project() {
   else
     fact fugaro-version PASS "$(printf '%s' "$ver" | head -1 | cut -c1-120)"
   fi
+  # Check 921 launches nothing and reviews nothing, and CHECK920_CHECKOUT is
+  # empty in that mode: `git -C ""` would read whatever directory the owner
+  # happened to run from, and a row that is not 921's own would ride its verdict.
+  if [ "$MODE" = catalog ]; then return 0; fi
   rc=0
   git -C "$CHECKOUT" remote get-url origin >"$SCRATCH/origin" 2>"$SCRATCH/origin.err" || rc=$?
   if [ "$rc" -ne 0 ]; then
@@ -898,10 +917,12 @@ audit_read() { # audit_read RID OUT
 }
 
 # --------------------------------------------------------------------- the runs
+# The two runs this check launches take their ids from CHECK920_RUN_ID's base.
+# The review does not: `fugaro review` mints its own run id and prints it in the
+# launch document, and it has no flag to set one (see step_review).
 run_id_for() { # run_id_for LABEL
   case "$1" in
   one) printf '%s-0920' "$RUN_BASE" ;;
-  review) printf '%s-0921' "$RUN_BASE" ;;
   unlisted) printf '%s-0922' "$RUN_BASE" ;;
   *) die "Check 920 has no run id for the label '$1'" ;;
   esac
@@ -997,17 +1018,44 @@ step_record() {
   fact record PASS "${RTDB%/}/creds/projectsecrets.json read: ${n} workflow secret(s) — $(printf '%s' "$NAMES" | cut -c1-200) — including both secrets under test"
 }
 
-# is_workflow_secret NAME: whether the project record named NAME as a workflow
-# secret. The `fugaro_p_` grammar is ALSO the dynamic-delivery grammar for an
-# admin-shared project credential (reconciliation F10), and the two classes are
-# told apart by the container's own marker label (IS4) — which is why the
-# reading below is the record's list of names and never the prefix alone: a job
-# mounting a shared credential is not a job mounting a workflow secret, and a
-# row that failed on the prefix would report the flip broken on an installation
-# where it is not.
-is_workflow_secret() {
+# is_container_of CID NAME: whether CID is a Secret Manager container of the
+# logical secret NAME, in any spelling a deployment mounts one under — the
+# delivery grammar's `fugaro_p_<name>`, the project copy
+# `fugaro-project-<installation>-<name>-<16 hex>` (`gcp.ProjectSecretID`, which
+# is what a job mounted BEFORE the flip, so it is the spelling U4's question and
+# the pre-move project copy G4 keeps alive are both about) and a repository's own
+# copy `fugaro-<slug>-<name>-<16 hex>` (`gcp.SecretID`). The hash is not
+# recomputed: NAME comes from the record, so the suffix only has to be a hash.
+is_container_of() { # is_container_of CID NAME
+  local cid=$1 name=$2
+  [ -n "$name" ] || return 1
+  case "$cid" in
+  "fugaro_p_${name}") return 0 ;;
+  "fugaro-project-${INSTALL}-${name}-"*) ;;
+  "fugaro-"*"-${name}-"*) ;;
+  *) return 1 ;;
+  esac
+  printf '%s' "${cid##*-${name}-}" | grep -Eq '^[0-9a-f]{16}$'
+}
+
+# workflow_secret_of CID: the workflow secret whose container CID is, or nothing.
+# The two secrets under test always count — a mount of one is this check's own
+# subject whether or not the record could be read — and any other name only when
+# the project record names it. The `fugaro_p_` grammar is ALSO the
+# dynamic-delivery grammar for an admin-shared project credential (reconciliation
+# F10), so the class is the record's list of names and never the prefix alone: a
+# job mounting a shared credential is not a job mounting a workflow secret, and a
+# row that failed on the prefix would report the flip broken where it is not.
+workflow_secret_of() { # workflow_secret_of CID
+  local cid=$1 name
+  for name in "$SECRET" "$FILE_SECRET"; do
+    if is_container_of "$cid" "$name"; then printf '%s' "$name"; return 0; fi
+  done
   [ "$RECORD_OK" = yes ] || return 1
-  printf '%s\n' "$NAMES" | tr ' ' '\n' | grep -qx "$1"
+  for name in $NAMES; do
+    if is_container_of "$cid" "$name"; then printf '%s' "$name"; return 0; fi
+  done
+  return 1
 }
 
 step_jobs() {
@@ -1024,22 +1072,21 @@ step_jobs() {
   mounts=$(sed -n 's/^mounts=//p' "$SCRATCH/mounts" | head -n 1)
   while IFS='|' read -r job var cid; do
     [ -n "$cid" ] || continue
-    [ "${cid#fugaro_p_}" != "$cid" ] || continue
-    name=${cid#fugaro_p_}
-    if is_workflow_secret "$name"; then
-      bad="${bad}${bad:+, }${job} mounts ${cid} as ${var}"
-    else
-      others="${others}${others:+, }${job} mounts ${cid} as ${var}"
+    if name=$(workflow_secret_of "$cid"); then
+      bad="${bad}${bad:+, }${job} mounts ${cid} as ${var} (the workflow secret ${name})"
+      continue
     fi
+    [ "${cid#fugaro_p_}" != "$cid" ] || continue
+    others="${others}${others:+, }${job} mounts ${cid} as ${var}"
   done < <(sed -n 's/^mount=//p' "$SCRATCH/mounts")
   if [ -n "$bad" ]; then
-    fact jobs FAIL "${jobs} deployed job(s), ${mounts} Secret Manager mount(s), and ${bad} — a workflow secret. After the flip no run job mounts one: the run fetches it from the credentials service at bootstrap. A mount left behind is the plan's G6 broken: run 'fugaro update --repo' for that repository, and 'fugaro doctor' lists any job that still mounts one"
+    fact jobs FAIL "${jobs} deployed job(s), ${mounts} Secret Manager mount(s), and ${bad}. After the flip no run job mounts a workflow secret in any spelling — neither the delivery grammar's container nor the project copy a job mounted before it: the run fetches the value from the credentials service at bootstrap (G6, U4). A mount left behind is the flip not reached: run 'fugaro update --repo' for that repository, and 'fugaro doctor' lists any job that still mounts one"
   elif [ -n "$others" ] && [ "$RECORD_OK" != yes ]; then
     unmeasured jobs "${jobs} deployed job(s) and ${mounts} Secret Manager mount(s): ${others}. The delivery grammar is also the one an admin-shared project credential uses (F10), the record that tells the two apart could not be read (see the record row), so whether any of those is a workflow secret is NOT settled here — read the record and run this check again"
   elif [ -n "$others" ]; then
     fact jobs PASS "${jobs} deployed job(s) and ${mounts} Secret Manager mount(s): ${others} — and the record does NOT name any of them, so they are shared credentials of the delivery grammar and not the workflow-secret class this row is about"
   else
-    fact jobs PASS "${jobs} deployed job(s), ${mounts} Secret Manager mount(s), and none of them is a fugaro_p_ container at all: no run job mounts a workflow secret"
+    fact jobs PASS "${jobs} deployed job(s), ${mounts} Secret Manager mount(s), and not one of them is a container of a workflow secret — neither the delivery grammar's nor the project copy the flip takes away: no run job mounts a workflow secret"
   fi
 }
 
@@ -1101,21 +1148,15 @@ step_run_mounts() { # step_run_mounts <row>
     fi
     while IFS='|' read -r var cid; do
       [ -n "$cid" ] || continue
-      case "$cid" in
-      "fugaro_p_${SECRET}" | "fugaro_p_${FILE_SECRET}")
-        bad="${bad}${bad:+, }${file} feeds ${var} from ${cid}"
-        continue
-        ;;
-      esac
-      [ "${cid#fugaro_p_}" != "$cid" ] || continue
-      name=${cid#fugaro_p_}
-      is_workflow_secret "$name" && bad="${bad}${bad:+, }${file} feeds ${var} from ${cid}"
+      if name=$(workflow_secret_of "$cid"); then
+        bad="${bad}${bad:+, }${file} feeds ${var} from ${cid} (the workflow secret ${name})"
+      fi
     done < <(sed -n 's/^mount=//p' "$SCRATCH/pod-$file")
   done
   if [ -n "$bad" ]; then
     fact run-mounts FAIL "${bad}. The run is served at bootstrap and its job carries no container: a spec that still names one is the mount the flip removed (G6), and a run whose containers run as the build identity is a run reading the service's own store"
   else
-    fact run-mounts PASS "neither the job ${job} nor the execution ${RUN_ONE_EXEC} the run ${RUN_ONE_ID} ran on is fed from fugaro_p_${SECRET} or fugaro_p_${FILE_SECRET} in any container, and neither runs as the build identity (${accounts}): the value reached the run from the service and from nowhere else"
+    fact run-mounts PASS "neither the job ${job} nor the execution ${RUN_ONE_EXEC} the run ${RUN_ONE_ID} ran on is fed from a container of ${SECRET} or ${FILE_SECRET} in any spelling, and neither runs as the build identity (${accounts}): the value reached the run from the service and from nowhere else"
   fi
 }
 
@@ -1199,15 +1240,23 @@ step_review() {
     unmeasured review "the run ${RUN_ONE_ID} opened no pull request, so there is nothing to review: this row is a review OF that pull request, which must be served neither file"
     return 0
   fi
+  say "launching the review of pull request #${RUN_ONE_PR} from ${CHECKOUT} — it goes on in the cloud"
   local rid rc=0
-  rid=$(run_id_for review)
-  say "launching the review of pull request #${RUN_ONE_PR} (${rid}) from ${CHECKOUT} — it goes on in the cloud"
-  ( cd "$CHECKOUT" && fugaro review --pr "$RUN_ONE_PR" --project "$INSTALL" --run-id "$rid" --json \
+  ( cd "$CHECKOUT" && fugaro review --pr "$RUN_ONE_PR" --project "$INSTALL" --json \
       >"$SCRATCH/review.json" 2>"$SCRATCH/review.err" </dev/null ) || rc=$?
   if [ "$rc" -ne 0 ]; then
     unmeasured review "'fugaro review --pr ${RUN_ONE_PR}' exited ${rc} and launched no review: $(last_lines "$SCRATCH/review.err")"
     return 0
   fi
+  # The id is the CLI's own: `fugaro review` mints it and prints it in the launch
+  # document, and it has no flag to set one. A launch that names no run leaves
+  # this row unmeasured — the alternative is polling an id that is not a run.
+  rid=$(reader launch "$SCRATCH/review.json" 2>/dev/null | sed -n 's/^run_id=//p' | head -n 1 || true)
+  if [ -z "$rid" ]; then
+    unmeasured review "'fugaro review --pr ${RUN_ONE_PR}' launched and its launch document names no run: $(last_lines "$SCRATCH/review.json"). Without the id there is no run to read, and a row that polled an id of its own would read a run nobody launched"
+    return 0
+  fi
+  say "the review launched as ${rid}"
   poll_row review "$rid" "$REPO"
   local row; row=$(row_of review)
   if [ "$(field_of found "$row")" != yes ] || [ "$(field_of terminal "$row")" != yes ]; then
@@ -1228,15 +1277,9 @@ step_review() {
         reader pod "$SCRATCH/$file.json" >"$SCRATCH/pod-$file" || true
         while IFS='|' read -r var cid; do
           [ -n "$cid" ] || continue
-          case "$cid" in
-          "fugaro_p_${SECRET}" | "fugaro_p_${FILE_SECRET}")
-            bad="${bad}${bad:+, }${file} feeds ${var} from ${cid}"
-            continue
-            ;;
-          esac
-          [ "${cid#fugaro_p_}" != "$cid" ] || continue
-          name=${cid#fugaro_p_}
-          is_workflow_secret "$name" && bad="${bad}${bad:+, }${file} feeds ${var} from ${cid}"
+          if name=$(workflow_secret_of "$cid"); then
+            bad="${bad}${bad:+, }${file} feeds ${var} from ${cid} (the workflow secret ${name})"
+          fi
         done < <(sed -n 's/^mount=//p' "$SCRATCH/pod-$file")
       done
     else
@@ -1458,16 +1501,16 @@ print_plan() {
   say "  [network] fugaro doctor --project ${INSTALL} --all and fugaro version  (this is the ${P} installation, and the binary is not a development build)"
   say "  [network] gcloud auth print-access-token  (one token, into a 0600 curl config file in the scratch directory, for the record read below; never printed and never on an argv)"
   say "  [network] curl GET <the installation's Realtime Database>/creds/projectsecrets.json  (the workflow-secret names — the class this check is about — and the two secrets under test must be in it)"
-  say "  [network] gcloud run jobs list --project=${P} --region=${L} --format=json  (every deployed job: NONE of them may mount a fugaro_p_<name> container)"
+  say "  [network] gcloud run jobs list --project=${P} --region=${L} --format=json  (every deployed job: NONE of them may mount a container of a workflow secret the record names — neither fugaro_p_<name> nor the project copy fugaro-project-${INSTALL}-<name>-<16 hex> a job mounted before the flip)"
   say "  [network, writes] fugaro run --repo ${REPO:-<the repository under test>} --project ${INSTALL} --run-id <today>-0920 --title 'Check 920: one' --task-file <task> --json  (one throwaway run in the VERTEX repository: it writes one line to CHK920.md, commits and opens a pull request)"
   say "  [network] fugaro runs ls --repo ${REPO:-<the repository under test>} --no-cache --json  (its row, polled until terminal: status, outcome and its pull request)"
-  say "  [network] gcloud run jobs describe <the job it ran on>, gcloud run jobs executions describe <its execution>  (neither may feed any variable from fugaro_p_${SECRET:-<secret>} or fugaro_p_${FILE_SECRET:-<file secret>})"
+  say "  [network] gcloud run jobs describe <the job it ran on>, gcloud run jobs executions describe <its execution>  (neither may feed any variable from a container of ${SECRET:-<secret>} or ${FILE_SECRET:-<file secret>}, in any spelling)"
   say "  [network] gcloud storage cat gs://<the runs bucket>/runs/<slug>/<run id>/result.json  (the run's own verify records: the steps file makes its verify fail unless the file secret is a 0400 non-empty file at the path its variable names)"
   say "  [network] gcloud logging read 'resource.type=\"cloud_run_revision\" resource.labels.service_name=\"${SVC}\" jsonPayload.run=\"<run id>\"'  (the service's own lines: exactly one workflow-secret act per fetch, each naming a fugaro_p_ container)"
   say "  [network, writes] the same launch in ${UNLISTED:-<the repository the allow-list does not admit>} (<today>-0922), expected to FAIL its bootstrap: the service refuses it, and the sentence names the fix, 'fugaro secrets allow'"
   say "  [network] gcloud logging read for that run too  (its refusal sentence)"
-  say "  [network, writes] cd ${CHECKOUT:-<a checkout of the repository under test>} && fugaro review --pr <the pull request> --project ${INSTALL} --run-id <today>-0921 --json  (a review run of its own, which must carry no workflow secret and have no workflow-secret line)"
-  say "  [network] gcloud run jobs describe / executions describe for the review's job and execution, and gcloud logging read for its run id  (neither container on it, and no workflow-secret line)"
+  say "  [network, writes] cd ${CHECKOUT:-<a checkout of the repository under test>} && fugaro review --pr <the pull request> --project ${INSTALL} --json  (a review run of its own — the CLI mints its run id, which the launch document names and every read below polls — which must carry no workflow secret and have no workflow-secret line)"
+  say "  [network] fugaro runs ls --repo <the repository under test> --no-cache --json for that run id, gcloud run jobs describe / executions describe for the review's job and execution, and gcloud logging read for its run id  (neither container on it, and no workflow-secret line)"
   say "and its cleanup would run: nothing. It creates no cloud resource and writes no record: the scratch directory is the only thing it makes, and its own EXIT trap removes it. The runs and the review open branches and pull requests on the SANDBOX repositories, which stay there and are yours to settle."
 }
 

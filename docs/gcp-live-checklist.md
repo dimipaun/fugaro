@@ -25582,10 +25582,13 @@ steps you follow are in
 **What it measures.** Five claims, one row each — and the class it reads is the project record's, not a name prefix:
 
 - **The flip (G6).** `gcloud run jobs list` for the installation: no deployed run job mounts a container the project
-  secret record `creds/projectsecrets` names. `fugaro_p_` is **also** the dynamic-delivery grammar for an admin-shared
-  project credential (reconciliation **F10**), so the check settles a mount by the record's list of names and never by
-  the prefix: a shared credential is not a workflow secret, and a `fugaro_p_` mount whose class the record could not
-  settle is left **UNVERIFIED** rather than failed.
+  secret record `creds/projectsecrets` names — in **any** spelling a deployment mounts one under, the delivery
+  grammar's `fugaro_p_<name>` **and** the project copy `fugaro-project-<installation>-<name>-<16 hex>`
+  (`gcp.ProjectSecretID`) a job mounted **before** the flip, which is the state **G4** tolerates after the release and
+  the question **U4** asks. `fugaro_p_` is **also** the dynamic-delivery grammar for an admin-shared project
+  credential (reconciliation **F10**), so the check settles a mount by the record's list of names and never by the
+  prefix: a shared credential is not a workflow secret, and a mount whose class the record could not settle is left
+  **UNVERIFIED** rather than failed.
 - **A vertex repository's run fetches one (U1).** A run of the repository under test — which holds a run identity,
   `agent.auth: vertex` — succeeded with a pull request, and **neither the job it ran on nor the execution it ran on**
   feeds any variable from the two secrets' containers or runs as the installation's build identity. With the run

@@ -7,9 +7,11 @@
 #
 # The readings are the point, and each case bends exactly one of them:
 #
-#   * a job of the installation that mounts a `fugaro_p_<name>` container
-#     (the flip's G6, broken);
-#   * the run's OWN job or execution fed from that container, or running as the
+#   * a job of the installation that mounts a workflow secret — in the delivery
+#     grammar's `fugaro_p_<name>` spelling AND in the project copy a job mounted
+#     before the flip (`fugaro-project-…-<name>-<16 hex>`, G4/U4), which a
+#     prefix-only reading would pass;
+#   * the run's OWN job or execution fed from either spelling, or running as the
 #     build identity (U1);
 #   * a run of the repository under test that did not succeed, or succeeded
 #     with no pull request;
@@ -234,8 +236,23 @@ runs)
   f=$dir/rows-$(printf '%s' "$repo" | tr '/.' '--').json
   if [ -f "$f" ]; then cat "$f"; else printf '{"runs":[]}'; fi
   ;;
-run | review)
+run)
   exit "${FAKE920_LAUNCH_EXIT:-0}"
+  ;;
+review)
+  # `fugaro review` has no flag that sets its run id: it mints one and prints it
+  # in the launch document, which is where the check reads it. FAKE920_REVIEW_RID
+  # is that id, and setting it EMPTY is a launch that names no run.
+  rc=${FAKE920_REVIEW_EXIT:-0}
+  if [ "$rc" -eq 0 ]; then
+    rid=${FAKE920_REVIEW_RID-2026-11-24-0400-0921}
+    if [ -n "$rid" ]; then
+      printf '{\n "project": "fugaro",\n "run": "Check 920 review",\n "run_id": "%s",\n "status": "launched"\n}\n' "$rid"
+    else
+      printf '{\n "project": "fugaro",\n "run": "Check 920 review",\n "status": "launched"\n}\n'
+    fi
+  fi
+  exit "$rc"
   ;;
 *)
   printf 'fake fugaro: unexpected verb %s\n' "$*" >&2
@@ -425,6 +442,8 @@ run920_raw() { # run920_raw <args...>
     FAKE920_DOCTOR=${FAKE920_DOCTOR-project: fugaro (GCP fugaro-dev, us-east5)}
     FAKE920_VERSION=${FAKE920_VERSION-fugaro v1.2.3 ($VERSION_MARKER)}
     FAKE920_LAUNCH_EXIT=${FAKE920_LAUNCH_EXIT-0}
+    FAKE920_REVIEW_EXIT=${FAKE920_REVIEW_EXIT-0}
+    FAKE920_REVIEW_RID=${FAKE920_REVIEW_RID-$REVIEW_RID}
     CHECK920_RUN_ID=${CHECK920_RUN_ID-2026-11-24-0400}
     CHECK920_REPO=${CHECK920_REPO-acme/sandbox}
     CHECK920_CHECKOUT=${CHECK920_CHECKOUT-${CHECKOUT:-$work/none}}
@@ -432,7 +451,8 @@ run920_raw() { # run920_raw <args...>
     CHECK920_SECRET=${CHECK920_SECRET-is12-env}
     CHECK920_FILE_SECRET=${CHECK920_FILE_SECRET-is12-file}
     CHECK920_RUN_SECONDS=${CHECK920_RUN_SECONDS-2400}
-    export FAKE920_DOCTOR FAKE920_VERSION FAKE920_LAUNCH_EXIT CHECK920_RUN_ID \
+    export FAKE920_DOCTOR FAKE920_VERSION FAKE920_LAUNCH_EXIT FAKE920_REVIEW_EXIT \
+      FAKE920_REVIEW_RID CHECK920_RUN_ID \
       CHECK920_REPO CHECK920_CHECKOUT CHECK920_UNLISTED_REPO CHECK920_SECRET \
       CHECK920_FILE_SECRET CHECK920_RUN_SECONDS
     env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE \
@@ -534,7 +554,28 @@ PY
   [ "$status" -ne 0 ] || fail "a mounted workflow secret: passed"
   expect_row "$out" jobs FAIL "a mounted workflow secret: the jobs row"
   expect_contains "$out" "$JOB mounts fugaro_p_is12-env as DEPLOY_TOKEN" "a mounted workflow secret: the job is named"
-  expect_contains "$out" "the plan's G6 broken" "a mounted workflow secret: the row names the constraint"
+  expect_contains "$out" "A mount left behind is the flip not reached" "a mounted workflow secret: the row names the constraint"
+}
+
+# The other spelling of the same class: a job that still mounts the PROJECT copy
+# (`gcp.ProjectSecretID`, what a job mounted before the flip) reads PASS under a
+# check keyed on the `fugaro_p_` prefix alone — and that is exactly the state the
+# plan's G4 keeps alive after the release and U4 asks about.
+test_a_job_mounting_the_project_copy_fails() {
+  case_dir projectcopy
+  write_review_row
+  python3 - "$answers/jobs.json" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+spec = doc[0]["spec"]["template"]["spec"]["template"]["spec"]
+spec["containers"][0]["env"].append({"name": "DEPLOY_TOKEN",
+  "valueSource": {"secretKeyRef": {"secret": "fugaro-project-fugaro-is12-env-0123456789abcdef", "key": "1"}}})
+json.dump(doc, open(sys.argv[1], "w"))
+PY
+  run920
+  [ "$status" -ne 0 ] || fail "a job mounting the project copy: passed"
+  expect_row "$out" jobs FAIL "a job mounting the project copy: the jobs row"
+  expect_contains "$out" "$JOB mounts fugaro-project-fugaro-is12-env-0123456789abcdef as DEPLOY_TOKEN (the workflow secret is12-env)" "a job mounting the project copy: the job and the secret are named"
 }
 
 test_a_job_mounting_another_secret_is_not_this_row() {
@@ -568,6 +609,26 @@ PY
   [ "$status" -ne 0 ] || fail "the run's own mount: passed"
   expect_row "$out" run-mounts FAIL "the run's own mount: the row"
   expect_contains "$out" "job-one feeds FILE_SECRET from fugaro_p_is12-file" "the run's own mount: the job is named"
+}
+
+# The same row over the project copy, on the EXECUTION rather than the job — the
+# document Cloud Run overrides the job template with, and the one a prefix-only
+# reading would pass.
+test_the_runs_own_execution_mounting_the_project_copy_fails() {
+  case_dir runprojectcopy
+  write_review_row
+  python3 - "$answers/execution-$EXEC.json" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+spec = doc["spec"]["template"]["spec"]
+spec["containers"][0]["env"].append({"name": "DEPLOY_CERT",
+  "valueSource": {"secretKeyRef": {"secret": "fugaro-project-fugaro-is12-file-0123456789abcdef"}}})
+json.dump(doc, open(sys.argv[1], "w"))
+PY
+  run920
+  [ "$status" -ne 0 ] || fail "the run's execution on the project copy: passed"
+  expect_row "$out" run-mounts FAIL "the run's execution on the project copy: the row"
+  expect_contains "$out" "exec-one feeds DEPLOY_CERT from fugaro-project-fugaro-is12-file-0123456789abcdef (the workflow secret is12-file)" "the run's execution on the project copy: the row names it"
 }
 
 test_a_run_that_ran_as_the_build_identity_fails() {
@@ -771,6 +832,44 @@ PY
   expect_contains "$out" "exec-review feeds FILE_SECRET from fugaro_p_is12-file" "a review carrying the container: the row names it"
 }
 
+test_a_review_carrying_the_project_copy_fails() {
+  case_dir reviewprojectcopy
+  write_review_row
+  write_audit "$answers/audit-$REVIEW_RID.json" "$REVIEW_RID" "git-credential" "git-credential"
+  python3 - "$answers/execution-$REEXEC.json" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+spec = doc["spec"]["template"]["spec"]
+spec["containers"][0]["env"].append({"name": "DEPLOY_TOKEN",
+  "valueSource": {"secretKeyRef": {"secret": "fugaro-project-fugaro-is12-env-0123456789abcdef"}}})
+json.dump(doc, open(sys.argv[1], "w"))
+PY
+  run920
+  expect_row "$out" review FAIL "a review carrying the project copy: the row"
+  expect_contains "$out" "exec-review feeds DEPLOY_TOKEN from fugaro-project-fugaro-is12-env-0123456789abcdef (the workflow secret is12-env)" "a review carrying the project copy: the row names it"
+}
+
+# `fugaro review` has no `--run-id`: the id is the CLI's own and the launch
+# document is where it is read. A launch that names none leaves the row
+# unmeasured — the alternative is polling an id no run ever had.
+test_a_review_whose_launch_names_no_run_is_not_measured() {
+  case_dir reviewnorun
+  write_review_row
+  FAKE920_REVIEW_RID= run920
+  expect_status "$status" 3 "a review launch naming no run: the verdict"
+  expect_row "$out" review UNVERIFIED "a review launch naming no run: the row"
+  expect_contains "$out" "names no run" "a review launch naming no run: the row says why"
+}
+
+test_a_review_launch_that_failed_is_not_measured() {
+  case_dir reviewnolaunch
+  write_review_row
+  FAKE920_REVIEW_EXIT=1 run920
+  expect_status "$status" 3 "a review launch that failed: the verdict"
+  expect_row "$out" review UNVERIFIED "a review launch that failed: the row"
+  expect_contains "$out" "launched no review" "a review launch that failed: the row says why"
+}
+
 test_an_unlisted_run_that_succeeded_fails() {
   case_dir unlistedok
   write_review_row
@@ -828,6 +927,23 @@ test_a_launch_that_never_started_is_not_measured() {
   expect_status "$status" 3 "a launch that failed: the verdict"
   expect_row "$out" run-one UNVERIFIED "a launch that failed: the row"
   expect_contains "$out" "never launched one" "a launch that failed: the row says why"
+}
+
+# Check 921 launches nothing and owns no review row, and the steps file's own
+# bare command (`check920.sh --catalog`) names no checkout. Run from a directory
+# that is not a git checkout at all — `git -C ""` reads the caller's cwd — the
+# block must still be 921's own, with no `review` row riding its verdict.
+test_the_catalog_mode_needs_no_checkout() {
+  case_dir catnocheckout
+  write_catalog_answers ok
+  local back; back=$(pwd)
+  mkdir -p "$work/not-a-repo"
+  cd "$work/not-a-repo"
+  CHECK920_CHECKOUT= run920_raw --catalog
+  cd "$back"
+  expect_status "$status" 0 "the catalog mode from a directory that is not a checkout: the verdict"
+  expect_contains "$out" "CHECK 921 RESULT END (exit 0)" "the catalog mode from a directory that is not a checkout: the end line"
+  expect_not_contains "$out" "FACT review:" "the catalog mode from a directory that is not a checkout: no review row"
 }
 
 test_the_catalog_mode_passes() {
@@ -1050,7 +1166,8 @@ t() {
   elif [ -n "${CHECK_TEST_SHARD:-}" ]; then
     [ $((i % ${CHECK_TEST_SHARD#*/})) -eq "${CHECK_TEST_SHARD%/*}" ] || return 0
   fi
-  unset FAKE920_DOCTOR FAKE920_VERSION FAKE920_LAUNCH_EXIT CHECK920_REPO CHECK920_UNLISTED_REPO \
+  unset FAKE920_DOCTOR FAKE920_VERSION FAKE920_LAUNCH_EXIT FAKE920_REVIEW_EXIT \
+    FAKE920_REVIEW_RID CHECK920_REPO CHECK920_UNLISTED_REPO \
     CHECK920_RUN_SECONDS 2>/dev/null || true
   "$1"
 }
@@ -1059,8 +1176,10 @@ t test_dry_run_calls_nothing
 t test_dry_run_catalog_calls_nothing
 t test_the_happy_path_passes
 t test_a_job_that_mounts_a_workflow_secret_fails
+t test_a_job_mounting_the_project_copy_fails
 t test_a_job_mounting_another_secret_is_not_this_row
 t test_the_runs_own_job_that_mounts_one_fails
+t test_the_runs_own_execution_mounting_the_project_copy_fails
 t test_a_run_that_ran_as_the_build_identity_fails
 t test_a_run_that_did_not_succeed_fails
 t test_a_run_with_no_pull_request_fails
@@ -1078,12 +1197,16 @@ t test_a_service_log_that_could_not_be_read_is_not_measured
 t test_a_service_log_with_no_line_for_the_run_fails
 t test_a_review_that_was_served_the_secret_fails
 t test_a_review_that_carries_the_container_fails
+t test_a_review_carrying_the_project_copy_fails
+t test_a_review_whose_launch_names_no_run_is_not_measured
+t test_a_review_launch_that_failed_is_not_measured
 t test_an_unlisted_run_that_succeeded_fails
 t test_a_refusal_without_the_fix_fails
 t test_a_run_that_failed_with_no_refusal_is_not_measured
 t test_the_installation_guard_stops_another_project
 t test_a_development_build_fails_the_version_row
 t test_a_launch_that_never_started_is_not_measured
+t test_the_catalog_mode_needs_no_checkout
 t test_the_catalog_mode_passes
 t test_an_identity_with_a_containers_accessor_fails
 t test_an_identity_with_a_project_level_accessor_fails
