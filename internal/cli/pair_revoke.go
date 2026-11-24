@@ -164,11 +164,11 @@ func runPairRevoke(cmd *cobra.Command, o *pairRevokeOptions) error {
 		if errors.Is(fp.FamilyErr, rtdb.ErrPermission) {
 			return pairRefuseIn(ev, o.asJSON, pairRefusedDatabaseAdmin,
 				fmt.Errorf("the device node %s is deleted and this laptop's MAC key is gone, but the deletion of its refresh family %s was refused: revoking a device ends its family there with roles/firebasedatabase.admin, which this credential does not hold on project %s's Firebase project (its owners and editors hold it, and terraform.budget_admins): %w%s",
-					fp.Node, pairRefreshFamilyPath(device.UID), lc.Name, fp.FamilyErr, pairCloudLeftover(fp.CopyErr, lc)))
+					fp.Node, mobilesession.RefreshFamilyPath(device.UID), lc.Name, fp.FamilyErr, pairCloudLeftover(fp.CopyErr, lc)))
 		}
 		cause := dbErr(lc, fp.FamilyErr, true)
 		return pairRefuseIn(ev, o.asJSON, pairRefusalCode(cause, pairRefusedUnreachable),
-			fmt.Errorf("%w; the device node %s is deleted and the phone is off the allowlist, but the device's refresh family %s could not be ended, so a refresh token the phone still holds keeps rotating until the family is deleted by hand: the node's deletion ends the database reads, and the family is the session", cause, fp.Node, pairRefreshFamilyPath(device.UID)))
+			fmt.Errorf("%w; the device node %s is deleted and the phone is off the allowlist, but the device's refresh family %s could not be ended, so a refresh token the phone still holds keeps rotating until the family is deleted by hand: the node's deletion ends the database reads, and the family is the session", cause, fp.Node, mobilesession.RefreshFamilyPath(device.UID)))
 	}
 	// The third copy's own failure, reported after the push node's for the reason
 	// the two deletions are ordered as they are: the node is the read the rules
@@ -260,28 +260,6 @@ func pairSelectDevice(rows []pairDeviceRow, o *pairRevokeOptions, lc *localcfg.C
 	}
 }
 
-// pairRefreshRoot is where a project's refresh families live (P4's store, D2783,
-// D2794): one node per device, keyed by the device's uid, because the contract
-// fixes one family per device and `RefreshStore.Issue` is asked for a family by
-// uid (C1). It is under config/admin — where the device allowlist, the invites,
-// the member records and the push registrations already live and where no
-// client token may read or write anything — so `fugaro pair revoke` ends a
-// family with the database admin it holds and needs no phone and no service in
-// the loop, which is the whole reason C1 keeps the store and the route apart.
-//
-// The path is spelled here rather than beside rules.PathDevices for the same
-// reason pairPushRoot's is: no rule names it, and there it would read as a node
-// the rules read, which is exactly what it is not. The node's own shape is
-// P4's to write and no shape is fixed here: this command only ever deletes it.
-const pairRefreshRoot = "config/admin/refresh"
-
-// pairRefreshFamilyPath is one device's refresh family. The key is the DEVICE's
-// uid, which is what makes the family one device's: the contract fixes one
-// family per device, the pairing minted the uid the device node is keyed by,
-// and the service starts the family with the same uid (P4). A revoke by device
-// therefore names the family it ends from the uid alone.
-func pairRefreshFamilyPath(deviceUID string) string { return pairRefreshRoot + "/" + deviceUID }
-
 // pairDatabaseRefreshStore is C1's RefreshStore over this installation's own
 // database (mobilesession.RefreshStore), and it is the half an admin act needs:
 // it ends a family. It is the CLI's own store because the two callers that
@@ -305,7 +283,7 @@ func (s pairDatabaseRefreshStore) Revoke(ctx context.Context, _, family string) 
 	if family == "" {
 		return errors.New("a refresh family to revoke is empty: a device's family is keyed by its uid, and a revoke with no key would delete the store's whole root rather than one device's session")
 	}
-	return s.db.Patch(ctx, pairRefreshRoot, map[string]any{family: nil})
+	return s.db.Patch(ctx, mobilesession.RefreshRoot, map[string]any{family: nil})
 }
 
 func (pairDatabaseRefreshStore) Issue(context.Context, string, string) (mobilesession.RefreshGrant, error) {
@@ -384,7 +362,7 @@ func pairDeleteDeviceFootprint(ctx context.Context, lc *localcfg.Config, db *rtd
 	// stay where P4 keeps them and this act only ends one.
 	familyErr := refresh.Revoke(ctx, lc.Name, deviceUID)
 	if familyErr == nil {
-		fp.Family = pairRefreshFamilyPath(deviceUID)
+		fp.Family = mobilesession.RefreshFamilyPath(deviceUID)
 		fp.Wrote = append(fp.Wrote, fp.Family)
 	}
 	fp.FamilyErr = familyErr
@@ -436,7 +414,7 @@ func pairFamilyLeftover(err error, deviceUID string) string {
 	if err == nil {
 		return ""
 	}
-	return fmt.Sprintf("; the device's refresh family %s could not be ended either (%v), so a token the phone still holds keeps rotating and must be deleted by hand", pairRefreshFamilyPath(deviceUID), oneLine(err.Error()))
+	return fmt.Sprintf("; the device's refresh family %s could not be ended either (%v), so a token the phone still holds keeps rotating and must be deleted by hand", mobilesession.RefreshFamilyPath(deviceUID), oneLine(err.Error()))
 }
 
 // pairMemberRemoval is what removing a member deleted: the record, every device
@@ -529,7 +507,7 @@ func pairFootprintFailures(fp pairDeviceFootprint) []string {
 		failed = append(failed, fmt.Sprintf("the device node %s could not be deleted: %s", rules.PathDevices+"/"+fp.UID, oneLine(fp.NodeErr.Error())))
 	}
 	if fp.FamilyErr != nil {
-		failed = append(failed, fmt.Sprintf("the refresh family %s could not be ended: %s", pairRefreshFamilyPath(fp.UID), oneLine(fp.FamilyErr.Error())))
+		failed = append(failed, fmt.Sprintf("the refresh family %s could not be ended: %s", mobilesession.RefreshFamilyPath(fp.UID), oneLine(fp.FamilyErr.Error())))
 	}
 	if fp.PushErr != nil {
 		failed = append(failed, fmt.Sprintf("the push node %s could not be deleted: %s", pairPushPath(fp.UID), oneLine(fp.PushErr.Error())))

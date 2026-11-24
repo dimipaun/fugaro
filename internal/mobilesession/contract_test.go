@@ -265,6 +265,27 @@ func TestComposedStoreItemNames(t *testing.T) {
 	}
 }
 
+// TestRefreshFamilyPathIsUnderTheAdminNode holds the family path to the two
+// things a caller relies on: it is inside config/admin, which the generated
+// rules deny to every client token, and it is one node per device, keyed by the
+// uid the device node and Issue already use. Both sides write it — P4 creates
+// and rotates a family there, P7's admin revoke deletes the node — so a path
+// that moved into a client-readable subtree, or off the uid, is a revoke that
+// deletes nothing while the stolen phone keeps refreshing (D2794, F32).
+func TestRefreshFamilyPathIsUnderTheAdminNode(t *testing.T) {
+	if !strings.HasPrefix(RefreshRoot, "config/admin/") {
+		t.Errorf("the refresh families live at %q, want a path under config/admin: the rules deny that node to every client token, and a family a client could read is a token a client could take", RefreshRoot)
+	}
+	if strings.HasSuffix(RefreshRoot, "/") {
+		t.Errorf("RefreshRoot %q ends in a slash, so RefreshFamilyPath composes a doubled one", RefreshRoot)
+	}
+	for _, uid := range []string{"device-1", "a-uid-with-dashes"} {
+		if got, want := RefreshFamilyPath(uid), RefreshRoot+"/"+uid; got != want {
+			t.Errorf("RefreshFamilyPath(%q) = %q, want %q: the family is keyed by the device's uid and nothing else", uid, got, want)
+		}
+	}
+}
+
 // roundTripWire holds every wire document in the file to the shape that reads
 // it: the document is unmarshalled and marshalled back, and the two JSON
 // documents must be the same. A field the file names and the shape does not is

@@ -42,6 +42,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/mailbox/keychain"
 	"github.com/dimipaun/fugaro/internal/mobileauth"
+	"github.com/dimipaun/fugaro/internal/mobilesession"
 )
 
 // The pairing fixture: a project config whose budget backend is the RTDB fake,
@@ -2889,7 +2890,7 @@ func TestRevokeNeverDeletesTheAuthUser(t *testing.T) {
 	if doc == nil {
 		t.Fatalf("the %s event carries no document: %v", pairEventRevoked, events[0])
 	}
-	if want := []string{rules.PathDevices + "/" + pairDevA, pairRefreshFamilyPath(pairDevA), pairPushPath(pairDevA)}; !slices.Equal(doc.Wrote, want) {
+	if want := []string{rules.PathDevices + "/" + pairDevA, mobilesession.RefreshFamilyPath(pairDevA), pairPushPath(pairDevA)}; !slices.Equal(doc.Wrote, want) {
 		t.Fatalf("wrote = %v, want the nodes and the family the act deleted (%v): the Auth user is not this command's to delete, and the pairing session's node is the sweep's", doc.Wrote, want)
 	}
 	if len(doc.Warnings) != 0 || len(doc.Refused) != 0 {
@@ -2927,7 +2928,7 @@ func TestRevokeDeletesThePushNodeWithTheDeviceNode(t *testing.T) {
 	if len(events) != 1 || events[0].Event != pairEventRevoked || events[0].Revoke == nil {
 		t.Fatalf("events = %v, want one %s carrying a document", events, pairEventRevoked)
 	}
-	want := []string{rules.PathDevices + "/" + pairDevA, pairRefreshFamilyPath(pairDevA), pairPushPath(pairDevA)}
+	want := []string{rules.PathDevices + "/" + pairDevA, mobilesession.RefreshFamilyPath(pairDevA), pairPushPath(pairDevA)}
 	if !slices.Equal(events[0].Revoke.Wrote, want) {
 		t.Fatalf("wrote = %v, want %v: the device node first, because it is what the rules read and its deletion is the revocation, the refresh family with it because the family is the session, and the push node with them", events[0].Revoke.Wrote, want)
 	}
@@ -3096,7 +3097,7 @@ func TestRevokeDestroysTheCloudCopyOfTheKey(t *testing.T) {
 	if len(events) != 1 || events[0].Event != pairEventRevoked || events[0].Revoke == nil {
 		t.Fatalf("events = %v, want one %s carrying a document", events, pairEventRevoked)
 	}
-	want := []string{rules.PathDevices + "/" + pairDevA, pairRefreshFamilyPath(pairDevA), pairPushPath(pairDevA), pairCloudCopy()}
+	want := []string{rules.PathDevices + "/" + pairDevA, mobilesession.RefreshFamilyPath(pairDevA), pairPushPath(pairDevA), pairCloudCopy()}
 	if !slices.Equal(events[0].Revoke.Wrote, want) {
 		t.Fatalf("wrote = %v, want %v: the copy is step 2b, between the nodes and the laptop's item", events[0].Revoke.Wrote, want)
 	}
@@ -3143,7 +3144,7 @@ func TestRevokeDestroysTheCloudCopyOfADisabledVersion(t *testing.T) {
 	if len(events) != 1 || events[0].Event != pairEventRevoked || events[0].Revoke == nil {
 		t.Fatalf("events = %v, want one %s carrying a document", events, pairEventRevoked)
 	}
-	want := []string{rules.PathDevices + "/" + pairDevA, pairRefreshFamilyPath(pairDevA), pairPushPath(pairDevA), pairCloudCopy()}
+	want := []string{rules.PathDevices + "/" + pairDevA, mobilesession.RefreshFamilyPath(pairDevA), pairPushPath(pairDevA), pairCloudCopy()}
 	if !slices.Equal(events[0].Revoke.Wrote, want) {
 		t.Fatalf("wrote = %v, want %v: the copy is step 2b, and a version a disable hides from the revoke is the state step 2b exists for", events[0].Revoke.Wrote, want)
 	}
@@ -3173,7 +3174,7 @@ func TestRevokeWithoutAContainerDestroysNothing(t *testing.T) {
 		t.Fatalf("revoke on an installation with no cloud container: %v", err)
 	}
 	events := pairLines(t, out)
-	want := []string{rules.PathDevices + "/" + pairDevA, pairRefreshFamilyPath(pairDevA), pairPushPath(pairDevA)}
+	want := []string{rules.PathDevices + "/" + pairDevA, mobilesession.RefreshFamilyPath(pairDevA), pairPushPath(pairDevA)}
 	if !slices.Equal(events[0].Revoke.Wrote, want) {
 		t.Fatalf("wrote = %v, want %v", events[0].Revoke.Wrote, want)
 	}

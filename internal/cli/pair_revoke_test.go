@@ -51,8 +51,15 @@ func pairRevokeEnv(t *testing.T, f *pairFixture) (*localcfg.Config, *rtdb.Client
 // and is refused with device_revoked (D2794, F32). So this looks a token up and
 // nothing else: it is not a second implementation of the rules, and the day P4
 // lands, the test's question is the same one its Rotate answers.
+//
+// It reads the contract's own path (mobilesession.RefreshRoot), which is where
+// P4 has to write a family for the admin revoke to find one, and it finds a
+// plaintext "token" field, which P4's store will not keep (D2783: hashed at
+// rest). Both are this test's stand-in for the store: what it can hold the
+// sides to is that the revoke deleted the node the contract names, and the
+// lookup itself is replaced by P4's Rotate when that lands.
 func pairRefreshWithToken(ctx context.Context, db *rtdb.Client, token string) (string, error) {
-	keys, err := db.Keys(ctx, pairRefreshRoot)
+	keys, err := db.Keys(ctx, mobilesession.RefreshRoot)
 	if err != nil {
 		return "", err
 	}
@@ -60,7 +67,7 @@ func pairRefreshWithToken(ctx context.Context, db *rtdb.Client, token string) (s
 		var node struct {
 			Token string `json:"token"`
 		}
-		found, err := db.Get(ctx, pairRefreshFamilyPath(family), &node)
+		found, err := db.Get(ctx, mobilesession.RefreshFamilyPath(family), &node)
 		if err != nil {
 			return "", err
 		}
@@ -81,7 +88,7 @@ func TestPairRevokeFamilyEndsTheRefreshSession(t *testing.T) {
 	f := newPairFixture(t, pairMe)
 	f.pairSeedDevice(pairDevA, "phone-a")
 	f.pairSeedItem(t, pairDevA)
-	f.db.Set(pairRefreshFamilyPath(pairDevA), map[string]any{"token": pairRefreshTokenA})
+	f.db.Set(mobilesession.RefreshFamilyPath(pairDevA), map[string]any{"token": pairRefreshTokenA})
 	_, db := pairRevokeEnv(t, f)
 
 	// The family is there and a refresh finds it before the revoke, so what the
@@ -99,10 +106,10 @@ func TestPairRevokeFamilyEndsTheRefreshSession(t *testing.T) {
 	if len(events) != 1 || events[0].Event != pairEventRevoked || events[0].Revoke == nil {
 		t.Fatalf("events = %v, want one %s carrying a document", events, pairEventRevoked)
 	}
-	if !slices.Contains(events[0].Revoke.Wrote, pairRefreshFamilyPath(pairDevA)) {
+	if !slices.Contains(events[0].Revoke.Wrote, mobilesession.RefreshFamilyPath(pairDevA)) {
 		t.Fatalf("wrote = %v, want the refresh family among the paths the act deleted: a document that omits it reports a session the command did not end", events[0].Revoke.Wrote)
 	}
-	if v := f.db.Value(pairRefreshFamilyPath(pairDevA)); v != nil {
+	if v := f.db.Value(mobilesession.RefreshFamilyPath(pairDevA)); v != nil {
 		t.Fatalf("the family survived the revoke: %v", v)
 	}
 
@@ -126,7 +133,7 @@ func TestPairRevokeFamilyKeepsTheMemberRecord(t *testing.T) {
 	f := newPairFixture(t, pairMe)
 	f.pairSeedDevice(pairDevA, "phone-a")
 	f.pairSeedItem(t, pairDevA)
-	f.db.Set(pairRefreshFamilyPath(pairDevA), map[string]any{"token": pairRefreshTokenA})
+	f.db.Set(mobilesession.RefreshFamilyPath(pairDevA), map[string]any{"token": pairRefreshTokenA})
 	key := pairAddressKey(t, pairMe)
 	f.db.Set(pairMemberRoot+"/"+key, map[string]any{
 		"v": pairMemberVersion, "email": pairMe, "at": pairT0.UTC().Format(time.RFC3339),
@@ -147,7 +154,7 @@ func TestPairRevokeFamilyKeepsTheMemberRecord(t *testing.T) {
 	if v := f.db.Value(rules.PathDevices + "/" + pairDevA); v != nil {
 		t.Fatalf("the device node survived: %v", v)
 	}
-	if v := f.db.Value(pairRefreshFamilyPath(pairDevA)); v != nil {
+	if v := f.db.Value(mobilesession.RefreshFamilyPath(pairDevA)); v != nil {
 		t.Fatalf("the family survived: %v", v)
 	}
 }
@@ -162,8 +169,8 @@ func TestPairRevokeFamilyFailureIsRefused(t *testing.T) {
 	f.pairSeedDevice(pairDevA, "phone-a")
 	itemName, _ := f.pairSeedItem(t, pairDevA)
 	f.pairSeedPush(pairDevA)
-	f.db.Set(pairRefreshFamilyPath(pairDevA), map[string]any{"token": pairRefreshTokenA})
-	f.db.Deny(pairRefreshRoot)
+	f.db.Set(mobilesession.RefreshFamilyPath(pairDevA), map[string]any{"token": pairRefreshTokenA})
+	f.db.Deny(mobilesession.RefreshRoot)
 
 	out, _, err := pairRun(t, "revoke", "--uid", pairDevA, "--json")
 	if err == nil || ExitCode(err) != ExitUserError {
@@ -174,7 +181,7 @@ func TestPairRevokeFamilyFailureIsRefused(t *testing.T) {
 	if last.Event != pairEventRefused || last.Code != pairRefusedDatabaseAdmin {
 		t.Fatalf("events = %v, want a %s with code %q", events, pairEventRefused, pairRefusedDatabaseAdmin)
 	}
-	if !strings.Contains(last.Reason, pairRefreshFamilyPath(pairDevA)) {
+	if !strings.Contains(last.Reason, mobilesession.RefreshFamilyPath(pairDevA)) {
 		t.Fatalf("the refusal does not name the family it could not end: %q", last.Reason)
 	}
 	for _, e := range events {
@@ -185,7 +192,7 @@ func TestPairRevokeFamilyFailureIsRefused(t *testing.T) {
 	if v := f.db.Value(rules.PathDevices + "/" + pairDevA); v != nil {
 		t.Fatalf("the device node survived: its deletion is the revocation, and the deny is on the family (%v)", v)
 	}
-	if v := f.db.Value(pairRefreshFamilyPath(pairDevA)); v == nil {
+	if v := f.db.Value(mobilesession.RefreshFamilyPath(pairDevA)); v == nil {
 		t.Fatal("a write the database denied deleted the family anyway")
 	}
 	if _, ok := f.keys.Keys[itemName]; ok {
@@ -206,9 +213,9 @@ func TestPairRevokeFamilyRemovesAMember(t *testing.T) {
 	f.pairSeedItem(t, pairDevA)
 	f.pairSeedItem(t, pairDevB)
 	f.pairSeedItem(t, pairDevC)
-	f.db.Set(pairRefreshFamilyPath(pairDevA), map[string]any{"token": pairRefreshTokenA})
-	f.db.Set(pairRefreshFamilyPath(pairDevB), map[string]any{"token": pairRefreshTokenB})
-	f.db.Set(pairRefreshFamilyPath(pairDevC), map[string]any{"token": pairRefreshTokenC})
+	f.db.Set(mobilesession.RefreshFamilyPath(pairDevA), map[string]any{"token": pairRefreshTokenA})
+	f.db.Set(mobilesession.RefreshFamilyPath(pairDevB), map[string]any{"token": pairRefreshTokenB})
+	f.db.Set(mobilesession.RefreshFamilyPath(pairDevC), map[string]any{"token": pairRefreshTokenC})
 	key, other := pairAddressKey(t, pairMe), pairAddressKey(t, pairLauncher)
 	f.db.Set(pairMemberRoot+"/"+key, map[string]any{"v": pairMemberVersion, "email": pairMe})
 	f.db.Set(pairMemberRoot+"/"+other, map[string]any{"v": pairMemberVersion, "email": pairLauncher})
@@ -228,8 +235,8 @@ func TestPairRevokeFamilyRemovesAMember(t *testing.T) {
 		t.Fatalf("removal.Failed = %v, want none", removal.Failed)
 	}
 	want := []string{
-		rules.PathDevices + "/" + pairDevA, pairRefreshFamilyPath(pairDevA), pairPushPath(pairDevA),
-		rules.PathDevices + "/" + pairDevB, pairRefreshFamilyPath(pairDevB), pairPushPath(pairDevB),
+		rules.PathDevices + "/" + pairDevA, mobilesession.RefreshFamilyPath(pairDevA), pairPushPath(pairDevA),
+		rules.PathDevices + "/" + pairDevB, mobilesession.RefreshFamilyPath(pairDevB), pairPushPath(pairDevB),
 		pairMemberRoot + "/" + key,
 	}
 	if !slices.Equal(removal.Wrote, want) {
@@ -237,8 +244,8 @@ func TestPairRevokeFamilyRemovesAMember(t *testing.T) {
 	}
 
 	for _, path := range []string{
-		rules.PathDevices + "/" + pairDevA, pairRefreshFamilyPath(pairDevA),
-		rules.PathDevices + "/" + pairDevB, pairRefreshFamilyPath(pairDevB),
+		rules.PathDevices + "/" + pairDevA, mobilesession.RefreshFamilyPath(pairDevA),
+		rules.PathDevices + "/" + pairDevB, mobilesession.RefreshFamilyPath(pairDevB),
 		pairMemberRoot + "/" + key,
 	} {
 		if v := f.db.Value(path); v != nil {
@@ -246,7 +253,7 @@ func TestPairRevokeFamilyRemovesAMember(t *testing.T) {
 		}
 	}
 	for _, path := range []string{
-		rules.PathDevices + "/" + pairDevC, pairRefreshFamilyPath(pairDevC),
+		rules.PathDevices + "/" + pairDevC, mobilesession.RefreshFamilyPath(pairDevC),
 		pairMemberRoot + "/" + other,
 	} {
 		if v := f.db.Value(path); v == nil {
@@ -269,7 +276,7 @@ func TestPairRevokeFamilyRemovesAMember(t *testing.T) {
 func TestPairRevokeFamilyRemovalReportsWhatItLeft(t *testing.T) {
 	f := newPairFixture(t, pairMe)
 	f.pairSeedDeviceFor(pairDevA, "phone-a", pairMe, "operator")
-	f.db.Set(pairRefreshFamilyPath(pairDevA), map[string]any{"token": pairRefreshTokenA})
+	f.db.Set(mobilesession.RefreshFamilyPath(pairDevA), map[string]any{"token": pairRefreshTokenA})
 	key := pairAddressKey(t, pairMe)
 	f.db.Set(pairMemberRoot+"/"+key, map[string]any{"v": pairMemberVersion, "email": pairMe})
 	f.db.Deny(rules.PathDevices)
