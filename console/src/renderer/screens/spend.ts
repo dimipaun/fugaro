@@ -66,7 +66,7 @@
 // only thing that reaches a point's `title` through this path is a date this
 // file wrote.
 //
-// **The person breakdown is on by default** (D3214, 2026-11-22, amending D15):
+// **The person breakdown is on by default** (D3214, 2026-11-21, amending D15):
 // the report groups by `person` when the operator asks it to, and the by-person
 // panel beside it is drawn from the screen's own read. A person key is drawn
 // through `sanitize.ts`'s `person` class, which draws the identity the document
@@ -666,7 +666,7 @@ export interface SpendSwitchEntry {
 export interface SpendOptions {
   /**
    * `persons` turns the `person` breakdown on. It is **on by default** (D3214,
-   * 2026-11-22, amending D15): the report can name the people whose runs spent
+   * 2026-11-21, amending D15): the report can name the people whose runs spent
    * the money, and the operator turns the view off for the session rather than
    * on. The rows are in the document either way; this decides whether the screen
    * draws them.
@@ -1956,7 +1956,7 @@ export interface SpendControls {
 
 /**
  * SPEND_DEFAULT_CONTROLS is the screen as it opens: the recent week, by day,
- * with the person view on (D3214, 2026-11-22, amending D15).
+ * with the person view on (D3214, 2026-11-21, amending D15).
  *
  * **`7d` is the owner's choice and not the CLI's default** (console 0.118.0,
  * "when going to the Spend screen, let's default to 7d/day"): the question this
