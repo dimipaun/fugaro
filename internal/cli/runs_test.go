@@ -2792,6 +2792,7 @@ var terminalStatusNames = []string{
 	"runstore.StatusSucceeded", "runstore.StatusFailed",
 	"runstore.StatusUnreviewed", "runstore.StatusInfraError",
 	"runstore.StatusCancelled", "runstore.StatusHalted",
+	"runstore.StatusPaused",
 }
 
 // TestRunsListsReadTheStatusWord guards the two list surfaces that read a

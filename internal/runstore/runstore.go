@@ -51,6 +51,17 @@ const (
 	StatusInfraError Status = "infra_error"
 	StatusCancelled  Status = "cancelled"
 	StatusHalted     Status = "halted" // a budget or token limit stopped the run
+	// StatusPaused is a run that suspended itself when every source its chain
+	// could reach was exhausted: it saved its session, pushed its work in
+	// progress as a checkpoint, wrote pause.json and asked the credentials
+	// service to record the pause, and a fresh run resumes it later
+	// (model-credentials-routing, D3185, R15; the shapes are pause.go's). It is
+	// a status of its own and not a reuse of an existing one: a paused run is
+	// in flight — it will be resumed — where a halted one has stopped, and a
+	// reader that could not tell the two apart would count a paused chain as
+	// lost. The execution that ends paused has ended — the container stops and
+	// the lease is released (R12) — so Terminal's own rule covers it.
+	StatusPaused Status = "paused"
 )
 
 // Statuses is the whole vocabulary, in source order. It is the one spelling of
@@ -62,7 +73,7 @@ const (
 // two places a record crosses its boundary refuse one rather than let it be
 // read as a status later: a strict reader validates against the schema, and the
 // database's rules refuse the outcome.
-var Statuses = []Status{StatusRunning, StatusSucceeded, StatusFailed, StatusUnreviewed, StatusInfraError, StatusCancelled, StatusHalted}
+var Statuses = []Status{StatusRunning, StatusSucceeded, StatusFailed, StatusUnreviewed, StatusInfraError, StatusCancelled, StatusHalted, StatusPaused}
 
 // Terminal reports whether a run carrying this status has ended. Running is the
 // one status that has not, which is what the budget database's outcome
