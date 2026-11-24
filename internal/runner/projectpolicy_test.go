@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -845,6 +846,32 @@ func TestPolicyCarriedVersionHaltsTheRunWithTheUpdateRemedy(t *testing.T) {
 	for _, bad := range []string{"refresh the runner image", "upgrade Fugaro", "publish --delete"} {
 		if strings.Contains(err.Error(), bad) {
 			t.Errorf("the refusal tells the operator to %q, and a node the chain carries is migrated in place: %v", bad, err)
+		}
+	}
+	if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
+		t.Fatalf("%d stages ran", len(b.agent.calls))
+	}
+}
+
+// R4's own direction, and the one the fixtures above used to prove by accident:
+// a node that still says the word the budget mode's vocabulary dropped is not
+// one a run may read as "no mode" or as the observe it used to mean. The
+// release behind published one — it kept its version, because that step left no
+// bump behind (D3025, AB8a) — and a run that meets it, because `fugaro update`
+// has not run yet or an older CLI published it, is refused at bootstrap with
+// C1's one text, which names the fix (AB2, D3009, D3022). The node is the
+// operator's own to fix, so the refusal names it and offers nothing the run
+// cannot do: only the update rewrites it in place (F22), and the run is not the
+// update.
+func TestPolicyWithTheRemovedModeHaltsTheRunWithTheOneText(t *testing.T) {
+	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":9,"budget":{"mode":"off"}}`, capScript(3)...)
+	rec, err := b.run(t, implement("feature"))
+	if err == nil {
+		t.Fatalf("a policy node that says the word must stop the run: rec = %+v", rec)
+	}
+	for _, want := range []string{projectpolicy.PathShared(), policy.ModeOffRefusal} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
 	}
 	if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
