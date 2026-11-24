@@ -116,6 +116,26 @@ func seedInstallationTfvars(t *testing.T, e *initEngine, image string) {
 	}
 }
 
+// stampWorkdir prepares the installation root's workdir, which is the state
+// the credentials-service stage leaves behind once it has had its turn: the
+// tree is rebuilt, and the release behind's tfvars are the snapshot
+// PrepareWorkdir took before it (Workdir.PrevVars, which
+// recordedCredentialsImage reads). A run that has not reached that stage — the
+// preview's pass, where every stage's check runs before any has run — has no
+// workdir at all, and that is the state this distinguishes.
+func stampWorkdir(t *testing.T, e *initEngine) {
+	t.Helper()
+	dir, err := infra.InstallationWorkdir(os.Getenv, e.lc.GCPProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wd, err := infra.PrepareWorkdir(dir, "installation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.wd = wd
+}
+
 // stampEngine is the engine one of these tests drives the stage with: the rig's
 // own config and `update`'s door unless the case says otherwise.
 func stampEngine(t *testing.T, r *initRig, o *initOptions) *initEngine {
@@ -400,11 +420,15 @@ func TestStampHoldsWhilePolicyIsHeld(t *testing.T) {
 // TestStampHoldsWhileCredentialsServiceIsBehind: even in the owner's own run, a
 // recorded credentials service image that is not this release's is a process
 // that stays where it is — the servicesImageStale predicate the policy stage's
-// own raise precondition uses (credentialsResolveBeforeRaise).
+// own raise precondition uses (credentialsResolveBeforeRaise). The workdir is
+// the credentials-service stage's own turn (stampWorkdir): this is the state
+// the run reaches this slot in after a move that did not happen, not the one
+// its review screen is drawn in.
 func TestStampHoldsWhileCredentialsServiceIsBehind(t *testing.T) {
 	r, _ := stampRig(t)
 	e := stampEngine(t, r, &initOptions{door: updateDoor.name, yes: true})
 	seedInstallationTfvars(t, e, credentialsImageAt("0.1.0"))
+	stampWorkdir(t, e)
 	clearAgentMarkers(t)
 	st, err := newVersionStampStage(e).Check(t.Context())
 	if err != nil {
@@ -415,6 +439,42 @@ func TestStampHoldsWhileCredentialsServiceIsBehind(t *testing.T) {
 	}
 	if !strings.Contains(st.Detail, "credentials service image is not this release's") {
 		t.Errorf("the held line does not name the fact it waits for: %q", st.Detail)
+	}
+}
+
+// TestReviewScreenDoesNotHoldOnTheReleaseBehindSImage: the preview's pass runs
+// every stage's check before any stage has run, so the tfvars on disk still
+// carry the release behind's credentials service — the very process this run
+// replaces. Reporting the stamp as held there would leave the owner a step the
+// same run then does itself: the review screen and the run must agree, and the
+// run has not yet given the credentials-service stage its turn.
+func TestReviewScreenDoesNotHoldOnTheReleaseBehindSImage(t *testing.T) {
+	r, db := stampRig(t)
+	publishedSeam(t, true)
+	e := stampEngine(t, r, &initOptions{door: updateDoor.name})
+	seedInstallationTfvars(t, e, credentialsImageAt("0.1.0"))
+	st, err := checkStamp(t, e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("Check = %+v, want todo: the image on disk is the one this run replaces", st)
+	}
+	if strings.Contains(st.Detail, "holds it there") {
+		t.Errorf("the review screen holds the stamp for a service the run replaces: %q", st.Detail)
+	}
+	res, out, err := runStampStage(t, r, &initOptions{door: updateDoor.name, planOnly: true})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if d := res.Stages[0].Detail; !strings.Contains(d, "required CLI: none → 0.2.0") {
+		t.Errorf("the plan view says %q, want the raise the run would make", d)
+	}
+	if _, present := stampOn(t, e); present {
+		t.Error("the review screen wrote a stamp")
+	}
+	if got := stampNodeWrites(db); got != 0 {
+		t.Errorf("the review screen wrote the node %d times", got)
 	}
 }
 

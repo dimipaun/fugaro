@@ -212,9 +212,21 @@ func (s *versionStampStage) read(ctx context.Context) (*versionStampPlan, error)
 // that stays where it is, and a stamp raised over it refuses every cascade and
 // Bitbucket-proxied call until a later update succeeds (the owner's ruling of
 // 2026-11-10, init_stages.go).
+//
+// The image is read only once the credentials-service stage has had its turn
+// (e.wd, which that stage's own prepare is what sets). Before it — the
+// preview's pass, where every stage's check runs before any has run — the
+// tfvars on disk still carry the release behind's image, which says nothing
+// about this run: it is a service the run itself is about to replace. Holding
+// on it there would make the review screen report the stamp as left for the
+// owner and then write it in the same run, which is the one thing a plan view
+// may never do.
 func (s *versionStampStage) held(p *versionStampPlan) string {
 	if why := s.e.credentialsMoveHeld(); why != "" {
 		return why
+	}
+	if s.e.wd == nil {
+		return ""
 	}
 	doc, _, err := s.e.recordedCredentialsImage()
 	if err != nil || doc == nil {
