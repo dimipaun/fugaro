@@ -197,11 +197,11 @@ func TestSecretsRmFailureIsACrossAndALog(t *testing.T) {
 	if !strings.HasPrefix(step, markFailed+" Removing project_secrets.bitbucket-token") {
 		t.Errorf("the failed removal is not a cross naming the entry:\n%s", out)
 	}
-	if !strings.Contains(step, "was put back") {
-		t.Errorf("the step does not carry the error the command returns: %q", step)
+	if text := failureError(reportLines(out)); !strings.Contains(text, "was put back") {
+		t.Errorf("the failure block does not carry the error the command returns:\n%s", out)
 	}
 	log, _ := onlyLog(t, "secrets-rm")
-	if !strings.Contains(out, "full output: "+log) {
+	if !strings.Contains(out, "Log:  "+log) {
 		t.Errorf("the failure does not name the log the rest of it is in:\n%s", out)
 	}
 	if last := reportLines(out); !strings.HasPrefix(last[len(last)-1], "Failed in ") {
@@ -212,6 +212,26 @@ func TestSecretsRmFailureIsACrossAndALog(t *testing.T) {
 	if got := sm.Latest(id); string(got) != tokenValue || readFileString(t, path) != before {
 		t.Errorf("the failed removal changed something: value %q, config %s", got, readFileString(t, path))
 	}
+}
+
+// failureError is the failure block's "Error:" line and the lines the message
+// continues on, as one line: what the command returned, drawn under the step it
+// failed (report.Step.Failed). The step's own line carries the step's name and
+// nothing else, so "the account says why it failed" is read here — and the
+// block ends at the log's line and the command that explains the run.
+func failureError(account []string) string {
+	var out []string
+	for _, l := range account {
+		l = strings.TrimSpace(l)
+		if len(out) == 0 && !strings.HasPrefix(l, "Error: ") {
+			continue
+		}
+		if strings.HasPrefix(l, "Log: ") {
+			break
+		}
+		out = append(out, l)
+	}
+	return strings.Join(out, " ")
 }
 
 // lineAt is the first line of account that carries want, or -1.
@@ -330,11 +350,11 @@ func TestCredsSetFailureIsACrossAndALog(t *testing.T) {
 	if !strings.HasPrefix(step, markFailed+" Writing ") {
 		t.Errorf("the write that landed and lost the race is not a cross:\n%s", out)
 	}
-	if !strings.Contains(step, "not the document this command wrote") {
-		t.Errorf("the step does not carry the error the command returns: %q", step)
+	if text := failureError(reportLines(out)); !strings.Contains(text, "not the document this command wrote") {
+		t.Errorf("the failure block does not carry the error the command returns:\n%s", out)
 	}
 	log, _ := onlyLog(t, "creds-set")
-	if !strings.Contains(out, "full output: "+log) {
+	if !strings.Contains(out, "Log:  "+log) {
 		t.Errorf("the failure does not name the log the rest of it is in:\n%s", out)
 	}
 	if last := reportLines(out); !strings.HasPrefix(last[len(last)-1], "Failed in ") {

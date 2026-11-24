@@ -151,6 +151,19 @@ repo_of() { # repo_of ARGS... — the repository, positional in add and rm
   local r
   r=$(argval --repo "$@")
   [ -n "$r" ] || r=$4
+  case "${3:-}" in
+  status | rm)
+    # The real command refuses a name without its provider; the check has to
+    # spell it canonically (github/owner/name) or it reads a refusal as an answer.
+    case "$r" in
+    github/*/*) r=${r#github/} ;;
+    *)
+      printf 'fugaro: "%s" is not a canonical repository name: spell it with its git provider, as in "github/acme/app"\n' "$r" >&2
+      exit 1
+      ;;
+    esac
+    ;;
+  esac
   printf '%s' "$r"
 }
 filled() { [ -f "$state/filled" ]; }
@@ -268,7 +281,8 @@ status_cmd() { # status_cmd ARGS...
 }
 
 rm_cmd() { # rm_cmd ARGS...
-  local r=$4
+  local r
+  r=$(repo_of "$@")
   warning "$r"
   leaves
   keeps
@@ -430,7 +444,10 @@ update_cmd() { # update_cmd ARGS...
 case "${1:-}" in
 version) printf 'fugaro v0.0.0-chk670 (fake)\n' ;;
 doctor)
-  [ -f "$state/doctor.exit" ] && exit "$(cat "$state/doctor.exit")"
+  if [ -f "$state/doctor.exit" ]; then
+    [ -f "$state/doctor.prints" ] && cat "$state/doctor.json"
+    exit "$(cat "$state/doctor.exit")"
+  fi
   cat "$state/doctor.json"
   ;;
 project)
@@ -733,7 +750,7 @@ test_happy_path() {
   local calls
   calls=$(cat "$dir/state/logs/fugaro.calls")
   expect_contains "$calls" "run /" "the runs were launched"
-  expect_contains "$calls" "project repos rm $repo" "the removal was run"
+  expect_contains "$calls" "project repos rm github/$repo" "the removal was run"
   expect_absent "$calls" "belong" "belong is never named"
 }
 
@@ -897,6 +914,16 @@ test_a_doctor_that_does_not_answer_is_not_measured() {
   expect_status "$status" 2 "a doctor that exits 1"
   expect_row installation "exited 1" "a doctor that exits 1: the row"
   expect_absent "$(cat "$dir/state/logs/fugaro.calls")" "repos add" "a doctor that exits 1: nothing is enrolled"
+}
+
+test_a_doctor_that_finds_a_problem_but_prints_its_document_is_read() {
+  local dir=$work/doctor-exit1-document
+  prepare "$dir"
+  printf '1\n' >"$dir/state/doctor.exit"
+  : >"$dir/state/doctor.prints"
+  run_check "$dir"
+  expect_absent "$(cat "$dir/state/logs/fugaro.calls")" "no answer" "a doctor that exits 1 with its document: it is read"
+  expect_contains "$(cat "$dir/state/logs/fugaro.calls")" "repos add" "a doctor that exits 1 with its document: the check goes on to enrol"
 }
 
 test_a_doctor_with_no_project_is_not_measured() {
@@ -1355,6 +1382,7 @@ t test_a_key_file_that_is_not_a_pem_is_not_measured
 t test_a_checkout_without_a_fugaro_yaml_stops
 t test_a_clone_that_refuses_stops
 t test_a_doctor_that_does_not_answer_is_not_measured
+t test_a_doctor_that_finds_a_problem_but_prints_its_document_is_read
 t test_a_doctor_with_no_project_is_not_measured
 t test_a_checkout_of_another_installation_is_not_measured
 t test_a_gcp_project_that_is_not_the_checkouts_is_refused

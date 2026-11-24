@@ -182,10 +182,11 @@ func TestUpdateFinishesAFlagWhoseLabelWriteFailed(t *testing.T) {
 
 // TestUpdateDoesNotFinishAFactThatRecordsAnotherAmount: the completion above is
 // for ONE object — this project's fact recording the amount this run was given.
-// A fact recording another amount is close to it and is not it: a flag records
-// an amount, it does not edit one, so writing the label there would make the
-// project managed at a figure its owner never chose for this run, and no
-// command of ours would take it back to the amount the run meant. The run says
+// A fact recording another amount is close to it and is not it: this step adds
+// an amount to a fact that records none, and a figure a fact already holds is
+// replaced by `fugaro managed flag` with an explicit --budget (D2215), so
+// writing the label there would make the project managed at a figure this run
+// was not given and would leave the amount it was given unrecorded. The run says
 // what it found, names both amounts, and names the one way to finish it.
 func TestUpdateDoesNotFinishAFactThatRecordsAnotherAmount(t *testing.T) {
 	r := unmanagedUpdateRig(t)

@@ -83,6 +83,7 @@ var RetainedTypes = map[string]string{
 	"google_project_service":                 "enabling an API is the installation's, and disabling one is not one repository's to do",
 	"google_project_iam_custom_role":         "a custom role is shared by the installation's principals and by its other repositories",
 	"google_firebase_project":                "the project's Firebase, not one repository's",
+	"google_firestore_index":                 "the run index's composite indexes serve every repository's listings at once, and one repository's retirement is not the place to take a read the whole installation makes",
 	"google_logging_project_sink":            "the installation's log routing",
 	"google_logging_project_exclusion":       "the installation's log exclusions",
 	"google_logging_log_view":                "the installation's log views",

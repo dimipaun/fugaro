@@ -186,7 +186,7 @@ func updatedText(path string) string {
 
 const cliCaution = "Every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on this release before you merge a change that adds gcp_project: older versions refuse the key as unknown."
 
-func warnedLine(msg string) string { return "warning: " + msg + "\n" }
+func warnedLine(msg string) string { return "Warning: " + msg + "\n" }
 
 // stageWarn is the stage's one warning about acme/app's workflow app (the
 // base kind): the same text as fugaro update --anchor's FAIL line.
