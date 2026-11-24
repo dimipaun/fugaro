@@ -15,9 +15,12 @@ const PinsGCPProject = "proj-1234"
 
 // The three roles a run behind a gateway must name to be priced at all
 // (CheckPins, D3020): the coder and the first line on sonnet, the senior review
-// on opus, the background model on haiku.
-var roleModels = map[string]string{
-	"coder": "claude-sonnet-5-5", "reviewer": "claude-opus-5", "background": "claude-haiku-4-5",
+// on opus, the background model on haiku. The order is the order they are
+// written in, never a map's: the layer's own bytes are hashed into every
+// record's project_layer.sha256, so two runs of one fixture must build it the
+// same way.
+var roleModels = []struct{ role, model string }{
+	{"coder", "claude-sonnet-5-5"}, {"reviewer", "claude-opus-5"}, {"background", "claude-haiku-4-5"},
 }
 
 // TakeFilePins lifts the keys a repository's file may no longer write out of it
@@ -111,8 +114,8 @@ func ensureRoles(defaults *yaml.Node) {
 		setPath(defaults, []string{"agent"}, agent)
 	}
 	models := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	for role, model := range roleModels {
-		mapSet(models, role, scalar(model))
+	for _, r := range roleModels {
+		mapSet(models, r.role, scalar(r.model))
 	}
 	mapSet(agent, "models", models)
 }
@@ -382,8 +385,8 @@ func PinsLayerText(cfg string) string {
 		}
 	}
 	models := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	for role, model := range roleModels {
-		mapSet(models, role, scalar(model))
+	for _, r := range roleModels {
+		mapSet(models, r.role, scalar(r.model))
 	}
 	agentPins := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	mapSet(agentPins, "models", models)
