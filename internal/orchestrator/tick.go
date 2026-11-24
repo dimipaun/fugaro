@@ -1389,8 +1389,13 @@ func (c *cycle) carry(ctx context.Context, view RunView) error {
 // is the cycle's own failure: a project whose pauses could not be read is a
 // project whose daemon is working blind, and it must not carry on as though
 // nothing were paused.
+//
+// It is a launch and it asks what every launch path asks before it starts
+// anything (Caps.KillSwitch's own note): the kill switch, and the daemon's pause
+// — the same reading the plan is handed, over the same nodes — so a cycle that
+// is stopped resumes nothing, whatever stopped it.
 func (c *cycle) resume(ctx context.Context) error {
-	out, err := ResumePauses(ctx, c.tick.Pauses, c.tick.Resume, c.now)
+	out, err := ResumePauses(ctx, c.tick.Pauses, c.tick.Resume, c.tick.Caps, c.paused, c.now)
 	if err != nil {
 		return err
 	}

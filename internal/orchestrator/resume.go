@@ -109,9 +109,11 @@ type ResumeRequest struct {
 //
 // It is the launcher's own path and not a plan action: a resume is not an item
 // of the plan — the paused run's item is in flight and stays so (the chain is
-// one piece of work) — and nothing about it is a cap's business. A chain's
+// one piece of work) — and no allowance of a cap's is its business. A chain's
 // remaining budget is the resumed run's, which is the same reason planNode does
-// not cap a re-issue (D1045-D1047).
+// not cap a re-issue (D1045-D1047). The one thing in Caps that is every launch
+// path's is the kill switch, and that one a resume asks like the rest
+// (ResumePauses).
 type ResumeLauncher interface {
 	Resume(ctx context.Context, r ResumeRequest) (string, error)
 }
@@ -137,10 +139,27 @@ type ResumeOutcome struct {
 // adds to it. Its body is assigned by this file and stands only while nothing
 // else has made one (the guard in resume_stub.go), so the stub that stands
 // until the body exists is replaced by it without either file naming the other.
-var ResumePauses func(ctx context.Context, pauses PauseReader, launcher ResumeLauncher, now time.Time) (ResumeOutcome, error)
+//
+// caps and paused are the guard every path that starts a run asks before it
+// starts anything (Caps.KillSwitch's own note): the kill switch — both switches
+// a caller folded into it, ON where the reading failed — and the daemon's
+// pause, the breaker's question standing on a node (BreakerOpen). A resume is a
+// launch like the plan's, the ladder's and the decision agent's, so it asks them
+// here rather than being written to afterwards: a daemon that could not read its
+// budget, a project whose orchestrator switch is off, and a daemon a breaker has
+// paused all resume nothing.
+var ResumePauses func(ctx context.Context, pauses PauseReader, launcher ResumeLauncher, caps Caps, paused bool, now time.Time) (ResumeOutcome, error)
 
 // resumeDue is one pass over the project's pauses: read them, decide which are
 // due, and start each one once.
+//
+// The guard comes first, and before the read: a pass under the kill switch or
+// under the daemon's pause starts nothing and reads nothing at all, exactly as
+// the ladder and the decision agent do — a stopped daemon has no business on the
+// project's database either. It is not a cap of the allowances: those bound what
+// a cycle may spend, and a resume spends none of them (a chain's budget is the
+// resumed run's, D1045-D1047), which is why planNode's re-issue is uncapped for
+// the same reason.
 //
 // The read is the pass's own failure and nothing else is: a project whose
 // pauses could not be read is a project whose daemon is working blind, and the
@@ -148,18 +167,21 @@ var ResumePauses func(ctx context.Context, pauses PauseReader, launcher ResumeLa
 // paused. A launcher that refuses one pause is not that — it is one entry in
 // the outcome's refusals — because the next tick reads the same node again and
 // the pause is still due.
-func resumeDue(ctx context.Context, pauses PauseReader, launcher ResumeLauncher, now time.Time) (ResumeOutcome, error) {
+func resumeDue(ctx context.Context, pauses PauseReader, launcher ResumeLauncher, caps Caps, paused bool, now time.Time) (ResumeOutcome, error) {
+	if caps.KillSwitch || paused {
+		return ResumeOutcome{}, nil
+	}
 	if pauses == nil || launcher == nil {
 		// A daemon given no reader or no launcher resumes nothing, which is the
 		// direction every unset seam here fails in: a resume it cannot make is
 		// a resume it must not pretend to have made.
 		return ResumeOutcome{}, nil
 	}
-	paused, err := pauses.Pauses(ctx)
+	read, err := pauses.Pauses(ctx)
 	if err != nil {
 		return ResumeOutcome{}, err
 	}
-	due, refused := duePauses(paused, now)
+	due, refused := duePauses(read, now)
 	out := ResumeOutcome{Due: len(due), Refused: refused}
 	for _, p := range due {
 		run, err := launcher.Resume(ctx, ResumeRequest{Slug: p.slug, Run: p.run, Node: p.node})

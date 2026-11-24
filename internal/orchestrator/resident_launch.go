@@ -212,7 +212,10 @@ func ResidentCarry(ctx context.Context, st Starter, s State, view RunView, caps 
 // It reads nothing of the node, and there is nothing of the node for it to read:
 // whether a pause is due is the service's own record and the paused run's own
 // status (ResumePauses's decision), and a resident pass has the same two
-// readings a daemon has.
+// readings a daemon has. What it is handed is the kill switch the pass was given
+// with its caps, the same one ResidentCarry's requests are refused under, and no
+// pause: a resident pass has no node, so there is no breaker's question standing
+// anywhere for it to read.
 //
 // It is ResumePauses under the name this pass reads, and the seam is called here
 // rather than by the caller for that reason: the body behind it is a build's own
@@ -221,6 +224,6 @@ func ResidentCarry(ctx context.Context, st Starter, s State, view RunView, caps 
 // interface. A refusal is collected and the pass goes on, exactly as
 // ResidentCarry's is: the node has no breaker and no pause, so a pause a
 // launcher refuses for good must not hold the others back.
-func ResidentResumes(ctx context.Context, pauses PauseReader, launcher ResumeLauncher, now time.Time) (ResumeOutcome, error) {
-	return ResumePauses(ctx, pauses, launcher, now)
+func ResidentResumes(ctx context.Context, pauses PauseReader, launcher ResumeLauncher, caps Caps, now time.Time) (ResumeOutcome, error) {
+	return ResumePauses(ctx, pauses, launcher, caps, false, now)
 }

@@ -20,8 +20,9 @@ import (
 // resumeNothing is the answer of a build with no resumer in it: nothing is due,
 // so nothing is reissued. It reads no node, no record and no clock — two ticks
 // with two different instants get the same answer, which is what a body that
-// decides nothing means.
-func resumeNothing(context.Context, PauseReader, ResumeLauncher, time.Time) (ResumeOutcome, error) {
+// decides nothing means — and the guard it is handed is asked by the real body
+// alone (resume.go), because a body that resumes nothing has nothing to stop.
+func resumeNothing(context.Context, PauseReader, ResumeLauncher, Caps, bool, time.Time) (ResumeOutcome, error) {
 	return ResumeOutcome{}, nil
 }
 

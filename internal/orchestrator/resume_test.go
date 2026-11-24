@@ -87,7 +87,14 @@ func pauseHarness(t *testing.T, now time.Time, paused []orchestrator.PausedRun, 
 	t.Helper()
 	const chainRun = "20261107-090000-abcd"
 	w, it := o6OpenItem("wi-1", chainRun, now.Add(-time.Hour), now.Add(-30*time.Minute))
-	h := newHarness(t, tickState(t, now, []orchestrator.WorkItem{w}, []orchestrator.Intent{it}), now)
+	return pauseHarnessOver(t, tickState(t, now, []orchestrator.WorkItem{w}, []orchestrator.Intent{it}), now, paused, answer)
+}
+
+// pauseHarnessOver is the same tick over a state the test built itself, for the
+// tests that seed the node with something else as well (the breaker's question).
+func pauseHarnessOver(t *testing.T, s orchestrator.State, now time.Time, paused []orchestrator.PausedRun, answer string) (*harness, *pauseStub, *resumeStub) {
+	t.Helper()
+	h := newHarness(t, s, now)
 	pauses := &pauseStub{paused: paused}
 	launcher := &resumeStub{answer: answer}
 	h.tick.Pauses, h.tick.Resume = pauses, launcher
@@ -289,6 +296,56 @@ func TestANodeThisReleaseCannotReadIsNotResumed(t *testing.T) {
 	if rep.ResumeErr == nil {
 		t.Errorf("the unreadable node is not in the report: %+v", rep)
 	}
+}
+
+// TestAResumeAsksTheKillSwitchAndThePause is the guard every launch path asks
+// before it starts anything (Caps.KillSwitch's own note): a resume starts a run,
+// so it asks the two switches the plan, the ladder and the decision agent ask —
+// the kill switch, which carries both of them folded into one and is ON where
+// the reading failed, and the daemon's pause, the breaker's question standing on
+// a node (BreakerOpen). A pass under either starts nothing and reads nothing:
+// a daemon that could not read its budget, a project whose orchestrator switch
+// is off, and a daemon a breaker has paused all resume nothing.
+//
+// Mutation: drop the guard from resumeDue — both halves resume the pause.
+func TestAResumeAsksTheKillSwitchAndThePause(t *testing.T) {
+	now := o6Now()
+	const (
+		slug      = "acme/web"
+		pausedRun = "20261107-090000-abcd"
+		newRun    = "20261107-120500-beef"
+	)
+	due := func(t *testing.T) []orchestrator.PausedRun {
+		t.Helper()
+		return []orchestrator.PausedRun{pauseOf(t, slug, pausedRun, dueNode(now), runstore.StatusPaused, "")}
+	}
+
+	t.Run("the kill switch", func(t *testing.T) {
+		h, pauses, launcher := pauseHarness(t, now, due(t), newRun)
+		h.tick.Caps = withCaps(func(c *orchestrator.Caps) { c.KillSwitch = true })
+
+		rep := h.step()
+		if rep.Resumed != 0 || len(launcher.asked) != 0 {
+			t.Errorf("a cycle under the kill switch resumed a pause: %+v, launcher asked %+v", rep, launcher.asked)
+		}
+		if pauses.reads != 0 {
+			t.Errorf("a cycle under the kill switch read the project's pauses %d time(s): a stopped daemon has no business on the project's database", pauses.reads)
+		}
+	})
+
+	t.Run("the breaker's question standing on the node", func(t *testing.T) {
+		w, it := o6OpenItem("wi-1", pausedRun, now.Add(-time.Hour), now.Add(-30*time.Minute))
+		s := breakerQuestion(t, tickState(t, now, []orchestrator.WorkItem{w}, []orchestrator.Intent{it}), now)
+		h, pauses, launcher := pauseHarnessOver(t, s, now, due(t), newRun)
+
+		rep := h.step()
+		if rep.Resumed != 0 || len(launcher.asked) != 0 {
+			t.Errorf("a cycle whose node carries the breaker's question resumed a pause: %+v, launcher asked %+v", rep, launcher.asked)
+		}
+		if pauses.reads != 0 {
+			t.Errorf("a paused cycle read the project's pauses %d time(s)", pauses.reads)
+		}
+	})
 }
 
 // TestATickWithNoPauseReaderResumesNothing: the pauses are read through the
