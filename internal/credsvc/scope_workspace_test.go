@@ -2012,20 +2012,22 @@ func TestWorkspaceModeServesTheGrantAndTheClaim(t *testing.T) {
 	}
 }
 
-// TestWorkspaceModeAnswersThePersonalSlipThroughTheSwitch is the test WC5's
-// finding asks for: a workspace-mode deployment whose own half is wired answers
-// a slip that names a person's token THROUGH this process's switch — and not
-// with personalSwitchOff, which is the answer every such call gets while the
-// variable sits at its default (C1's stub, OFF for every project).
+// TestWorkspaceModeAnswersThePersonalSlipThroughTheSwitch pins the seam the
+// personal half reads its switch through: a workspace-mode call under a slip
+// naming a person's token is answered 200 and not `personalSwitchOff`, and the
+// switch it was answered on is THIS PROCESS'S — the package variable the
+// workspace-mode serve path assigns (I1's line, and WC5's comment on the
+// variable says so) — asked about the caller's own member (wsMemberA, the
+// project its verified identity names) and about nobody else.
 //
-// **It fails on that default and it is meant to.** Before I1's line the process
-// owns no real reader, so the stub's OFF is what a call under a personal slip
-// meets, and this test's 200 is the deployment's wiring read back: the two
-// assertions are one fact, because a served call is one whose switch was asked
-// and answered on. The member asked is the CALLER's own (wsMemberA, the project
-// its verified identity names) and not the process's or the slip's, which is
-// what makes the reader I1 installs a scope-aware one (WC5's comment on the
-// variable, WC6's read of the member's published policy).
+// **What it does not prove is that the deployment's wiring exists.** The fixture
+// installs a scripted switch ON (newWSPerson says why ON), so the call is
+// answered by that reader whether or not I1's line is ever written, and this
+// test guards the seam and the member the reader asks about, not the assignment.
+// The end-to-end proof — a member's real published policy read through WC6's
+// `projectpolicy` reader — is I1's own, which its plan entry names and whose red
+// step is this file's default: the stub answers `personalSwitchOff` for every
+// project while nothing has assigned the variable.
 func TestWorkspaceModeAnswersThePersonalSlipThroughTheSwitch(t *testing.T) {
 	p := newWSPerson(t)
 	svc := p.service(t)

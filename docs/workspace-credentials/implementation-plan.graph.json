@@ -322,6 +322,8 @@
         "paths": [
           "internal/creds/person_stub.go",
           "internal/credsvc/scope_person_stub.go",
+          "internal/credsvc/personal_workspace.go",
+          "internal/cli/credentials_serve.go",
           "internal/cli/workspace_personal_end_to_end_test.go"
         ]
       },
