@@ -33,6 +33,13 @@ const (
 	// signs with it) -- so an assertion naming random key ids cannot make this
 	// service read the endpoint once per request.
 	keySetMinReadInterval = time.Minute
+	// keySetFetchTimeout bounds one read of the pinned URL. Without it a fetch
+	// that hangs -- an endpoint that accepts the connection and then says
+	// nothing -- would be a fetch that never ends, and a read is not the only
+	// thing that waits on it: it is what keeps this service's pairing from being
+	// hostage to a socket, and ten seconds is long beside a document of a few
+	// keys and short beside a phone's patience.
+	keySetFetchTimeout = 10 * time.Second
 	// maxKeySetBytes bounds the document before it is parsed. It is generous
 	// beside a set of a few Ed25519 keys and small beside anything worth
 	// fetching.
@@ -53,7 +60,7 @@ type heldSet struct {
 // in service of O7's sentence -- a pinned key verifies with no fetch, any other
 // key comes from a set the pinned root key signed.
 //
-// It is bounded three ways and each bound is load-bearing:
+// It is bounded four ways and each bound is load-bearing:
 //
 //   - a held set answers until its own exp (180 days, O18), so an ordinary
 //     assertion costs no round trip and the project does not depend on the
@@ -63,7 +70,12 @@ type heldSet struct {
 //     outage here;
 //   - past the bound, or with nothing ever held, an assertion is refused, and
 //     the refusal names the key set rather than the assertion, because the
-//     assertion may be perfectly good and the document unreadable.
+//     assertion may be perfectly good and the document unreadable;
+//   - one read is bounded by keySetFetchTimeout, and no read ever holds mu: a
+//     fetch is the only thing here that can wait on a stranger's socket, and a
+//     verifier whose mutex waited with it would stall every assertion in the
+//     process behind one hung connection -- a pinned key's verification
+//     included, which is the verification O7 says must need no fetch at all.
 //
 // Reads are rate-limited to one a minute, and the rate limit applies to the
 // extra read an unknown key id causes as well: without it, a request naming a
@@ -90,10 +102,17 @@ type keySetCache struct {
 	// first read's interval refuses: a project whose identity project rotated a
 	// second ago must not refuse every assertion until the minute is up.
 	rotated time.Time
+	// reading is non-nil while a read is in flight. A caller that finds one
+	// waits on it instead of starting a second read, and it waits with mu
+	// released: the mutex guards this cache's fields and never a socket.
+	reading chan struct{}
+	// fetchTimeout bounds one read, and it is a field rather than the constant
+	// itself so that a test can shorten it instead of waiting ten seconds.
+	fetchTimeout time.Duration
 }
 
 func newKeySetCache(pins Pins, client *http.Client, now func() time.Time, seq SeqFloorStore) *keySetCache {
-	return &keySetCache{pins: pins, client: client, now: now, seq: seq}
+	return &keySetCache{pins: pins, client: client, now: now, seq: seq, fetchTimeout: keySetFetchTimeout}
 }
 
 // omitsPinned reports whether the held set is a valid one -- at or above the
@@ -121,34 +140,45 @@ func (c *keySetCache) omitsPinned(kid string) bool {
 // signal the project rotated; the read is rate-limited, so the second assertion
 // naming a key nobody publishes in a minute is refused without one.
 func (c *keySetCache) key(ctx context.Context, kid string) (ed25519.PublicKey, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	set, err := c.setLocked(ctx)
+	set, err := c.set(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if key, held := set.keys[kid]; held {
 		return key, nil
 	}
-	c.readLocked(ctx, true)
-	if c.held != nil {
-		if key, held := c.held.keys[kid]; held {
-			return key, nil
-		}
+	// The held set does not hold it: the project may have rotated and published
+	// a key after the one we hold. One more read, rate-limited, and then the
+	// refusal.
+	c.read(ctx, true)
+	if set, err = c.set(ctx); err != nil {
+		return nil, err
+	}
+	if key, held := set.keys[kid]; held {
+		return key, nil
 	}
 	return nil, refuse("kid", "no key set this verifier can read holds the key id this assertion names")
 }
 
-// setLocked is the set to verify against: the held one while it is inside its
-// own validity, and otherwise what a read gives, with the held one answering
-// while a failed read is inside its bound. It is called with c.mu held.
-func (c *keySetCache) setLocked(ctx context.Context) (*heldSet, error) {
-	now := c.now()
-	if c.held != nil && now.Before(c.held.exp) {
-		return c.held, nil
+// set is the set to verify against: the held one while it is inside its own
+// validity, and otherwise what a read gives, with the held one answering while a
+// failed read is inside its bound. It takes mu for the two reads of the fields
+// and for nothing else, so a caller that finds a held set here -- the pinned-key
+// path's ordinary case -- never waits on a read in flight.
+func (c *keySetCache) set(ctx context.Context) (*heldSet, error) {
+	c.mu.Lock()
+	if c.held != nil && c.now().Before(c.held.exp) {
+		held := c.held
+		c.mu.Unlock()
+		return held, nil
 	}
-	c.readLocked(ctx, false)
-	if c.held != nil && now.Before(c.held.exp.Add(KeySetMaxStale)) {
+	c.mu.Unlock()
+
+	c.read(ctx, false)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.held != nil && c.now().Before(c.held.exp.Add(KeySetMaxStale)) {
 		return c.held, nil
 	}
 	if c.err != nil {
@@ -157,26 +187,57 @@ func (c *keySetCache) setLocked(ctx context.Context) (*heldSet, error) {
 	return nil, refuseSet("document", "no key set has been read")
 }
 
-// readLocked reads and verifies the set, at most once per keySetMinReadInterval
-// per reason for reading. A read that fails changes nothing but c.err: the held
-// set stays, because a document that could not be read is not evidence about the
-// one that was. It is called with c.mu held.
-func (c *keySetCache) readLocked(ctx context.Context, rotation bool) {
+// read reads and verifies the set, at most once per keySetMinReadInterval per
+// reason for reading, and it never holds mu across the network. A read that
+// fails changes nothing but c.err: the held set stays, because a document that
+// could not be read is not evidence about the one that was.
+//
+// A caller that finds a read already in flight waits for it rather than adding a
+// second read to the endpoint, and waits with mu released -- on the read's own
+// answer or on its context, whichever comes first. That is the whole reason the
+// fetch is not called from a locked section: this mutex is held by every
+// verification in the process at one moment or another, and one hung connection
+// to the identity project's endpoint must not be one that stalls them all.
+func (c *keySetCache) read(ctx context.Context, rotation bool) {
+	c.mu.Lock()
 	now := c.now()
+	// A read in flight is waited for before the interval is consulted: the
+	// interval says "do not read", and a caller that finds one under way wants
+	// its answer -- the first read of a cold cache leaves every other caller in
+	// this process with nothing to verify against until it lands.
+	if c.reading != nil {
+		done := c.reading
+		c.mu.Unlock()
+		select {
+		case <-done:
+		case <-ctx.Done():
+		}
+		return
+	}
 	gate := &c.lastRead
 	if rotation {
 		gate = &c.rotated
 	}
 	if !gate.IsZero() && now.Sub(*gate) < keySetMinReadInterval {
+		c.mu.Unlock()
 		return
 	}
 	*gate, c.lastRead = now, now
+	c.reading = make(chan struct{})
+	done := c.reading
+	c.mu.Unlock()
+
 	set, err := c.fetch(ctx)
+
+	c.mu.Lock()
 	if err != nil {
 		c.err = err
-		return
+	} else {
+		c.held, c.err = set, nil
 	}
-	c.held, c.err = set, nil
+	c.reading = nil
+	c.mu.Unlock()
+	close(done)
 }
 
 // fetch reads the pinned URL once and verifies what it finds. The error it
@@ -184,6 +245,8 @@ func (c *keySetCache) readLocked(ctx context.Context, rotation bool) {
 // them, and an error from net/http carries a URL and a transport's text, which
 // is not what a refusal reaches a log line with.
 func (c *keySetCache) fetch(ctx context.Context) (*heldSet, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.fetchTimeout)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.pins.JWKSURL, nil)
 	if err != nil {
 		return nil, refuseSet("document", "the pinned key set URL cannot be requested")

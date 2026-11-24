@@ -158,12 +158,13 @@ type keySetServer struct {
 	status int
 	calls  int
 	fail   bool
+	hang   bool
 }
 
 func (s *keySetServer) set(body string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.body, s.status, s.fail = body, http.StatusOK, false
+	s.body, s.status, s.fail, s.hang = body, http.StatusOK, false, false
 }
 
 func (s *keySetServer) down(fail bool) {
@@ -172,25 +173,55 @@ func (s *keySetServer) down(fail bool) {
 	s.fail = fail
 }
 
+// hangUp makes the endpoint accept the request and then say nothing at all,
+// until the request's context ends: the socket a fetch can wait on forever is
+// the one this test stands in.
+func (s *keySetServer) hangUp() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hang = true
+}
+
 func (s *keySetServer) reads() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.calls
 }
 
+// RoundTrip answers from a snapshot of this server's state, so a request that
+// waits holds nothing of the server's: a hung fetch that held this mutex would
+// be a test that deadlocked rather than one that measured a hang.
 func (s *keySetServer) RoundTrip(r *http.Request) (*http.Response, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.calls++
-	if s.fail {
+	hang, fail, status, body := s.hang, s.fail, s.status, s.body
+	s.mu.Unlock()
+	if hang {
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	}
+	if fail {
 		return nil, errors.New("the key endpoint is unreachable")
 	}
 	return &http.Response{
-		StatusCode: s.status,
-		Body:       io.NopCloser(strings.NewReader(s.body)),
+		StatusCode: status,
+		Body:       io.NopCloser(strings.NewReader(body)),
 		Header:     http.Header{},
 		Request:    r,
 	}, nil
+}
+
+// fetchStarted waits until the endpoint has been reached, so that a case about
+// what happens *during* a read can be sure one is under way.
+func (s *keySetServer) fetchStarted(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for s.reads() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the key endpoint was never reached")
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func (s *keySetServer) client() *http.Client { return &http.Client{Transport: s} }
@@ -798,6 +829,89 @@ func TestVerifyServesTheCacheWhileTheEndpointIsDownThenStops(t *testing.T) {
 	claims["jti"] = "test-jti-3"
 	if _, err := verify(t, v, signAssertion(t, signPriv, testSignKID, claims)); err == nil {
 		t.Fatalf("an assertion was verified against a set more than %s past its own exp: the bound is what keeps a withdrawn key from verifying forever", KeySetMaxStale)
+	}
+}
+
+// A read is the one thing here that can wait on a stranger's socket, and it
+// must not be a thing the rest of the process waits with. A verification signed
+// by a pinned key needs no fetch at all (O7), and it must keep needing none
+// while another request's fetch is hanging: that socket is the identity
+// project's and this pairing is this project's, and neither is the other's
+// hostage.
+func TestVerifyDoesNotWaitForAFetchInFlight(t *testing.T) {
+	rootPub, rootPriv := testKey(t)
+	signPub, signPriv := testKey(t)
+	buildPub, _ := testKey(t)
+	srv := &keySetServer{}
+	srv.set(keySetDoc(t, rootPriv, 7, validUntil(), jwkOf(testSignKID, signPub)))
+	v := newTestVerifier(t, pins(rootPub, 7, pinned(testSignKID, signPub), pinned("signing-elsewhere", buildPub)), srv, newMemoryClaims(), &memorySeq{})
+
+	// One verification naming a key id nobody holds, which is what reaches the
+	// endpoint -- and the endpoint never answers this one.
+	srv.hangUp()
+	hanging, stop := context.WithCancel(context.Background())
+	defer stop()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		claims := goodClaims()
+		claims["jti"] = "test-jti-hanging"
+		_, _ = v.Verify(hanging, signAssertion(t, signPriv, "signing-fetched", claims), mobilesession.Binding{Audience: testAudience, Challenge: testChallenge})
+	}()
+	srv.fetchStarted(t)
+
+	// The pinned verification, on its own context and behind a guard: if it
+	// waits for the socket, this fails here rather than hanging the package.
+	answered := make(chan error, 1)
+	go func() {
+		_, err := verify(t, v, signAssertion(t, signPriv, testSignKID, goodClaims()))
+		answered <- err
+	}()
+	select {
+	case err := <-answered:
+		if err != nil {
+			t.Fatalf("a pinned key's assertion was refused while a fetch hung: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a pinned key's verification waited for a fetch in flight: a read that holds the cache's mutex across a socket makes one hung connection to the identity project's endpoint every assertion in this process stalled behind it, the pinned ones included")
+	}
+	stop()
+	<-done
+}
+
+// The other half of the same bound: a fetch that never answers must not be a
+// verification that never answers. The bound is the cache's own rather than the
+// HTTP client's, so a deployment that configured no client timeout is still a
+// deployment whose pairing recovers.
+func TestVerifyBoundsAKeySetFetch(t *testing.T) {
+	rootPub, rootPriv := testKey(t)
+	signPub, signPriv := testKey(t)
+	buildPub, _ := testKey(t)
+	srv := &keySetServer{}
+	srv.set(keySetDoc(t, rootPriv, 7, validUntil(), jwkOf(testSignKID, signPub)))
+	srv.hangUp()
+	// The build pins another key, so this assertion is the fetch path.
+	v := newTestVerifier(t, pins(rootPub, 7, pinned("signing-elsewhere", buildPub)), srv, newMemoryClaims(), &memorySeq{})
+	// The test's own bound rather than keySetFetchTimeout: ten seconds of wall
+	// clock in every run of this package, to prove a constant, is ten seconds
+	// nobody gets back.
+	v.keys.fetchTimeout = 50 * time.Millisecond
+
+	answered := make(chan error, 1)
+	go func() {
+		_, err := verify(t, v, signAssertion(t, signPriv, testSignKID, goodClaims()))
+		answered <- err
+	}()
+	select {
+	case err := <-answered:
+		if err == nil {
+			t.Fatal("an assertion was accepted from a key set that never arrived")
+		}
+		if field := refusalField(t, err); field != "document" {
+			t.Errorf("the refusal names %q, want \"document\": a fetch that ran out of time is a key set that could not be read", field)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a fetch that never answers was not bounded: a read of the pinned URL has to end on its own timeout, or one hung connection is every verification in this process stuck behind it")
 	}
 }
 
