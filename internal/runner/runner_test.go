@@ -19,6 +19,7 @@ import (
 
 	"gocloud.dev/blob"
 	"gocloud.dev/blob/memblob"
+	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"

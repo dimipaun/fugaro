@@ -632,13 +632,22 @@ func TestTriageSwitchIsReadFromTheBaseBranch(t *testing.T) {
 	})
 }
 
-// triageLayer is a project layer whose defaults.rigor names Startup and nothing
-// else: the mode a run whose base branch cannot be read still resolves, which is
-// what makes the second case above about the switch and not about the mode.
+// triageLayer is a project layer whose defaults.rigor names Startup: the mode a
+// run whose base branch cannot be read still resolves, which is what makes the
+// second case above about the switch and not about the mode.
+//
+// It names the three roles a run behind a gateway must be priced by
+// (CheckPins, D3020) because it is the whole of that run's configuration: the
+// base branch's file is gone, and since S1 (D3237) the checkout's own
+// agent.models block is dropped before the merge, so a layer that named only
+// the rigor would leave the run with no model to price it by and it would be
+// refused at bootstrap instead of reaching the switch this test is about.
 const triageLayer = `version: 1
 project: aurora
 gcp_project: proj-1234
 defaults:
+  agent:
+    models: { coder: claude-sonnet-5-5, reviewer: claude-opus-5, background: claude-haiku-4-5 }
   rigor:
     default: startup
 `
