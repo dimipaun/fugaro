@@ -56,9 +56,11 @@ func TestValidateNamesACraftModelProblemAtItsOwnPath(t *testing.T) {
 	// an owner's price, because the price rule reaches them: every run has a
 	// gateway now (AB1b, D3009), so `validate` prices the crafts' models in
 	// every mode, and "no price" would otherwise be a problem this test's
-	// fixture contributed rather than the allow-list rule it is about.
-	craftFixtureWith(t, "budget: { allowed_models: [\"claude-opus-4\"] }\n"+
-		"model_prices:\n  claude-opus-4: { input_per_m: 15, output_per_m: 75 }\n  claude-opus-4-1: { input_per_m: 15, output_per_m: 75 }\n")
+	// fixture contributed rather than the allow-list rule it is about. Those
+	// two prices are the fixture's own (craftLocalExtra, AB4, D3020); the
+	// installation config carries one model_prices block, and a second one
+	// appended here is a duplicate key its strict decode refuses.
+	craftFixtureWith(t, "budget: { allowed_models: [\"claude-opus-4\"] }\n")
 	testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": validateCraftModelYAML})
 	out, errOut, err := execute(t, "validate", "--offline", "fugaro.yaml")
 	if ExitCode(err) != ExitUserError {
@@ -108,10 +110,10 @@ func TestValidateNamesACraftModelProblemAtItsOwnPath(t *testing.T) {
 // reason: the price rule reaches the crafts' models in every mode now (AB1b,
 // D3009), so a model with no row in the shipped table would be a problem this
 // fixture contributed rather than the crafts-of-the-installation rule it is
-// about.
+// about. That price is the fixture's own (craftLocalExtra, AB4, D3020), and it
+// is not repeated here: the installation config carries one model_prices block.
 func TestValidateIgnoresTheCraftsNoRunReads(t *testing.T) {
-	craftFixtureWith(t, "budget: { allowed_models: [\"claude-opus-4-1\", \"claude-sonnet-5-5\"] }\n"+
-		"model_prices:\n  claude-opus-4-1: { input_per_m: 15, output_per_m: 75 }\n")
+	craftFixtureWith(t, "budget: { allowed_models: [\"claude-opus-4-1\", \"claude-sonnet-5-5\"] }\n")
 	testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": validateCraftPinnedYAML})
 	out, errOut, err := execute(t, "validate", "--offline", "fugaro.yaml")
 	if ExitCode(err) != ExitOK {
