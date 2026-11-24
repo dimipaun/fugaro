@@ -49,16 +49,17 @@ package cli
 //     admins editing one member cannot lose each other's work.
 //
 // The mirror's document shape is here because nothing else declares it: C2 fixes
-// the path and C1 the entry, and a node needs a document. It is one key —
-// `{"people":[{...C1's entry...}]}` — spelled as the roster spells its own list,
-// and it is read strictly (an unknown key is a refusal, and every entry is held
-// to C1's `Validate`): one spelling of the document, for the same reason the
-// roster has one. An EMPTY list is NOT refused, unlike the workspace roster's own
-// write (internal/workspace/roster_rtdb.go): the database prunes a value-less
-// document, so an empty mirror is a DELETE of the node, and that is exactly what
-// detaching a member needs — the write WU6 calls to remove the mirror — which is
-// also why `Found=false` reads as "not mirrored" rather than as an empty member
-// list. The mirror is ADVISORY besides (D2813): a member's own admins hold their
+// the path and C1 the entry, and a node needs a document. It is
+// `{"version":1,"members":[{...C1's entry...}]}` — the version this build writes,
+// and C1's own entries under the key the roster spells its list with — and it is
+// read strictly (an unknown key is a refusal, a version this build does not write
+// is a refusal, and every entry is held to C1's `Validate`): one spelling of the
+// document, for the same reason the roster has one. The REMOVAL is the EMPTY OBJECT
+// (`{}`), not an empty list: the database prunes a value-less document, so `{}`
+// is a DELETE of the node, and that is exactly what detaching a member needs —
+// the write WU6 calls to remove the mirror — which is also why `Found=false`
+// reads as "not mirrored" rather than as a member list that is empty. The mirror
+// is ADVISORY besides (D2813): a member's own admins hold their
 // database's write, so drift, never the mirror, is the fence, and the strict read
 // here is a refusal to act on a document it cannot understand rather than a claim
 // about its truth.
