@@ -2662,6 +2662,22 @@ type repoRootFixture struct {
 var repoRootFixtures = map[string]repoRootFixture{
 	"repo_root":        {agent: repoRootOAuthAgent},
 	"repo_root_vertex": {agent: repoRootVertexAgent},
+	// repo_root_vertex_served is IS9's fixture (D3326 as amended by F17): the
+	// vertex repository of an installation whose credentials service is
+	// deployed, which is the one repository handed the ADDRESS without being
+	// served. What a real plan of its root pins is the pair this task is
+	// about: every job account holds its roles/run.invoker on the service
+	// (google_cloud_run_v2_service_iam_member.credentials), and NOTHING of the
+	// repository's is dropped — the job's accessor on each secret it mounts,
+	// its mounts and the service's own account's grants are the ones the
+	// no-service fixture beside it has (G7). Without the fixture the address
+	// arm of the mirror was pinned by no real plan at all, which is the hole
+	// repo_root_credentials closed for the cascade and this closes for vertex.
+	//
+	// No record is written: localcfg.Repo.CredentialsServiceReady is the
+	// switch's answer and is false for a vertex repository by construction, so
+	// a fixture that wrote one would be a state no installation has.
+	"repo_root_vertex_served": {agent: repoRootVertexAgent, credentialsService: true},
 	// Its local config carries the service's address as well, which is what
 	// `fugaro update` leaves on a machine whose installation has one: every
 	// job that reaches the service — the check job now included (B4.9) —
@@ -2802,6 +2818,47 @@ func TestRepoAddressesMatchTheVertexGolden(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("Addresses() differs from repo_root_vertex_addresses.golden:\nmissing: %v\nunexpected: %v",
 			missingFrom(want, got), missingFrom(got, want))
+	}
+}
+
+// IS9's fixture pins the one branch no other golden can: the installation has
+// the credentials service and the repository is a `vertex` one, so the root
+// carries the block — the address every job account is granted roles/run.invoker
+// on — while nothing of the repository's is dropped (D3326 as amended by F17,
+// G7). A real plan is what makes the second half mean something: the drop and
+// the address hang on two different inputs, and a module that read one for the
+// other would show here as a missing accessor or a missing grant.
+func TestRepoAddressesMatchTheVertexServedGolden(t *testing.T) {
+	spec := repoRootFixtureSpec(t, "repo_root_vertex_served")
+	want := addressesGolden(t, "repo_root_vertex_served")
+	if len(want) == 0 {
+		t.Fatal("the golden is empty")
+	}
+	got := spec.Addresses()
+	if !slices.Equal(got, want) {
+		t.Errorf("Addresses() differs from repo_root_vertex_served_addresses.golden:\nmissing: %v\nunexpected: %v",
+			missingFrom(want, got), missingFrom(got, want))
+	}
+	// The golden's own premise, asserted rather than trusted: the plan names
+	// the job's invoker grant and none of the three things the drop would take
+	// away, so a golden regenerated from a module that dropped the wrong half
+	// fails here rather than reading as the new truth.
+	for _, want := range []string{
+		`module.repo.module.workflow["web"].google_cloud_run_v2_service_iam_member.credentials[0]`,
+		`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["github-app-key"]`,
+		`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["npm-token"]`,
+	} {
+		if !slices.Contains(got, want) {
+			t.Errorf("the vertex repository's addresses are missing %s, which a real plan of its root has: the address is handed without anything being dropped (D3326, G7)", want)
+		}
+	}
+	for _, unwanted := range []string{
+		"google_cloud_run_v2_service_iam_member.build_credentials",
+		"google_secret_manager_secret_iam_member.service[",
+	} {
+		if slices.ContainsFunc(got, func(a string) bool { return strings.Contains(a, unwanted) }) {
+			t.Errorf("the vertex repository's addresses name %s, which a real plan of its root does not: the service serves this repository nothing, so it is granted none of its containers and its build account is handed no address (D3326, F17)", unwanted)
+		}
 	}
 }
 
@@ -3365,6 +3422,18 @@ func TestTheDeployAloneDropsNoModelMount(t *testing.T) {
 // moment its update deploys the service, because `fugaro creds set` is the
 // bundle's only writer; and all three holding, which is the one row that may
 // move, and only for the cascade.
+//
+// D3326 as amended by F17 is the one exception, and it is the vertex row: a
+// `vertex` repository is handed the ADDRESS whenever the installation HAS the
+// service — the record and the mode are the model switch's conditions and a
+// vertex repository is never served — so for that row alone the block follows
+// the installation's own output, with the record in any state. What keeps that
+// from being the release blocker §1.4 names is the fact beside the block
+// (RepoInstallation.CredentialsServiceServes, false here): the module's drops
+// read it, so this root takes none of the job's credentials away and the
+// address it grants a call to is one the run only fetches its workflow secrets
+// through (§1.4's damage was a job that lost a credential the service could not
+// hand back).
 func TestNoRepositoryRootGainsAServiceTheBundleCannotServe(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -3378,6 +3447,8 @@ func TestNoRepositoryRootGainsAServiceTheBundleCannotServe(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			served := tc.agent == repoRootCascadeAgent
+			// The one auth the address reaches without the switch (D3326).
+			addressed := tc.agent == repoRootVertexAgent
 			for _, st := range []struct {
 				name      string
 				installed bool
@@ -3401,9 +3472,9 @@ func TestNoRepositoryRootGainsAServiceTheBundleCannotServe(t *testing.T) {
 					t.Fatal(err)
 				}
 				got := rs.Installation.CredentialsService
-				if want := served && st.installed && st.ready; want != (got != nil) {
+				if want := served && st.installed && st.ready || addressed && st.installed; want != (got != nil) {
 					if want {
-						t.Fatalf("%s: the repository root carries no credentials service, want the installation's: the installation has the block, the record vouches for the bundle and agent.auth is %s — all three conditions — so this is the one row the switch turns on, and without it no repository of any installation ever reaches the service", st.name, config.AuthCascade)
+						t.Fatalf("%s: the repository root carries no credentials service, want the installation's: this is the row the service is reached on — all three switch conditions for the cascade, and the installation's own block alone for the one auth the address reaches without being served (D3326) — and without it no repository of any installation ever reaches the service", st.name)
 					}
 					t.Errorf("%s: the repository root carries installation.credentials_service %+v, want none: modules/workflow/sa.tf's gate is `var.credentials_service == null` and reads no auth, so this root's next apply would take the job's model credential away and grant its account roles/run.invoker on a service that cannot hand it back — the release blocker §1.4 states", st.name, got)
 				}
