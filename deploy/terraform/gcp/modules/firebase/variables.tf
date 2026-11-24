@@ -73,6 +73,22 @@ variable "manage_apis" {
   nullable    = false
 }
 
+# Whether the FP's Firestore (default) database is there, which `fugaro update`
+# reads before this root is applied (internal/infra's FirestoreStep.
+# DatabaseExists) and passes here. It gates the run index's composite indexes
+# (firestore_indexes.tf, RI2): an index can only be created under a database
+# that exists, and `fugaro update` ensures that database as the LAST step of the
+# stage that applies this root (D3027) — so a fresh installation plans none of
+# them here and gains them on the next update. False is the default because it
+# is the answer that cannot fail: a plan carrying no index is applied whatever
+# the project holds.
+variable "firestore_database_exists" {
+  description = "Whether the FP's Firestore (default) database is there, as fugaro update read it before this root was applied. It gates the run index's composite indexes: an index under a database that does not exist is refused, and fugaro update ensures that database after this root."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
 variable "skip_apis" {
   description = "APIs this root does not enable because the installation root, in the same GCP project, does (set by fugaro update when the FP is the installation's own project; empty with two projects)."
   type        = list(string)

@@ -3676,9 +3676,12 @@ not evaluated at all, because a runner has no Claude Code.
 
 --offline checks the update class and nothing else, and it makes no cloud call,
 no network call and no secret read: the plugin's wiring and the install on this
-machine, the login unit that runs the orchestrator daemon, and the base image
+machine, the login unit that runs the orchestrator daemon, the base image
 this checkout resolves to where a local installation is configured to answer
-it. Every check whose answer lives in the project's Realtime Database or the
+it, and whether this binary is below the release the project requires,
+answered from this machine's own stamp cache (with no cache entry there, the
+check is skipped like the others rather than read from the database). Every
+other check whose answer lives in the project's Realtime Database or the
 runs bucket — the published policy, the deployed rules, and whether a
 workflow's job was built from the image settings it resolves to now — and the
 one that asks whether a newer release is available, is skipped rather than
@@ -8679,6 +8682,7 @@ Subcommands:
 
 - `fugaro runs digest` -- Write a closed period's report of this repository, or print the stored one
 - `fugaro runs ls` -- List runs with their status, stage, cost and PR
+- `fugaro runs reindex` -- Rebuild the run index from the runs bucket
 - `fugaro runs reports` -- Write every repository's closed-period reports into the runs bucket (the project's reports job)
 - `fugaro runs show` -- Show a run's chain and what is left of its limits
 - `fugaro runs stats` -- Aggregate run records by the person who started each run
@@ -8911,6 +8915,46 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro runs reindex`
+
+Rebuild the run index from the runs bucket
+
+Rebuild the run index: mark it incomplete, then walk every run in the runs
+bucket into it and recompute the summary (RI5).
+
+The mark is written first and is the part that always lands: from it, every
+later sweep of the history job continues the walk on its own until it reaches
+the end of history, with no execution started by the job and no timeout
+overridden. Then one execution is started in the job's --reindex mode, which
+is the pass that walks now; a caller who may not start the job -- only the
+installation's own scheduler account may -- gets one line saying so, and the
+walk is carried by the next sweep instead.
+
+The walk is resumable: a pass that runs out of time leaves its position
+beside the writer lease, and the next pass continues from there rather than
+starting over. A walk that is already going is left alone: its own fresh
+claim is what says so, and nothing is started.
+
+A reindex asks nothing of any run: a run in flight is neither waited for nor
+touched, because the walk reads the runs bucket and never writes a run's own
+objects.
+
+Usage: `fugaro runs reindex`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for reindex |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro runs reports`
 
 Write every repository's closed-period reports into the runs bucket (the project's reports job)
@@ -9037,8 +9081,11 @@ Attribution, as the records themselves state it:
   - Dollars are never added across currencies: a row is one user and one currency,
     and a total covers one currency. Every cost recorded today is in USD.
   - The window is UTC days like the rest of the CLI. A run is counted on the day
-    the bucket's run IDs place its start, so the window and the runs in it agree
-    with runs ls.
+    the read places it: the day its own run id places its start when the records
+    are read -- which is runs ls's window -- and its entry's own last change when
+    the index answers, which is a settled run's finish. The two reads can therefore
+    put the same run inside the window or outside it (see the index paragraph
+    below).
 
 The money is model dollars, counted the way the budget screens count them. COUNTED
 $ is the model spend that counts toward the caps: the money part of a run's model
@@ -9068,8 +9115,9 @@ is refused, never quietly widened: the error says so, and names --all-users. An
 identity with no key of its own because nothing printable is left of it (a pasted
 zero-width character, say) is shown no row instead: the table is empty, and its
 view line says the CLI cannot tell who you are. A row keyed 'unknown' is every run
-of the window that recorded no launcher -- never one person's -- so it is not shown
-as the caller's own either, and a note says so.
+of the window that recorded no launcher, and -- when the index answers -- the runs
+it has not folded yet, whose launcher its page cannot show (below). It is never one
+person's, so it is not shown as the caller's own either, and a note says so.
 
 The launcher text is what a launcher wrote and is read for nothing else: it is
 sanitised and size-capped before it is printed, and it authorises and admits
@@ -9094,7 +9142,17 @@ is the window's, over everyone's runs, and is no more the caller's own than the
 truncation is. The rows come from the run index -- one page of entries for the
 window, and no run object read at all -- which index_complete reports: it is false
 while the index has not finished a walk, when the run records are read instead,
-over the same window and with the same figures.
+one object read per run.
+
+The two reads answer the same question and do not always answer it alike. The
+index windows a run by its entry's own last change where the record read windows
+it by the day its run id places its start, so a run that started and settled on
+opposite sides of an edge is in one read's window and not the other's. And a run
+the index has not folded yet arrives as its id, its repository and its status
+alone -- no launcher and no record to read -- so the index read counts it under
+'unknown' with no record, where the record read would name the launcher its own
+launch recorded. A folded run both windows hold reads the same either way, and
+index_complete says which of the two reads a caller is looking at.
 
 --json prints {version, project, by, view, you, admin, since, until, max_runs,
 truncated, index_complete, rows[], totals[], unlaunched, notes}; rows and totals
@@ -9120,7 +9178,7 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
-| `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
+| `--since` | string | `7d` | no | only runs the read places within this long (7d, 36h, 90m; 0 for all) |
 
 Subcommands:
 
