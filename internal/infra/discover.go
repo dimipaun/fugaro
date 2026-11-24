@@ -638,14 +638,38 @@ func (d *discovery) installationSingletons(spec InstallationSpec) error {
 			b.Name, strconv.Quote(b.Description), strconv.Quote(spec.LogBucketDescription), spec.Names.Log.Bucket, loc, d.project, shellQuote(spec.LogBucketDescription)))
 		return nil
 	}
-	if b.LifecycleState != "ACTIVE" {
-		d.refuse(fmt.Errorf("log bucket %s is %s (a rollback deletes it, and it stays pending deletion for 7 days), so it can be neither imported nor created: restore it first with %s, then rerun fugaro update",
-			b.Name, b.LifecycleState, LogBucketUndelete(d.project, loc)))
+	if b.LifecycleState != logBucketActive {
+		// Only a bucket pending deletion can be restored, so the refusal names
+		// the undelete command for that state alone: a CREATING, UPDATING or
+		// FAILED bucket is named as what it is, because the command would fail
+		// on it (logBucketStateAdvice).
+		d.refuse(fmt.Errorf("the installation's log bucket %s can be neither imported nor created: %s. Then rerun fugaro update",
+			b.Name, logBucketStateAdvice(d.project, LogBucketRef{Name: b.Name, State: b.LifecycleState})))
 		return nil
 	}
 	d.im.LogBucketLocation = loc
 	d.add(importLogBucket, d.im.LogBucketLocation, "", spec.Names.Log.Bucket)
 	return nil
+}
+
+// The log bucket lifecycle states this read tells apart. A bucket is adoptable
+// only while it is ACTIVE, and only one that is DELETE_REQUESTED can be
+// restored — undelete is what puts one back inside its seven-day window — so
+// those two are the ones every message here branches on. CREATING, UPDATING and
+// FAILED are not restorable at all, and naming the undelete command for one
+// would be a command that fails.
+const (
+	logBucketActive          = "ACTIVE"
+	logBucketDeleteRequested = "DELETE_REQUESTED"
+)
+
+// LogBucketRef is one bucket the listing found by ID: the name it gave back and
+// the lifecycle state it is in. Both are the refusal's own facts — the name says
+// which bucket a person has to act on, and the state says what can be done about
+// it, which is why the message is worded from the state rather than assumed.
+type LogBucketRef struct {
+	Name  string
+	State string
 }
 
 // LogBucketAmbiguousError refuses a project that holds the installation's log
@@ -655,13 +679,54 @@ func (d *discovery) installationSingletons(spec InstallationSpec) error {
 // deletion completes — and adopting the wrong one would set its retention and
 // delete it on a rollback. The names of the buckets are the message's whole
 // point: naming them is what lets a person say which is the installation's.
+//
+// Live is how many of them are ACTIVE. It is 0 when no bucket carrying the ID is
+// ACTIVE: there is nothing to choose between because there is nothing to adopt,
+// and the message says so rather than telling a person to delete a bucket that
+// is already deleting. It is worded by each bucket's OWN state, and it names the
+// undelete command only for the buckets that are DELETE_REQUESTED: restoring one
+// is the way out — it is immediate, it keeps the logs the bucket holds, and it
+// leaves exactly one ACTIVE, which this read then adopts — while a bucket that
+// is CREATING, UPDATING or FAILED cannot be restored at all, and an undelete
+// command printed for it would be a command that fails.
+//
+// Project is the project the buckets are in, which the zero-ACTIVE message
+// names each undelete command with.
 type LogBucketAmbiguousError struct {
-	Names []string
+	Buckets []LogBucketRef
+	Live    int
+	Project string
 }
 
 func (e *LogBucketAmbiguousError) Error() string {
+	names := make([]string, 0, len(e.Buckets))
+	for _, b := range e.Buckets {
+		names = append(names, b.Name)
+	}
+	if e.Live == 0 {
+		advice := make([]string, 0, len(e.Buckets))
+		for _, b := range e.Buckets {
+			advice = append(advice, logBucketStateAdvice(e.Project, b))
+		}
+		return fmt.Sprintf("the project holds %d log buckets with the installation's ID and none of them is ACTIVE: %s. A bucket that is not ACTIVE is not the installation's to adopt, and fugaro will not adopt one by chance, since the plan would set that bucket's retention and a rollback would delete it: %s. Then rerun fugaro update",
+			len(e.Buckets), strings.Join(names, ", "), strings.Join(advice, "; "))
+	}
 	return fmt.Sprintf("the project holds %d log buckets with the installation's ID: %s. fugaro cannot tell which one is the installation's, and it will not adopt one by chance, since the plan would set that bucket's retention and a rollback would delete it: remove all but one of them (gcloud logging buckets delete <id> --location=<location> --project <project>), then rerun fugaro update",
-		len(e.Names), strings.Join(e.Names, ", "))
+		len(e.Buckets), strings.Join(names, ", "))
+}
+
+// logBucketStateAdvice is what a refusal says about one bucket that is not
+// ACTIVE: the state it is in and what can be done about it. Only a bucket
+// pending deletion can be restored, so only DELETE_REQUESTED names the undelete
+// command; a bucket in any other state is named as what it is, because the
+// command would fail on it and the bucket is not one this installation may
+// adopt either way.
+func logBucketStateAdvice(project string, b LogBucketRef) string {
+	if b.State == logBucketDeleteRequested {
+		loc, _ := logBucketLocationID(b.Name)
+		return fmt.Sprintf("%s is DELETE_REQUESTED (it is gone in 7 days, logs and all) and can be restored with %s", b.Name, LogBucketUndelete(project, loc))
+	}
+	return fmt.Sprintf("%s is %s, and nothing restores a bucket in that state", b.Name, b.State)
 }
 
 // logBucketNamed is the project's log bucket of ID id, found by listing the
@@ -675,7 +740,9 @@ func (e *LogBucketAmbiguousError) Error() string {
 // made in its place is ACTIVE, so the ACTIVE one answers for the ID. Two
 // ACTIVE ones answer for nothing and the read refuses through
 // LogBucketAmbiguousError, naming both, rather than import whichever the
-// listing happened to return last.
+// listing happened to return last; so does a project whose no bucket carrying
+// the ID is ACTIVE, with the message worded by each bucket's own state and
+// naming the undelete command only for the buckets pending deletion.
 //
 // It is nil, with no error, when the project holds no such bucket. A 404 (the
 // project is gone) and a disabled Logging API are the errors they are, and
@@ -701,17 +768,17 @@ func logBucketNamed(ctx context.Context, c *Clients, project, id string) (*loggi
 		return found[0], nil
 	}
 	var live []*logging.LogBucket
-	names := make([]string, 0, len(found))
+	buckets := make([]LogBucketRef, 0, len(found))
 	for _, b := range found {
-		names = append(names, b.Name)
-		if b.LifecycleState == "ACTIVE" {
+		buckets = append(buckets, LogBucketRef{Name: b.Name, State: b.LifecycleState})
+		if b.LifecycleState == logBucketActive {
 			live = append(live, b)
 		}
 	}
 	if len(live) == 1 {
 		return live[0], nil
 	}
-	return nil, &LogBucketAmbiguousError{Names: names}
+	return nil, &LogBucketAmbiguousError{Buckets: buckets, Live: len(live), Project: project}
 }
 
 // Existing is what discovery found of a repository's live jobs and

@@ -131,9 +131,9 @@ command with no flags records a figure rather than asking for one (design
 D2212 and D2211). The amount is the budget ALERT amount the installation's
 Terraform creates and nothing else — this command does not create or change a
 budget, and it makes no billing call. The alert itself is the installation's
-own Terraform and belongs to the fugaro update that applies it, not to this
+own Terraform and belongs to the update step of that installation, not to this
 object — fugaro update --budget N --budget-currency CCC --billing-account ID
-applies the amount this command records. Nothing else is a question: the bound
+sets the amount this command records. Nothing else is a question: the bound
 on
 billable image builds this object used to record (D1013) is gone (D1543), so
 there is no count to ask the owner for and none to write, exactly as fugaro

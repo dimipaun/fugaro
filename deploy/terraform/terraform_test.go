@@ -246,21 +246,37 @@ func TestNoAuthoritativeIAM(t *testing.T) {
 // Secret access is granted per secret, never on the whole project. A plan
 // assertion can't enumerate every resource, so this is a text check.
 //
-// ONE grant of this tree is a project-level secretAccessor, and it is a
-// decision rather than an oversight: the dynamic class's prefix accessor
-// (D1931, DS2.2, credentials.tf). Its containers are named by the callers' own
-// subjects (fugaro_u_<sub>_<name>), so an installation cannot name them when it
-// plans and there is no per-secret grant to write; what bounds the read is the
-// class's one name-prefix condition, which the module takes from the local that
-// the intake's own write binding takes it from (TestServicePrefixAccessorIsConditioned
-// resolves both and holds them byte for byte). The member is the credentials
-// service's own account and the reader is listed (secret_readers_test.go, E23).
-// It is admitted here BY ADDRESS and not by shape: a second project-level
-// secretAccessor, this one renamed, or the same grant moved to another file is
-// refused, and so is this one once it stops carrying the class's condition.
+// TWO grants of this tree are project-level secretAccessors, and each is a
+// decision rather than an oversight. The first is the dynamic class's prefix
+// accessor (D1931, DS2.2, credentials.tf): its containers are named by the
+// callers' own subjects (fugaro_u_<sub>_<name>), so an installation cannot name
+// them when it plans and there is no per-secret grant to write; what bounds the
+// read is the class's one name-prefix condition, which the module takes from the
+// local that the intake's own write binding takes it from
+// (TestServicePrefixAccessorIsConditioned resolves both and holds them byte for
+// byte). The member is the credentials service's own account and the reader is
+// listed (secret_readers_test.go, E23).
+//
+// The second is the workspace root's person-token accessor (WC2, D2971, R6):
+// the same impossibility and the same answer — the container is one per person
+// and carries the verified token's own subject (fugaro_u_<sub>_claude-oauth-token,
+// internal/secretname), so the workspace's own account reads it through one
+// conditioned project grant, whose expression is stricter than the installation's
+// (the per-person prefix AND the one name the workspace serves, never the shared
+// fugaro_p_ class the intake's fence admits too), and whose reader is listed
+// (secret_readers_test.go, E32).
+//
+// Each is admitted here BY ADDRESS and not by shape: a third project-level
+// secretAccessor, one of these renamed, or either moved to another file is
+// refused, and so is either one once it stops carrying its own condition. The
+// workspace's is read out of its own block and compared to the Go constant that
+// internal/infra/tf's cover holds the plan to, so the two spellings of the fence
+// cannot drift.
 func TestNoProjectLevelSecretAccessor(t *testing.T) {
 	const allowedPath = "gcp/modules/installation/credentials.tf"
 	const allowedName = "google_project_iam_member.credentials_prefix_accessor"
+	const personPath = "gcp/roots/workspace/main.tf"
+	const personName = "google_project_iam_member.workspace_person_token"
 	walk(t, func(path string, b []byte) {
 		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_member") {
 			if !strings.Contains(blk.body, "secretmanager.secretAccessor") {
@@ -269,7 +285,12 @@ func TestNoProjectLevelSecretAccessor(t *testing.T) {
 			if path == allowedPath && blk.name == allowedName && strings.Contains(blk.body, "local.dynamic_secret_names_condition.expression") {
 				continue
 			}
-			t.Errorf("%s: %s grants secretmanager.secretAccessor on the project, which only the dynamic class's conditioned prefix accessor may do (%s's %s)", path, blk.name, allowedPath, allowedName)
+			if path == personPath && blk.name == personName &&
+				hasAttr(blk.body, "title", strconv.Quote(gcp.WorkspacePersonTokenConditionTitle)) &&
+				hasAttr(blk.body, "expression", strconv.Quote(gcp.WorkspacePersonTokenCondition())) {
+				continue
+			}
+			t.Errorf("%s: %s grants secretmanager.secretAccessor on the project, which only the dynamic class's conditioned prefix accessor (%s's %s) and the workspace's conditioned person-token accessor (%s's %s) may do", path, blk.name, allowedPath, allowedName, personPath, personName)
 		}
 	})
 }
@@ -1397,15 +1418,53 @@ func TestHistoryNoDatastoreAdmin(t *testing.T) {
 // H8: the Firestore database is an idempotent REST ensure step (a Terraform
 // create of a singleton does not adopt), and the rules are REST too: no
 // Terraform resource for either.
+//
+// The database, not the whole service: `google_firestore_index` IS Terraform
+// (docs/console-fixes/contract-index.md, C-INDEX; plan task RI2), because an
+// index is not a singleton the ensure step adopts — Firestore creates one from
+// its fields, the provider names the resource after them, and the role the
+// history job holds (datastore.user) cannot change one, so the owner-run
+// Firebase root is the only place it can be declared (iam.tf). The type is
+// therefore allowed by name and nothing else of the service is.
 func TestNoFirestoreDatabaseResource(t *testing.T) {
+	// The service's names are held by their PREFIX and not by a list of the
+	// types that were Terraform at the time: a fourth declaration
+	// (google_firestore_backup_schedule, or a name Google adds) is the same
+	// mistake as the database, and an enumeration is what would let it in. The
+	// index is the one name of the service that is Terraform, and where it may
+	// be declared is the loop below. A second one is a decision rather than a
+	// slip — the orchestrator's session TTL policy is the candidate the spec
+	// already names (docs/central-orchestrator/reconciliation.md, D11) — and
+	// this line is where it is made in the open.
+	firestoreType := regexp.MustCompile(`google_firestore_[a-z0-9_]*`)
 	walk(t, func(path string, b []byte) {
 		code := stripComments(string(b))
-		for _, bad := range []string{`"google_firestore_database"`, `"google_firebase_rules_`, `"google_firestore_`} {
-			if strings.Contains(code, bad) {
-				t.Errorf("%s declares %s: the database and its rules are fugaro update's REST steps", path, bad)
+		for _, m := range firestoreType.FindAllString(code, -1) {
+			if m != "google_firestore_index" {
+				t.Errorf("%s names %s: the Firestore database and its rules are fugaro update's REST steps, and the index is the service's only Terraform type here (RI2)", path, m)
+			}
+		}
+		if strings.Contains(code, `"google_firebase_rules_`) {
+			t.Errorf("%s declares a google_firebase_rules_ resource: the rules are fugaro update's REST step", path)
+		}
+	})
+	// A google_firestore_index anywhere but the Firebase module is a second
+	// owner of a read the installation's one Firebase project serves, and the
+	// type's permit above is what the loop below holds to the module: every
+	// declaration of it is in modules/firebase, and none is in a root or
+	// another module.
+	n := 0
+	walk(t, func(path string, b []byte) {
+		for range resourceBlocks(t, path, b, "google_firestore_index") {
+			n++
+			if !strings.HasPrefix(path, "gcp/modules/firebase/") {
+				t.Errorf("%s declares a google_firestore_index: the run index's composite indexes belong to the Firebase module alone (RI2), whose root is the one `fugaro update` applies against the Firebase project", path)
 			}
 		}
 	})
+	if n == 0 {
+		t.Errorf("no google_firestore_index is declared anywhere: the run index's reads need their composite indexes (contract-index.md, RI2)")
+	}
 }
 
 // The history account may read the runs bucket (objectViewer) and nothing
@@ -1945,7 +2004,7 @@ var (
 	// "serviceAccount:${each.value}" is the workspace root's invoker binding
 	// (WS6, D2980): the member table's job accounts arrive as bare addresses —
 	// internal/localcfg's WorkspaceMember.JobServiceAccounts holds an "IAM
-	// service account address" and `fugaro workspace member add` writes that
+	// service account address" and `fugaro workspace project add` writes that
 	// shape into the workspace's own config, which is what this root's tfvars
 	// carries — so the resource writes the prefix the table does not. It is
 	// admitted by shape for the reason each.value is: what bounds the member is
@@ -1953,7 +2012,18 @@ var (
 	// every entry to a service account address, and internal/infra/tf's
 	// WorkspaceNotCovered refuses an invoke grant whose member is not one of
 	// the table's accounts.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake|build_identity|mobile)\[0\]\.member|google_service_account\.(catalog_check|reports|licence|voice)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{each\.value\}"|"serviceAccount:\$\{var\.(history_account|coordinator_account|mobile_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account|credentials_service\.account|issuer_account)\}"|"serviceAccount:\$\{var\.orchestrator\.account_id\}@\$\{var\.project\}\.iam\.gserviceaccount\.com")$`)
+	//
+	// "user:${each.value}" is that same root's PERSON invoke binding (WC2,
+	// D2971, R6): the workspace's roster arrives as the addresses the roster
+	// names — `fugaro update` renders each `human` of the workspace's own
+	// workspaceRosters/<name> node into this root's people list
+	// (internal/cli's workspace_create.go) — so the resource writes the `user:`
+	// prefix the roster does not. It is admitted by shape for the same reason:
+	// what bounds the member is the root rather than the expression, the
+	// variable's own validation holds every entry to an address, and
+	// internal/infra/tf's WorkspaceNotCovered refuses an invoke grant whose
+	// member is not one of the roster's own people.
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake|build_identity|mobile)\[0\]\.member|google_service_account\.(catalog_check|reports|licence|voice)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{each\.value\}"|"user:\$\{each\.value\}"|"serviceAccount:\$\{var\.(history_account|coordinator_account|mobile_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account|credentials_service\.account|issuer_account)\}"|"serviceAccount:\$\{var\.orchestrator\.account_id\}@\$\{var\.project\}\.iam\.gserviceaccount\.com")$`)
 
 	// workspaceRolePath and workspaceRoleType name the ONE custom role in this
 	// tree no module creates: the workspace root's own (W3 of the workspaces
@@ -2397,6 +2467,12 @@ func TestServiceAccountTokenCreatorIsTheDeployersImpersonationGrant(t *testing.T
 			account: `"projects/${var.project}/serviceAccounts/fugaro-verifier@${var.project}.iam.gserviceaccount.com"`,
 			forEach: "local.credentials_service_on ? toset(var.operators) : toset([])",
 		},
+		{
+			file:    "gcp/modules/installation/orchestrator.tf",
+			block:   "google_service_account_iam_member.fugaro_orchestrator_token_creator",
+			account: `"projects/${var.project}/serviceAccounts/fugaro-orch@${var.project}.iam.gserviceaccount.com"`,
+			forEach: "local.orchestrator_on ? toset(var.operators) : toset([])",
+		},
 	}
 	want := make([]string, 0, len(sites))
 	for _, s := range sites {
@@ -2423,7 +2499,7 @@ func TestServiceAccountTokenCreatorIsTheDeployersImpersonationGrant(t *testing.T
 		}
 	})
 	if !slices.Equal(found, want) {
-		t.Errorf("the literal %s appears in %v; want exactly %v — the deployer's impersonation (D75) and the verifier account's (CSR14), and nothing else in the tree", role, found, want)
+		t.Errorf("the literal %s appears in %v; want exactly %v — the deployer's impersonation (D75), the verifier account's (CSR14) and the resident orchestrator's, and nothing else in the tree", role, found, want)
 	}
 
 	for _, s := range sites {
@@ -6718,13 +6794,37 @@ func TestWorkspaceDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
 		t.Errorf("tf.FugaroRoles names %s: that table is the installation's modules' roles (each pinned in RolePermissions and covered by cover.go's grantRules), and the workspace root's role is covered by WorkspaceNotCovered instead — a row here would admit the role to an installation's plan", tf.WorkspaceDatabaseRoleID)
 	}
 
-	// The one grant: that role, on the workspace's own project, to the
-	// workspace's own account, with no condition and no second member.
+	// The root's TWO project grants, found by the role each names rather than
+	// by position. The first is that role, on the workspace's own project, to
+	// the workspace's own account, with no condition and no second member. The
+	// second is WC2's (D2971, R6): the one conditioned secretAccessor the same
+	// account holds on the personal token containers of the people the
+	// workspace's roster names. TestNoProjectLevelSecretAccessor is the
+	// tree-level half of that fence — it refuses a project-level accessor
+	// anywhere else, and this one unless it carries the condition byte for
+	// byte — and the assertions here are what says the same grant is gated on
+	// the one boolean, bound to the workspace's account and on the workspace's
+	// own project.
 	grants := resourceBlocks(t, workspaceRolePath, b, "google_project_iam_member")
-	if len(grants) != 1 {
-		t.Fatalf("%s declares %d project grants, want exactly one — the database role, to the workspace's own account", workspaceRolePath, len(grants))
+	if len(grants) != 2 {
+		t.Fatalf("%s declares %d project grants, want exactly two — the database role and the person-token accessor, both to the workspace's own account", workspaceRolePath, len(grants))
 	}
-	grant := squash(grants[0].body)
+	var dbGrant, accessor block
+	for _, g := range grants {
+		body := squash(g.body)
+		switch {
+		case strings.Contains(body, `role = "projects/${var.project}/roles/`+tf.WorkspaceDatabaseRoleID+`"`):
+			dbGrant = g
+		case strings.Contains(body, `role = "`+tf.WorkspaceBundleAccessorRole+`"`):
+			accessor = g
+		default:
+			t.Errorf("%s: %s is neither the database grant nor the person-token accessor:\n%s", workspaceRolePath, g.name, body)
+		}
+	}
+	if dbGrant.name == "" || accessor.name == "" {
+		t.Fatalf("%s: the root's two project grants are %q and %q, want the database grant and the person-token accessor", workspaceRolePath, dbGrant.name, accessor.name)
+	}
+	grant := squash(dbGrant.body)
 	for _, want := range []string{
 		"project = var.project",
 		`role = "projects/${var.project}/roles/` + tf.WorkspaceDatabaseRoleID + `"`,
@@ -6741,8 +6841,32 @@ func TestWorkspaceDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
 	// google_project_iam_custom_role's name is computed, so the reference
 	// reaches a plan as an unknown role and the cover could no longer say which
 	// role the grant is (tf's WorkspaceNotCovered, the unknown-role arm).
-	if roleAttr := firstAttr(grants[0].body, "role"); strings.Contains(roleAttr, "google_project_iam_custom_role.") {
+	if roleAttr := firstAttr(dbGrant.body, "role"); strings.Contains(roleAttr, "google_project_iam_custom_role.") {
 		t.Errorf("%s: the database grant reads its role from the role resource (%s), which a plan sees as unknown:\n%s", workspaceRolePath, roleAttr, grant)
+	}
+
+	// WC2's accessor: one grant, gated on the same boolean as the service and
+	// the bundle accessor, on the workspace's own project and account, and
+	// carrying the fence's own title and expression — the two read out of the
+	// Go constants the plan cover compares a plan against, so a plan this root
+	// would apply and a plan the cover would accept cannot be two different
+	// fences.
+	body := squash(accessor.body)
+	for _, want := range []string{
+		"project = var.project",
+		`role = "` + tf.WorkspaceBundleAccessorRole + `"`,
+		"member = google_service_account.workspace.member",
+		"count = local.credentials_service_on ? 1 : 0",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%s: the person-token accessor does not hold %q:\n%s", workspaceRolePath, want, body)
+		}
+	}
+	if title := firstAttr(accessor.body, "title"); title != strconv.Quote(gcp.WorkspacePersonTokenConditionTitle) {
+		t.Errorf("%s: the person-token accessor is titled %s, want %q (gcp.WorkspacePersonTokenConditionTitle, which internal/infra/tf's cover holds a plan to)", workspaceRolePath, title, gcp.WorkspacePersonTokenConditionTitle)
+	}
+	if expr := firstAttr(accessor.body, "expression"); expr != strconv.Quote(gcp.WorkspacePersonTokenCondition()) {
+		t.Errorf("%s: the person-token accessor's condition is %s, want %q (gcp.WorkspacePersonTokenCondition(), the per-person prefix AND the one name the workspace serves): the prefix alone would hand the account every personal secret of the workspace's project and a wider name would reach another project's container", workspaceRolePath, expr, gcp.WorkspacePersonTokenCondition())
 	}
 	// No predefined database role is granted to this account anywhere in the
 	// tree: the whole point of the custom role is that the two predefined ones
@@ -8373,21 +8497,30 @@ func TestIntakeRefusesAContainerOfAnotherShape(t *testing.T) {
 }
 
 // TestLauncherAccountsReachTheServices pins the class list to the deployment
-// rather than to a literal: FUGARO_LAUNCHER_ACCOUNTS is the launcher class
-// (D1938, F25) — the bare addresses a Google ID token's email claim carries —
-// and the two services that admit a launcher read it from var.launcher_accounts,
-// which internal/infra derives from the same roster list the invoker grants are
-// made from (internal/infra/launchers.go; F31, F36).
+// rather than to a literal: FUGARO_LAUNCHER_ACCOUNTS is the class the process
+// reads — the bare addresses a Google ID token's email claim carries — and the
+// two services that admit a caller by it read it from the installation's
+// launchers, which internal/infra derives from the same roster list the invoker
+// grants are made from (internal/infra/launchers.go; F31, F36).
+//
+// The INTAKE's is the launchers AND the workspace roster's people (WC3, R5,
+// D3143): the module composes var.launcher_accounts with var.intake.people in
+// one expression (local.intake_accounts), which is also what the invoker grant
+// above it is made from, so the class and the grant cannot drift apart. The
+// credentials service's stays the launchers' own: that service's read mint
+// reaches the installing person's whole workspace, which is not what a roster
+// person is given (F10), so it reads no second list and neither does its grant.
 //
 // It is rendered the way every optional class list here is (credentials.tf's
 // FUGARO_PERSON_ACCOUNTS): a dynamic block, so an installation whose roster
 // names no launcher starts with a class that admits nobody rather than
 // refusing to bind a port, and no address is written into the module.
 func TestLauncherAccountsReachTheServices(t *testing.T) {
-	for _, path := range []string{
-		"gcp/modules/installation/credentials.tf",
-		"gcp/modules/installation/intake.tf",
+	for _, tc := range []struct{ path, expr string }{
+		{"gcp/modules/installation/credentials.tf", "jsonencode(var.launcher_accounts)"},
+		{"gcp/modules/installation/intake.tf", "jsonencode(local.intake_accounts)"},
 	} {
+		path := tc.path
 		b, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -8402,8 +8535,8 @@ func TestLauncherAccountsReachTheServices(t *testing.T) {
 			t.Errorf("%s: FUGARO_LAUNCHER_ACCOUNTS is not rendered by a dynamic env block, so an installation whose roster names no launcher gets an empty value rather than no entry (credentialsServiceLaunchers reads an absent entry as an empty class, and an empty string is refused)", path)
 			continue
 		}
-		if !strings.Contains(squash(m[1]), "jsonencode(var.launcher_accounts)") {
-			t.Errorf("%s: the launcher class is not jsonencode(var.launcher_accounts): the value is a JSON array of bare addresses and it is derived from the roster, never written here:\n%s", path, squash(m[1]))
+		if !strings.Contains(squash(m[1]), tc.expr) {
+			t.Errorf("%s: the class is not %s: the value is a JSON array of bare addresses derived from the roster, never written here, and the intake's is the launchers composed with the workspace roster's own people (WC3, R5):\n%s", path, tc.expr, squash(m[1]))
 		}
 	}
 	// The variable is the roster's own people, so the module must not carry a
@@ -8420,6 +8553,53 @@ func TestLauncherAccountsReachTheServices(t *testing.T) {
 	body := code[m[1]:matchBrace(code, m[1]-1)]
 	if !hasAttr(body, "default", "[]") {
 		t.Errorf("launcher_accounts must default to the empty list: an installation whose roster names no launcher renders no entry at all, and a module that refused to plan without the variable would break every tfvars written before this release:\n%s", squash(body))
+	}
+}
+
+// TestTheIntakesPeopleAreHeldToTheLauncherAccountsShape (WC3, R5) pins the one
+// rule the two class lists share to the deployment, because the two are ONE
+// list by the time anything reads them: intake.tf composes var.intake.people
+// with var.launcher_accounts into local.intake_accounts (the class the process
+// reads) and into local.intake_invoker_members (the grant), each entry of the
+// people's half spelled "user:<entry>". An entry the people list took and the
+// launchers list refuses is a class list the module composes from two grammars,
+// and one carrying a colon is the member spelling rather than the bare address a
+// token's email claim holds — a member IAM has no principal for, which is what
+// internal/infra's memberAddress drops the person over (and internal/access's
+// admin list refuses an entry over, for the same reason).
+//
+// The refusal is a plan-time one in EVERY installation, and it is not an update
+// that fails: `fugaro update` renders this list with internal/infra's
+// IntakePeople, which drops the same three shapes the validation refuses
+// (memberAddress, the 512-byte bound and a service account's suffix), so no
+// value a workspace's roster can hold is written here.
+func TestTheIntakesPeopleAreHeldToTheLauncherAccountsShape(t *testing.T) {
+	b, err := os.ReadFile("gcp/modules/installation/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+	body := func(name string) string {
+		m := regexp.MustCompile(`(?m)^\s*variable\s+"` + regexp.QuoteMeta(name) + `"\s*\{`).FindStringIndex(code)
+		if m == nil {
+			t.Fatalf("the installation module declares no %s variable", name)
+		}
+		return code[m[1]:matchBrace(code, m[1]-1)]
+	}
+	shape := func(v string, which string) string {
+		m := regexp.MustCompile(`can\(regex\("([^"]*@[^"]*)"`).FindStringSubmatch(body(v))
+		if m == nil {
+			t.Fatalf("var.%s holds no address shape: the class list is a list of addresses and the module refuses what is not one", which)
+		}
+		return m[1]
+	}
+	launchers := shape("launcher_accounts", "launcher_accounts")
+	people := squash(body("intake"))
+	if !strings.Contains(people, squash(launchers)) {
+		t.Errorf("var.intake.people is not held to var.launcher_accounts' own shape %q: the two merge into ONE class list and ONE invoker set (intake.tf's locals) and each entry of the people's half is spelled \"user:<entry>\" into the grant, so a shape one takes and the other refuses is a class list composed from two grammars — and an entry carrying a colon is the member spelling IAM has no principal for (WC3, R5):\n%s", launchers, people)
+	}
+	if !strings.Contains(people, `endswith(lower(p), ".gserviceaccount.com")`) {
+		t.Errorf("var.intake.people does not refuse a service account's address, folded: that shape is a job's rather than a person's and internal/credsvc's foldLauncherAccounts refuses it outright — the intake's revision exits on start, which fails the apply and every later `fugaro update` of that workspace (WC3):\n%s", people)
 	}
 }
 

@@ -97,7 +97,14 @@ import { SPAWN_LOG_ENV } from '../../src/main/spawnlog'
 import type { SpawnLogEntry } from '../../src/main/spawnlog'
 import { SETTINGS_TICK_LABEL } from '../../src/main/settingsview'
 import type { JSONDoc } from '../../src/source/source'
-import { CANCEL_LABEL, SAVE_LABEL, TICK_ID, TITLE_SETTINGS } from '../../src/renderer/confirm'
+import {
+  CANCEL_LABEL,
+  ENTRY_OK_LABEL,
+  SAVE_LABEL,
+  TICK_ID,
+  TITLE_ENTRY,
+  TITLE_SETTINGS,
+} from '../../src/renderer/confirm'
 import { PROJECT_PANEL_KEYS, PROJECTS_BUSY, PROJECTS_THEMES } from '../../src/renderer/screens/projects'
 import { CLI_VERSION_BUILT_AGAINST, MODELS_LIST_CLI_FLOOR } from '../../src/shared/version'
 import { inRangeCliStub } from '../support/cliStub'
@@ -167,6 +174,9 @@ const MODULES: readonly string[] = Object.freeze([
   'renderer/skeleton.js',
   'renderer/screens/reading.js',
   'renderer/section.js',
+  // The streamed read the Project tab falls back through (RS5), which the screen
+  // requires.
+  'renderer/stream.js',
   'renderer/writes.js',
   'renderer/screens/policynotes.js',
   'renderer/screens/projects.js',
@@ -177,6 +187,7 @@ const MODULES: readonly string[] = Object.freeze([
   'renderer/manage/kinds/index.js',
   'renderer/manage/kinds/read.js',
   'renderer/manage/kinds/people.js',
+  'renderer/manage/kinds/pools.js',
   'renderer/manage/kinds/repos.js',
   'renderer/manage/kinds/images.js',
   'renderer/manage/kinds/recipes.js',
@@ -1143,6 +1154,45 @@ async function pressWhenReady(confirm: Page, label: string): Promise<void> {
     .toBe('answered')
 }
 
+/**
+ * pressEntryOk presses the entry form's OK and waits for the **same** window to
+ * settle into the diff, which is what the press moves it to (SU1, D2902): one
+ * modal draws the form, the dry run's diff and the confirmation, and OK writes
+ * nothing (`ENTRY_OK_LABEL`).
+ *
+ * It cannot be `pressWhenReady`: the window does not close on this press, so the
+ * state waited on is the confirmation's own title rather than the window's
+ * disappearance. The retry is that helper's for the same reason -- a submit that
+ * lands inside the main process's readiness delay is refused with
+ * `CONFIRM_NOT_YET` and decides nothing, so the press is repeated until the
+ * window has really taken it.
+ */
+async function pressEntryOk(confirm: Page): Promise<void> {
+  const title = (): Promise<string | null> =>
+    confirm
+      .locator('#confirm-title')
+      .textContent()
+      .catch(() => null)
+  await expect
+    .poll(
+      async () => {
+        if (await title() === TITLE_SETTINGS) return 'settled'
+        await confirm
+          .getByRole('button', { name: ENTRY_OK_LABEL })
+          .click({ timeout: 3_000 })
+          .catch((error: unknown) => {
+            if (error instanceof Error && (error.name === 'TimeoutError' || /has been closed|Target closed/.test(error.message))) {
+              return undefined
+            }
+            throw error
+          })
+        return (await title()) === TITLE_SETTINGS ? 'settled' : 'waiting'
+      },
+      { timeout: 20_000, intervals: [100], message: `the ${ENTRY_OK_LABEL} press never settled the window into its diff` },
+    )
+    .toBe('settled')
+}
+
 /** settingsWrites is the argv of every settings write the console has run so far,
  * read from the spawn log: the record of what was spawned, and the second
  * reading of "the console ran the command line it showed". A write is told from
@@ -1152,6 +1202,15 @@ function settingsWrites(where: string): readonly (readonly string[])[] {
   return readsOf(where)
     .map((record) => record.argv)
     .filter((argv) => argv[1] === 'settings' && (argv[2] === 'set' || argv[2] === 'unset') && !argv.includes('--dry-run'))
+}
+
+/** settingsReads is how many `settings --json` reads the console has made so far,
+ * from the same log: the section's own read on every visit, and the flow's
+ * before it opens its window, which is what names the row's layer. A write's
+ * re-read of the section (R2) is one more of these, and the two together are
+ * what the first write case counts. */
+function settingsReads(where: string): number {
+  return readsOf(where).filter((record) => record.argv[1] === 'settings' && record.argv[2] === '--json').length
 }
 
 /** stubWrites is the stub's own record of every settings line it was handed,
@@ -1392,19 +1451,29 @@ test.describe('the Projects view in the dashboard', () => {
     expect(stubWrites(cli)).toEqual([])
     await openSettingsGroup('Runs')
     const row = page.locator(`${THE_PROJECTS} li.projects-settings-row`).filter({ hasText: SETTINGS_KEY })
+    const reads = settingsReads(spawnLog)
     await row.locator('button.projects-settings-pencil').click()
-    const editor = page.locator(`${THE_PROJECTS} .projects-settings-editor`)
-    await expect(editor).toBeVisible()
-    // The value is typed into the row's own box; an empty box is the unset, and
-    // this case is the write of one value (the terminator is C3's unit test).
-    await editor.locator('input').fill('3')
-    await editor.getByRole('button', { name: 'Review and write' }).click()
 
+    // **The pencil opens the one modal, on its entry form** (SU2b, D2902). The
+    // row draws no control of its own any more -- no box to type a value into and
+    // no second button -- so the value is the operator's and it is typed into
+    // main's window; the form's own title is not the confirmation's, which is not
+    // drawn until the dry run has answered.
     const confirm = await confirmWindow(app)
-    await expect(confirm.locator('#confirm-title')).toHaveText(TITLE_SETTINGS)
-    // The window is the settings question and not the launch's: its confirming
+    await expect(confirm.locator('#confirm-title')).toHaveText(TITLE_ENTRY)
+    // The control is the key's own type's (R5): `agent.review_rounds` is an
+    // `int`, so the form draws a number field opening on the value a run reads
+    // now.
+    const entry = confirm.locator('#confirm-fields dd input')
+    await expect(entry).toHaveValue('2')
+    await entry.fill('3')
+    await pressEntryOk(confirm)
+
+    // The dry run answered and the **same window** settles into the diff. The
+    // window is the settings question and not the launch's: its confirming
     // button is the settings window's word, and a non-widening edit has no tick
     // at all (D1109) -- the tick is the widening's.
+    await expect(confirm.locator('#confirm-title')).toHaveText(TITLE_SETTINGS)
     await expect(confirm.getByRole('button', { name: SAVE_LABEL })).toBeVisible()
     await expect(confirm.locator(`#${TICK_ID}`)).toHaveCount(0)
 
@@ -1414,9 +1483,6 @@ test.describe('the Projects view in the dashboard', () => {
     ])
     await pressWhenReady(confirm, SAVE_LABEL)
 
-    // The write's own outcome, in the CLI's words, and the row it leaves behind:
-    // an edit does not change a run until `fugaro update` publishes it (D1119).
-    await expect(editor.locator('.projects-settings-editor-outcome')).toContainText('next: fugaro update')
     // **The property this spec exists for**, from outside the process: the stub's
     // own record of the command line it was handed -- written by the stub, from
     // `$0` and every argument -- is the command line the window drew, word for
@@ -1434,18 +1500,35 @@ test.describe('the Projects view in the dashboard', () => {
     // that argv, and not a second spelling built for the spawn.
     await expect.poll(() => settingsWrites(spawnLog).length).toBeGreaterThan(0)
     expect(settingsWrites(spawnLog).at(-1)).toEqual(shown)
+
+    // **R2, from outside the process**: the write re-reads the settings section
+    // at once, so the row it moved is drawn from the CLI's answer rather than
+    // from the copy this session had cached. Exactly two reads land: the flow's
+    // own, which names the row's layer before the window opens, and the
+    // section's, which the write asks for. The sentence the flow answered with
+    // is drawn in the row and goes with that repaint -- the rows are replaced
+    // whole (`paintSettings` in `src/renderer/entry.ts`) -- which is why this
+    // case asserts the reads and not the line.
+    await expect
+      .poll(() => settingsReads(spawnLog), { message: 'the write never re-read the settings section' })
+      .toBe(reads + 2)
   })
 
   test('asks for the tick on a widening, and writes the argv the ticked window showed', async () => {
     await openSettingsGroup('Credentials')
     const row = page.locator(`${THE_PROJECTS} li.projects-settings-row`).filter({ hasText: SETTINGS_WIDENING_KEY })
     await row.locator('button.projects-settings-pencil').click()
-    const editor = page.locator(`${THE_PROJECTS} .projects-settings-editor`)
-    await expect(editor).toBeVisible()
-    await editor.locator('input').fill('true')
-    await editor.getByRole('button', { name: 'Review and write' }).click()
 
+    // The same entry form behind the same press, drawing the control this key's
+    // type calls for: `claude_account_auto` is a `bool`, so it is a real checkbox
+    // holding what a run reads now, and the answer OK submits is `true`.
     const confirm = await confirmWindow(app)
+    await expect(confirm.locator('#confirm-title')).toHaveText(TITLE_ENTRY)
+    const entry = confirm.locator('#confirm-fields dd input')
+    await expect(entry).not.toBeChecked()
+    await entry.check()
+    await pressEntryOk(confirm)
+
     await expect(confirm.locator('#confirm-title')).toHaveText(TITLE_SETTINGS)
     // A widening draws the console's own extra confirmation (D1101): the tick is
     // a real checkbox with the owner's own words, and Confirm is disabled until
@@ -1477,22 +1560,25 @@ test.describe('the Projects view in the dashboard', () => {
     await openSettingsGroup('Runs')
     const row = page.locator(`${THE_PROJECTS} li.projects-settings-row`).filter({ hasText: SETTINGS_KEY })
     await row.locator('button.projects-settings-pencil').click()
-    const editor = page.locator(`${THE_PROJECTS} .projects-settings-editor`)
-    await expect(editor).toBeVisible()
-    await editor.locator('input').fill('5')
-    await editor.getByRole('button', { name: 'Review and write' }).click()
 
+    // The form is the flow's first gate (D2902): a no here is the operator's,
+    // and **no child at all** follows it -- the dry run is what OK asks for, and
+    // OK was never pressed.
     const confirm = await confirmWindow(app)
+    await expect(confirm.locator('#confirm-title')).toHaveText(TITLE_ENTRY)
     await pressWhenReady(confirm, CANCEL_LABEL)
 
-    // The dry run went out -- the window was drawn from its answer -- and the
-    // write did not: a no is the operator's, and the only argv this case may
-    // add to either record is the dry run's.
-    await expect.poll(() => stubWrites(cli).length, { message: 'the cancelled edit’s dry run never reached the stub' }).toBe(
-      before + 1,
-    )
-    expect(stubWrites(cli).at(-1)).toContain('--dry-run')
+    expect(stubWrites(cli)).toHaveLength(before)
     expect(settingsWrites(spawnLog)).toHaveLength(writes)
+
+    // And the row draws the flow's own account of it, where the pencil sits: no
+    // write followed, so no re-read replaced the row, and the sentence stays on
+    // screen until the operator's next visit. The class is
+    // `SETTINGS_EDIT_OUTCOME_CLASS` in `src/renderer/entry.ts`, and the words are
+    // `SETTINGS_EDIT_CANCELLED` in `src/main/settingsedit.ts`.
+    await expect(row.locator('span.projects-settings-editor-outcome')).toHaveText(
+      'the edit was not confirmed: nothing was written',
+    )
   })
 
   test('draws an owned row without a pencil, and never draws a sensitive row', async () => {

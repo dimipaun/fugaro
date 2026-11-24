@@ -96,13 +96,22 @@ func (r *projectRig) existing(billing bool) {
 }
 
 // foreign makes the project exist, readable, with Firebase and billing as
-// given, and without the creation label: a project no run of fugaro setup
-// created, which a run refuses.
+// given, and without an origin label: a project no run of fugaro setup has
+// made Fugaro's yet. It holds nothing else of Fugaro's either, so a run adopts
+// it (the owner's ruling of 2026-11-22); a caller that wants it refused gives
+// it something of Fugaro's first (installed).
 func (r *projectRig) foreign(billing bool) {
 	r.crm.AddProject(newProj, 424242)
 	r.gcs.AddProject(newProj, 424242)
 	r.fb.AddFirebase(newProj)
 	r.bill.SetBilling(newProj, billing)
+}
+
+// installed gives the project a runs bucket of its own: the installation every
+// run of fugaro setup creates, so the project holds something of Fugaro's and
+// is refused rather than adopted.
+func (r *projectRig) installed() {
+	r.gcs.AddBucket("fugaro-runs-"+newProj, 424242, map[string]string{"fugaro": "managed"})
 }
 
 // run is the converge with the flags and the stdin; terminal says whether
@@ -339,13 +348,14 @@ func TestCreateResumesItsOwnProject(t *testing.T) {
 	r.nothingDone(t, "a resumed project")
 }
 
-// TestCreateRefusesAnExistingProjectItDidNotCreate: Fugaro only starts fresh
-// (the owner's ruling of 2026-10-23). A project that already exists, that the
-// caller can read, and that no run of fugaro setup created (it carries no
-// creation label) is refused with the one line that says so, before anything is
-// created, added, linked or applied — whatever billing it has, and in the plan
-// as in the apply.
-func TestCreateRefusesAnExistingProjectItDidNotCreate(t *testing.T) {
+// TestCreateRefusesAProjectThatHoldsSomethingOfFugaros: a project that
+// already exists, that the caller can read, and that holds something of
+// Fugaro's — here the runs bucket of an installation — is refused with the one
+// line that says so, before anything is created, added, linked or applied,
+// whatever billing it has, and in the plan as in the apply. Fugaro adopts only
+// a project that holds nothing of Fugaro's (the owner's ruling of 2026-11-22),
+// and a project holding nothing is TestSetupAdoptsAnExistingEmptyProject's.
+func TestCreateRefusesAProjectThatHoldsSomethingOfFugaros(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		billing bool
@@ -358,17 +368,21 @@ func TestCreateRefusesAnExistingProjectItDidNotCreate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newProjectRig(t)
 			r.foreign(tc.billing)
+			r.installed()
 			r.bill.AddAccount(billingAcc, true)
 			out, _, err := r.run(t, true, newProj+"\n"+billingAcc+"\n", append([]string{"--create-project"}, tc.args...)...)
 			if ExitCode(err) != ExitUserError {
 				t.Fatalf("exit %d (%v), want a user error\n%s", ExitCode(err), err, out)
 			}
-			if want := "Fugaro only starts fresh: " + newProj + " already exists; pick another id"; !strings.Contains(out+errString(err), want) {
+			if want := newProj + " already exists and holds something of Fugaro's"; !strings.Contains(out+errString(err), want) {
 				t.Errorf("the refusal does not say %q:\n%s\n%v", want, out, err)
 			}
-			r.nothingDone(t, "an existing project setup did not create")
+			r.nothingDone(t, "an existing project holding something of Fugaro's")
+			if got := r.crm.Labels(newProj)[infra.CreatedLabelKey]; got != "" {
+				t.Errorf("the refused project was labelled %s=%s", infra.CreatedLabelKey, got)
+			}
 			if n := len(r.ran(t, "apply")); n != 0 {
-				t.Errorf("an installation was applied into a project setup did not create: %q", r.calls(t))
+				t.Errorf("an installation was applied into a project holding something of Fugaro's: %q", r.calls(t))
 			}
 		})
 	}
@@ -606,7 +620,7 @@ func stageLine(s string) string {
 // the fix (a role, or someone else creating the project) is the same one.
 func TestRefusedProjectCreationIsOneHelpfulLine(t *testing.T) {
 	const want = "Fugaro could not create the project " + newProj + ": your Google account is not allowed to create projects in your organization. " +
-		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder: Fugaro only starts fresh, so it creates the project itself. " +
+		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder. If they create the project for you instead, rerun this command with the same --gcp-project: fugaro setup adopts a project that already exists and holds nothing of Fugaro's. " +
 		"See docs/gcp-setup.md#not-an-owner."
 	// The three shapes the same refusal takes: a 403, a 400 whose own text says
 	// what it is (the only thing that can tell a refusal from the other 400s
@@ -660,7 +674,7 @@ func TestRefusedProjectCreationIsOneHelpfulLine(t *testing.T) {
 // and keeps its own message and exit code.
 func TestRefusedCreationArrivingOnTheOperation(t *testing.T) {
 	const want = "Fugaro could not create the project " + newProj + ": your Google account is not allowed to create projects in your organization. " +
-		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder: Fugaro only starts fresh, so it creates the project itself. " +
+		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder. If they create the project for you instead, rerun this command with the same --gcp-project: fugaro setup adopts a project that already exists and holds nothing of Fugaro's. " +
 		"See docs/gcp-setup.md#not-an-owner."
 
 	// PERMISSION_DENIED and FAILED_PRECONDITION are the two codes a refusal
@@ -1113,10 +1127,10 @@ func TestFirebaseProjectPairingRuleIsUnchanged(t *testing.T) {
 
 // TestFirebaseProjectIsAlwaysTheInstallations pins the pairing refusal from
 // both sides: it fires for a run that creates the project and for one that
-// creates nothing. Fugaro only starts fresh (the owner's ruling of
-// 2026-10-23), so a Firebase project other than the installation's own is no
-// layout at all any more: check() refuses it wherever both ids are on the
-// command line, and runInit does where the GCP project comes from the config.
+// creates nothing. The budget backend lives in the installation's own project,
+// so a Firebase project other than it is no layout at all: check() refuses it
+// wherever both ids are on the command line, and runInit does where the GCP
+// project comes from the config.
 func TestFirebaseProjectIsAlwaysTheInstallations(t *testing.T) {
 	// A creation whose Firebase project is another one: refused, naming the
 	// flag and the project.

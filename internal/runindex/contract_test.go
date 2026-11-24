@@ -48,6 +48,7 @@ func TestContractShapes(t *testing.T) {
 			Status:       runstore.StatusSucceeded,
 			PlanTask:     "C-INDEX",
 			PR:           3540,
+			Branch:       "fugaro/20261120-093000-a1b2",
 			RequestedBy:  "dev@example.invalid",
 			LaunchedBy:   "dev@example.invalid",
 			Batch:        "20261120-093000",
@@ -78,6 +79,8 @@ func TestContractShapes(t *testing.T) {
 				Cost:  &runstore.Cost{ModelUSD: 1.25, ComputeUSD: 0.41, ComputeEstimated: true, TotalUSD: 1.66, ModelBasis: runstore.BasisAPIList},
 				PR:    &runstore.PRRef{Number: 3540, URL: "https://example.invalid/acme/widgets/pull/3540"},
 			},
+			LaunchUnreadable: true,
+			RecordUnreadable: true,
 		}
 		roundTrip(t, want)
 		// The round trip above would survive a tag rename, because both
@@ -89,10 +92,11 @@ func TestContractShapes(t *testing.T) {
 		// not in the document fails too.
 		keysAre(t, want, []string{
 			"run_id", "slug", "repo", "updated_at", "status", "plan_task", "pr",
+			"branch",
 			"requested_by", "launched_by", "batch", "tier", "rigor",
 			"started_at", "finished_at", "workflow", "title", "recipe",
 			"oauth_account", "previous_run", "follow_up", "follow_up_of",
-			"launch", "record",
+			"launch", "record", "launch_unreadable", "record_unreadable",
 		})
 	})
 
@@ -125,6 +129,24 @@ func TestContractShapes(t *testing.T) {
 			"states", "spent_micros", "notional_micros", "compute_micros",
 			"compute_runs", "compute_not_estimated", "estimate",
 		})
+	})
+
+	t.Run("summary omits the compute figure when none is known", func(t *testing.T) {
+		// contract-index.md says `compute_micros` is *absent* when no run's
+		// compute is known, and the zero value of the field is exactly that
+		// state: a write that spelled it `null` would be a shape the document
+		// does not describe, and "not estimated" read as a figure.
+		data, err := json.Marshal(Summary{Version: Version, States: map[string]int64{}})
+		if err != nil {
+			t.Fatalf("marshalling a summary with no compute figure: %v", err)
+		}
+		var doc map[string]json.RawMessage
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatalf("unmarshalling the summary as a document: %v", err)
+		}
+		if _, ok := doc["compute_micros"]; ok {
+			t.Errorf("a summary with no compute figure carries %q: %s", "compute_micros", data)
+		}
 	})
 
 	t.Run("cursor", func(t *testing.T) {

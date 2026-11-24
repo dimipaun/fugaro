@@ -3,6 +3,13 @@
 //
 // The portal's Hosting configuration (portal plan P9.2; F21, F40, D2194).
 //
+// Two configurations, one per project: a Hosting site id is globally unique, so
+// `fugaro-prod` holds `fugaro-portal` (app.fugaro.dev) and `fugaro-staging` holds
+// `fugaro-portal-staging` (app.staging.fugaro.dev, P0.1). The staging file is the
+// prod one with that single name changed, and the two are read against each other
+// here: a staging deploy that read the prod file would publish one project's
+// bundle onto the other's domain.
+//
 // Three readings here are the ones nobody notices breaking until the site is
 // live. The file is **one** hosting object naming the portal's own site: a
 // second site, a `target` or the website's `public` would put one deploy's
@@ -82,6 +89,9 @@ const hosting: HostingConfig = parsed.hosting ?? {}
 const rewrites = hosting.rewrites ?? []
 const headers = hosting.headers ?? []
 
+const staging = JSON.parse(read('../firebase.staging.json')) as FirebaseConfig
+const stagingHosting: HostingConfig = staging.hosting ?? {}
+
 /** The header a rule sets, or undefined when the rule does not set it. */
 function header(rule: HeaderRule, key: string): string | undefined {
   return rule.headers.find((entry) => entry.key === key)?.value
@@ -127,6 +137,36 @@ describe('the portal hosting configuration', () => {
     expect(hosting.target).toBeUndefined()
     expect(hosting.public).toBe('dist')
     expect(hosting.ignore).toContain('**/.*')
+  })
+
+  it('gives the staging project a site of its own, differing in that name alone', () => {
+    // A Hosting site id is globally unique, so `fugaro-staging` cannot hold
+    // `fugaro-portal` (fugaro-prod's) and the owner created
+    // `fugaro-portal-staging` there (P0.1). The two configurations are one file
+    // and one site name: a second difference between them is a deploy
+    // difference nobody reads, and the site name is the only one that has to
+    // differ.
+    expect(Array.isArray(staging.hosting)).toBe(false)
+    expect(stagingHosting.site).toBe('fugaro-portal-staging')
+    expect(stagingHosting.target).toBeUndefined()
+    expect(stagingHosting.public).toBe(hosting.public)
+    expect(read('../firebase.staging.json').replace('"fugaro-portal-staging"', '"fugaro-portal"')).toBe(
+      read('../firebase.json'),
+    )
+  })
+
+  it('names each project\'s own site in the deploy script', () => {
+    // The script picks the staging file from `--project fugaro-staging` alone,
+    // so the two project ids and the two site ids it holds are what keeps a
+    // deploy from reading the other project's file; the pairs are read here
+    // because a rename on either side is otherwise a silent cross-site deploy.
+    const script = read('../../../scripts/deploy-portal.sh')
+    const value = (name: string): string | undefined => new RegExp(`^${name}=(.*)$`, 'm').exec(script)?.[1]
+    expect(value('DEFAULT_PROJECT')).toBe('fugaro-prod')
+    expect(value('DEFAULT_SITE')).toBe('fugaro-portal')
+    expect(value('STAGING_PROJECT')).toBe('fugaro-staging')
+    expect(value('STAGING_SITE')).toBe('fugaro-portal-staging')
+    expect(value('STAGING_CONFIG')).toBe('ee/portal/firebase.staging.json')
   })
 
   it('publishes the SPA bundle and leaves the website where it is', () => {
@@ -304,8 +344,8 @@ describe('the portal hosting configuration', () => {
   })
 
   it('carries the business licence notice beside it', () => {
-    expect(read('../firebase.json.license')).toBe(
-      'SPDX-License-Identifier: LicenseRef-Fugaro-Subscription\nSee ee/LICENSE for the terms.\n',
-    )
+    const notice = 'SPDX-License-Identifier: LicenseRef-Fugaro-Subscription\nSee ee/LICENSE for the terms.\n'
+    expect(read('../firebase.json.license')).toBe(notice)
+    expect(read('../firebase.staging.json.license')).toBe(notice)
   })
 })

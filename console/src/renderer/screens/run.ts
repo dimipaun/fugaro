@@ -190,9 +190,8 @@ export interface RunRow {
   readonly outcome: string | null
   readonly requestedBy: string | null
   /** the run's whole recorded launcher (`launched_by`), `null` when the record
-   * carries none. The **whole** value and not the short form a column has room
-   * for: this screen is the run view, which is where the owner's spec puts the
-   * full identity (`shared/launcher.ts`) */
+   * carries none -- the identity the record holds, drawn as it wrote it
+   * (`shared/launcher.ts`) */
   readonly launchedBy: string | null
   readonly created: string | null
   readonly startedAt: string | null
@@ -1277,22 +1276,20 @@ function metaLine(factory: RunFactory, model: RunModel): ScreenElement {
   const account = cell(element, factory, 'span', 'run-meta-field')
   literal(cell(account, factory, 'span', 'run-meta-label'), 'account')
   maybeCell(account, factory, 'span', model.row.oauthAccount, 'person', 'row.oauth_account', 'run-account')
-  // The two actors keep the `person` class the wire key carries: an address is
-  // drawn as the console's marker and a login as itself, on this line as in
-  // every other cell of the console that draws one. Unlike the five columns
-  // above, an absent actor draws **no field at all** rather than the mark: a
-  // record written before `launch.json` existed has no launcher, and its
-  // `n/a` would read as a launcher the console could not name instead of one
-  // the record never carried.
+  // The two actors keep the `person` class the wire key carries, so an address
+  // is drawn as the identity the record holds, on this line as in every other
+  // cell of the console that draws one. Unlike the five columns above, an absent
+  // actor draws **no field at all** rather than the mark: a record written before
+  // `launch.json` existed has no launcher, and its `n/a` would read as a launcher
+  // the console could not name instead of one the record never carried.
   if (model.row.requestedBy !== null) {
     const requested = cell(element, factory, 'span', 'run-meta-field')
     literal(cell(requested, factory, 'span', 'run-meta-label'), 'requested by')
     const asked = cell(requested, factory, 'span', 'run-requested-by', 'run-meta-value')
     putText(asked, model.row.requestedBy, 'person', 'row.requested_by')
   }
-  // Who started the run: the **whole** recorded identity, which is what the run
-  // view is for -- the Live and Projects columns draw the short form
-  // (`shared/launcher.ts`).
+  // Who started the run: the same whole identity the Live column draws, in the
+  // class the wire key carries (`shared/launcher.ts`).
   const startedBy = launcherFull(model.row.launchedBy)
   if (startedBy !== null) {
     const started = cell(element, factory, 'span', 'run-meta-field')

@@ -346,6 +346,12 @@ export function createImageAdd(deps: ImageAddDeps): ImageAddWriter {
   const deadlineMs = deps.deadlineMs ?? IMAGE_ADD_DEADLINE_MS
 
   let held: HeldImageAdd | null = null
+  /** planning is true from the moment a plan is accepted until its dry run has
+   * answered and its window is open (or the plan refused). It is the guard's own
+   * fact and not `held`'s: `held` is written only after the child answers, so two
+   * plans that overlap inside `await runChild` would both read an empty `held`
+   * and both spawn, and the second's window would replace the first's argv. */
+  let planning = false
 
   /** runChild runs one child under the deadline and answers its whole result: its
    * status beside both streams. The status is not decoration -- a write prints the
@@ -458,51 +464,58 @@ export function createImageAdd(deps: ImageAddDeps): ImageAddWriter {
     'image.add.plan': async (args: ValidatedArguments): Promise<ImageAddOutcome> => {
       refuseBelowFloor()
       const values = readImageAddValues({ ...args })
-      // One write at a time: a plan that is still waiting for its window's answer
-      // may not be replaced, because the argv the window showed is the argv the
-      // operator agreed to.
-      if (held !== null && held.outcome === null) throw new SourceRefusal(IMAGE_ADD_PLAN_PENDING_REFUSAL)
-      const planPlan = deps.plan('image.add.plan', values, deps.project)
-      const applyPlan = deps.plan('image.add', values, deps.project)
-      const result = await runChild(planPlan)
-      // The dry run's status is the first fact here too: a plan that exited
-      // non-zero printed no plan to agree to, whatever its stdout holds.
-      if (result.code !== 0 || result.signal !== null) {
-        throw new SourceRefusal(sentenceOf(result.stderr, IMAGE_ADD_UNREADABLE_DOCUMENT))
+      // One write at a time: a plan that is still spawning its dry run, or one
+      // still waiting for its window's answer, may not be replaced, because the
+      // argv the window showed is the argv the operator agreed to.
+      if (planning || (held !== null && held.outcome === null)) {
+        throw new SourceRefusal(IMAGE_ADD_PLAN_PENDING_REFUSAL)
       }
-      const document = result.stdout.trim()
-      const shownDigest = digest(document)
-      // The argv the window shows is the **write's**, not the dry run's: what the
-      // operator is agreeing to is the command line the yes spawns, and a line
-      // marked `--dry-run` would say nothing is written.
-      const read = imageAddView({
-        dryRun: parseDocument(document),
-        project: deps.project,
-        digest: shownDigest,
-        argv: applyPlan.argv,
-      })
-      // **A dry run that refused is not confirmed.** The CLI's own refusal is a
-      // sentence with a non-zero exit and no document at all, so there is nothing
-      // for a window to draw and no write to agree to: the sentence is the CLI's,
-      // and a screen draws it with the field that was refused.
-      if (!read.ok) throw new SourceRefusal(sentenceOf(result.stderr, read.because))
-      const writer: HeldImageAdd = {
-        view: read.view,
-        values,
-        document,
-        digest: shownDigest,
-        applyPlan,
-        armed: false,
-        running: null,
-        outcome: null,
+      planning = true
+      try {
+        const planPlan = deps.plan('image.add.plan', values, deps.project)
+        const applyPlan = deps.plan('image.add', values, deps.project)
+        const result = await runChild(planPlan)
+        // The dry run's status is the first fact here too: a plan that exited
+        // non-zero printed no plan to agree to, whatever its stdout holds.
+        if (result.code !== 0 || result.signal !== null) {
+          throw new SourceRefusal(sentenceOf(result.stderr, IMAGE_ADD_UNREADABLE_DOCUMENT))
+        }
+        const document = result.stdout.trim()
+        const shownDigest = digest(document)
+        // The argv the window shows is the **write's**, not the dry run's: what the
+        // operator is agreeing to is the command line the yes spawns, and a line
+        // marked `--dry-run` would say nothing is written.
+        const read = imageAddView({
+          dryRun: parseDocument(document),
+          project: deps.project,
+          digest: shownDigest,
+          argv: applyPlan.argv,
+        })
+        // **A dry run that refused is not confirmed.** The CLI's own refusal is a
+        // sentence with a non-zero exit and no document at all, so there is nothing
+        // for a window to draw and no write to agree to: the sentence is the CLI's,
+        // and a screen draws it with the field that was refused.
+        if (!read.ok) throw new SourceRefusal(sentenceOf(result.stderr, read.because))
+        const writer: HeldImageAdd = {
+          view: read.view,
+          values,
+          document,
+          digest: shownDigest,
+          applyPlan,
+          armed: false,
+          running: null,
+          outcome: null,
+        }
+        held = writer
+        // The window is shown only for a plan that ran. Its identity is the
+        // installation the write lands in (`imageAddConfirmID`).
+        deps.confirmer.open(writer.view, (yes: boolean) => {
+          decide(writer, yes)
+        })
+        return { ok: true, sentence: 'the plan is waiting for your answer in its window' }
+      } finally {
+        planning = false
       }
-      held = writer
-      // The window is shown only for a plan that ran. Its identity is the
-      // installation the write lands in (`imageAddConfirmID`).
-      deps.confirmer.open(writer.view, (yes: boolean) => {
-        decide(writer, yes)
-      })
-      return { ok: true, sentence: 'the plan is waiting for your answer in its window' }
     },
 
     /**

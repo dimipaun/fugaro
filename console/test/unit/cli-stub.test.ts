@@ -136,12 +136,13 @@ describe('the e2e stub’s own answers', () => {
     expect(run(directory, ['plan', 'status', '--json', '--project', 'e2e']).stdout).toBe(seeded)
   })
 
-  it('prints the coordinator document for `coordinator status`, and the console reads it', () => {
-    // The project view's own read (Bitbucket credentials T1.2, D364): the console
-    // spawns `coordinator status --from-store --all --json --project P`, and the
-    // document that comes back is what the screen is a function of. A stub that
-    // printed a shape the decoder refuses would put every e2e that opens the
-    // project view in front of the refusal screen instead of the view.
+  it('prints the coordinator document for `coordinator status`, and the decoder admits it', () => {
+    // The v2 project view's own read (Bitbucket credentials T1.2, D364), which
+    // D3210 retired with that tab: **no screen spawns `coordinator status
+    // --from-store --all --json` any more**. The stub still answers it, the
+    // console's spawn row still lists it and the fixture is still committed, so
+    // what is held here is that the three agree -- a leftover that a follow-up
+    // deletes together rather than a shape left to rot.
     const directory = install()
     writeFileSync(join(directory, 'project.txt'), 'e2e\n')
     // The committed document, which is the one `cliStub.ts` writes beside the
@@ -161,12 +162,10 @@ describe('the e2e stub’s own answers', () => {
     expect(answered.stdout).toBe(seeded)
     const decoded = decodeCoordinatorStatus(JSON.parse(answered.stdout))
     expect(decoded.ok).toBe(true)
-    // **The states the e2e's words are read off, held here where there is no
-    // Electron.** `coordinator.spec.ts` asserts that `draft`, `in flight`, `no
-    // run behind it` and `state unread` reach a real window; whether the document
-    // carries the state each of those words is drawn for is a fact about this
-    // fixture, and a spec that had to launch an app to find it out would be
-    // asserting it in the slowest place there is.
+    // **The states the retired tab's words were drawn for, held here where there
+    // is no Electron.** `draft`, `in flight`, `no run behind it` and `state
+    // unread` are facts about this fixture, and a test that had to launch an app
+    // to find them out would be asserting them in the slowest place there is.
     const repos = decoded.ok ? decoded.value.repos : []
     expect(repos.map((repo) => repo.stored)).toEqual([true, false])
     const stored = repos[0]
@@ -550,9 +549,10 @@ describe('the stub’s settings arms', () => {
     expect(answered.stdout).toContain('next: fugaro update')
     expect(settingsArgvs(directory)).toEqual([`${join(directory, 'fugaro')} ${asked.join(' ')}`])
     // An `unset` carries no value and no terminator, and this stub answers it
-    // too: the console sends the same subcommand for an empty box
-    // (`openSettingsEdit`), so the arm's second spelling is reachable without a
-    // second stub.
+    // too: the console sends the same subcommand for an empty box (the entry
+    // form's Reset to default, `createSettingsEditor` in
+    // `src/main/settingsedit.ts`), so the arm's second spelling is reachable
+    // without a second stub.
     const unset = ['settings', 'unset', 'agent.review_rounds', '--layer', 'project', '--project', 'e2e']
     expect(run(directory, unset).status).toBe(0)
     expect(settingsArgvs(directory)).toHaveLength(2)

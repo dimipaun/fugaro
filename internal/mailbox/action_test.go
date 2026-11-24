@@ -1,12 +1,16 @@
 package mailbox
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/mailbox/keychain"
 )
 
 // TestConfirmConstantsMatchTheSharedModule holds this package's copy of
@@ -73,6 +77,46 @@ func TestConfirmConstantsMatchTheSharedModule(t *testing.T) {
 		if !mine[code] {
 			t.Errorf("the module refuses with %q, which this package does not speak", code)
 		}
+	}
+
+	// D2786's session policy, which `shared/confirm/policy.js` owns: the two
+	// values the ruling reads, their defaults (P6's `mobile.costly_modes` and
+	// `mobile.biometric_on_costly`) and C2's bounds for them. Each is read out of
+	// the module, so a default moved on one side fails here.
+	policy := readSharedFile(t, "confirm", "policy.js")
+	if got := jsList(t, policy, jsPolicyCostlyModes, "DEFAULT_COSTLY_MODES"); !sameStrings(got, ConfirmDefaultCostlyModes) {
+		t.Errorf("ConfirmDefaultCostlyModes is %v, the module's DEFAULT_COSTLY_MODES is %v", ConfirmDefaultCostlyModes, got)
+	}
+	if m := jsPolicyBiometric.FindSubmatch(policy); m == nil {
+		t.Fatal("shared/confirm/policy.js no longer declares DEFAULT_BIOMETRIC_ON_COSTLY in a shape this test reads")
+	} else if got := string(m[1]) == "true"; got != ConfirmDefaultBiometricOnCostly {
+		t.Errorf("ConfirmDefaultBiometricOnCostly is %v, the module's is %v", ConfirmDefaultBiometricOnCostly, got)
+	}
+	if got := jsProduct(t, policy, jsPolicyMaxCostlyModes, "MAX_COSTLY_MODES"); got != ConfirmMaxCostlyModes {
+		t.Errorf("ConfirmMaxCostlyModes is %d, the module's is %d", ConfirmMaxCostlyModes, got)
+	}
+	if got := jsProduct(t, policy, jsPolicyMaxModeLength, "MAX_MODE_LENGTH"); got != ConfirmMaxModeLen {
+		t.Errorf("ConfirmMaxModeLen is %d, the module's is %d", ConfirmMaxModeLen, got)
+	}
+	// A pending read-back may hold the destructive verbs and D2786's costly
+	// start, which is the module's own composition of the two.
+	if !jsConfirmPendingVerbs.Match(confirm) {
+		t.Fatal("shared/confirm/index.js no longer composes PENDING_VERBS out of DESTRUCTIVE_VERBS and VERB.LAUNCH")
+	}
+	pending := append(append([]string{}, jsList(t, confirm, jsConfirmDestructiveVerbs, "DESTRUCTIVE_VERBS")...), ConfirmVerbLaunch)
+	if !sameStrings(pending, ConfirmPendingVerbs) {
+		t.Errorf("ConfirmPendingVerbs is %v, the module's PENDING_VERBS is %v", ConfirmPendingVerbs, pending)
+	}
+	kindBlock := jsConfirmTargetKindBlock.FindSubmatch(confirm)
+	if kindBlock == nil {
+		t.Fatal("shared/confirm no longer declares a TARGET_KIND table this test can read")
+	}
+	kinds := map[string]string{}
+	for _, m := range jsRefusalEntry.FindAllSubmatch(kindBlock[1], -1) {
+		kinds[string(m[1])] = string(m[2])
+	}
+	if got := kinds["MODE"]; got != ConfirmTargetMode {
+		t.Errorf("ConfirmTargetMode is %q, the module's TARGET_KIND.MODE is %q", ConfirmTargetMode, got)
 	}
 
 	// P6.5's prompt vocabulary: the cap and the two replies. (The TTL itself is
@@ -596,6 +640,41 @@ func TestConfirmValidateActionBindsTheHeadReadBack(t *testing.T) {
 	}
 }
 
+// TestConfirmRefusesAStateThatDoesNotSayWhatIsCostly: the module refuses a
+// state whose `costlyModes` is missing (`missing-field/costlyModes`), and a port
+// that read a nil list as "no mode is costly" would fail open on the worst
+// answer: a costly start would pass through with no read-back while the phone
+// asked for one. A state that *names* no costly mode is the empty list, which is
+// read as what it says.
+func TestConfirmRefusesAStateThatDoesNotSayWhatIsCostly(t *testing.T) {
+	state, refusal := ConfirmInitialState(ConfirmOptions{Now: testNow})
+	if refusal != nil {
+		t.Fatalf("the empty machine was refused: %s", refusal.Code)
+	}
+	launch := ConfirmEvent{
+		Type: ConfirmEventCommand, Now: testNow + 1000,
+		UtteranceID: "utt-1", Text: "kick off the docs job in pro mode",
+		Verb: ConfirmVerbLaunch, Mode: "pro", HasMode: true,
+		ActionID: "act-1", HasActionID: true,
+	}
+
+	state.CostlyModes = nil
+	if answer := ConfirmStep(state, launch); answer.OK || answer.Code != CodeMissingField || answer.Field != "costlyModes" {
+		t.Errorf("a state with no costly mode list was answered: ok=%v code=%s field=%s, want %s/%s",
+			answer.OK, answer.Code, answer.Field, CodeMissingField, "costlyModes")
+	}
+
+	// A start that is not costly is a plain start, which carries no action id:
+	// it is the same event the machine passes through with no read-back.
+	plain := launch
+	plain.ActionID, plain.HasActionID = "", false
+	state.CostlyModes = []string{}
+	if answer := ConfirmStep(state, plain); !answer.OK || answer.Outcome != ConfirmOutcomePassThrough {
+		t.Errorf("a session that calls no mode costly did not pass the start through: ok=%v outcome=%s code=%s",
+			answer.OK, answer.Outcome, answer.Code)
+	}
+}
+
 func openTestMemory(t *testing.T, path string, cap int) *ConfirmMemory {
 	t.Helper()
 	m, err := OpenConfirmMemory(ConfirmMemoryOptions{
@@ -621,9 +700,16 @@ func sameStrings(left, right []string) bool {
 
 func readSharedModule(t *testing.T, name string) []byte {
 	t.Helper()
-	body, err := os.ReadFile(filepath.Join("..", "..", "shared", name, "index.js"))
+	return readSharedFile(t, name, "index.js")
+}
+
+// readSharedFile reads one file of one shared module, for a value the module
+// keeps in a file beside its entry point.
+func readSharedFile(t *testing.T, module, file string) []byte {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("..", "..", "shared", module, file))
 	if err != nil {
-		t.Fatalf("reading shared/%s: %v", name, err)
+		t.Fatalf("reading shared/%s/%s: %v", module, file, err)
 	}
 	return body
 }
@@ -702,8 +788,21 @@ var (
 	jsConfirmPRMax             = regexp.MustCompile(`(?m)^export const PR_MAX = (\d+);$`)
 	jsConfirmForwardJump       = regexp.MustCompile(`(?m)^export const MAX_FORWARD_JUMP_MS = (\d+) \* (\d+) \* (\d+) \* (\d+) \* (\d+);$`)
 	jsConfirmCue               = regexp.MustCompile(`(?m)^export const CONFIRM_CUE = '([^']*)';$`)
-	jsRefusalBlock             = regexp.MustCompile(`(?s)export const REFUSAL = Object\.freeze\(\{(.*?)\n\}\);`)
-	jsRefusalEntry             = regexp.MustCompile(`(?m)^\s*([A-Z_0-9]+): '([^']*)',$`)
+	// D2786's policy half lives in shared/confirm/policy.js, which
+	// shared/confirm/index.js re-exports as its only entry point.
+	jsConfirmPendingVerbs  = regexp.MustCompile(`(?m)^const PENDING_VERBS = Object\.freeze\(\[\.\.\.DESTRUCTIVE_VERBS, VERB\.LAUNCH\]\);$`)
+	jsPolicyCostlyModes    = regexp.MustCompile(`(?m)^export const DEFAULT_COSTLY_MODES = Object\.freeze\(\[([^\]]*)\]\);$`)
+	jsPolicyBiometric      = regexp.MustCompile(`(?m)^export const DEFAULT_BIOMETRIC_ON_COSTLY = (true|false);$`)
+	jsPolicyMaxCostlyModes = regexp.MustCompile(`(?m)^export const MAX_COSTLY_MODES = (\d+);$`)
+	jsPolicyMaxModeLength  = regexp.MustCompile(`(?m)^export const MAX_MODE_LENGTH = (\d+);$`)
+	jsRefusalBlock         = regexp.MustCompile(`(?s)export const REFUSAL = Object\.freeze\(\{(.*?)\n\}\);`)
+	jsRefusalEntry         = regexp.MustCompile(`(?m)^\s*([A-Z_0-9]+): '([^']*)',$`)
+
+	jsConfirmVerbBlock        = regexp.MustCompile(`(?s)export const VERB = Object\.freeze\(\{(.*?)\n\}\);`)
+	jsConfirmTargetKindBlock  = regexp.MustCompile(`(?s)export const TARGET_KIND = Object\.freeze\(\{(.*?)\n\}\);`)
+	jsConfirmDestructiveVerbs = regexp.MustCompile(`(?m)^export const DESTRUCTIVE_VERBS = Object\.freeze\(\[([^\]]*)\]\);$`)
+	jsConfirmPassThroughVerbs = regexp.MustCompile(`(?m)^export const PASS_THROUGH_VERBS = Object\.freeze\(\[([^\]]*)\]\);$`)
+	jsConfirmRefusedVerbs     = regexp.MustCompile(`(?ms)^export const REFUSED_VERBS = Object\.freeze\(\[([^\]]*)\]\);$`)
 
 	jsPromptsMaxPending = regexp.MustCompile(`(?m)^export const DEFAULT_MAX_PENDING = (\d+);$`)
 	jsPromptsQueueFull  = regexp.MustCompile(`(?m)^export const QUEUE_FULL_REPLY = '([^']*)';$`)
@@ -715,3 +814,219 @@ var (
 
 	jsLeaseMaxTimestamp = regexp.MustCompile(`(?m)^export const MAX_TIMESTAMP = (.+);$`)
 )
+
+// TestDestructiveIsRefused is T6's headline test and the one its first Red step
+// names: the three tables are the module's own, as sets, and every verb the
+// module refuses is refused by the machine — so a verb added to the ruling and
+// not to this package fails here, and removing `cancel` from the three makes it
+// fail as the Red step says it should.
+//
+// The tables are read out of `shared/confirm/index.js` rather than restated,
+// because "the refusal list is a value with a test" is the plan's own answer to
+// the risk of a list that is right today and wrong later. The behavioural half
+// then drives the machine: a refused verb is `refused-verb`, a verb in no table
+// at all is `unknown-verb` — the closed set is why a new destructive verb is
+// never silently unprotected — a pass-through verb goes through, and the three
+// destructive verbs are read back rather than refused. Two of those four are the
+// same statement from two sides: what is *not* in the tables is refused by
+// default.
+func TestDestructiveIsRefused(t *testing.T) {
+	confirm := readSharedModule(t, "confirm")
+	destructive := jsList(t, confirm, jsConfirmDestructiveVerbs, "DESTRUCTIVE_VERBS")
+	passThrough := jsList(t, confirm, jsConfirmPassThroughVerbs, "PASS_THROUGH_VERBS")
+	refused := jsList(t, confirm, jsConfirmRefusedVerbs, "REFUSED_VERBS")
+	if len(destructive)+len(passThrough)+len(refused) < 15 {
+		t.Fatalf("the module's three verb tables read as %d verbs in total, which is fewer than they declare: the lists are not being read", len(destructive)+len(passThrough)+len(refused))
+	}
+
+	for _, c := range []struct {
+		name  string
+		js    []string
+		gover []string
+	}{
+		{"DESTRUCTIVE_VERBS", destructive, ConfirmDestructiveVerbs},
+		{"PASS_THROUGH_VERBS", passThrough, ConfirmPassThroughVerbs},
+		{"REFUSED_VERBS", refused, ConfirmRefusedVerbs},
+	} {
+		if !sameStrings(c.js, c.gover) {
+			t.Errorf("%s is %v here and %v in shared/confirm: the refusal table is the ruling's, and a package that restates it at a different width is a fence with a hole in it", c.name, c.gover, c.js)
+		}
+	}
+
+	// Every verb the module names is classified exactly once. A verb in two
+	// tables has two answers and no stated tie-break; a verb in none is one this
+	// machine would refuse as unknown, which is the safe half but not what the
+	// module says about it.
+	block := jsConfirmVerbBlock.FindSubmatch(confirm)
+	if block == nil {
+		t.Fatal("shared/confirm no longer declares a VERB table this test can read")
+	}
+	verbs := map[string]string{}
+	for _, m := range jsRefusalEntry.FindAllSubmatch(block[1], -1) {
+		verbs[string(m[2])] = string(m[1])
+	}
+	if len(verbs) == 0 {
+		t.Fatal("the module's VERB table read as empty, so this half of the test would pass over nothing")
+	}
+	classified := map[string]int{}
+	for _, list := range [][]string{destructive, passThrough, refused} {
+		for _, verb := range list {
+			classified[verb]++
+		}
+	}
+	for verb, name := range verbs {
+		switch classified[verb] {
+		case 1:
+		case 0:
+			t.Errorf("the module declares the verb %s (%s) and no table of this package classifies it: a new destructive verb must not be silently unprotected", verb, name)
+		default:
+			t.Errorf("the verb %s (%s) is in %d tables: a verb with two answers has none", verb, name, classified[verb])
+		}
+	}
+
+	state, refusal := ConfirmInitialState(ConfirmOptions{Now: testNow})
+	if refusal != nil {
+		t.Fatalf("the empty machine was refused: %s", refusal.Code)
+	}
+	run := ConfirmTarget{Kind: ConfirmTargetRun, RunID: "20261018-125859-d3c8"}
+	merge := ConfirmTarget{Kind: ConfirmTargetMerge, Repo: "owner/name", PR: 7, HeadSHA: strings.Repeat("a", 40)}
+
+	for _, verb := range ConfirmRefusedVerbs {
+		answer := ConfirmStep(state, commandEvent(verb, &merge))
+		if answer.OK || answer.Code != CodeConfirmRefusedVerb {
+			t.Errorf("the verb %q is not refused: ok=%v code=%s: every destructive verb the ruling names is refused whatever the target says", verb, answer.OK, answer.Code)
+		}
+	}
+	for _, verb := range []string{"teleport", "Cancel", "cancel "} {
+		answer := ConfirmStep(state, commandEvent(verb, &run))
+		if answer.OK || answer.Code != CodeUnknownVerb {
+			t.Errorf("the verb %q is not refused as an unknown verb: ok=%v code=%s: the table is the closed set, which is what a new destructive verb meets", verb, answer.OK, answer.Code)
+		}
+	}
+	for _, verb := range ConfirmPassThroughVerbs {
+		answer := ConfirmStep(state, commandEvent(verb, nil))
+		if !answer.OK || answer.Outcome != ConfirmOutcomePassThrough {
+			t.Errorf("the verb %q does not pass through: ok=%v outcome=%s code=%s", verb, answer.OK, answer.Outcome, answer.Code)
+		}
+	}
+	for _, c := range []struct {
+		verb   string
+		target ConfirmTarget
+	}{
+		{ConfirmVerbCancel, run},
+		{ConfirmVerbConfirm, run},
+		{ConfirmVerbMerge, merge},
+	} {
+		answer := ConfirmStep(state, commandEvent(c.verb, &c.target))
+		if !answer.OK || answer.Outcome != ConfirmOutcomeReadBack || answer.Phase != ConfirmPhasePending {
+			t.Errorf("the destructive verb %q is not read back: ok=%v outcome=%s phase=%s code=%s: it needs a confirmation and is admitted on the way to one", c.verb, answer.OK, answer.Outcome, answer.Phase, answer.Code)
+		}
+	}
+}
+
+// commandEvent is one command utterance carrying a verb and a target, with the
+// ids the machine needs. A synthetic one and not a record: what is under test is
+// the verb table, and a record would drag the confirmation and the head clock
+// into a test that is not about them.
+//
+// The text is deliberately wordless about the verb. A transcript carrying the
+// confirming phrase is refused `command-and-confirm` before the verb is read --
+// D47's rule, so one misrecognition cannot satisfy both halves -- and a text
+// built out of the verb would make the `confirm` row a test of that rule
+// instead of a test of the table.
+func commandEvent(verb string, target *ConfirmTarget) ConfirmEvent {
+	ev := ConfirmEvent{
+		Type: ConfirmEventCommand, Now: testNow,
+		UtteranceID: "utt-1", Text: "do the thing", Verb: verb,
+	}
+	if target != nil {
+		ev.Target, ev.HasTarget = target, true
+	}
+	// A destructive verb carries the action id the confirmation will name. A
+	// launch's is D2786's: a *costly* start carries one too, which a test that
+	// means it sets itself, beside the mode that made it costly.
+	if confirmContains(ConfirmDestructiveVerbs, verb) {
+		ev.ActionID, ev.HasActionID = "act-1", true
+	}
+	return ev
+}
+
+// writeRecorder is the store one pass writes through: it records every path a
+// conditional write asked for, which is what "the write set is exactly the
+// outbox and the heartbeat" is a fact about. It satisfies OutboxStore and
+// HeartbeatStore at once, because those are the same two methods on two nodes.
+type writeRecorder struct {
+	inner OutboxStore
+	paths []string
+}
+
+func (s *writeRecorder) GetETag(ctx context.Context, path string, out any) (string, bool, error) {
+	return s.inner.GetETag(ctx, path, out)
+}
+
+func (s *writeRecorder) PutIfMatch(ctx context.Context, path, etag string, v any) error {
+	s.paths = append(s.paths, path)
+	return s.inner.PutIfMatch(ctx, path, etag, v)
+}
+
+// TestTheWriteSetIsTheOutboxAndTheHeartbeat is T6's write-set test, and it is
+// C0's sentence as code: the consumer writes the outbox and the heartbeat with
+// the operator's own credential and nothing else, so the write set is a rule in
+// this command's code rather than a fence the database enforces.
+//
+// One pass here is the two writes a consumer makes -- one take and one reply --
+// through a recorder that sees every conditional write asked of the store, so
+// what is asserted is what reached the store and not what a caller intended.
+// Each of the two values is then read back and verified in its own direction
+// (M4b): a write set that were the right two nodes and unsigned would be a fence
+// around the wrong thing.
+func TestTheWriteSetIsTheOutboxAndTheHeartbeat(t *testing.T) {
+	key := []byte(vectorKey(t))
+	f := gcpfake.NewRTDB(t)
+	store := &writeRecorder{inner: leaseClient(t, f)}
+	ctx := context.Background()
+
+	opts := leaseOptions(leaseHolder, leaseAt)
+	opts.Sign = NewHeartbeatSigner(keychain.NewKey(key)).Heartbeat
+	if _, err := Take(ctx, store, opts); err != nil {
+		t.Fatalf("taking the lease: %v", err)
+	}
+	reply := testReply(t, "r-m-0001", "m-0001")
+	run, err := WriteReply(ctx, store, NewOutboxSigner(keychain.NewKey(key)), reply)
+	if err != nil {
+		t.Fatalf("writing the reply: %v", err)
+	}
+	if run.Verdict != ReplyWritten {
+		t.Fatalf("the reply was not written: %s, %v", run.Verdict, run.Refusal)
+	}
+
+	heartbeat, err := HeartbeatPath(leaseMailbox)
+	if err != nil {
+		t.Fatalf("building the heartbeat path: %v", err)
+	}
+	outbox, err := OutboxPath(reply.Sender, reply.ID)
+	if err != nil {
+		t.Fatalf("building the outbox path: %v", err)
+	}
+	want := map[string]string{heartbeat: directionHeartbeat, outbox: directionOutbox}
+	if len(store.paths) != len(want) {
+		t.Fatalf("the pass wrote %v: one take and one reply are two writes, to %v and only those", store.paths, want)
+	}
+	for _, path := range store.paths {
+		if _, ok := want[path]; !ok {
+			t.Errorf("the pass wrote %s, which is neither the outbox nor the heartbeat: the write set is a rule in this package's code (C0), and a third node is a rule broken", path)
+		}
+	}
+	for path, direction := range want {
+		stored := storedRecord(t, f, path)
+		if stored == nil {
+			t.Fatalf("nothing is in the store at %s", path)
+		}
+		if mac, _ := stored["mac"].(string); mac == "" {
+			t.Errorf("the write to %s carries no mac: every outbound value is signed before it is written (M4)", path)
+		}
+		if ok, err := VerifyMAC(stored, key, direction); err != nil || !ok {
+			t.Errorf("the value at %s does not verify in the %s direction: %v, %v", path, direction, ok, err)
+		}
+	}
+}

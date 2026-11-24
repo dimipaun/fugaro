@@ -136,7 +136,7 @@ func TestLevelsL3BounceNeverDecidesWithoutL2(t *testing.T) {
 		Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature",
 		ReviewLevels: &config.ReviewLevels{
 			L2: &config.LevelSetting{Off: true},
-			L3: &config.LevelSetting{Model: "senior-model"},
+			L3: &config.LevelSetting{Model: opus},
 		},
 	}
 	h := newHarnessFiles(t, cfg, spec, levelsFiles)
@@ -312,7 +312,7 @@ func TestLevelsBootstrapRefusesBelowFloor(t *testing.T) {
 // straight to the runs bucket from running the senior review on the model that
 // wrote the change.
 func TestLevelsBootstrapRefusesSameModelTask(t *testing.T) {
-	const shared = "coder-model"
+	const shared = sonnet
 	spec := &task.Spec{
 		Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature",
 		ReviewLevels: &config.ReviewLevels{

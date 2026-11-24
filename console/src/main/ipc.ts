@@ -343,27 +343,53 @@ export const RUNS_STREAM_SINCE_WINDOWS: readonly string[] = Object.freeze(['24h'
 
 /**
  * GRAPH_SCOPE_RE is the closed shape of a `graph.read` scope argument: the two
- * selector words, and an id-carrying scope whose id is one lower-case letter or
- * digit followed by up to 39 more of those or a hyphen. It is **the CLI's own
- * pattern, spelled the same way** (`graph.ParseScope`'s `scopeIDPattern`,
- * `ee/graph/key.go`), because the value reaches argv from a renderer and both
- * ends have to refuse the same strings: an id this process admitted and that
- * command refused would be a child spawned to fail.
+ * selector words, and an id-carrying scope whose id is **C-ORCH's orchestrator
+ * id and nothing else** -- the project's own name rule (`config.ProjectNameRE`),
+ * optionally a `~` (`orchestrator.NameSeparator`) and a name
+ * (`^[a-z0-9][a-z0-9-]{0,39}$`). The id half is one rule, held by
+ * `orchestrator.ValidScopeID` (`internal/orchestrator/naming.go`, F40), the same
+ * rule `graph.ParseScope` reads: an id written twice here would drift from the
+ * command's own, and an id this process admitted and that command refused would
+ * be a child spawned to fail.
+ *
+ * **A named id is admitted by the grammar and by nothing else.** A scope whose
+ * id carries a `~` reaches a child only from a CLI at or above
+ * `ORCHESTRATOR_MAP_CLI_FLOOR` (`src/shared/version.ts`), because the named
+ * scope grammar and `orchestrator map --json` are one release's; the floor is
+ * asked at the source (`createBoundSource`, `src/source/cli.ts`), the one place
+ * a scope and an installation's version are read together, and `graphScopeIsNamed`
+ * is the one spelling of "this scope names a named orchestrator" both use.
  *
  * Anchored, so nothing before or after it gets in. A leading `-` (which would
  * reach argv as a flag, the plan's H1), a path separator, an uppercase letter,
- * a whitespace character, a `.`, an `@` and a 41-character id are each refused
- * here -- before a child exists -- and `isSafeArgumentValue` refuses the leading
- * `-` and the alphabet a second time on the way into the argv.
+ * a whitespace character, a `.`, an `@`, a trailing hyphen on the project half
+ * and an over-long id are each refused here -- before a child exists -- and
+ * `isSafeArgumentValue` refuses the leading `-` and the alphabet a second time
+ * on the way into the argv.
  */
-const GRAPH_SCOPE_RE = /^(?:all|coordinator|(?:orchestrator|local):[a-z0-9][a-z0-9-]{0,39})$/
+const GRAPH_SCOPE_RE =
+  /^(?:all|coordinator|(?:orchestrator|local):[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?(?:~[a-z0-9][a-z0-9-]{0,39})?)$/
 
 /**
  * MAX_GRAPH_SCOPE_LENGTH bounds a scope argument before the grammar runs, so a
  * hostile payload cannot make the regular expression work. It is the longest
- * value the pattern admits: `orchestrator:` plus a 40-character id.
+ * value the pattern admits: `orchestrator:` plus `orchestrator.MaxOrchestratorIDLength`
+ * (81: a project name at its 40-character cap, the `~`, and a name at its cap).
  */
-export const MAX_GRAPH_SCOPE_LENGTH = 'orchestrator:'.length + 40
+export const MAX_GRAPH_SCOPE_LENGTH = 'orchestrator:'.length + 81
+
+/**
+ * graphScopeIsNamed reports whether a well-formed scope names a **named**
+ * orchestrator -- whether its id half carries the separator. It is one spelling
+ * for the one reader that has to tell the two apart: `createBoundSource`'s scope
+ * guard (`src/source/cli.ts`), which admits a named scope only at or above
+ * `ORCHESTRATOR_MAP_CLI_FLOOR`. It takes a scope `GRAPH_SCOPE_RE` already
+ * admitted and looks for the separator the pattern allows in one place only, so
+ * it is a reading and not a second grammar.
+ */
+export function graphScopeIsNamed(scope: string): boolean {
+  return scope.includes('~')
+}
 
 /**
  * ROADMAP_NODE_RE is the shape of the **document key** a move names: the
@@ -538,13 +564,16 @@ const MAX_ROADMAP_RELEASE_LENGTH = 64
  * is what ties the three together: a `set` carries a value and an `unset` does
  * not.
  *
- * **`graphSource` is the graph read's one argument** (the graph plan's CG9a):
- * the scope the document is about, held to `GRAPH_SCOPE_RE` -- the CLI's own
- * anchored pattern -- and, at the source, to the set a previous read of the same
- * document listed (F21). It is the one kind here whose *shape* is a closed
- * grammar and whose *membership* is the read's own answer, which is why the two
- * checks live apart: this module refuses a spelling no scope could have, and
- * `createBoundSource` refuses an id the CLI never named.
+ * **`graphSource` is the graph read's one argument** (the graph plan's CG9a;
+ * its named ids arrived with the console-fixes plan's CG7a): the scope the
+ * document is about, held to `GRAPH_SCOPE_RE` -- C-ORCH's own id rule, the one
+ * `graph.ParseScope` reads -- and, at the source, to the set a previous read of
+ * the same document listed (F21). It is the one kind here whose *shape* is a
+ * closed grammar and whose *membership* is the read's own answer, which is why
+ * the two checks live apart: this module refuses a spelling no scope could have,
+ * and `createBoundSource` refuses an id the CLI never named -- and refuses a
+ * **named** id below `ORCHESTRATOR_MAP_CLI_FLOOR`, the release whose CLI reads
+ * one at all.
  *
  * **`licenceKey` is the licence section's one argument** (subscriptions plan
  * S2.7), and it is the only argument on this surface whose value is a
@@ -684,12 +713,15 @@ export interface ConsoleOperation {
    * **It is a field of the row and never a list of names beside the table.** The
    * design states the rule and its reason: a later cancel is admitted to the kept
    * set by its own row differing from the launch's in this one field, so a gate
-   * that classified by name would refuse a cancel the day it was added. Two rows
-   * carry it today -- `run.launch` and `settings.edit`, the whole of what T12
-   * takes away -- and `assertReachableSurface` refuses the column on a row that
-   * spawns no command, because the rows that spawn nothing are the console's own
-   * answers (the design's kept set, and the key screen §5.6 keeps ungated as the
-   * way out).
+   * that classified by name would refuse a cancel the day it was added. The rows
+   * carrying it are the ones that spawn a command and change something --
+   * `run.launch`, `settings.edit`, `roadmap.move`, `setup.apply` and `models.add`
+   * -- and one row that spawns nothing **as itself** because it drives another
+   * one of them: `settings.editor.open` is the settings write's window, and it
+   * names the row whose plan its every child comes from (`drivesOperation`
+   * below). `assertReachableSurface` refuses the column on every other row that
+   * spawns no command, because those rows are the console's own answers (the
+   * design's kept set, and the key screen §5.6 keeps ungated as the way out).
    *
    * Every other operation is the design's kept set: every read, including the
    * paid views, and the kill switch's state.
@@ -722,6 +754,34 @@ export interface ConsoleOperation {
    * at registration instead.
    */
   readonly installationArgument?: string
+  /**
+   * `drivesOperation` names the operation whose command a row spawns while
+   * fixing no command of its own. `settings.editor.open` is the one row with it:
+   * that operation is the settings write's window (SU1, D2902), its `command` is
+   * `null` because no payload of it becomes an argv here, and every child it
+   * spawns is one phase of `settings.edit`'s own plan, built and spawned through
+   * the source (`src/main/settingsedit.ts`, `createSettingsEditor`).
+   *
+   * **It is a column for `refusedAfterLapse`'s reason, and it is what keeps the
+   * lapse's class honest about a write reached through a window.** The class is
+   * the operations that take a capability away when the key has lapsed, and a
+   * window that drives one of them is one of them: a lapse that refused the write
+   * and kept the window would leave the Project tab's pencil on screen with a
+   * working write behind it, which is exactly what the design's T12 refuses
+   * (`docs/lapse-read-only/spec.md` §3.2).
+   *
+   * `assertReachableSurface` holds it: the name must be a row of this same
+   * table, and it must itself be in the refused class and spawn a command --
+   * which is what admits a row that spawns no command to that class at all.
+   *
+   * **It is a `string` and not an `OperationName`**, for the reason
+   * `installationArgument` is one: `OperationName` is derived from this same
+   * table (`(typeof CONSOLE_OPERATIONS)[number]['name']`), so a column typed
+   * with it would make the table's own type depend on itself. The name is
+   * checked at registration instead, which is where a name no row answers has to
+   * fail.
+   */
+  readonly drivesOperation?: string
 }
 
 /**
@@ -751,7 +811,7 @@ export const LAUNCH_PAYLOAD_WIDTH =
   LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Forty-three operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Fifty-seven operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -1147,10 +1207,14 @@ export const CONSOLE_OPERATIONS = [
   // **Its one argument is the scope, and it is the only argument on this
   // surface held to a grammar *and* to a membership.** `GRAPH_SCOPE_RE` refuses
   // every spelling no scope could have (`-x`, `all --source local:o1`,
-  // `orchestrator:../..`, a 41-character id) before a child exists, and
-  // `createBoundSource` refuses a scope the previous document of this read did
-  // not list (F21) -- a value a renderer invented, or one that names a scope
-  // the CLI's own sources array never mentioned, is a refusal and not a spawn.
+  // `orchestrator:../..`, a project half over 40 characters) before a child
+  // exists, and `createBoundSource` refuses a scope the previous document of
+  // this read did not list (F21) -- a value a renderer invented, or one that
+  // names a scope the CLI's own sources array never mentioned, is a refusal and
+  // not a spawn. **A named id is the same check's second half** (CG7a): the
+  // grammar admits `orchestrator:<project>~<name>`, and the source refuses it
+  // below `ORCHESTRATOR_MAP_CLI_FLOOR`, because the CLI that reads a named
+  // orchestrator is the release that ships `orchestrator map --json`.
   // The read is also the one place the console may name a *paid* command
   // (`ee/graph`, D1362), which is why it takes no other word: the `--watch`
   // stream that holds a child open is a different argv and its own row
@@ -1813,6 +1877,41 @@ export const CONSOLE_OPERATIONS = [
     command: 'coordinator intents',
     flags: ['--all', '--json'],
     summary: 'what the fleet’s writers have declared, newest first',
+    args: [],
+  },
+  // The orchestrator map (the console-fixes plan's CG7a; C-ORCH's document,
+  // `internal/orchestrator/mapdoc.go`; D3221): `fugaro orchestrator map --json`,
+  // the project's **active** orchestrators, the connections between them and the
+  // coordinator's own heartbeat. It is the read the Coordinator tab draws, and
+  // it sits beside the stored view and the declarations above because it is the
+  // same screen's third read -- and the one that replaces the tab's v2 sections
+  // (CG7b, D3210).
+  //
+  // **It has no argument at all**, like the declarations read: the whole argv is
+  // the row's own words (`src/main/spawn.ts`), so there is no field a renderer
+  // could fill and nothing it could steer. `--json` is fixed rather than a
+  // control, and `--project`/`--config` come from the row's `takesProject` like
+  // every other project read (rule 3). The document is one project's, so the
+  // scope a screen is looking at is not an argument of this read: the map is
+  // already the project's active set.
+  //
+  // **The command is registered from `ee/`** (`ee/orchestrator/cli/map.go`) and
+  // no released CLI carries it, so `ORCHESTRATOR_MAP_CLI_FLOOR` is `null` today
+  // (`src/shared/version.ts`) and the tab draws the version it needs rather than
+  // spawning this row at all. The two ends of that floor are one release: the
+  // command, and the named graph scope beside it (`GRAPH_SCOPE_RE`, F40).
+  //
+  // Like the stored view, this read asks nothing of the host: the map is built
+  // from the caller's own database -- the orchestrator nodes, their leases, the
+  // claims and the coordinator's heartbeat (`roles/firebasedatabase.viewer`) --
+  // so no App key is read, no installation token is minted and no provider is
+  // opened.
+  {
+    name: 'orchestrator.map',
+    method: 'orchestratorMap',
+    command: 'orchestrator map',
+    flags: ['--json'],
+    summary: 'the project’s active orchestrators, their connections and the coordinator’s heartbeat',
     args: [],
   },
   // The roadmap record's one write (the dependency-graph plan's GV3.2; the
@@ -2612,11 +2711,19 @@ export const CONSOLE_OPERATIONS = [
   },
   {
     // The settings editor (SU1, D2902): the one operation of the nine whose
-    // command is **null**, because it spawns nothing as itself. It opens the
+    // command is **null**, because it fixes no argv of its own. It opens the
     // main process's own window for one key of the document the settings read
     // answered -- the entry, the validation, the dry run and the confirmation
     // window are that window's -- and it answers the outcome object rather than
     // a document, exactly as `settings.edit` does.
+    //
+    // **It is the settings write, reached through a window**, so it is in the
+    // lapse's refused class beside `settings.edit` and says which row's command
+    // its children come from: SU2b wires the Project tab's pencil to this row,
+    // and a lapse that refused the write and kept the window would leave the
+    // pencil on screen with a working write behind it. Its payload names no
+    // installation, exactly as the write's does not: the flow writes the settings
+    // document of the installation this console is driving.
     //
     // **`key` is the whole payload.** The layer and the phase are main's,
     // decided from the read's own row and the dry run's document, so a renderer
@@ -2628,6 +2735,8 @@ export const CONSOLE_OPERATIONS = [
     name: 'settings.editor.open',
     method: 'openSettingsEditor',
     command: null,
+    drivesOperation: 'settings.edit',
+    refusedAfterLapse: true,
     flags: [],
     summary: 'the write’s window: one setting’s entry, its dry run and the operator’s confirmation',
     args: [
@@ -4185,16 +4294,18 @@ function validateValue(
       if (!SECRET_SCOPES.includes(value)) return refuse(`${spec.key} must be ${SECRET_SCOPES.join(' or ')}`)
       return { ok: true, value }
     case 'graphSource':
-      // The graph read's scope (CG9a): `all`, `coordinator`, or an id-carrying
-      // scope whose id matches the CLI's own pattern. This is the half that
-      // keeps a value from being a path, a flag or another word of the command
-      // -- `-x`, `all --source local:o1`, `orchestrator:../..` and a 41-character
-      // id are all refused here, before a child exists -- and the other half,
-      // that the scope is one a previous read of this document named, is the
-      // source's (`createBoundSource`, F21).
+      // The graph read's scope (CG9a; named ids with CG7a): `all`, `coordinator`,
+      // or an id-carrying scope whose id is C-ORCH's orchestrator id -- a project
+      // name and, for a named orchestrator, a `~` and a name. This is the half
+      // that keeps a value from being a path, a flag or another word of the
+      // command -- `-x`, `all --source local:o1`, `orchestrator:../..`, a
+      // 41-character project half and a name over 40 characters are all refused
+      // here, before a child exists -- and the other half, that the scope is one
+      // a previous read of this document named, is the source's
+      // (`createBoundSource`, F21).
       if (!GRAPH_SCOPE_RE.test(value)) {
         return refuse(
-          `${spec.key} must be all, coordinator, or orchestrator:<id> / local:<id> with an id of 1 to 40 characters of a-z, 0-9 and -`,
+          `${spec.key} must be all, coordinator, or orchestrator:<id> / local:<id> with an id of a project name, optionally ~ and a name of 1 to 40 characters of a-z, 0-9 and -`,
         )
       }
       return { ok: true, value }
@@ -5047,49 +5158,19 @@ export interface IpcMainLike {
  * verbatim -- and a generic one otherwise, so a thrown non-Error cannot put an
  * object on the wire.
  *
- * "Bounded" is meant literally, and it is the three things `boundReason` does: a
+ * "Bounded" is meant literally, and it is the two things `boundReason` does: a
  * message is flattened to one line (a CLI sentence is one line; a message with
  * newlines in it is either a stack or something written to look like the
- * console's own output), its absolute paths are replaced (the CLI's refusals
- * name flags and values, never the machine's directories, and a path in a
- * refusal is a path a screen would print), and it is cut at
- * `MAX_REPLY_REASON_LENGTH`. The CLI's own sentences are short enough that none
- * of the three touches them; a hostile message hits all three.
+ * console's own output), and it is cut at `MAX_REPLY_REASON_LENGTH`. A path is
+ * **not** one of them: the CLI's refusals name flags, values and the operator's
+ * own directories, so a path in a refusal is a path a screen would print, and
+ * D3213 (2026-11-21) leaves it as written -- the renderer's `sanitizeRefusal` is
+ * what masks a secret, wherever one stands. The CLI's own sentences are short
+ * enough that neither of the two touches them; a hostile message hits both.
  */
 function replyReason(error: unknown): string {
   if (error instanceof Error && error.message !== '') return boundReason(error.message)
   return 'the operation failed'
-}
-
-/**
- * ABSOLUTE_PATH_RE matches an absolute path in a message: a POSIX one (`/etc`,
- * `/home/me/x`), a home-relative one (`~/x`), or a Windows one with a drive
- * letter or a UNC prefix. It is anchored on a separator that cannot be part of
- * a word -- the start of the message, whitespace, a quote, a backtick, an
- * opening bracket, `=`, `,`, `;` or `:` -- so a flag like `--repo owner/name`
- * keeps its slash, and it stops at the first character that closes a path in a
- * sentence: whitespace, a quote, a backtick, `)`, `]` or `>`.
- *
- * A colon *is* an anchor, because Go's own wrapped errors put a path straight
- * after one (`open:/Users/me/.config/...`), and so is a drive letter after one
- * (`dir:C:\Users\me`). What keeps a URL from being cut at its `//` -- which
- * would turn `https://x/y` into `https:<path>`, a corrupted sentence rather than
- * a redaction -- is the first alternative: a `scheme://` URL is matched whole,
- * first, and kept, except a `file://` one, which *is* a path and is replaced
- * whole. `replacePath` is the replacer that makes that choice. The scheme is
- * bounded and must start a word, so a long run of letters is scanned once
- * rather than once per position.
- */
-const ABSOLUTE_PATH_RE =
-  /((?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/[^\s'"`)\]>]*)|(^|[\s'"`([<{=,;:])(?:~[\\/]|[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`)\]>]*/g
-
-/** PATH_PLACEHOLDER is what an absolute path in a message becomes. It names
- * *that* a path was there, which is what a reader needs, and not which one. */
-const PATH_PLACEHOLDER = '<path>'
-
-function replacePath(_match: string, url: string | undefined, anchor: string | undefined): string {
-  if (url !== undefined) return /^file:/i.test(url) ? PATH_PLACEHOLDER : url
-  return `${anchor ?? ''}${PATH_PLACEHOLDER}`
 }
 
 /** INVISIBLE_RE is the shared set of invisible characters
@@ -5107,10 +5188,10 @@ const LONE_SURROGATE_RE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff
 /**
  * boundReason is the one place a handler-authored message is made safe to put in
  * front of a user: control characters out, invisible format characters out,
- * half-characters replaced, absolute paths out, one line, and a hard length cut
- * on a character boundary. It never returns an empty string -- a refusal with
- * no text is a screen with nothing to draw -- and it never echoes more of the
- * message than the bound allows.
+ * half-characters replaced, one line, and a hard length cut on a character
+ * boundary. It never returns an empty string -- a refusal with no text is a
+ * screen with nothing to draw -- and it never echoes more of the message than
+ * the bound allows.
  */
 function boundReason(message: string): string {
   // Every pass below is linear, and the input is first cut to a few times the
@@ -5124,24 +5205,24 @@ function boundReason(message: string): string {
     .replace(/\s+/g, ' ')
     .trim()
   if (flattened === '') return 'the operation failed'
-  const redacted = flattened.replace(ABSOLUTE_PATH_RE, replacePath)
-  if (redacted.length <= MAX_REPLY_REASON_LENGTH) return redacted
+  if (flattened.length <= MAX_REPLY_REASON_LENGTH) return flattened
   // The cut is marked, so a reader can tell a truncated sentence from a whole
   // one rather than wondering what the CLI meant to say. It is in UTF-16 code
   // units, like the bound, and it steps back one when it would land between
   // the two halves of a surrogate pair: half an emoji is not text.
   let cut = MAX_REPLY_REASON_LENGTH - 1
-  const last = redacted.charCodeAt(cut - 1)
+  const last = flattened.charCodeAt(cut - 1)
   if (last >= 0xd800 && last <= 0xdbff) cut -= 1
-  return `${redacted.slice(0, cut).trimEnd()}…`
+  return `${flattened.slice(0, cut).trimEnd()}…`
 }
 
 /**
  * assertReachableSurface throws unless every entry of a table is one the console
  * may drive: its command and its flags are clear of `NEVER_REACHABLE`, the flags
  * it fixes are the surface's own two, the lapse's refused class holds only rows
- * that spawn a command and names its target installation only in a required
- * `installationName` argument of its own, and no two entries share a name.
+ * that spawn a command or drive one the lapse itself takes away, and names its
+ * target installation only in a required `installationName` argument of its own,
+ * and no two entries share a name.
  *
  * It takes the table as an argument so that the guard is a pure function of one
  * and the test can hand it the mutation directly -- a table with `budget kill`
@@ -5163,17 +5244,41 @@ export function assertReachableSurface(operations: readonly ConsoleOperation[]):
         throw new Error(`${operation.name} fixes ${flag}, which is not a flag the surface may fix`)
       }
     }
-    // The lapse's refused class is the three writes (`run.launch`, `settings.edit`
-    // and `roadmap.move`), and the design's kept set includes every answer the
-    // console gives out of its own process: a row with no command spawns
-    // nothing, so refusing it would take away a read, the key
-    // screen (the way out, §5.6), or the console's own surface -- and never a
-    // capability the licence granted. A later task that wants to refuse one of
-    // these has to come back here and say why, which is the point.
-    if (operation.refusedAfterLapse === true && operation.command === null) {
+    // The lapse's refused class is the operations that change something
+    // (`run.launch`, `settings.edit`, `roadmap.move`, `setup.apply` and
+    // `models.add`), and the design's kept set includes every answer the console
+    // gives out of its own process: a row with no command spawns nothing, so
+    // refusing it would take away a read, the key screen (the way out, §5.6), or
+    // the console's own surface -- and never a capability the licence granted.
+    // The one row that spawns nothing as itself and belongs to the class anyway
+    // is a window that drives one of those operations (`drivesOperation`), which
+    // is checked just below: it spawns the write's own phases through the source,
+    // so a lapse that kept it would keep the write. A later task that wants to
+    // refuse one of these has to come back here and say why, which is the point.
+    if (operation.refusedAfterLapse === true && operation.command === null && operation.drivesOperation === undefined) {
       throw new Error(
         `${operation.name} is refused after a lapse and spawns no command: the operations the lapse takes away are the ones that spawn a command, and the console's own answers stay`,
       )
+    }
+    // A row that drives another one's command (`drivesOperation`) may belong to
+    // the refused class without a command of its own, and only that way: the name
+    // has to be a row of this same table, and for a refused row it has to be a
+    // row the lapse itself takes away -- pointing one window at a read would put
+    // it in the class on a command nobody loses after a lapse, and a name that
+    // matched no row would leave the window working with nothing to refuse.
+    if (operation.drivesOperation !== undefined) {
+      const drivenName = operation.drivesOperation
+      const driven = operations.find((candidate) => candidate.name === drivenName)
+      if (driven === undefined) {
+        throw new Error(
+          `${operation.name} drives ${drivenName}, which is not an operation of this surface`,
+        )
+      }
+      if (operation.refusedAfterLapse === true && (driven.refusedAfterLapse !== true || driven.command === null)) {
+        throw new Error(
+          `${operation.name} is refused after a lapse and drives ${driven.name}, which the lapse does not take away: a row with no command of its own is in the refused class only through an operation the lapse refuses`,
+        )
+      }
     }
     // The lapse gate asks about the installation a row's own payload names
     // (`installationArgument`), so the column has to name an argument of this

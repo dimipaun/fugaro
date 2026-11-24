@@ -1,6 +1,6 @@
 # Dynamic secret delivery: reconciliation
 
-**Status: the owner answered D1930–D1946 on 2026-11-09, all as recommended (D1938–D1940 after review round 1, D1941–D1943 after round 2, D1944–D1946 after round 3). No item is open. Every task of the plan has merged except DS3.4 (token ownership on the run record).**
+**Status: the owner answered D1930–D1946 on 2026-11-09, all as recommended (D1938–D1940 after review round 1, D1941–D1943 after round 2, D1944–D1946 after round 3). No item is open. Every task of the plan has merged, DS3.4 (token ownership on the run record) the last of them, as #3522.**
 Checked against `origin/main` at `934bb23f8`, 2026-11-09. **Where this file disagrees with [spec.md](spec.md), it wins.**
 
 **Amended 2026-11-22 by [model credentials routing](../../model-credentials-routing/README.md)**, whose

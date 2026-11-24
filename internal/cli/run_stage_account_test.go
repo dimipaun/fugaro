@@ -524,7 +524,7 @@ func TestRunPRLandsAFollowUpOfAMixedRunOnTheMixsAccount(t *testing.T) {
 			f := newCloudFixture(t)
 			f.appendConfig(t, defaultClaudeAccountConfig+mixRouteConfig+mixEnforce)
 			recipeCheckout(t, f, "  models: { coder: "+mixCoderModel+", reviewer: "+claudeReviewer+", background: "+mixCoderModel+" }\n", nil)
-			writeBuildRecord(t, f, otherSlug, "svc", release065)
+			writeBuildRecord(t, f, otherSlug, "svc", release085)
 			variant := gcp.WorkflowVariant("svc", "acme-overflow")
 			f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
 			root := wallRunIDAt(2, "090000", "d5e1")

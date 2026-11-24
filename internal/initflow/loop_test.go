@@ -215,10 +215,11 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 	// checkout's own steps inside fugaro update (init_checkout_upgrade.go), the credentials service's image moving onto this release's after the policy migration (init_stages.go's newCredentialsStage), the
 	// owner's own cache-price keys renamed in place (update_model_prices.go, SA4.2),
 	// the login unit that runs the orchestrator daemon (init_orchestrator_stage.go,
-	// O9) and the compute backend's provisioning, which the design puts last
-	// (compute-backend §8.1 task 6).
-	if len(names) != 21 {
-		t.Fatalf("the design has twenty-one stages, got %v", names)
+	// O9), the copy of the installation's model keys into the credentials
+	// service's bundle (update_keys.go, KS12) and the compute backend's
+	// provisioning, which the design puts last (compute-backend §8.1 task 6).
+	if len(names) != 22 {
+		t.Fatalf("the design has twenty-two stages, got %v", names)
 	}
 	pos := map[string]int{}
 	for i, n := range names {
@@ -233,7 +234,7 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 		}
 	}
 	// The order the dogfooding run found by hand.
-	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Repository, Rules, ModelPrices, Policy, CredentialsService, WorkspaceProject, Workspace, CredentialsRoute, Layer, Checkout, Unit, Compute}
+	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Repository, Rules, ModelPrices, Policy, CredentialsService, CredentialsCopy, WorkspaceProject, Workspace, CredentialsRoute, Layer, Checkout, Unit, Compute}
 	if !slices.Equal(names, want) {
 		t.Errorf("order = %v, want %v", names, want)
 	}

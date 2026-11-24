@@ -1,12 +1,52 @@
 package cli
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/place"
 )
+
+// fsLocation is where the Firestore database of an installation whose region
+// is region is created: the mapping's answer for it (D3085), which is what
+// firestoreStep hands the step and what the confirmation prints. The rigs'
+// own region is initConfig's (us-east5).
+func fsLocation(region string) string { return place.For(region).Firestore.Where }
+
+// TestTheFirestoreStepHoldsTheMappingsLocation is LP3 at the CLI's own seam:
+// what firestoreStep gives the step is place.For's answer for the
+// installation's region (D3085) and the place that region lies in — never the
+// region itself, and never a constant of the CLI's own.
+func TestTheFirestoreStepHoldsTheMappingsLocation(t *testing.T) {
+	for _, tc := range []struct {
+		region, loc string
+		place       place.Place
+	}{
+		{"us-east5", "us-east5", place.US},
+		{"europe-west4", "europe-west4", place.EU},
+		{"us-west8", "us-east5", place.US},
+		{"europe-west2", "europe-west2", place.None},
+	} {
+		t.Run(tc.region, func(t *testing.T) {
+			lc, err := localcfg.Parse([]byte("version: 1\nname: aurora\ngcp_project: proj-1234\nregion: " + tc.region +
+				"\nruns_bucket: fugaro-runs-proj-1234\nendpoints: { firestore: http://127.0.0.1:1, firebase_rules: http://127.0.0.1:1, no_auth: true }\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			fs, err := (&initRun{}).firestoreStep(context.Background(), lc, fpID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fs.Location != tc.loc || fs.Place != tc.place {
+				t.Errorf("the step holds location %q, place %q; want %q, %q", fs.Location, fs.Place, tc.loc, tc.place)
+			}
+		})
+	}
+}
 
 func (r *fbRig) dbCreates() int {
 	n := 0
@@ -52,7 +92,7 @@ func TestEnsureCreatesOnceAfterConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	for _, want := range []string{"Cloud Firestore database: CREATE", "us-east5", "PERMANENT", "deny-all rules", "Firestore mark: write meta/installation", "permanent and can never be changed"} {
+	for _, want := range []string{"Cloud Firestore database: CREATE", fsLocation("us-east5"), "PERMANENT", "deny-all rules", "Firestore mark: write meta/installation", "permanent and can never be changed"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the confirmation lacks %q:\n%s", want, out)
 		}
@@ -61,7 +101,7 @@ func TestEnsureCreatesOnceAfterConfirmation(t *testing.T) {
 		t.Errorf("database creates = %d, want 1", n)
 	}
 	loc, prot := r.fs.Database()
-	if loc != "us-east5" || prot != "DELETE_PROTECTION_ENABLED" {
+	if loc != fsLocation("us-east5") || prot != "DELETE_PROTECTION_ENABLED" {
 		t.Errorf("database = %s %s", loc, prot)
 	}
 	if src, ok := r.rules.Source(); !ok || src != infra.FirestoreRules {
@@ -101,18 +141,26 @@ func TestEnsureAdoptsExisting(t *testing.T) {
 	r.noDeletes(t)
 }
 
-func TestEnsureRefusesOtherLocation(t *testing.T) {
+// TestEnsureAdoptsDatabaseElsewhere is LP3, R3 and D3091 at the CLI: a native
+// database that exists is adopted wherever it is, and the plan's line says
+// where it is when that is outside the installation's place. Nothing is
+// created, moved or deleted.
+func TestEnsureAdoptsDatabaseElsewhere(t *testing.T) {
 	r := newFBRig(t)
 	r.fs.SetDatabase("europe-west1")
+	fakeTerminal(t)
 	out, stderr, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
-	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error()+stderr, "europe-west1") {
-		t.Fatalf("err = %v, stderr = %s\n%s", err, stderr, out)
+	if err != nil {
+		t.Fatalf("a database elsewhere was not adopted: %v\n%s%s", err, out, stderr)
 	}
-	if r.fsWrites() != 0 || r.db.Value("fugaro/mark") != nil {
-		t.Error("a refused database was followed by writes")
+	if !strings.Contains(out, "exists in europe-west1 (outside the US), adopted as it is") {
+		t.Errorf("the plan does not say where the adopted database is:\n%s", out)
 	}
-	if len(r.applies(t)) != 0 {
-		t.Errorf("refused only after applying %v", r.applies(t))
+	if n := r.dbCreates(); n != 0 {
+		t.Errorf("database creates = %d on an existing database", n)
+	}
+	if _, ok := r.fs.Value("meta", "installation"); !ok {
+		t.Error("the mark was not written into the adopted database")
 	}
 	if loc, _ := r.fs.Database(); loc != "europe-west1" {
 		t.Errorf("the database was changed: %s", loc)
@@ -363,7 +411,7 @@ func TestLocationConfirmationRequiredToCreate(t *testing.T) {
 	if r2.dbCreates() != 1 {
 		t.Errorf("creates = %d with a person at the terminal", r2.dbCreates())
 	}
-	if loc, _ := r2.fs.Database(); loc != infra.FirestoreLocation {
+	if loc, _ := r2.fs.Database(); loc != fsLocation("us-east5") {
 		t.Errorf("database = %s", loc)
 	}
 }
@@ -433,22 +481,53 @@ func TestCreateRaceAdoptsOnlyAcceptable(t *testing.T) {
 	r := newFBRig(t)
 	fakeTerminal(t)
 	r.fs.RaceCreate("us-east5")
-	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
+	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if _, ok := r.fs.Value("meta", "installation"); !ok {
 		t.Error("the raced database was not marked")
 	}
+	// And the run says where it is, because it did not create it: the location
+	// is permanent and nobody chose it in this run.
+	if !strings.Contains(out, "created by someone else after the plan, in us-east5, adopted as it is") {
+		t.Errorf("the run does not say where the adopted database is:\n%s", out)
+	}
+	// A database that appeared elsewhere meanwhile is refused (LP3, D3085):
+	// the plan and the confirmation named us-east5, a location is permanent,
+	// and nothing agreed to keeping the installation's history in
+	// europe-west1. The refusal names both locations and the way out, and
+	// nothing is written to it.
 	r2 := newFBRig(t)
+	fakeTerminal(t)
 	r2.fs.RaceCreate("europe-west1")
-	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
-	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "europe-west1") {
+	out, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
+	if ExitCode(err) != ExitUserError || err == nil ||
+		!strings.Contains(err.Error(), "europe-west1") || !strings.Contains(err.Error(), "us-east5") ||
+		!strings.Contains(err.Error(), "run it again") {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
+	if loc, _ := r2.fs.Database(); loc != "europe-west1" {
+		t.Errorf("the refused database was changed: %s", loc)
+	}
 	if _, ok := r2.fs.Value("meta", "installation"); ok {
-		t.Error("marked a database in another location")
+		t.Error("a database that is not where the plan said was marked")
 	}
 	if _, ok := r2.rules.Source(); ok {
+		t.Error("rules deployed over a refused database")
+	}
+	// Ours it is not: a raced database holding data and no mark is refused.
+	r3 := newFBRig(t)
+	r3.fs.Set("app_users", "u1", map[string]any{"name": "x"})
+	r3.fs.RaceCreate("europe-west1")
+	out, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "app_users") {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+	if _, ok := r3.fs.Value("meta", "installation"); ok {
+		t.Error("marked a database that is not ours")
+	}
+	if _, ok := r3.rules.Source(); ok {
 		t.Error("rules deployed over a refused database")
 	}
 }
@@ -510,25 +589,24 @@ func TestReadBackAfterCreateRetriesAPIPropagation(t *testing.T) {
 	}
 }
 
-// TestRegionCannotChangeTheFirestoreLocation: where the installation's jobs
-// and the scheduler run is not where the Firestore database is created. The
-// two are separate constants that happen to hold the same value today
-// (reconciliation C1), and a database's location is permanent, so the
-// confirmation keeps coming from infra.FirestoreLocation and stays Typed in
-// `setup`: a run whose region is nowhere near the database's location reads
-// the note from infra.FirestoreLocation alone and confirms it by being at the
-// terminal, with nothing typed (T7). Where nobody can confirm it, the step is
-// left.
-func TestRegionCannotChangeTheFirestoreLocation(t *testing.T) {
-	const elsewhere = "europe-west4"
-	if elsewhere == infra.FirestoreLocation {
-		t.Fatalf("%s is the database's own location: this test needs a region that is not it", elsewhere)
+// TestTheRegionDecidesTheFirestoreLocation: the location is the mapping's
+// answer for the installation's region (D3085) and not a constant of its own,
+// so a run whose region is elsewhere reads the note about THAT location: the
+// region us-west8 has no Firestore of its own, and the note names us-east5.
+// Nothing about it is typed (T7, docs/no-prompt-policy): a person at the
+// terminal is the confirmation, and where nobody can confirm it the step is
+// left, with the one-line route.
+func TestTheRegionDecidesTheFirestoreLocation(t *testing.T) {
+	const elsewhere = "us-west8" // a region Firestore is not offered in
+	loc := fsLocation(elsewhere)
+	if loc == elsewhere {
+		t.Fatalf("the mapping puts %s in %s: this test needs a region that is not its own location", elsewhere, loc)
 	}
 	c := condition{name: "a region elsewhere", terminal: true,
 		opts: initOptions{door: setupDoor.name, cloud: cloudOptions{gcpProject: initProject, region: elsewhere}}}
 
 	r, spy, out := c.run(t, "")
-	if err := r.confirmLocation(); err != nil {
+	if err := r.confirmLocation(loc); err != nil {
 		t.Fatalf("a person at the terminal did not confirm the location: %v\n%s", err, out)
 	}
 	if spy.read {
@@ -537,9 +615,9 @@ func TestRegionCannotChangeTheFirestoreLocation(t *testing.T) {
 	if r.o.cloud.region != elsewhere {
 		t.Errorf("the run's region = %q, want the one it was given (%s)", r.o.cloud.region, elsewhere)
 	}
-	if got := out.String(); !strings.Contains(got, "the Firestore database is created in "+infra.FirestoreLocation) ||
+	if got := out.String(); !strings.Contains(got, "the Firestore database is created in "+loc) ||
 		!strings.Contains(got, "can NEVER be changed") || strings.Contains(got, elsewhere) {
-		t.Errorf("the confirmation does not come from %s alone:\n%s", infra.FirestoreLocation, got)
+		t.Errorf("the confirmation does not name the mapping's location (%s) alone:\n%s", loc, got)
 	}
 
 	// Nobody can confirm it: the step is left, and the note is all that was
@@ -547,13 +625,13 @@ func TestRegionCannotChangeTheFirestoreLocation(t *testing.T) {
 	pipe := c
 	pipe.terminal = false
 	r2, spy2, out2 := pipe.run(t, elsewhere+"\n")
-	err := r2.confirmLocation()
+	err := r2.confirmLocation(loc)
 	var ny *initflow.NeedsYouError
 	if err == nil || !asNeedsYou(err, &ny) || spy2.read {
 		t.Fatalf("err %v, read %v: the location was confirmed with no terminal", err, spy2.read)
 	}
-	if got := out2.String(); !strings.Contains(got, "the Firestore database is created in "+infra.FirestoreLocation) ||
+	if got := out2.String(); !strings.Contains(got, "the Firestore database is created in "+loc) ||
 		strings.Contains(got, elsewhere) {
-		t.Errorf("the note does not come from %s alone:\n%s", infra.FirestoreLocation, got)
+		t.Errorf("the note does not name the mapping's location (%s) alone:\n%s", loc, got)
 	}
 }

@@ -295,8 +295,8 @@ func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
 			covered bool
 		}{{setupDoor.name, false}, {updateDoor.name, true}} {
 			t.Run(tc.door, func(t *testing.T) {
-				e, out := stageEngine(t, infra.FirestoreLocation+"\n", &initOptions{door: tc.door, yes: true, firebase: "aurora-fp"})
-				err := e.r.confirmLocation()
+				e, out := stageEngine(t, fsLocation("us-east5")+"\n", &initOptions{door: tc.door, yes: true, firebase: "aurora-fp"})
+				err := e.r.confirmLocation(fsLocation("us-east5"))
 				if !tc.covered {
 					// The class is Typed for `setup`, so the run's own answer
 					// confirms nothing here and the run leaves the permanent
@@ -305,7 +305,7 @@ func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
 					if err == nil || !strings.Contains(err.Error(), "the Firestore database's permanent location") {
 						t.Fatalf("setup confirmed the permanent location: %v\n%s", err, out)
 					}
-					if !strings.Contains(out.String(), infra.FirestoreLocation) {
+					if !strings.Contains(out.String(), fsLocation("us-east5")) {
 						t.Errorf("the setup banner does not name the location it leaves:\n%s", out)
 					}
 					if strings.Contains(out.String(), "confirmed by this run's own answer") {

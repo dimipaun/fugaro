@@ -314,6 +314,44 @@ func TestEstimateStaleCatalog(t *testing.T) {
 	}
 }
 
+// TestEstimateNamesARowsOwnPublisher: the provenance the figure carries is the
+// priced row's own publisher, not the embedded table's own source and date,
+// which are the Claude page's (estimateCatalogOf). The Gemini row carries
+// Vertex's (pricing/vertex_gemini.go, GV3), so repricing a run at it names
+// Vertex's page and the day those prices were read — both readings, since
+// --json's catalog is what a reader stores and the human line is what a person
+// reads.
+func TestEstimateNamesARowsOwnPublisher(t *testing.T) {
+	f := newCloudFixture(t)
+	t.Chdir(t.TempDir())
+	id := recentRunID(t, time.Hour, "abcd")
+	seedEstimateRun(t, f, id, estimateSeed{tokens: map[string]runstore.ModelTokenCounts{
+		"claude-sonnet-5": {Input: 1_000_000, Output: 100_000},
+	}})
+	ref := appSlug + "/" + id
+	// Gemini 3 Pro's own rates, flat: $2/M in and $12/M out, 1M + 100k.
+	doc := estimateUSD(t, "--run", ref, "--model", "google/gemini-3-pro")
+	if math.Abs(doc.USD-3.2) > 1e-9 {
+		t.Errorf("estimate = $%v, want $3.20 at the row's own rates\n%+v", doc.USD, doc)
+	}
+	if !strings.Contains(doc.Catalog.Source, "cloud.google.com") {
+		t.Errorf("catalog.source = %q, want Vertex's own page: the row carries its publisher, and the embedded table's source is the Claude page's", doc.Catalog.Source)
+	}
+	if doc.Catalog.CheckedAt != "2026-11-22" {
+		t.Errorf("catalog.checked_at = %q, want the day Vertex's prices were read (2026-11-22) and not the Claude table's 2026-10-20", doc.Catalog.CheckedAt)
+	}
+	human, _, err := execute(t, "estimate", "--run", ref, "--model", "google/gemini-3-pro")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, human)
+	}
+	if !strings.Contains(human, "cloud.google.com") {
+		t.Errorf("the human reading does not name the row's own publisher:\n%s", human)
+	}
+	if strings.Contains(human, "2026-10-20") {
+		t.Errorf("the human reading shows the Claude table's date beside Vertex's figure:\n%s", human)
+	}
+}
+
 // TestEstimateByPR: --pr finds the run the way `runs ls --pr` does, over one
 // repository and its own window (F16).
 func TestEstimateByPR(t *testing.T) {

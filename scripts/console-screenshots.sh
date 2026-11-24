@@ -62,25 +62,46 @@ if [ ! -d "${console_dir}" ]; then
   exit 1
 fi
 
-# The console's toolchain is pinned **exactly** (`console/package.json`'s
-# `engines.node` is one version, and `console/.npmrc` sets
+# The console's toolchain is pinned to a **bounded range** (`console/package.json`'s
+# `engines.node` is `>=22.23.3 <23`, and `console/.npmrc` sets
 # `engine-strict=true`), and the Electron build it runs is what the e2e suite
-# runs. The version is read from that file rather than written here, and it is
-# compared exactly rather than by major: the guard exists to turn the `npm ci`
-# EBADENGINE failure into one line, and a major-only check would let Node 22.11
-# through to exactly that failure -- with a message that said the version was
-# fine.
+# runs. The range is read from that file rather than written here, and the
+# question asked of this shell's Node is the one `npm ci` asks -- is it inside
+# that range -- rather than "is it this string": the guard exists to turn the
+# EBADENGINE failure into one line, and a check that only compared majors would
+# let Node 22.11 through to exactly that failure, with a message that said the
+# version was fine.
 wanted=$(node -p -e 'require(process.argv[1]).engines.node' "${console_dir}/package.json" 2>/dev/null || true)
 if [ -z "${wanted}" ]; then
   echo "console-screenshots: ${console_dir}/package.json does not name an engines.node, so this script cannot check the version it needs" >&2
   exit 1
 fi
 
-current=$(node -p 'process.versions.node')
-if [ "${current}" != "${wanted}" ]; then
-  echo "console-screenshots: console/package.json pins Node ${wanted} (engines.node, with engine-strict in console/.npmrc), and this shell has $(node -v); install Node ${wanted} (nvm, mise, asdf or homebrew) and run this again" >&2
+# The floor-and-ceiling question, in node so that it reads `engines.node` the way
+# npm reads it: `yes` inside the range, `no` outside it, and nothing at all when
+# the field is not the shape this guard knows (an open range, a caret, a tag) --
+# which is the third answer below and not a silent pass.
+holds=$(node -e '
+const m = /^>=(\d+)\.(\d+)\.(\d+) <(\d+)$/.exec(process.argv[1])
+if (m === null) process.exit(0)
+const floor = m.slice(1, 4).map(Number)
+const ceiling = Number(m[4])
+const [major, minor, patch] = process.versions.node.split(".").map(Number)
+const above = (major - floor[0] || minor - floor[1] || patch - floor[2]) >= 0
+process.stdout.write(above && major < ceiling ? "yes" : "no")
+' "${wanted}" 2>/dev/null || true)
+
+case "${holds}" in
+yes) ;;
+no)
+  echo "console-screenshots: console/package.json requires Node ${wanted} (engines.node, with engine-strict in console/.npmrc), and this shell has $(node -v); install a Node in that range (nvm, mise, asdf or homebrew) and run this again" >&2
   exit 1
-fi
+  ;;
+*)
+  echo "console-screenshots: console/package.json's engines.node is ${wanted}, which this script cannot read as a floor and a ceiling, so it cannot check the version it needs" >&2
+  exit 1
+  ;;
+esac
 
 cd "${console_dir}"
 

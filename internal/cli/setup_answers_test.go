@@ -69,6 +69,9 @@ func fullAnswers() string {
 func answersRun(t *testing.T, path, stdin string, o *initOptions) (*initRun, *strings.Builder) {
 	t.Helper()
 	r, out := wizardRun(t, stdin, o)
+	// The file's budget on a creating run needs the account the alert is
+	// created with, which no file answers and no fixture's state records.
+	r.o.billingAccount = "000000-000000-000000"
 	r.o.answersFile = path
 	if err := r.applySetupAnswers(); err != nil {
 		t.Fatalf("%s was refused: %v\n%s", path, err, out)

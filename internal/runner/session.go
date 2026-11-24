@@ -15,8 +15,10 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -374,6 +376,115 @@ func (r *run) restoreSession(ctx context.Context, prev *runstore.Store, head str
 	}
 	r.d.Log.Info("session restored", "session", m.ID, "new_commits", len(moved))
 	return res
+}
+
+// prepareResume is a resumed run's bootstrap (R18, D3185): it reads the pause
+// the run it continues left in its own prefix, checks that this run's checkout
+// is the checkpoint that pause names, and puts the saved session in place, so
+// the run enters the stage the paused one was in rather than the first one.
+//
+// Every way the pause is not one this image can act on ends the run, named
+// (R18): a version it does not read, a record whose shape it cannot place, a
+// session that is not there, a head that is not the checkpoint. It never falls
+// back to a fresh session the way a follow-up does, and it never checks the
+// checkpoint out: what the paused run had half-done is in the session and the
+// commit alone, so a resume that cannot have both starts nothing at all. The
+// error it returns carries runstore.ErrInvalidPause, which is the name the run
+// ends with (Run's own bootstrap handling writes it to the record's reason).
+//
+// The pause record is written inside the paused run's job and is trusted
+// exactly as far as the run record a follow-up already trusts is, and no
+// further (R23, R26): every member of it that this run acts on — the version,
+// the stage, the session's name, the checkpoint — is checked by ReadPause and
+// by the restore below before anything is checked out, restored or started.
+func (r *run) prepareResume(ctx context.Context) error {
+	pausedID := r.spec.Resumes
+	paused := r.d.Store.Sibling(pausedID)
+	rec, err := paused.ReadPause(ctx)
+	if err != nil {
+		// ReadPause carries ErrInvalidPause itself for a record this image
+		// cannot read (a version, a member it cannot place, a member that is
+		// not what it must be). A run that never suspended has no record at
+		// all, and a resume of one is refused the same way: there is no pause
+		// to pick up, and starting the work afresh is not this run's to do.
+		return fmt.Errorf("resuming run %s: %w", pausedID, err)
+	}
+	// What the paused run worked from, read before anything is restored: a
+	// resume continues the chain's questions as well as its work. Suspending
+	// never ended a ruling — a run launched with `--owner-ruled` that paused
+	// mid-stage has an answer the owner has already given — and a resumed run
+	// whose reviewers were told nothing would mark the same finding needs_owner
+	// and stop on a settled question, while its own record, written with no
+	// ruling, would drop that answer for every run after it. The record is an
+	// object the paused run's own job wrote beside the pause, so a resume that
+	// cannot read it cannot say what it is continuing and refuses rather than
+	// continuing the work without the answers it was given (R18, R23).
+	prevRec, err := paused.ReadRecord(ctx)
+	if err != nil {
+		r.d.Log.Warn("reading the paused run's record failed", "paused_run", pausedID, "err", r.redact(err.Error()))
+		return fmt.Errorf("resuming run %s: %w: it has no readable record, so what it worked from cannot be read", pausedID, runstore.ErrInvalidPause)
+	}
+	r.inheritRulings(prevRec, pausedID)
+	if !gitprov.SameCommit(r.follow.startSHA, rec.Checkpoint) {
+		return fmt.Errorf("resuming run %s: %w: it paused at %s and %s is at %s, so this checkout is not the work in progress it pushed",
+			pausedID, runstore.ErrInvalidPause, rec.Checkpoint, r.spec.Branch, r.follow.startSHA)
+	}
+	res := r.restoreSession(ctx, paused, rec.Checkpoint)
+	if !res.Resumed {
+		return fmt.Errorf("resuming run %s: %w: %s", pausedID, runstore.ErrInvalidPause, res.Note)
+	}
+	if res.ID != rec.Session {
+		// The record names the session the paused run saved, and the session
+		// stored under its prefix is a different one: one of the two is not
+		// the work this run is meant to carry on, and neither is a guess this
+		// run may make (R18).
+		return fmt.Errorf("resuming run %s: %w: its pause names session %s and the session it saved is %s",
+			pausedID, runstore.ErrInvalidPause, rec.Session, res.ID)
+	}
+	stage, err := resumeStage(rec.Stage)
+	if err != nil {
+		return fmt.Errorf("resuming run %s: %w", pausedID, err)
+	}
+	r.follow.restored, r.follow.resumedStage = res, stage
+	// A resume reads no comment of the pull request (its prompt says so: it
+	// acts on its launch's instructions alone). The delimiters that would wrap
+	// one — and the ruling inherited above — still have to be a nonce this run
+	// chose: the builders refuse an empty one, so text from outside could never
+	// pass for the prose around a block, and a resume that emitted none would
+	// panic where it is read.
+	r.follow.nonce = followup.NewNonce()
+	// The record says what a follow-up's own record says (runstore.FollowUp):
+	// which session this run continued, and why. Its Comments stays zero — a
+	// resume reads no comment of the pull request and acts on its launch's
+	// instructions alone.
+	r.rec.FollowUp.Session, r.rec.FollowUp.SessionNote = "resumed", res.Note
+	// And the rulings this run works from, onto its own record (OD1): the pair
+	// the paused run held, behind whatever its own launch carried, which is
+	// what a later follow-up on this chain inherits (recordRuling,
+	// workingRulings). Written before the save so the record a reader finds
+	// while the run goes says the same as the briefs the agent is handed.
+	r.recordRuling()
+	r.save(ctx)
+	r.d.Log.Info("resuming the paused run", "paused_run", pausedID, "stage", stage, "session", res.ID, "checkpoint", rec.Checkpoint)
+	return nil
+}
+
+// resumeStage is the stage a resume enters: the stage the paused run was in,
+// when it is one this image can enter. Those are the runner's two work stages
+// and the review stages — the stages whose whole state is what the pause
+// names, the session the branch was worked in, the checkout at the commit it
+// pushed and the pull request's own diff — so entering one of them again is
+// carrying on the paused stage and not starting it afresh.
+func resumeStage(stage string) (string, error) {
+	switch {
+	case stage == "implement" || stage == "fix" || config.IsReviewStage(stage):
+		return stage, nil
+	}
+	// Anything else — a plan, a render, a digest, a finalize, a stage a later
+	// release adds — is a stage this image cannot enter from a standing start:
+	// what it had half-done lives in no record this release reads, and a run
+	// that started another stage instead would be the fresh start R18 refuses.
+	return "", fmt.Errorf("%w: the paused run was in stage %q, which this image cannot enter", runstore.ErrInvalidPause, stage)
 }
 
 // writeSessionFile writes data as session id's file through an os.Root on

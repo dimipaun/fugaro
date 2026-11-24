@@ -42,10 +42,10 @@ Fugaro also has a desktop console — a graphical `fugaro watch`, with live run 
 
 Then, in the repository's checkout:
 
-1. Run `fugaro setup` in your own terminal. It sets up the cloud side behind confirmations you type, asks for secrets at hidden prompts, and wires the Fugaro plugin into `.claude/settings.json`.
+1. Run `fugaro setup` in your own terminal. It sets up the cloud side behind confirmations you type, asks for secrets at hidden prompts, and installs the Fugaro plugin in your own Claude Code.
 2. Open Claude Code and run `/fugaro:setup`. It writes `fugaro.yaml` with you and opens a pull request; merge it, then run `fugaro setup` again to add the repository's job and first image build.
 
-Commit the `.claude/settings.json` change: a teammate who opens the folder in a new Claude Code session and trusts it should get the plugin installed; if the `/fugaro:` skills are not listed (for example the folder was already trusted), run `fugaro upgrade --local` in the checkout (it installs the plugin through the `claude` CLI), then restart the session (a repository's settings can install plugins, so only trust folders you trust), and one whom an owner made an operator, a person allowed to start runs (`fugaro setup --operator` once per operator; the flag replaces the list, so name the current ones too), needs only the CLI and `gcloud auth application-default login`, no `fugaro setup`. Then hand it work:
+The plugin is your machine's, not the repository's, so there is nothing to commit: a teammate whose Claude Code does not list the `/fugaro:` skills runs `fugaro update` (it installs the plugin through the `claude` CLI), then restarts the session, and one whom an owner made an operator, a person allowed to start runs (`fugaro setup --operator` once per operator; the flag replaces the list, so name the current ones too), needs only the CLI and `gcloud auth application-default login`, no `fugaro setup`. Then hand it work:
 
 ```sh
 fugaro run "add a --verbose flag to the export command"
@@ -58,7 +58,7 @@ Or ask your agent: the plugin's `working` skill launches, watches and diagnoses 
 
 ## Upgrading
 
-`brew upgrade dimipaun/tap/fugaro && fugaro upgrade`, in each checkout, in your own terminal. `fugaro upgrade` pins the plugin in `.claude/settings.json` to the new release (commit the diff), installs or updates it in Claude Code through the `claude` CLI (restart running sessions), and moves the repository's job images onto the release's base image. It asks at each cloud step; each is confirmed at your own real terminal, and a non-terminal session is refused with a sentence naming what to do. `--local` does the first two only, `--check` only reports (exit 1 when something is stale); in Claude Code `/fugaro:upgrade` does the local half and hands you the rest ([docs/upgrade/spec.md](docs/upgrade/spec.md)). If the project config (providers, model_prices, budget settings, the compute price override, the GitHub App ID) changed since the job was last deployed by `fugaro update --repo`, it also tells you to run `fugaro update --repo .` ([multi-model.md](docs/multi-model.md)); it never runs that itself.
+`brew upgrade dimipaun/tap/fugaro && fugaro update`, once, in your own terminal; there is no other step. `fugaro update` brings the installation to the new release, installs or updates the plugin in your own Claude Code through the `claude` CLI (restart running sessions), and moves the repository's job images onto the release's base image; a plugin pin an earlier release committed to a checkout is offered its removal as a diff, which you commit or not. It asks at each cloud step; each is confirmed at your own real terminal, and a non-terminal session is refused with a sentence naming what to do. `--check` only reports (exit 1 when something is stale); in Claude Code `/fugaro:update` does the local half and hands you the rest ([docs/upgrade/spec.md](docs/upgrade/spec.md)). If the project config (providers, model_prices, budget settings, the compute price override, the GitHub App ID) changed since the job was last deployed by `fugaro update --repo`, it also tells you to run `fugaro update --repo .` ([multi-model.md](docs/multi-model.md)); it never runs that itself.
 
 ## How it works
 

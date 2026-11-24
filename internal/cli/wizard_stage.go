@@ -379,8 +379,9 @@ func (s *wizardStage) ask(ctx context.Context) error {
 		return s.answer(err)
 	}
 	// An installation may already be there (one this machine has no project
-	// config for: the owner's second machine, or a teammate's). `setup` only
-	// starts fresh, so it refuses the ID before the name is asked and says
+	// config for: the owner's second machine, or a teammate's). `setup` adopts
+	// only a project that holds nothing of Fugaro's, so it refuses an ID that
+	// holds an installation before the name is asked and says
 	// which command reads that installation's config instead. `update` is that
 	// command: what it settles here is the name — the installation's own, so
 	// it is not asked — and its installation stage then writes this machine's
@@ -397,8 +398,9 @@ func (s *wizardStage) ask(ctx context.Context) error {
 			return nil
 		}
 	}
-	// The project: a first run of `setup` creates it (settleCreation). There
-	// is no question to ask: Fugaro only starts fresh.
+	// The project: a first run of `setup` makes it Fugaro's (settleCreation),
+	// creating it or adopting one that is already there and holds nothing of
+	// Fugaro's. There is no question to ask.
 	if err := r.settleCreation(true); err != nil {
 		return s.answer(err)
 	}

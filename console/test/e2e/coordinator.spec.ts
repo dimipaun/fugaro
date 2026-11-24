@@ -1,56 +1,50 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
-// The project view in a real window (Bitbucket credentials T1.2, D364; the
-// styling work's per-screen forced-colors smoke, design section 6.4).
+// The Coordinator tab as a graph of the project's active orchestrators (CG7b,
+// D3210; the read is C-ORCH's map document,
+// `docs/console-fixes/contract-orchestrators.md`).
 //
 // `coordinator.test.ts` holds the decoder and the screen against
 // `test/support/fakeDom.ts`, and `entry-wiring.test.ts` the wiring. This file is
-// the one place either of them meets a **browser**: the real CSP, the real entry
-// reading `coordinator status --from-store --all --json` from the stub CLI, and
-// the real stylesheet applied to the elements the screen draws. Two claims live
-// here and nowhere else:
+// the one place either of them meets a **browser**: the real CSP, the real
+// stylesheet applied to the elements the screen draws, and -- in the second
+// describe -- the real entry opening the tab.
 //
-//   1. **the console's own words are in the DOM**, and they are what the
-//      stylesheet's tones are redundant beside. `state unread`, `draft`,
-//      `in flight` and `no run behind it` are `literal`s the screen writes, so a
-//      unit case can read them off a fake tree -- but section 4.4 rule 1 is a
-//      claim about a reader who cannot see the tones, and the rule that paints
-//      those tones is in `screens.css`, which no unit case applies.
-//   2. **the rows keep their boundary when the author's colours are gone.** Every
-//      record, collision and unread row is separated by a `--rule-width` hairline
-//      in `--border` (design section 3.8), and a table drawn in hairlines alone
-//      becomes structureless the moment the author's colours go away -- which is
-//      what section 4.4 rule 2 is for. This screen adds **no arm** to the
-//      forced-colors block: its rows' boundary is a border of its own, and the
-//      claim is that the system's own pass leaves it there. The emulation is
-//      Chromium's, so this is the system's forced-colors pass and not a
-//      stylesheet pretending.
+// Three claims live here and nowhere else:
 //
-// **The project view's document is the stub's `coordinator status` answer.** The
-// stub beside this suite answers that read (`test/fixtures/bin/fugaro`,
-// `test/support/cliStub.ts`) with the committed
-// `test/fixtures/coordinator-status.json`, and `test/unit/cli-stub.test.ts`
-// holds that document to the console's own decoder -- so the view in this window
-// is a document the console reads rather than a shape invented in a spec. It
-// carries every word the first case reads: a draft pull request, a record in
-// flight with a run that has not finished, a record with no run behind it, and a
-// pull request whose host state no sweep could read.
+//   1. **the overlap is dashed in a browser's own answer.** An overlap edge and
+//      a dependency edge differ by a tone *and* by a dash, and the dash is the
+//      channel that survives forced colors (design sections 3.5 and 4.4 rule 2):
+//      `getComputedStyle(path).strokeDasharray` is the browser's reading of what
+//      the stylesheet asked for, and a unit case has no stylesheet at all.
+//   2. **the console's own words are in the DOM beside every tone**, and they
+//      stay there when the author's colours are gone. The overlap's count and
+//      its sentence are `literal`s the screen writes, so the tone is redundant
+//      by construction -- which is the whole of the reason this screen adds no
+//      arm to the forced-colors block.
+//   3. **the floor is a sentence and not a refusal** (F40). `orchestrator map`
+//      is registered from `ee/`, so a CLI below the release that carries it is
+//      answered with the console's own sentence naming that release -- and with
+//      **no read spawned at all**, which only a window running the real entry
+//      can show.
 //
-// **The goldens** are the second describe: `test/e2e/__screenshots__/coordinator/{light,dark}-<platform>.png`,
-// taken the way `spend.spec.ts` takes its own -- the compiled screen loaded out
-// of `dist/` into the window's own document and mounted into a host of this
-// spec's making, so what a golden frames is the screen and not the window's
-// entry beside it. The name is passed to `toHaveScreenshot` as an ARRAY
-// (`['coordinator', 'light.png']`), because Playwright sanitizes a STRING name
-// before `snapshotPathTemplate` applies and would flatten
-// `'coordinator/light.png'` into `__screenshots__/coordinator-light.png` beside
-// the Live screen's two files.
+// **The goldens** are the first describe:
+// `test/e2e/__screenshots__/coordinator/{light,dark}-<platform>.png`, taken the
+// way `graph.spec.ts` takes its own -- the compiled screen loaded out of `dist/`
+// into the window's own document, laid out by the **real** elk worker, and
+// mounted into a host of this spec's making, so what a golden frames is the
+// screen and not the window's entry beside it. The name is passed to
+// `toHaveScreenshot` as an ARRAY (`['coordinator', 'light.png']`), because
+// Playwright sanitizes a STRING name before `snapshotPathTemplate` applies and
+// would flatten `'coordinator/light.png'` into
+// `__screenshots__/coordinator-light.png` beside the Live screen's two files.
 //
-// Nothing on this screen moves or is read from a clock -- `COORDINATOR_NO_AGE_WORD`
-// is the console's own sentence about the time the stored view does not carry --
-// so the frame is a function of the committed document alone and needs no
-// emulation to freeze it. **No PNG is committed**, as for the other five
-// screens: macOS and Linux pixels differ, and the baselines are owner-run.
+// **No PNG is committed**, as for the other screens: macOS and Linux pixels
+// differ, and the baselines are owner-run. The document the goldens are drawn
+// from is written in this file rather than committed as a fixture: it is a
+// shape the contract names (`docs/console-fixes/contract-orchestrators.md`),
+// and the console's own decoder admits it in the window before the screen sees
+// it, so a frame of it is a frame of a document the console read.
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -59,27 +53,22 @@ import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
 import {
-  COORDINATOR_BLIND_WORD,
-  COORDINATOR_BUSY,
-  COORDINATOR_DESCRIPTION_CLASS,
-  COORDINATOR_DESCRIPTION_HEAD_CLASS,
-  COORDINATOR_DESCRIPTION_HIDE_WORD,
-  COORDINATOR_DESCRIPTION_LINE_CLASS,
-  COORDINATOR_DESCRIPTION_SHOW_WORD,
-  COORDINATOR_JOBS_FLOOR_WORD,
-  COORDINATOR_NO_AGE_WORD,
-  COORDINATOR_QUEUE_BUSY,
-  COORDINATOR_QUEUE_JOBS_WORD,
-  COORDINATOR_QUEUE_NO_PLANS_WORD,
+  COORDINATOR_EDGE_DEPENDS_CLASS,
+  COORDINATOR_EDGE_OVERLAP_CLASS,
+  COORDINATOR_FLOOR_AND_WORD,
+  COORDINATOR_FLOOR_CLASS,
+  COORDINATOR_FLOOR_VERSION,
+  COORDINATOR_FLOOR_VERSION_CLASS,
+  COORDINATOR_FLOOR_WORD,
+  COORDINATOR_FLOOR_WORD_CLASS,
+  COORDINATOR_HEALTH_CLASS,
+  COORDINATOR_SOURCE_CLASS,
   COORDINATOR_SOURCE_LINE,
   COORDINATOR_THEMES,
-  COORDINATOR_TOTAL_COLLISIONS_WORD,
-  COORDINATOR_TOTAL_IN_FLIGHT_WORD,
-  COORDINATOR_TOTAL_REPOS_WORD,
-  COORDINATOR_TRANSCRIPT_MISSING_WORD,
-  COORDINATOR_TRANSCRIPT_QUESTIONS,
-  COORDINATOR_TRANSCRIPT_WORD,
-  COORDINATOR_WINDOW_FLOOR_WORD,
+  COORDINATOR_TITLE,
+  COORDINATOR_TITLE_CLASS,
+  COORDINATOR_WARNING_CLASS,
+  COORDINATOR_WARNING_COUNT_CLASS,
 } from '../../src/renderer/screens/coordinator'
 import { CLI_VERSION_BUILT_AGAINST } from '../../src/shared/version'
 import { inRangeCliStub } from '../support/cliStub'
@@ -89,11 +78,6 @@ import { launchConsole } from '../support/launch'
 
 // `test/e2e/x.spec.ts` is two levels below the console's own directory.
 const consoleDir = join(__dirname, '..', '..')
-
-/** COORDINATOR_FIXTURE is the committed `coordinator status --from-store --all
- * --json` document: the stub's own answer, and the document this spec's goldens
- * are drawn from. */
-const COORDINATOR_FIXTURE = join(consoleDir, 'test', 'fixtures', 'coordinator-status.json')
 
 /** THE_MOUNT is where the golden describe draws the screen, and therefore what
  * its goldens frame: the mount and never the page (see the header). */
@@ -117,19 +101,58 @@ const SKIP_GOLDENS = process.env['FUGARO_CONSOLE_GOLDENS'] === 'skip'
  * every golden failure here quotes back to the reader. */
 const SPEC = 'coordinator.spec.ts'
 
+/**
+ * MAP is the document the goldens are drawn from: the project's own
+ * orchestrator and a named one, each driven, joined by a dependency one way and
+ * an overlap the other, with the sweep on and a heartbeat. It is written from
+ * the contract's own table rather than recorded, so the two readings a screen
+ * turns on are both in it: the default orchestrator's empty `name` (drawn as the
+ * **project's** own name) and a lease with no readable stamp (`null`, which is
+ * not a zero).
+ */
+const MAP = {
+  version: 1,
+  project: 'repo-a',
+  generated_at: '2026-11-22T10:00:00Z',
+  nodes: [
+    {
+      id: 'repo-a',
+      name: '',
+      driver: 'person-1',
+      active_tasks: 2,
+      running_jobs: 1,
+      lease_age_seconds: 90,
+    },
+    {
+      id: 'repo-a~auth',
+      name: 'auth',
+      driver: 'person-2',
+      active_tasks: 0,
+      running_jobs: 3,
+      lease_age_seconds: null,
+    },
+  ],
+  edges: [
+    { from: 'repo-a~auth', to: 'repo-a', kind: 'dependency', reason: '' },
+    { from: 'repo-a', to: 'repo-a~auth', kind: 'overlap', reason: 'both touch src/auth' },
+  ],
+  health: {
+    sweep: true,
+    started_at: '2026-11-22T09:59:00Z',
+    ok_at: '2026-11-22T09:59:30Z',
+    at: '2026-11-22T10:00:00Z',
+    note: '',
+  },
+}
+
 /** The compiled modules the screen is made of, in dependency order: the screen,
- * the writers in `renderer/app.js`, and the shared modules those reach.
- * `renderer/section.js` is here because the screen's body is a section: it draws
- * its busy mark, its skeleton and its stamp through that helper, and the helper
- * requires the reading words and the skeleton shapes beside it.
- * `shared/schema.js` is here because the fixture is decoded in the window rather
- * than in this file: the screen is handed a document the console's own decoder
- * admitted, which is the shape the entry hands it. `renderer/screens/spend.js`
- * is here because K1's queue reads a budget document beside the screen's own:
- * the rules that decide whether a repository is at its cap are the Spend
- * screen's, and importing them is what keeps one reading of a cap in the
- * console rather than two. Nothing else may be
- * reachable -- the registry below refuses a specifier that is not a relative
+ * the writers in `renderer/app.js`, the layout client whose worker places the
+ * boxes, the section helper the screen's mark goes up through (with the reading
+ * words and the skeleton shapes it requires), and the shared modules those
+ * reach. `shared/schema.js` is here because the document is decoded in the
+ * window rather than in this file: the screen is handed a document the console's
+ * own decoder admitted, which is the shape the entry hands it. Nothing else may
+ * be reachable -- the registry below refuses a specifier that is not a relative
  * path, so a bundle that grew an import of `node:` or of a package fails here
  * rather than in a window with no Node in it. */
 const MODULES: readonly string[] = Object.freeze([
@@ -143,7 +166,7 @@ const MODULES: readonly string[] = Object.freeze([
   'renderer/skeleton.js',
   'renderer/screens/reading.js',
   'renderer/section.js',
-  'renderer/screens/spend.js',
+  'renderer/graph/layout-client.js',
   'renderer/screens/coordinator.js',
 ])
 
@@ -182,9 +205,11 @@ function load(path) {
 }
 `
 
-/** FACTORY is a DOM-backed `ScreenFactory`: one wrapper per element, so the
- * screen's own narrow interface is served by a real node. `node` is the
- * harness's handle on the element and is never visible to the screen. */
+/** FACTORY is a DOM-backed `CoordinatorFactory`: one wrapper per element, so the
+ * screen's own narrow interface is served by a real node, in the namespace the
+ * tag needs -- the picture is SVG geometry, and `createNS` is the second method
+ * this screen's factory has. `node` is the harness's handle on the element and
+ * is never visible to the screen. */
 const FACTORY = `
 function domFactory() {
   var wrappers = new Map();
@@ -211,178 +236,48 @@ function domFactory() {
   }
   return {
     create: function (tag) { return wrap(document.createElement(tag)); },
+    createNS: function (tag) { return wrap(document.createElementNS('http://www.w3.org/2000/svg', tag)); },
     wrap: wrap,
   };
 }
 `
 
-/** draw is the expression the window evaluates: decode the committed fixture
- * through the console's own door, build the panels from it, and mount what the
- * screen draws. */
+/** draw is the expression the window evaluates: decode the document through the
+ * console's own door, lay it out with the real worker, and mount what the screen
+ * draws. It answers a promise, because the layout is the worker's:
+ * `executeJavaScript` waits for it. */
 function draw(theme: string): string {
-  const document = JSON.parse(readFileSync(COORDINATOR_FIXTURE, 'utf8')) as unknown
   return `(function () {
 ${LOADER}${MODULES.map(moduleSource).join('\n')}${FACTORY}
 var schema = load('/shared/schema.js');
 var coordinator = load('/renderer/screens/coordinator.js');
-var decoded = schema.decodeCoordinatorStatus(${JSON.stringify(document)}, 'the committed coordinator document');
-if (!decoded.ok) return { error: 'the decoder refused the fixture: ' + decoded.skew.because };
+var decoded = schema.decodeOrchestratorMap(${JSON.stringify(MAP)});
+if (!decoded.ok) return Promise.resolve({ error: 'the decoder refused the document: ' + decoded.skew.because });
 var factory = domFactory();
-var model = coordinator.buildCoordinatorModel({ view: decoded.value, runs: null, plans: null, caps: null, intents: null, summary: null, checkout: true, capsHidden: false });
-var tree = coordinator.renderCoordinator(factory, model, ${JSON.stringify(theme)});
-var previous = document.getElementById('coordinator-mount');
-if (previous) previous.remove();
-var host = document.createElement('div');
-host.id = 'coordinator-mount';
-host.appendChild(tree.node);
-document.body.appendChild(host);
-return { mounted: true };
+var screen = coordinator.coordinatorScreen(factory, ${JSON.stringify(theme)});
+return screen.load(decoded.value).then(function (drawn) {
+  if (drawn === null) return { error: 'the screen answered no drawing for the document' };
+  var previous = document.getElementById('coordinator-mount');
+  if (previous) previous.remove();
+  var host = document.createElement('div');
+  host.id = 'coordinator-mount';
+  host.appendChild(drawn.node);
+  document.body.appendChild(host);
+  return {
+    theme: drawn.node.getAttribute('data-theme'),
+    nodes: host.querySelectorAll('g.coordinator-node').length,
+    edges: host.querySelectorAll('path.coordinator-edge').length,
+    canvas: host.querySelectorAll('svg.coordinator-graph').length,
+  };
+});
 })()`
 }
 
-/** NAV_COORDINATOR is the navigation's own door to this view. */
-const NAV_COORDINATOR = 'nav.console-views button.console-view[data-view="coordinator"]'
-
-/** SCREEN is the project view's root: drawn once the read's document has been
- * decoded, so its arrival is the whole chain -- the stub's document, the entry's
- * read and the screen -- rather than a screen with nothing in it. */
-const SCREEN = 'section.coordinator'
-
-/** RECORD is one record's row: the element whose hairline is the boundary the
- * forced-colors case is about. */
-const RECORD = 'li.coordinator-record'
-
-/** REPO is one repository's panel, and its four step-7 parts: the head row (the
- * name and the source line), the counter strip (three labelled cells) and the
- * marked cell of a repository whose records collide. */
-const REPO = 'section.coordinator-repo'
-const REPO_HEAD = `${REPO} div.coordinator-repo-head`
-const COUNTS = `${REPO} div.coordinator-counts`
-const COUNT_ALERT = `${COUNTS} .coordinator-count-alert`
-
-/**
- * rowBoundary is one element's computed bottom border: the browser's own answer
- * to what the stylesheet asked for, and the thing section 4.4 rule 2 promises
- * survives forced colors.
- */
-async function rowBoundary(page: Page, selector: string): Promise<{ readonly width: string; readonly style: string }> {
-  return page.locator(selector).first().evaluate((element) => {
-    const computed = getComputedStyle(element)
-    return { width: computed.borderBottomWidth, style: computed.borderBottomStyle }
-  })
+/** strokeDash is one element's computed `stroke-dasharray`: the browser's own
+ * answer to what the stylesheet asked for. */
+async function strokeDash(page: Page, selector: string): Promise<string> {
+  return page.locator(selector).first().evaluate((element) => getComputedStyle(element).strokeDasharray)
 }
-
-test.describe('the project view in a window', () => {
-  let app: ElectronApplication
-  let page: Page
-  let cli: CliStub
-
-  test.beforeAll(async () => {
-    // A scratch profile with the stub as the active installation, as the other
-    // dashboard specs do: without one the window opens on the picker and there
-    // is no view to open. The document needs no seeding of its own -- the stub
-    // carries the committed one -- and no checkout either: this read names no
-    // directory (unlike `plan status --json`), because the stored view is a
-    // database read for every repository the installation's config lists.
-    cli = inRangeCliStub()
-    cli.seedActiveInstallation()
-    app = await launchConsole({ args: cli.launchArgs(consoleDir), env: cli.env })
-    page = await app.firstWindow()
-    await page.waitForLoadState('domcontentloaded')
-    await page.locator(NAV_COORDINATOR).click()
-    await page.locator(SCREEN).waitFor()
-    await page.locator(RECORD).first().waitFor()
-  })
-
-  test.afterAll(async () => {
-    await app?.close()
-    cli.remove()
-  })
-
-  test('draws the console’s own words beside every tone the stylesheet paints', async () => {
-    // A word and not a tone: section 3.5's never-colour-alone rule, and the
-    // reason this screen adds no arm to the forced-colors block at all. Each
-    // word is the console's own `literal`, so what this case reads is what the
-    // screen wrote and not a class the stylesheet invented.
-    const words = await page.locator(`${SCREEN} span`).allTextContents()
-    expect(words).toContain('draft')
-    expect(words).toContain('in flight')
-    expect(words).toContain('no run behind it')
-    expect(words).toContain('state unread')
-
-    // And each one is in the element the stylesheet's tone is written on, so the
-    // tone is redundant beside it rather than the other way round.
-    for (const [hook, word] of [
-      ['coordinator-record-draft', 'draft'],
-      ['coordinator-record-noruns', 'no run behind it'],
-      ['coordinator-unread-word', 'state unread'],
-    ] as const) {
-      await expect(page.locator(`span.${hook}`).first()).toHaveText(word)
-    }
-    // `in flight` is two readings and one word: the record's own state, and the
-    // run that has not finished. The document carries one of each.
-    await expect(page.locator('span.coordinator-record-flight').first()).toHaveText('in flight')
-    await expect(page.locator('span.coordinator-run-open').first()).toHaveText('in flight')
-  })
-
-  test('opens every repository panel with a head row and a counter strip', async () => {
-    // Console redesign, step 7. The head row is the panel's first element -- the
-    // repository's name and which view the node is, above every figure -- and the
-    // strip under it is three labelled cells. Both are read off the live tree,
-    // because what this case is about is the drawing and not the stylesheet.
-    const panels = await page.locator(REPO).all()
-    expect(panels.length, 'the committed document draws no repository panel').toBeGreaterThan(0)
-    for (const panel of panels) {
-      const head = panel.locator('div.coordinator-repo-head')
-      await expect(head).toHaveCount(1)
-      // `:scope >` and `:first-child` and not a descendant read: the head has to
-      // be the panel's own first child, which is what "opens with it" means.
-      await expect(panel.locator(':scope > div.coordinator-repo-head:first-child')).toHaveCount(1)
-      await expect(head.locator(':scope > h2.coordinator-repo-name:first-child')).toHaveCount(1)
-      await expect(head.locator(':scope > p.coordinator-repo-state')).toHaveCount(1)
-      await expect(panel.locator('div.coordinator-counts > span.coordinator-count')).toHaveCount(3)
-    }
-
-    // The strip is the console's own three words beside the console's own three
-    // figures, and the word is what says which count each cell is.
-    const words = await page.locator(`${COUNTS} span.coordinator-count-word`).allTextContents()
-    expect(words).toContain('records')
-    expect(words).toContain('in flight')
-    expect(words).toContain('collisions')
-
-    // The strip's one state: the committed document's first repository has a
-    // collision and the second has none, so exactly one cell is marked -- and the
-    // word `collisions` is inside it, which is what makes the tone redundant.
-    await expect(page.locator(COUNT_ALERT)).toHaveCount(1)
-    await expect(page.locator(`${COUNT_ALERT} span.coordinator-count-word`)).toHaveText('collisions')
-  })
-
-  test('keeps the rows’ boundary when forced colors is active', async () => {
-    // The authored boundary first, so the case below is about what forced colors
-    // does to it rather than about a row that never had one.
-    const authored = await rowBoundary(page, RECORD)
-    expect(authored.style).not.toBe('none')
-    expect(authored.width).not.toBe('0px')
-
-    await page.emulateMedia({ forcedColors: 'active' })
-    try {
-      // Section 4.4 rule 2: a panel keeps a boundary. This screen writes no arm
-      // for its rows, so what is asserted is the system's own pass -- the
-      // hairline is still a hairline of a non-zero width once every colour this
-      // file names is gone.
-      const forced = await rowBoundary(page, RECORD)
-      expect(forced.style).not.toBe('none')
-      expect(forced.width).not.toBe('0px')
-      // And the words are still there beside it: the two halves of the smoke are
-      // the same claim -- the structure survives, and what the structure says is
-      // still readable.
-      await expect(page.locator('span.coordinator-record-draft').first()).toHaveText('draft')
-      await expect(page.locator('span.coordinator-unread-word').first()).toHaveText('state unread')
-    } finally {
-      await page.emulateMedia({ forcedColors: 'none' })
-    }
-  })
-})
 
 test.describe('the Coordinator screen', () => {
   // One window, and the tests in order: each draws the screen it is about into
@@ -395,9 +290,10 @@ test.describe('the Coordinator screen', () => {
   let cli: CliStub
 
   test.beforeAll(async () => {
-    // A scratch profile with the stub as the active installation, as the cases
-    // above: without one the window opens on the picker and the document this
-    // spec mounts into would be a document with no stylesheet to paint it.
+    // A scratch profile with the stub as the active installation, as the other
+    // dashboard specs do: without one the window opens on the picker and the
+    // document this spec mounts into would be a document with no stylesheet to
+    // paint it.
     cli = inRangeCliStub()
     cli.seedActiveInstallation()
     app = await launchConsole({ args: cli.launchArgs(consoleDir), env: cli.env })
@@ -410,8 +306,8 @@ test.describe('the Coordinator screen', () => {
     cli.remove()
   })
 
-  /** mount draws the committed fixture in one theme and fails with the window's
-   * own words if the bundle could not be loaded or the screen refused to draw. */
+  /** mount draws the document in one theme and fails with the window's own words
+   * if the bundle could not be loaded or the screen refused to draw. */
   async function mount(theme: string): Promise<void> {
     const result = (await app.evaluate(async ({ BrowserWindow }, source) => {
       const window = BrowserWindow.getAllWindows()[0]
@@ -421,22 +317,27 @@ test.describe('the Coordinator screen', () => {
     expect(result.error).toBeUndefined()
   }
 
-  /** drawn reads what the mount holds back out of the live document: the theme
-   * the screen stamped, and the two things a frame of it has to contain. */
-  async function drawn(): Promise<{ readonly theme: string | null; readonly repos: number; readonly records: number }> {
+  /** drawn reads what the mount holds back out of the live document. */
+  async function drawn(): Promise<{
+    readonly theme: string | null
+    readonly nodes: number
+    readonly edges: number
+    readonly canvas: number
+  }> {
     return page.evaluate(() => {
       const scope: ParentNode = document.getElementById('coordinator-mount') ?? document.createDocumentFragment()
       return {
         theme: scope.querySelector('section.coordinator')?.getAttribute('data-theme') ?? null,
-        repos: scope.querySelectorAll('section.coordinator-repo').length,
-        records: scope.querySelectorAll('li.coordinator-record').length,
+        nodes: scope.querySelectorAll('g.coordinator-node').length,
+        edges: scope.querySelectorAll('path.coordinator-edge').length,
+        canvas: scope.querySelectorAll('svg.coordinator-graph').length,
       }
     })
   }
 
   test('is painted from the design tokens, not from the browser defaults', async () => {
-    // The same computed-ground assertion the other five screens' specs make, and
-    // the one case here that is red when the stylesheet stops being linked: the
+    // The same computed-ground assertion the other screens' specs make, and the
+    // one case here that is red when the stylesheet stops being linked: the
     // theme travels as a `data-theme` attribute the renderer stamps, so every
     // read above passes on a tree nothing paints.
     //
@@ -446,20 +347,66 @@ test.describe('the Coordinator screen', () => {
     await expectGrounded(page, (theme) => mount(theme), {
       themes: COORDINATOR_THEMES,
       mount: THE_MOUNT,
-      text: 'h2.coordinator-repo-name',
+      text: `h1.${COORDINATOR_TITLE_CLASS}`,
       screen: 'the Coordinator screen',
     })
+  })
+
+  test('draws the two orchestrators as boxes the worker placed, with both edges', async () => {
+    // The worker's answer first: the document has two nodes and two edges, and a
+    // frame that drew the fallback list instead would be a golden of the
+    // console's own sentence about a layout that did not arrive.
+    await mount('light')
+    const light = await drawn()
+    expect(light.theme).toBe('light')
+    expect(light.nodes, 'the worker placed no box').toBe(2)
+    expect(light.edges, 'the worker routed no edge').toBe(2)
+    expect(light.canvas, 'the canvas is not the drawing').toBe(1)
+
+    // The dependency is solid and the overlap is dashed: the design's two
+    // channels, read out of the browser rather than out of the source.
+    expect(await strokeDash(page, `.${COORDINATOR_EDGE_DEPENDS_CLASS}`)).toBe('none')
+    expect(await strokeDash(page, `.${COORDINATOR_EDGE_OVERLAP_CLASS}`)).not.toBe('none')
+
+    // And the overlap is drawn **twice**: the dashed edge, and the console's own
+    // count and sentence above the canvas -- because a dash is a tone, and no
+    // reading on this screen is a tone alone (design section 3.5).
+    await expect(page.locator(`.${COORDINATOR_WARNING_CLASS}`)).toHaveCount(1)
+    await expect(page.locator(`.${COORDINATOR_WARNING_COUNT_CLASS}`)).toHaveText('1')
+    // The health line is above the canvas and is drawn from the document: the
+    // sweep's own state and the beat it last woke at.
+    await expect(page.locator(`.${COORDINATOR_HEALTH_CLASS}`)).toHaveCount(1)
+  })
+
+  test('keeps the overlap’s dash, and its words, when forced colors is active', async () => {
+    // Section 4.4 rule 2. This screen writes no arm for the overlap: what is
+    // asserted is the system's own pass over a rule of this file's, and the dash
+    // is the channel it leaves alone -- a colour it takes away, a
+    // `stroke-dasharray` it does not.
+    const authored = await strokeDash(page, `.${COORDINATOR_EDGE_OVERLAP_CLASS}`)
+    expect(authored).not.toBe('none')
+
+    await page.emulateMedia({ forcedColors: 'active' })
+    try {
+      expect(await strokeDash(page, `.${COORDINATOR_EDGE_OVERLAP_CLASS}`)).toBe(authored)
+      // And the words are still there beside it: the two halves of the smoke are
+      // the same claim -- the structure survives, and what the structure says is
+      // still readable.
+      await expect(page.locator(`.${COORDINATOR_WARNING_CLASS}`)).toHaveCount(1)
+      await expect(page.locator(`.${COORDINATOR_WARNING_COUNT_CLASS}`)).toHaveText('1')
+    } finally {
+      await page.emulateMedia({ forcedColors: 'none' })
+    }
   })
 
   test('draws the coordinator screen', async ({}, testInfo) => {
     await mount('light')
     // The frame is worth recording only if the document reached it: the screen
-    // draws an empty-state sentence when the installation lists no repository,
-    // which would be a golden of a sentence.
+    // draws the console's own sentence about a quiet project when the map holds
+    // no node, which would be a golden of a sentence.
     const light = await drawn()
     expect(light.theme).toBe('light')
-    expect(light.repos, 'the committed document draws no repository panel').toBeGreaterThan(0)
-    expect(light.records, 'the committed document draws no record row').toBeGreaterThan(0)
+    expect(light.nodes, 'the worker placed no box').toBeGreaterThan(0)
     test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
     await expectGolden(page.locator(THE_MOUNT), GOLDEN_NAMES.light, { spec: SPEC, consoleDir, testInfo })
   })
@@ -468,7 +415,7 @@ test.describe('the Coordinator screen', () => {
     await mount('dark')
     const dark = await drawn()
     expect(dark.theme).toBe('dark')
-    expect(dark.repos, 'the committed document draws no repository panel').toBeGreaterThan(0)
+    expect(dark.nodes, 'the worker placed no box').toBeGreaterThan(0)
     test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
     await expectGolden(page.locator(THE_MOUNT), GOLDEN_NAMES.dark, { spec: SPEC, consoleDir, testInfo })
   })
@@ -503,7 +450,7 @@ test.describe('the Coordinator screen', () => {
 })
 
 // ---------------------------------------------------------------------------
-// The Coordinator view in the dashboard, reading through the stub CLI.
+// The Coordinator tab in the dashboard, opened by the real entry.
 // ---------------------------------------------------------------------------
 
 /** THE_PANEL is the dashboard's own panel, which is where this view is drawn:
@@ -511,20 +458,36 @@ test.describe('the Coordinator screen', () => {
  * bare `section.coordinator` would be ambiguous between the two. */
 const THE_PANEL = 'div.console-panel'
 
-/** THE_VIEW is the dashboard's Coordinator view, and the scope every reading
+/** THE_VIEW is the dashboard's Coordinator tab, and the scope every reading
  * below is taken in. */
 const THE_VIEW = `${THE_PANEL} section.coordinator`
-
-/** THE_BODY is the section the read belongs to: the element the busy mark is put
- * on, and the one the summary and each repository's detail are filled into. */
-const THE_BODY = `${THE_VIEW} div.coordinator-body`
 
 /** tab is one button of the dashboard's navigation. */
 function tab(view: string): string {
   return `nav.console-views button.console-view[data-view="${view}"]`
 }
 
-test.describe('the Coordinator view in the dashboard', () => {
+/**
+ * THE_V2_HOOKS are the hooks D3210 removed with the tab's four reads: the action
+ * queue, the fleet's totals, the job list and the transcript, plus the stored
+ * view's own rows. They are asserted absent in a real window, which is where a
+ * leftover drawing would be visible -- a unit case reads the tree the screen
+ * built, and a rule or a markup kept in `entry.ts` beside it would not be in it.
+ */
+const THE_V2_HOOKS: readonly string[] = Object.freeze([
+  'section.coordinator-queue',
+  'section.coordinator-totals',
+  'section.coordinator-jobs',
+  'section.coordinator-transcript',
+  'div.coordinator-body',
+  'div.coordinator-detail',
+  'li.coordinator-record',
+  'p.coordinator-age',
+  'li.coordinator-job',
+  'li.coordinator-queue-item',
+])
+
+test.describe('the Coordinator tab in the dashboard', () => {
   test.describe.configure({ mode: 'serial' })
 
   let app: ElectronApplication
@@ -532,9 +495,6 @@ test.describe('the Coordinator view in the dashboard', () => {
   let cli: CliStub
 
   test.beforeAll(async () => {
-    // A window of its own, and **the first visit to this tab in it**: the second
-    // visit inside five minutes is served from the session cache and paints at
-    // once, which is the state the case below is not about.
     cli = inRangeCliStub()
     cli.seedActiveInstallation()
     app = await launchConsole({ args: cli.launchArgs(consoleDir), env: cli.env })
@@ -547,303 +507,84 @@ test.describe('the Coordinator view in the dashboard', () => {
     cli.remove()
   })
 
-  test('draws what is true before the answer in the frame the tab was opened in, and fills the body after', async () => {
-    // **The click's own frame.** The read behind this view is the longest of the
-    // three tabs -- about 724 KB on the owner's installation -- so a screen that
-    // waited for it answered a click with nothing at all (the owner's report of
-    // 2026-10-31). What is asserted here is read from the frame the click
-    // happened in, before any answer can have arrived: the header the screen can
-    // state without a document, the mark naming the read, the shape that is
-    // coming, and the absence of every record.
+  test('draws the floor sentence in the click’s own frame, and spawns no read', async () => {
+    // **The click's own frame.** What is asserted here is read from the frame the
+    // click happened in, before any answer could have arrived: the header the
+    // screen can state without a document, and the console's own sentence naming
+    // the release `orchestrator map` arrives in.
+    //
+    // This window's CLI is in range but below that floor -- `ORCHESTRATOR_MAP_
+    // CLI_FLOOR` is unset until a release carries the command -- so the tab is
+    // the header and the sentence and **nothing else**: no busy mark (there is no
+    // read), no skeleton (no shape is coming), no canvas and no refusal, because
+    // a read that was never made has no sentence of its own (F40).
     const inTheFrame = await page.evaluate(
-      ({ button: selector, view: viewSelector, body: bodySelector }) => {
-        document.querySelector<HTMLElement>(selector)?.click()
-        const view = document.querySelector(viewSelector)
-        const body = document.querySelector(bodySelector)
+      ({ button, view }) => {
+        document.querySelector<HTMLElement>(button)?.click()
+        const drawn = document.querySelector(view)
         return {
-          mounted: view !== null,
-          // The two sentences drawn before the read answers: which command the
-          // panel is reading, and that the console claims no age for the view.
-          source: view?.querySelector('p.coordinator-source')?.textContent ?? null,
-          age: view?.querySelector('p.coordinator-age')?.textContent ?? null,
-          busy: body?.getAttribute('aria-busy') ?? null,
-          marked: body?.hasAttribute('data-busy') ?? null,
-          label: body?.querySelector('.console-busy-label')?.textContent ?? null,
-          spinner: body?.querySelector('.console-busy-spinner') !== null,
-          skeleton: body?.querySelector('.console-skeleton') !== null,
-          records: view?.querySelectorAll('li.coordinator-record').length ?? -1,
-          // K1: the queue is a section of its own, and it wears its own mark in
-          // this same frame -- the three reads behind it were started in this
-          // turn, and none of them is waiting on another.
-          queue: view?.querySelector('section.coordinator-queue')?.getAttribute('aria-busy') ?? null,
-          queueLabel: view?.querySelector('section.coordinator-queue .console-busy-label')?.textContent ?? null,
-          queueItems: view?.querySelectorAll('li.coordinator-queue-item').length ?? -1,
+          mounted: drawn !== null,
+          title: drawn?.querySelector('h1.coordinator-title')?.textContent ?? null,
+          source: drawn?.querySelector('p.coordinator-source')?.textContent ?? null,
+          floor: drawn?.querySelector('p.coordinator-floor')?.textContent ?? null,
+          floorWord: drawn?.querySelector('span.coordinator-floor-word')?.textContent ?? null,
+          floorVersion: drawn?.querySelector('span.coordinator-floor-version')?.textContent ?? null,
+          busyLabels: drawn?.querySelectorAll('.console-busy-label').length ?? -1,
+          slots: drawn?.querySelectorAll('div.console-busy-slot').length ?? -1,
+          skeletons: drawn?.querySelectorAll('.console-skeleton').length ?? -1,
+          canvas: drawn?.querySelectorAll('svg.coordinator-graph').length ?? -1,
+          boxes: drawn?.querySelectorAll('g.coordinator-node').length ?? -1,
+          refusals: drawn?.querySelectorAll('.unavailable-operation').length ?? -1,
+          destinations: drawn?.querySelectorAll('a').length ?? -1,
         }
       },
-      { button: tab('coordinator'), view: THE_VIEW, body: THE_BODY },
+      { button: tab('coordinator'), view: THE_VIEW },
     )
     expect(inTheFrame).toEqual({
       mounted: true,
+      title: COORDINATOR_TITLE,
       source: COORDINATOR_SOURCE_LINE,
-      age: COORDINATOR_NO_AGE_WORD,
-      busy: 'true',
-      marked: true,
-      label: COORDINATOR_BUSY,
-      spinner: true,
-      skeleton: true,
-      records: 0,
-      queue: 'true',
-      queueLabel: COORDINATOR_QUEUE_BUSY,
-      queueItems: 0,
+      floor: `${COORDINATOR_FLOOR_WORD}${COORDINATOR_FLOOR_VERSION}${COORDINATOR_FLOOR_AND_WORD}${CLI_VERSION_BUILT_AGAINST}`,
+      floorWord: COORDINATOR_FLOOR_WORD,
+      floorVersion: COORDINATOR_FLOOR_VERSION,
+      busyLabels: 0,
+      slots: 0,
+      skeletons: 0,
+      canvas: 0,
+      boxes: 0,
+      refusals: 0,
+      destinations: 0,
     })
-
-    // Then the body: the summary and the records the stub's committed document
-    // carries, filled into the same section, under the header that was already
-    // there.
-    await expect(page.locator(`${THE_VIEW} li.coordinator-record`).first()).toBeVisible()
-    await expect(page.locator(`${THE_VIEW} div.coordinator-detail`).first()).toBeVisible()
-    await expect(page.locator(THE_BODY)).not.toHaveAttribute('aria-busy', 'true')
-    await expect(page.locator(`${THE_VIEW} p.coordinator-source`)).toHaveText(COORDINATOR_SOURCE_LINE)
-  })
-
-  test('names every gap in the queue, and draws no figure for a read that did not answer', async () => {
-    // K1, in the state this stub puts the screen in: `coordinator status` is
-    // answered from the committed document, while the two reads no fixture was
-    // seeded for -- `runs ls`, which this stub does not answer at all, and
-    // `budget show` -- refuse, and the installation records no checkout, so the
-    // plan read is not made at all. What the queue has to do with that is say
-    // which part is which, part by part, rather than let one read's silence
-    // stand in for another's answer.
-    //
-    // The jobs are the one part this stub's first paint does not read: rule 5
-    // keeps `runs ls` out of a first paint, so its part carries the console's
-    // own button until a reader presses it. Both halves are read here: the
-    // refusal the button's press brings, and the four parts the first paint
-    // drew without it.
-    //
-    // What this case does NOT read is what the item buttons do: that is
-    // `entry-wiring.test.ts`'s, where the launch confirmation's fields can be
-    // read without a window (the queue is drawn here from a fixture with no run
-    // list, so it holds no job to retry).
-    const queue = page.locator(`${THE_VIEW} section.coordinator-queue`)
-    const totals = page.locator(`${THE_VIEW} section.coordinator-totals`)
-    await expect(queue).toHaveCount(1)
-    await expect(queue.locator('div.coordinator-queue-part')).toHaveCount(4)
-    await expect(queue).not.toHaveAttribute('aria-busy', 'true')
-
-    // Each refusal names its own command, and the one that answered keeps what
-    // it drew: a refusal is a part of the queue and not the whole of it. The
-    // jobs are not refused here -- they have not been read yet.
-    await expect(queue.locator('div.coordinator-queue-part .unavailable-operation')).toHaveText([
-      'budget.show',
+    await expect(page.locator(`.${COORDINATOR_TITLE_CLASS}`)).toHaveText(COORDINATOR_TITLE)
+    await expect(page.locator(`.${COORDINATOR_SOURCE_CLASS}`)).toHaveText(COORDINATOR_SOURCE_LINE)
+    // The sentence is four runs and two of its classes repeat: the console's own
+    // word, the release the read needs, the word joining the two, and the CLI in
+    // hand -- which is the version the handshake answered.
+    await expect(page.locator(`.${COORDINATOR_FLOOR_WORD_CLASS}`)).toHaveText([
+      COORDINATOR_FLOOR_WORD,
+      COORDINATOR_FLOOR_AND_WORD,
     ])
-
-    // The part the jobs will fill draws the console's own button instead, saying
-    // that the ask has not been made. Its press is what reads `runs ls`.
-    const jobs = queue.locator('button.coordinator-queue-jobs')
-    await expect(jobs).toHaveText(COORDINATOR_QUEUE_JOBS_WORD)
-    await expect(jobs).toHaveAttribute('aria-expanded', 'false')
-    await jobs.click()
-    await expect(queue.locator('div.coordinator-queue-part .unavailable-operation')).toHaveText([
-      'runs.list',
-      'budget.show',
+    await expect(page.locator(`.${COORDINATOR_FLOOR_VERSION_CLASS}`)).toHaveText([
+      COORDINATOR_FLOOR_VERSION,
+      CLI_VERSION_BUILT_AGAINST,
     ])
-    await expect(queue.locator('button.coordinator-queue-jobs')).toHaveCount(0)
-
-    // The plan read was not made -- the command walks a checkout this
-    // installation does not record -- so its part says so rather than drawing a
-    // queue of zero ready tasks.
-    await expect(queue.locator('p.coordinator-queue-note')).toHaveText(COORDINATOR_QUEUE_NO_PLANS_WORD)
-
-    // And the head says nothing at all: no count, and no "nothing is waiting"
-    // either, because a queue whose parts refused is not a queue that holds
-    // nothing. The count is the console's own figure and is drawn only over a
-    // whole queue.
-    await expect(queue.locator('span.coordinator-queue-count')).toHaveText('')
-    await expect(queue.locator('span.coordinator-queue-empty')).toHaveText('')
-
-    // The queue's own rule: one item, one button. A part with no item has no
-    // button, which is the same claim from the other side.
-    const items = await queue.locator('li.coordinator-queue-item').all()
-    for (const item of items) await expect(item.locator('button.coordinator-queue-button')).toHaveCount(1)
-
-    // The blind-spot line is the console's own words with no control on it
-    // (D813), and the figure it draws is a count of the document: the unread
-    // pull requests it says it cannot read are the rows drawn in the panels.
-    const blind = queue.locator('p.coordinator-blind')
-    await expect(blind.locator('span.coordinator-blind-word')).toHaveText(COORDINATOR_BLIND_WORD)
-    await expect(blind.locator('button')).toHaveCount(0)
-    const unread = await blind.locator('span.coordinator-blind-unread .coordinator-count-value').textContent()
-    expect(Number(unread), 'the committed document counts no unread pull request').toBeGreaterThan(0)
-    await expect(page.locator(`${THE_VIEW} li.coordinator-unread`)).toHaveCount(Number(unread))
-
-    // The fleet's strip: the three counts the stored view answered, and no word
-    // or figure for the plan and money reads that did not. A `$0.00` here would
-    // be a spend figure nobody read.
-    await expect(totals.locator('span.coordinator-count-word')).toHaveText([
-      COORDINATOR_TOTAL_REPOS_WORD,
-      COORDINATOR_TOTAL_IN_FLIGHT_WORD,
-      COORDINATOR_TOTAL_COLLISIONS_WORD,
-    ])
-    // The one figure it does draw is the document's own: the repositories the
-    // stored view lists are the panels the body draws under it, one per
-    // repository. `toHaveCount` rather than a count read once, because the body
-    // draws them one chunk at a time.
-    const repos = await totals.locator('span.coordinator-total-repos .coordinator-count-value').textContent()
-    expect(Number(repos), 'the stored view lists no repository').toBeGreaterThan(0)
-    await expect(page.locator(`${THE_VIEW} section.coordinator-repo`)).toHaveCount(Number(repos))
-
-    // And the fleet's window inside that strip: this window's CLI is 0.13.0,
-    // below `RUNS_SUMMARY_CLI_FLOOR`, so the console's own sentence naming the
-    // version it needs is drawn and **nothing is spawned for it** -- no figures,
-    // no skeleton left behind, and no refusal, because a read that was never
-    // made has no sentence of its own. A `$0.00` or a run count of zero here
-    // would be a window nobody read.
-    await expect(totals.locator('p.coordinator-window-note')).toHaveText(
-      `${COORDINATOR_WINDOW_FLOOR_WORD}${CLI_VERSION_BUILT_AGAINST}`,
-    )
-    await expect(totals.locator('span.coordinator-window-runs')).toHaveCount(0)
-    await expect(totals.locator('span.coordinator-window-spent')).toHaveCount(0)
-    await expect(totals.locator('.unavailable-operation')).toHaveCount(0)
-    // **And the strip's second busy host is not there either.** A slot is a flex
-    // item of the strip, and the window's can never be filled on this visit: a
-    // console that kept it would hold a line open for a read it will not make.
-    // The K1 documents' own slot stays -- its read is out and then answered.
-    await expect(totals.locator('div.console-busy-slot')).toHaveCount(1)
-    await expect(totals.locator('div.console-busy-slot[aria-busy="true"]')).toHaveCount(0)
+    // And it is a sentence rather than a refusal: no read was made, so there is
+    // no operation cell on the tab at all.
+    await expect(page.locator(`.${COORDINATOR_FLOOR_CLASS}`)).toHaveCount(1)
   })
 
-  test('says which CLI the job list needs, and spawns no read for one older than that', async () => {
-    // K4's floor, read in a window: this window's stub prints the version the
-    // console is built against (`CLI_VERSION_BUILT_AGAINST`), which is below
-    // `RUNS_LIST_PAGE_CLI_FLOOR` ('0.16.0', the release carrying #1545), so the
-    // section draws the console's own sentence naming the version it needs and
-    // the handshake's own version line beside it -- and does nothing else.
-    //
-    // **The absence is the claim.** No control is drawn, so no press can spawn a
-    // read this CLI would answer wrongly (`--after` is refused outright in the
-    // 0.15 line and `--limit` reads only the newest N, whose own `totals` would
-    // then be the page's); no row is drawn, because nothing was read; and no
-    // refusal is drawn either, because a read that was never made has no
-    // sentence to show. The section is a section of the queue's kind and not the
-    // whole screen: the records under it are still there.
-    const jobs = page.locator(`${THE_VIEW} section.coordinator-jobs`)
-    await expect(jobs).toHaveCount(1)
-    // The two words are the sentence, separator included: what a browser gives
-    // this paragraph is the word -- which carries the space -- and the version,
-    // so the fixture builds the expectation the same way the drawing does.
-    await expect(jobs.locator('p.coordinator-jobs-note')).toHaveText(
-      `${COORDINATOR_JOBS_FLOOR_WORD}${CLI_VERSION_BUILT_AGAINST}`,
-    )
-    await expect(jobs.locator('button.coordinator-jobs-load')).toHaveCount(0)
-    await expect(jobs.locator('button.coordinator-jobs-older')).toHaveCount(0)
-    await expect(jobs.locator('li.coordinator-job')).toHaveCount(0)
-    await expect(jobs.locator('.unavailable-operation')).toHaveCount(0)
-    // No window was read either, so the head draws no figure: a window the
-    // console has not read is not a window of zero runs.
-    await expect(jobs.locator('span.coordinator-jobs-window-word')).toHaveCount(0)
-    await expect(page.locator(`${THE_VIEW} li.coordinator-record`).first()).toBeVisible()
-  })
-
-  test('reads one pull request’s description on the press, and draws the refusal naming its own command', async () => {
-    // K3. This window's stub answers `coordinator status` and refuses everything
-    // else (`test/fixtures/bin/fugaro`), so the description read is a real spawn
-    // the CLI answers with its own refusal -- and what the block must do with
-    // that is name the command it is the refusal of, rather than draw a pull
-    // request with no description in it, which is a different fact.
-    //
-    // What a real browser adds here is the press, the spawn behind it and the
-    // stylesheet: the description drawn as text and its twenty-line bound are
-    // `coordinator.test.ts`'s, and the read-once rule is
-    // `entry-wiring.test.ts`'s.
-    const record = page.locator(`${THE_VIEW} li.coordinator-record`).first()
-    const head = record.locator(`button.${COORDINATOR_DESCRIPTION_HEAD_CLASS}`)
-    const block = record.locator(`div.${COORDINATOR_DESCRIPTION_CLASS}`)
-    // Drawn with the row and hidden: the press is a toggle, not a rendering.
-    await expect(head).toHaveText(COORDINATOR_DESCRIPTION_SHOW_WORD)
-    await expect(head).toHaveAttribute('aria-expanded', 'false')
-    await expect(block).toBeHidden()
-    await expect(block.locator('div.console-busy-slot')).toHaveCount(1)
-
-    await head.click()
-    await expect(block).toBeVisible()
-    await expect(head).toHaveText(COORDINATOR_DESCRIPTION_HIDE_WORD)
-    await expect(block.locator('span.unavailable-operation')).toHaveText('coordinator.show')
-    await expect(block.locator(`div.${COORDINATOR_DESCRIPTION_LINE_CLASS}`)).toHaveCount(0)
-
-    // The second press is the toggle, and the block it brings back is the one it
-    // already has: the refusal stands, and no second sentence is drawn beside it.
-    await head.click()
-    await expect(block).toBeHidden()
-    await expect(head).toHaveText(COORDINATOR_DESCRIPTION_SHOW_WORD)
-    await head.click()
-    await expect(block).toBeVisible()
-    await expect(block.locator('span.unavailable-operation')).toHaveCount(1)
-    await expect(block.locator('span.unavailable-operation')).toHaveText('coordinator.show')
-  })
-
-  test('draws the read-only pane, and holds no field a person could type in', async () => {
-    // K5, in the state this window's stub puts the pane in: the pane's own read
-    // (`coordinator intents --all --json`) is a real spawn the CLI refuses
-    // (exit 2, like every command this stub does not answer), so what the pane
-    // holds is the console's refusal naming its own command, the one press that
-    // asks that read again -- and, beside it, the three things it can draw
-    // without the store: its heading, the three questions the console composes
-    // itself, and the sentence about the front door that is not built (D820).
-    //
-    // **The absence is the claim** (D827): the pane is a drawing and not a door,
-    // and a real browser is what makes that checkable -- a field a person could
-    // type a command line into is the browser's own element, and a
-    // `contenteditable` is an attribute a fake tree would only record.
-    const pane = page.locator(`${THE_VIEW} section.coordinator-transcript`)
-    await expect(pane).toHaveCount(1)
-    await expect(pane.locator('p.coordinator-transcript-word')).toHaveText(COORDINATOR_TRANSCRIPT_WORD)
-    await expect(pane.locator('p.coordinator-transcript-missing')).toHaveText(
-      COORDINATOR_TRANSCRIPT_MISSING_WORD,
-    )
-    await expect(pane.locator('span.unavailable-operation')).toHaveText('coordinator.intents')
-    await expect(pane.locator('p.coordinator-transcript-question-word')).toHaveText(
-      COORDINATOR_TRANSCRIPT_QUESTIONS.map((question) => question.word),
-    )
-    // No declaration is drawn: the read that would carry one refused, and an
-    // empty pane is not a fleet that has declared nothing.
-    await expect(pane.locator('p.coordinator-transcript-intent')).toHaveCount(0)
-
-    await expect(pane.locator('input, textarea, select')).toHaveCount(0)
-    await expect(pane.locator('[contenteditable]')).toHaveCount(0)
-    // The pane's **one** control is the stamp's own Refresh, and the refusal is
-    // the state it is drawn without a time in (K5's follow-up): the read refused,
-    // so there are no declarations to date, and the clock in hand is a previous
-    // read's. A button that sent text would be a second one, whatever it read.
-    await expect(pane.locator('p.console-stamp button.console-stamp-refresh')).toHaveCount(1)
-    await expect(pane.locator('p.console-stamp span.console-stamp-at')).toHaveCount(0)
-    await expect(pane.locator('button')).toHaveCount(1)
-    await expect(page.locator(`${THE_VIEW} a`)).toHaveCount(0)
-  })
-
-  test('draws the committed fixture’s numbers as text, and puts no destination on any of them', async () => {
-    // K2, in the one state this window can be in: **no node of the committed
-    // document carries a provider** -- it is what a CLI older than C1 answers --
-    // so the console can form no triple for any number, and every one of them is
-    // the text K1 drew. What a real browser adds to `coordinator.test.ts`'s claim
-    // is the stylesheet and the entry: the numbers keep the class they are drawn
-    // with, no press reaches an operation, and there is no anchor anywhere on
-    // this view -- so nothing here is a destination, and the `pr.url` fields the
-    // fixture carries are on the screen nowhere at all.
-    //
-    // The other half -- a node that **does** name a provider, whose number is a
-    // button that opens the triple -- needs a document this stub does not answer
-    // with, and it is `entry-wiring.test.ts`'s (the bridge call is recorded
-    // there, with no window).
-    const fixture = JSON.parse(readFileSync(COORDINATOR_FIXTURE, 'utf8')) as {
-      repos: { view?: { records?: readonly unknown[] } }[]
+  test('draws none of the v2 tab, in a real window', async () => {
+    // D3210: the action queue, the fleet's totals, the job list and the
+    // transcript -- with their four reads -- are gone. What a real window adds to
+    // `coordinator.test.ts` is the entry beside the screen: a leftover section
+    // the entry drew, or a rule that styled one, would be invisible to a unit
+    // case about `renderCoordinator`.
+    for (const hook of THE_V2_HOOKS) {
+      await expect(page.locator(`${THE_VIEW} ${hook}`)).toHaveCount(0)
     }
-    const records = fixture.repos.reduce((total, repo) => total + (repo.view?.records?.length ?? 0), 0)
-    expect(records, 'the committed document holds no record').toBeGreaterThan(0)
-
-    await expect(page.locator(`${THE_VIEW} span.coordinator-record-label`)).toHaveCount(records)
-    await expect(page.locator(`${THE_VIEW} button.coordinator-record-label`)).toHaveCount(0)
-    await expect(page.locator(`${THE_VIEW} a`)).toHaveCount(0)
-    await expect(page.locator(THE_BODY)).not.toContainText('example.invalid')
+    // The tab is still the tab: the v2 hooks are gone and its own header is
+    // there, which is what makes the absences above an answer rather than a
+    // panel that drew nothing at all.
+    await expect(page.locator(`.${COORDINATOR_TITLE_CLASS}`)).toHaveText(COORDINATOR_TITLE)
   })
 })

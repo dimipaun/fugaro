@@ -1011,7 +1011,7 @@ func loadCheckoutResolved(ctx context.Context, dir string, lc *localcfg.Config, 
 	out, err := exec.CommandContext(ctx, "git", args...).Output()
 	if err != nil {
 		if dir != "" {
-			return "", rf, &ExitError{Code: ExitUserError, Err: fmt.Errorf("%s is not inside a git checkout; point at the repository's checkout", dir)}
+			return "", rf, &ExitError{Code: ExitUserError, Err: fmt.Errorf("%s is not inside a git checkout; it takes the checkout's PATH, not owner/name: run it from inside the checkout (for update, --repo alone), or pass the checkout's path", dir)}
 		}
 		return "", rf, &ExitError{Code: ExitUserError, Err: errors.New("not inside a git checkout; run this from the repository")}
 	}

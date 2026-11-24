@@ -36,6 +36,11 @@
 //   * every way an input can fail to be this router's input has its own refusal
 //     code, and a refusal never carries a route.
 //
+// J4 added the module's other half (`verbs.js`, re-exported here) and its tests
+// below: the phone's job verbs, what a session's role may send, and the mailbox
+// write each composes -- a start as D162's plain launch message, a cancel as
+// D169's action record, and a refusal everywhere else.
+//
 // No test value here is a secret, and no literal is secret-shaped.
 
 import assert from 'node:assert/strict';
@@ -46,6 +51,10 @@ import {
   COMMAND,
   CONFIRMATION_COMMANDS,
   CONFIRMATION_PHRASES,
+  JOB_CODES,
+  JOB_COMMANDS,
+  JOB_ROLES,
+  JOB_VERBS,
   LIST_TARGET,
   MAX_ALIASES,
   MAX_ENTRIES,
@@ -62,6 +71,8 @@ import {
   WAKE_ALIASES,
   defaultAgent,
   isConfirmation,
+  jobWrite,
+  maySend,
   routeUtterance,
 } from './index.js';
 
@@ -903,6 +914,235 @@ test('every refusal code is reachable, and every one is pinned by this suite', (
 });
 
 // ---------------------------------------------------------------------------
+// The phone's job verbs (J4; D2787, D162, D169; F14)
+// ---------------------------------------------------------------------------
+
+// The module reads a session's ROLE and nothing else, so a test session is a
+// role -- and that is the point worth pinning: if `jobWrite` ever started
+// reading an endpoint or a token, these tests would stop describing it. The full
+// port value (C2's `assertSessionPort`) is the app's to build, in `mobile/`.
+const VIEWER = { role: 'viewer' };
+const OPERATOR = { role: 'operator' };
+const ADMIN = { role: 'admin' };
+
+// A cancel as P6.2's machine builds it: an id, the verb, the run target and the
+// confirmation that authorised it. The module does not build one and does not
+// check the last field (the schema does); it is here so the tests carry the
+// record past the write path whole.
+function cancelRecord(run) {
+  return { id: 'a-7', verb: 'cancel', target: { run }, confirmation: 'confirm' };
+}
+
+test('the closed verb set is exactly a start and a cancel', () => {
+  assert.deepEqual(JOB_VERBS, ['launch', 'cancel']);
+  assert.equal(Object.isFrozen(JOB_VERBS), true);
+  assert.equal(Object.isFrozen(JOB_COMMANDS), true);
+  for (const verb of JOB_VERBS) {
+    assert.equal(Object.isFrozen(JOB_COMMANDS[verb]), true);
+  }
+});
+
+test('each verb needs the action internal/access names, at the operator role', () => {
+  // The table is the same fact as `internal/access`'s `ActionLaunch` and
+  // `ActionCancel` (both `MinRoleOperator`): the action names are literally the
+  // verbs, and a viewer holds neither. Written per verb rather than from the
+  // table, so a table edited to something else fails here.
+  assert.deepEqual(JOB_COMMANDS.launch, { action: 'launch', roles: ['operator', 'admin'] });
+  assert.deepEqual(JOB_COMMANDS.cancel, { action: 'cancel', roles: ['operator', 'admin'] });
+  assert.deepEqual(JOB_ROLES, ['viewer', 'operator', 'admin']);
+});
+
+test('maySend hides both verbs from a viewer and shows them to an operator', () => {
+  for (const verb of JOB_VERBS) {
+    assert.equal(maySend(OPERATOR, verb), true, verb);
+    assert.equal(maySend(ADMIN, verb), true, verb);
+    assert.equal(maySend(VIEWER, verb), false, verb);
+  }
+});
+
+test('maySend answers false for everything the question can be malformed with', () => {
+  // Hiding on a malformed session and hiding from a viewer have made the same
+  // mistake, so "no" is the one answer for: not a session, a role the roster
+  // does not have, and a verb outside the closed set.
+  assert.equal(maySend(null, 'launch'), false);
+  assert.equal(maySend('operator', 'launch'), false);
+  assert.equal(maySend({}, 'launch'), false);
+  assert.equal(maySend({ role: 'owner' }, 'launch'), false);
+  assert.equal(maySend(OPERATOR, 'delete'), false);
+  assert.equal(maySend(OPERATOR, undefined), false);
+  assert.equal(maySend(OPERATOR, 'toString'), false, 'an inherited name is not a verb');
+  assert.equal(maySend(OPERATOR, '__proto__'), false);
+});
+
+test('a start composes one plain message, classified as a launch', () => {
+  // D162: a launch travels as an ordinary message carrying the owner's words,
+  // with no record and no confirmation. `options.verb` is the classification the
+  // write path hands the lapse check (S6.3) -- the bytes are a message's either
+  // way, and only the label tells a lapsed launch from a lapsed question.
+  const result = jobWrite(OPERATOR, { verb: 'launch', text: 'fix the flaky test' });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.verb, 'launch');
+  assert.equal(result.text, 'fix the flaky test');
+  assert.deepEqual(result.options, { verb: 'launch' });
+  assert.equal(Object.isFrozen(result), true);
+  assert.equal(Object.isFrozen(result.options), true);
+});
+
+test('a cancel carries the machine’s action record, unchanged', () => {
+  // D169: the record is the authorisation. The module passes the machine's
+  // record through as `options.action` -- uncopied, because the client's schema
+  // validation deep-freezes it before anything is written -- and it is that
+  // record, not a rebuild, that the consumer re-validates and runs.
+  const record = cancelRecord('run-7');
+  const result = jobWrite(OPERATOR, { verb: 'cancel', text: 'Cancel run run-7.', record });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.verb, 'cancel');
+  assert.equal(result.options.action, record, 'the record travels as it was built');
+  assert.deepEqual(result.options.action.target, { run: 'run-7' });
+});
+
+test('the caller’s record is never mutated, and a frozen one is accepted', () => {
+  const record = cancelRecord('run-7');
+  jobWrite(ADMIN, { verb: 'cancel', text: 'Cancel run run-7.', record });
+
+  assert.equal(Object.isFrozen(record), false, 'this module does not freeze what it was handed');
+  assert.deepEqual(record, cancelRecord('run-7'));
+
+  const frozen = Object.freeze({ ...cancelRecord('run-9'), target: Object.freeze({ run: 'run-9' }) });
+  assert.equal(jobWrite(ADMIN, { verb: 'cancel', text: 'Cancel run run-9.', record: frozen }).ok, true);
+});
+
+test('a viewer sends neither verb: the write is refused, not composed', () => {
+  for (const request of [
+    { verb: 'launch', text: 'fix the flaky test' },
+    { verb: 'cancel', text: 'Cancel run run-7.', record: cancelRecord('run-7') },
+  ]) {
+    const result = jobWrite(VIEWER, request);
+
+    assert.equal(result.ok, false, request.verb);
+    assert.equal(result.code, JOB_CODES.NOT_PERMITTED);
+    assert.equal(result.field, 'verb');
+    assert.equal('options' in result, false, 'a refusal composes nothing to send');
+  }
+});
+
+test('the verb set is closed: a verb outside it is refused', () => {
+  for (const verb of ['delete', 'merge', 'confirm', 'Launch', '', undefined, 'toString', '__proto__']) {
+    const result = jobWrite(OPERATOR, { verb, text: 'x' });
+
+    assert.equal(result.ok, false, String(verb));
+    assert.equal(result.code, JOB_CODES.UNKNOWN_VERB);
+    assert.equal(result.field, 'verb');
+  }
+});
+
+test('a session the role cannot be read from is refused, and says which way', () => {
+  // Two codes, because they are two facts: a value that is not a session at all,
+  // and a session whose role is outside the roster. Both are the port's own
+  // codes, so one fault wears one name wherever it is found.
+  for (const notASession of [null, undefined, 'operator', 42, [], () => {}]) {
+    const result = jobWrite(notASession, { verb: 'launch', text: 'x' });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.code, JOB_CODES.NOT_A_SESSION);
+    assert.equal(result.field, 'session');
+  }
+  for (const role of ['owner', '', null, 'OPERATOR']) {
+    const result = jobWrite({ role }, { verb: 'launch', text: 'x' });
+
+    assert.equal(result.ok, false, String(role));
+    assert.equal(result.code, JOB_CODES.UNKNOWN_ROLE);
+    assert.equal(result.field, 'role');
+  }
+});
+
+test('a request with a field this module does not read is refused', () => {
+  assert.equal(jobWrite(OPERATOR, { verb: 'launch', text: 'x', run: 'run-7' }).code, JOB_CODES.UNKNOWN_FIELD);
+  assert.equal(jobWrite(OPERATOR, { verb: 'launch', text: 'x', record: cancelRecord('run-7') }).code, JOB_CODES.UNKNOWN_FIELD,
+    'a start carries no record: it is D162’s plain message');
+  assert.equal(jobWrite(OPERATOR, []).code, JOB_CODES.UNKNOWN_FIELD);
+  assert.equal(jobWrite(OPERATOR, 7).code, JOB_CODES.UNKNOWN_FIELD);
+});
+
+test('a start with no words, or words that are not text, is refused', () => {
+  for (const text of ['', null, undefined, 7, ['fix it'], {}]) {
+    const result = jobWrite(OPERATOR, { verb: 'launch', text });
+
+    assert.equal(result.ok, false, String(text));
+    assert.equal(result.code, JOB_CODES.BAD_TEXT);
+    assert.equal(result.field, 'text');
+  }
+});
+
+test('a cancel without a run’s action record is refused', () => {
+  const record = cancelRecord('run-7');
+  for (const bad of [
+    undefined,
+    null,
+    'cancel run-7',
+    record.id,
+    { ...record, verb: 'merge' },
+    { ...record, target: { run: '' } },
+    { ...record, target: {} },
+    { ...record, target: 'run-7' },
+    { ...record, target: { project: 'belong' } },
+  ]) {
+    const result = jobWrite(OPERATOR, { verb: 'cancel', text: 'Cancel run run-7.', record: bad });
+
+    assert.equal(result.ok, false, JSON.stringify(bad));
+    assert.equal(result.code, JOB_CODES.BAD_RECORD);
+    assert.ok(result.field.startsWith('record'));
+  }
+});
+
+test('jobWrite is a pure function of its input', () => {
+  const input = { verb: 'cancel', text: 'Cancel run run-7.', record: cancelRecord('run-7') };
+  const first = jobWrite(OPERATOR, input);
+  jobWrite(OPERATOR, { verb: 'launch', text: 'something else' });
+  const second = jobWrite(OPERATOR, input);
+
+  assert.deepEqual(second, first);
+  assert.notEqual(second.options, first.options, 'each call returns its own frozen result');
+  assert.equal(Object.isFrozen(first.options), true);
+});
+
+test('the verb refusal codes are distinct non-empty strings', () => {
+  const codes = Object.values(JOB_CODES);
+
+  assert.equal(new Set(codes).size, codes.length, 'two codes share a name');
+  for (const code of codes) {
+    assert.equal(typeof code, 'string');
+    assert.ok(code.length > 0);
+  }
+});
+
+test('every verb refusal code is reachable, and every one is pinned by this suite', () => {
+  const sweep = [
+    [JOB_CODES.NOT_A_SESSION, () => jobWrite(null, { verb: 'launch', text: 'x' })],
+    [JOB_CODES.UNKNOWN_ROLE, () => jobWrite({ role: 'owner' }, { verb: 'launch', text: 'x' })],
+    [JOB_CODES.NOT_PERMITTED, () => jobWrite(VIEWER, { verb: 'launch', text: 'x' })],
+    [JOB_CODES.UNKNOWN_VERB, () => jobWrite(OPERATOR, { verb: 'delete', text: 'x' })],
+    [JOB_CODES.UNKNOWN_FIELD, () => jobWrite(OPERATOR, { verb: 'launch', text: 'x', run: 'run-7' })],
+    [JOB_CODES.BAD_TEXT, () => jobWrite(OPERATOR, { verb: 'launch', text: '' })],
+    [JOB_CODES.BAD_RECORD, () => jobWrite(OPERATOR, { verb: 'cancel', text: 'x', record: null })],
+  ];
+
+  for (const [code, run] of sweep) {
+    const result = run();
+
+    assert.equal(result.ok, false, code);
+    assert.equal(result.code, code);
+  }
+  assert.deepEqual(
+    new Set(sweep.map(([code]) => code)),
+    new Set(Object.values(JOB_CODES)),
+    'a verb refusal code exists that this sweep does not exercise',
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Purity: no clock, no state, no runtime
 // ---------------------------------------------------------------------------
 
@@ -939,9 +1179,11 @@ test('the module is a pure function: no import, no clock, no randomness, no runt
   // claim as a check rather than a comment. The module imports nothing (the
   // package's contract: no runtime, no database, no network client) and reads no
   // clock and no random source, so its result is a function of its input alone.
-  const source = readFileSync(new URL('./index.js', import.meta.url), 'utf8');
+  //
+  // Both files are checked, because both are the module (J4 put the phone's
+  // verbs in `verbs.js` and `index.js` re-exports them): a claim about the entry
+  // point alone would be a claim about half of what a caller runs.
   const forbidden = [
-    [/^\s*import[\s{]/m, 'an import statement'],
     [/\brequire\s*\(/, 'require()'],
     [/new\s+Date\b/, 'a clock of its own'],
     [/Date\s*\.\s*now/, 'a clock of its own'],
@@ -954,7 +1196,18 @@ test('the module is a pure function: no import, no clock, no randomness, no runt
     [/\bglobalThis\b/, 'a global handle'],
   ];
 
-  for (const [pattern, what] of forbidden) {
-    assert.equal(pattern.test(source), false, `shared/command/index.js must not reach for ${what}`);
+  for (const file of ['./index.js', './verbs.js']) {
+    const source = readFileSync(new URL(file, import.meta.url), 'utf8');
+    assert.equal(/^\s*import[\s{]/m.test(source), false, `${file} must state no import`);
+    for (const [pattern, what] of forbidden) {
+      assert.equal(pattern.test(source), false, `${file} must not reach for ${what}`);
+    }
+    // The one dependency the module has is between its own two files: every
+    // `from` names a sibling here and nothing outside it. A path that leaves
+    // this directory is a dependency the package forbids, and re-exporting is
+    // the same static edge as importing, so it is checked the same way.
+    for (const [, specifier] of source.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)) {
+      assert.equal(specifier, './verbs.js', `${file} may only depend on its own sibling`);
+    }
   }
 });

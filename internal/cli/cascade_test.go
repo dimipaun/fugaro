@@ -581,60 +581,14 @@ func TestValidateRefusesCascadeWithBudgetOff(t *testing.T) {
 	}
 }
 
-// TestValidateCascadeSwitchReasonNeverBlamesTheGateway: a cascade run's
-// gateway is the credentials service's, not a model API's credential, and the
-// sentence validate prints for a cascade run's gateway must not be the
-// model-API one: "the gateway needs a model API's credential" is false of a
-// cascade run, whose whole point is a gateway carrying a credential that is
-// not the job's own (D133, D143).
-//
-// C1.19 taught runner.GatewayOn the value, so the state this is asked in is
-// the other one now: with an effective mode that is off, a cascade run has no
-// gateway at all (the gateway is the budget's to start, D11), the switch
-// reaches no run of the configuration, and the file is refused for the mode
-// beside the note — which is what the two lines below are about. With the mode
-// on, the same file reaches the switch instead, and what validate says about a
-// switch that names a model this checkout carries no route for is the halt
-// TestValidateRefusesCascadeWithBudgetOff's sibling cases cover.
-//
-// The state is the one the switch's reach is asked about: the project config's
-// switch names a Claude model this checkout carries no route for, so the pin
-// has no fall-back (D1b) and the line says what the run does with it.
-//
-// Mutation (run, restored): drop the cascade arm from routingInertWhy's
-// RoutingInertNoGateway case — the line then blames the gateway's credential
-// rule and this test fails on that sentence.
-func TestValidateCascadeSwitchReasonNeverBlamesTheGateway(t *testing.T) {
-	f := newLaunchBudget(t, "off")
-	// With the allow-list, so that the report this test reads is the gateway's
-	// refusal and the note beside it, and not the allow-list's refusal too.
-	publishPolicy(t, f, cascadePolicyAllowList("off"))
-	// The switch is the operator's own file, and it names a model only a route
-	// this repository may not send code to claims (routedProjectBlock admits
-	// acme/sandbox; the checkout is acme/other).
-	f.appendConfig(t, routedProjectBlock+routedSwitchBlock)
-	inCheckoutOf(t, "acme/other")
-	file := strings.Replace(cascadeCLI, "workflows:", "budget: { mode: off }\nworkflows:", 1)
-	out, errOut, err := execute(t, "validate", writeConfig(t, file))
-	// The gateway rule refuses the file: a cascade run with the budget off has
-	// no gateway, and a cascade run has no credential of its own to fall back
-	// to (C1.19's launch carries the same rule; config.CheckCascadeGateway).
-	if ExitCode(err) != ExitUserError {
-		t.Fatalf("exit = %d, want %d (out %q, err %v)", ExitCode(err), ExitUserError, out, err)
-	}
-	if !strings.Contains(errOut, "routing.claude") {
-		t.Fatalf("want the note about the switch's reach:\n%s%s", out, errOut)
-	}
-	if strings.Contains(out+errOut, "the gateway needs a model API's credential") {
-		t.Fatalf("the reason blames a gateway rule that is false of a cascade run:\n%s%s", out, errOut)
-	}
-	if !strings.Contains(errOut, "credentials service") {
-		t.Fatalf("the reason does not name the gateway a cascade run's calls are carried by:\n%s%s", out, errOut)
-	}
-	if strings.Contains(out, "the project's routing switch is not usable") {
-		t.Fatalf("the halt is asserted for a run that does not reach the switch:\n%s", out)
-	}
-}
+// The test that stood here — TestValidateCascadeSwitchReasonNeverBlamesTheGateway,
+// which asked validate's line for a cascade run under a budget whose mode is off
+// to name the credentials service and to assert no halt — is gone with the mode
+// (AB1b, D3009): runner.GatewayOn answers true for a cascade run in every mode,
+// so no mode leaves one without a gateway, the switch reaches every cascade run
+// that a mode could describe, and the cascade arm of routingInertWhy's
+// RoutingInertNoGateway case is a line no file reaches. The refusal such a file
+// still earns is TestValidateRefusesCascadeWithBudgetOff's.
 
 // shiftRelease returns rel with a release number moved by delta: a release
 // below cascadeSince is the image the gate has to refuse, and one above it the

@@ -9,6 +9,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -139,7 +140,29 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) error {
 	} else {
 		fmt.Fprintf(w, "%s, and no step reaches them\n", note)
 	}
+	// R5's own line, which is not a step and is the one fact the count's line
+	// cannot carry: a run that started with the budget off has no session and
+	// holds its key already, so nothing this update does reaches it and it
+	// finishes. It is printed while this machine's own config still says the
+	// word — the state in which such a run can exist, and the state this very
+	// update is about to end — and it is this release that owes it, because
+	// this is the release that removes the word.
+	if e.budgetOffRunFinishes() {
+		fmt.Fprintf(w, "  a run that started with the budget off holds its key and finishes\n")
+	}
 	return nil
+}
+
+// budgetOffRunFinishes is whether this machine's local config says the word that
+// is not a budget mode any more, read out of the bytes the run found: a run
+// launched under it was launched with no session and with its key in the job
+// (R5, D3009), and the word is exactly what tells such a run apart from one the
+// note's steps can reach. The loader holds the word as the file writes it
+// (localcfg's acceptedBudgetMode), and this asks the same bytes the update's
+// rewrite reads, so the two cannot disagree about a config that says it.
+func (e *initEngine) budgetOffRunFinishes() bool {
+	_, off := localcfg.RemovedBudgetMode(e.old)
+	return off
 }
 
 func runsPhrase(n int) string {
@@ -182,6 +205,10 @@ func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []inFli
 	if e.credentialsWindowOpens(ctx, db) {
 		steps = append(steps, inFlightStep{
 			line: "credentials service: a call between the node's raise and its move is refused"})
+	}
+	if e.orchestratorToWrite() {
+		steps = append(steps, inFlightStep{
+			line: "resident orchestrator: the credentials service's new revision names its account; a call is served by either revision"})
 	}
 	if e.tokensPublishReachesRuns(ctx, db) {
 		steps = append(steps, inFlightStep{

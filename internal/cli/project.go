@@ -321,6 +321,16 @@ var consoleReadPaths = map[string]bool{
 	// writes nothing, the remembered checkouts included. It asks nothing else
 	// of the machine: the read is the caller's own database node.
 	"fugaro coordinator intents": true,
+	// The orchestrator map (the console-fixes plan's CG7a; C-ORCH's document,
+	// D3221): the project's active orchestrators, their connections and the
+	// coordinator's heartbeat, assembled from the caller's own database -- the
+	// orchestrator nodes, their leases, the claims and the heartbeat node -- so
+	// it needs no checkout and asks the host for nothing. It is a cloud read
+	// like the rest, aimed with `--project`/`--config`, and it writes nothing,
+	// the remembered checkouts included. The command is registered from `ee/`
+	// (`ee/orchestrator/cli/map.go`), and no released CLI carries it yet, which
+	// is why the console's own read sits behind `ORCHESTRATOR_MAP_CLI_FLOOR`.
+	"fugaro orchestrator map": true,
 	// The settings read (the settings-edit plan's C1): the project's settings,
 	// each with the layer that decided it and the three writability facts. It
 	// writes nothing -- no file, no cache, no cloud object (`newSettingsCmd`'s

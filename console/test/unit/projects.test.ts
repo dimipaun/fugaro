@@ -1461,6 +1461,41 @@ describe('the settings section', () => {
     expect(all(settingsRow(tree, 'budget.mode'), 'projects-settings-pencil')).toEqual([])
   })
 
+  it('draws the pencil as the panel’s only write control, and no box to type a value into', () => {
+    // SU2b's half of the deletion: the inline editor an entry used to append to
+    // a row is gone, and this is the tree's own side of it. The row set is a
+    // picture of the document plus **one** control per writable row -- the
+    // pencil, which opens main's window (`entry.ts`) -- and the section's other
+    // box is the search field, which is a filter and not a value anything is
+    // written with. Nothing here is a value the operator types into.
+    const writableGrouped = {
+      ...SETTINGS_GROUPED,
+      settings: SETTINGS_GROUPED.settings.map((row) =>
+        row['key'] === 'budget.per_run_usd' ? { ...row, writable: true, target_layer: 'project' } : row,
+      ),
+    }
+    const tree = settingsTree(settingsInputs({ raw: writableGrouped }))
+    for (const tag of ['textarea', 'select', 'form']) {
+      expect(walk(tree).filter((node) => node.tag === tag), `the panel drew a <${tag}>`).toEqual([])
+    }
+    const inputs = walk(tree).filter((node) => node.tag === 'input')
+    expect(inputs, 'the panel drew a box that is not its search field').toHaveLength(1)
+    expect(inputs[0]?.getAttribute('class')).toBe('projects-settings-search')
+    const buttons = walk(tree).filter((node) => node.tag === 'button')
+    expect(buttons.length, 'the panel drew no pencil at all').toBeGreaterThan(0)
+    for (const button of buttons) {
+      expect(
+        button.getAttribute('class'),
+        'the panel drew a control that is not a row’s pencil',
+      ).toBe('projects-settings-pencil')
+      expect(button.getAttribute('type')).toBe('button')
+    }
+    // The entry is what draws a press's answer, and it draws it into the row it
+    // belongs to: the tree the screen built carries no outcome region of its
+    // own, so a repaint cannot leave one behind.
+    expect(walk(tree).filter((node) => node.getAttribute('aria-live') !== null)).toEqual([])
+  })
+
   it('names the pencil with the key as the sanitizer drew it, never with the raw text', () => {
     // The key reaches an **attribute** on the pencil and the sanitizer is the
     // door it goes through, the same door the key's own cell uses: a key this

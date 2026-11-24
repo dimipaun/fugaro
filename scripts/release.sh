@@ -5,6 +5,7 @@
 # push included: the release gate is the safeguard, there is no prompt.
 #
 #   scripts/release.sh X.Y.Z [--yes] [--dry-run] [--timeout-minutes N]
+#   scripts/release.sh X.Y.Z --at SHA [--dry-run] [--timeout-minutes N]
 #   scripts/release.sh X.Y.Z --hotfix [--fix SHA]... [--dry-run] [--timeout-minutes N]
 #
 # --yes is accepted and does nothing (there is no tag prompt any more); every
@@ -21,6 +22,33 @@
 # merging) and step 4 (CI's test, terraform and rules finishing on the merge
 # commit).
 #
+# --at is the third path: the release is cut at a given commit of main, the way
+# a console release tags an exact commit, instead of at the tip the ordinary
+# path bumps and merges. The commit has to be an ancestor of origin/main and to
+# carry the release's whole bump already -- the plugin version and every skill
+# header, docs/releases/vX.Y.Z.md, its line in
+# website/data/release-summaries.yaml, the cli stream's current in
+# docs/release-streams.yaml, the two doc lines that name the released version,
+# FEATURES.md's stamp with a commit to it since the previous tag, and
+# website/data/compatibility.yaml's as_of.cli -- which is
+# what the ordinary path's step 2 commits. It is for the case docs/release.md
+# gives it: main's tip is red, and the last green commit already carries the
+# bump, so nothing merged since it rides along. No branch, no pull request and
+# no commit of this run's own: the checks the release gate reads are the ones
+# already on that commit -- none is dispatched, because a dispatch runs a
+# workflow at a branch tip and the commit named is generally not the tip -- and
+# the commit is tagged where it is. The rehearsal, the summary, the tag and the
+# post-tag verification are the ordinary path's, unchanged, and no precondition
+# is relaxed: --at is cut from a clean main equal to origin/main exactly as the
+# ordinary path is, because this script, the gate, the release policy and the
+# verifier all run from this checkout -- only which commit the tag goes on
+# changes, and so does the commit the release's own text and checks are read
+# from. The commit named still has to be green, and a commit with no full ci run
+# of its own is refused with the command that puts one on it. The user's
+# checkout is never moved (the commit's own files are read from a scratch
+# worktree) and --at refuses --hotfix: a patch release is cut from release/X.Y,
+# which carries no commit of main to name.
+#
 # The release reads the CLI stream from docs/release-streams.yaml through a
 # small Go helper, internal/streams/cmd/streams (GD7: one file, the graph's
 # reader and this one): step 1 runs step 2's write in memory (`set --check`) and
@@ -34,7 +62,7 @@
 # from git and gh (an existing release/vX.Y.Z PR, merged or open, is found
 # and continued) rather than keeping any state of its own. It never force-
 # pushes, never pushes to main directly, and never deletes a tag. However it
-# exits, it leaves the checkout on main.
+# exits, it leaves the checkout on main (--at never moves it at all).
 #
 # --hotfix is the other path: steps 2 to 5 of docs/release.md's "Hotfix
 # releases", a patch release vX.Y.Z (Z of 1 or more) cut from the maintenance
@@ -95,6 +123,10 @@ dry_run=0
 timeout_minutes=45
 version=""
 hotfix=0
+# at is --at's commit, empty on the ordinary path: the release is cut at that
+# commit of main rather than at main's tip (the header comment has the whole
+# of it).
+at=""
 # skip_rehearsal is the owner's explicit word, ruling of 2026-11-21, that this one
 # release is cut without the pre-tag rehearsal: the sandbox it builds in was not
 # set up yet. It is a flag a person types, never a default, and the release
@@ -109,6 +141,17 @@ while [ $# -gt 0 ]; do
     --dry-run) dry_run=1 ;;
     --hotfix) hotfix=1 ;;
     --skip-rehearsal) skip_rehearsal=1 ;;
+    --at)
+      # A sha, `HEAD` or a branch name is never a flag: a value that starts
+      # with - is the next option this one would otherwise swallow, and the
+      # release would then run against the flag's name as if it were a commit.
+      if [ $# -lt 2 ] || [ -z "${2:-}" ] || [ "${2#-}" != "$2" ]; then
+        echo "--at needs a commit: a commit of origin/main that already carries the release's bump, which is then tagged instead of main's tip (docs/release.md, \"Cutting a release\")" >&2
+        exit 2
+      fi
+      shift
+      at=$1
+      ;;
     --fix)
       if [ $# -lt 2 ] || [ -z "${2:-}" ]; then
         echo "--fix needs a commit (a sha on origin/main): the fix the hotfix carries, cherry-picked onto the maintenance branch (docs/release.md, \"Hotfix releases\")" >&2
@@ -141,6 +184,7 @@ while [ $# -gt 0 ]; do
 done
 if [ -z "$version" ]; then
   echo "usage: $0 X.Y.Z [--yes] [--dry-run] [--skip-rehearsal] [--timeout-minutes N]
+       $0 X.Y.Z --at SHA [--dry-run] [--skip-rehearsal] [--timeout-minutes N]
        $0 X.Y.Z --hotfix [--fix SHA]... [--dry-run] [--timeout-minutes N]" >&2
   exit 2
 fi
@@ -152,6 +196,14 @@ fi
 # bump) itself, and takes no other (docs/release.md, "Cutting a release").
 if [ "$hotfix" = 0 ] && [ -n "$fixes" ]; then
   echo "--fix names a commit --hotfix cherry-picks onto the maintenance branch, and this run has no --hotfix: the ordinary release commits only the plugin bump, which it makes itself" >&2
+  exit 2
+fi
+# --at and --hotfix are two different cuts of a release and neither carries the
+# other: --at tags a commit of origin/main that already carries the bump, and
+# --hotfix builds the maintenance branch release/X.Y in a scratch worktree and
+# tags its tip, which no commit of main is (docs/release.md, "Hotfix releases").
+if [ "$hotfix" = 1 ] && [ -n "$at" ]; then
+  echo "--at tags a commit of origin/main, and --hotfix cuts a patch release from the maintenance branch release/X.Y, whose tip is built by that run and is no commit of main: run one or the other" >&2
   exit 2
 fi
 # fix_flags renders $fixes as the arguments that named them, for the resume
@@ -171,20 +223,36 @@ restore_main() {
       echo "could not switch back to main; run: git switch main" >&2
   fi
 }
-# plugin_scratch is the scratch worktree plugin_budget_check has created, or
-# empty; cleanup_plugin_scratch removes it and is called from the EXIT trap
-# below, so the worktree is gone however the run ends -- an error, or a Ctrl-C
-# or SIGTERM, which reaches on_signal's exit 130 and so the same trap.
-plugin_scratch=""
-cleanup_plugin_scratch() {
-  [ -n "$plugin_scratch" ] || return 0
-  git worktree remove --force "$plugin_scratch/tree" >/dev/null 2>&1 || true
-  rm -rf "$plugin_scratch"
+# scratch_dir is the one scratch worktree this run holds, if it holds one:
+# plugin_budget_check's bumped tree, or --at's tree at the commit being
+# released. cleanup_scratch removes it and is called from the EXIT trap below,
+# so the worktree is gone however the run ends -- an error, or a Ctrl-C or
+# SIGTERM, which reaches on_signal's exit 130 and so the same trap.
+scratch_dir=""
+cleanup_scratch() {
+  [ -n "$scratch_dir" ] || return 0
+  git worktree remove --force "$scratch_dir/tree" >/dev/null 2>&1 || true
+  rm -rf "$scratch_dir"
   # A worktree whose removal failed half-way (a process still in it, a signal
   # landing mid-delete) leaves a registration behind; prune drops the entries
   # whose directory is gone, so the checkout does not collect them.
   git worktree prune >/dev/null 2>&1 || true
-  plugin_scratch=""
+  scratch_dir=""
+}
+# in_release_tree runs a command from the root of the tree being released: this
+# checkout on the ordinary path, whose preconditions tie it to origin/main, and
+# the scratch worktree at --at's commit on --at, whose commit is not the tip the
+# checkout stands on even though it is main. It is how everything that needs a
+# working directory is made against the right tree: the stream catalogue through
+# internal/streams/cmd/streams, the two doc lines,
+# scripts/bump-plugin-version.sh --check, and the pre-tag rehearsal, which
+# builds the CLI from the tree it runs in.
+in_release_tree() {
+  if [ -n "$at" ]; then
+    ( cd "$scratch_dir/tree" && "$@" )
+  else
+    "$@"
+  fi
 }
 # rerun is this run's own command line, as far as resuming needs it: the
 # refusal messages and the signal handler print it rather than the plain one,
@@ -196,6 +264,11 @@ if [ "$hotfix" = 1 ]; then
   fi
 else
   rerun="scripts/release.sh $version"
+  # --at's commit is named the way the run was given it: a refusal that says
+  # the commit is wrong is answered by re-running with another one.
+  if [ -n "$at" ]; then
+    rerun="$rerun --at $at"
+  fi
   if [ "$skip_rehearsal" = 1 ]; then
     rerun="$rerun --skip-rehearsal"
   fi
@@ -801,7 +874,7 @@ Commit them on $branch (git fetch origin $branch && git switch -c $branch origin
   fi
   echo "dispatched CI on $branch; waiting up to ${timeout_minutes}m for the required checks..."
   wait_for_ci_full_run "$tip" "$before"
-  GITHUB_SHA="$tip" GITHUB_REPOSITORY="$repo" GATE_WAIT_SECONDS="$timeout_seconds" GATE_POLL_SECONDS="$poll_seconds" scripts/release-gate.sh "$tag"
+  run_release_gate "$tip"
 
   git tag -a "$tag" -m "Fugaro $tag" "$tip"
   if ! tag_err=$(git push origin "refs/tags/$tag" 2>&1); then
@@ -819,6 +892,151 @@ tag $tag pushed on $branch ($tip). Watch:
 EOF
   scripts/verify-release.sh "$tag" --timeout-minutes "$timeout_minutes" || return 1
   return 0
+}
+
+# run_release_gate SHA runs scripts/release-gate.sh on SHA, the commit the tag
+# goes on: the test, terraform and rules checks of the newest full `ci` run on
+# that commit, waited for up to --timeout-minutes and refused the moment one
+# fails. On the ordinary path the release has just put that run there
+# (ensure_full_ci_run); on --at the run is the one the commit already carries,
+# which is the premise of the flag. The gate's own rules -- which run counts,
+# what a patch tag may carry, the identical-tree fallback -- are read here and
+# nowhere restated.
+run_release_gate() {
+  local sha=$1
+  echo "waiting for test, terraform and rules to pass on $sha (up to ${timeout_minutes}m)..."
+  GITHUB_SHA="$sha" GITHUB_REPOSITORY="$repo" GATE_WAIT_SECONDS="$timeout_seconds" GATE_POLL_SECONDS="$poll_seconds" scripts/release-gate.sh "$tag"
+}
+
+# finish_the_release is everything after the gate, shared by the ordinary path
+# and --at: the pre-tag rehearsal (still inside step 4 because it is the last
+# thing that verifies $head_sha before the tag goes on it), the release summary,
+# the tag pushed on $head_sha -- never moved once pushed -- and
+# scripts/verify-release.sh, which a release is not done without. $head_sha is
+# the commit being released, set by the caller.
+finish_the_release() {
+
+  # The pre-tag rehearsal, still inside step 4 because it is the last thing that
+  # verifies the commit being tagged before the tag goes on it. 0.26.0's catalog build
+  # failed for the owner on three things no hermetic test sees -- a stale pinned
+  # branch, the leak scan's false positives on a real image, a layer-count
+  # refusal -- and the tag was pushed by then, so the build that found them was
+  # `fugaro update`'s on the owner's own installation. So the tag waits for a real
+  # build of this repository's own `go` catalog entry, in the sandbox project
+  # only, with the CLI built from the very commit being tagged.
+  #
+  # `run` is the billable half, and it refuses no session of its own: it builds in
+  # the sandbox project only and tags nothing, so a coding agent may run it by hand
+  # (the owner's ruling of 2026-11-19), and since the owner's order of 2026-11-21
+  # ("Remove the guard") the release around it refuses no session either -- the
+  # preconditions, the gate and the tag are the same whoever runs them. `check` is
+  # the gate: the record on disk --
+  # commit, Cloud Build id, verdict -- is what the tag is cut on, never this run's
+  # own memory of it, so a missing, red, or other-commit record refuses the tag
+  # and names the Cloud Build to read. The record is a local convention and no
+  # proof: nothing reads the build id back from Cloud Build, and a session that
+  # can write the file can pass the gate (docs/release.md says so). `run` reuses a
+  # green record for the same commit, so a release resumed after an interruption
+  # rebuilds nothing.
+  #
+  # This is the CLI path's step alone. The hotfix path above does not run it: its
+  # branch tip exists only inside its own run, in a scratch worktree removed on
+  # exit, so there is no commit anyone could have rehearsed beforehand, and a
+  # billable build is not what a patch release is for.
+  #
+  # It is run from the tree of $head_sha (in_release_tree): the rehearsal builds
+  # the CLI from the tree it runs in and refuses a checkout that is not at the
+  # commit it records, which on --at is main's tip and not the commit being
+  # tagged. The scratch worktree at that commit is already up for --at and is
+  # removed on exit either way.
+  if [ "$skip_rehearsal" = 1 ]; then
+    echo "--skip-rehearsal: no rehearsal was run for $head_sha, on the owner's explicit word of 2026-11-21; it is owed." >&2
+  else
+    in_release_tree scripts/release-rehearsal.sh run "$head_sha" || exit 1
+    in_release_tree scripts/release-rehearsal.sh check "$head_sha" || exit 1
+  fi
+
+  # 5. Summary and confirmation.
+  subject=$(git log -1 --format=%s "$head_sha")
+  if [ "$skip_rehearsal" = 1 ]; then
+    rehearsal_summary="rehearsal: SKIPPED on the owner's explicit word of 2026-11-21 (--skip-rehearsal); it is owed"
+  else
+    rehearsal_summary="rehearsal: this repository's own go catalog entry built for real in $FUGARO_LIVE_GCP_PROJECT (scripts/release-rehearsal.sh's record, above)"
+  fi
+  cat <<EOF
+
+Release summary
+  tag:     $tag
+  name:    $stream_name
+  commit:  $head_sha ($subject)
+  checks:  test, terraform and rules all succeeded, on $head_sha or on the identical-tree head of the merged PR (scripts/release-gate.sh says which, above)
+  $rehearsal_summary
+
+A pushed tag is permanent: the Go module proxy and the public ghcr.io images
+cache vX.Y.Z forever, so it is never moved or re-cut (docs/release.md#rolling-back).
+EOF
+
+  if [ "$local_tag" = 1 ]; then
+    existing=$(git rev-parse "refs/tags/$tag^{commit}")
+    if [ "$existing" != "$head_sha" ]; then
+      echo "tag $tag already exists locally at $existing, not the verified merge commit $head_sha; delete it (git tag -d $tag) and re-run" >&2
+      exit 1
+    fi
+    echo "Tag $tag already exists locally at this commit but is not on origin; pushing it."
+  fi
+
+  # 6. Tag and push.
+  if [ "$local_tag" != 1 ]; then
+    git tag -a "$tag" -m "Fugaro $tag" "$head_sha"
+  fi
+  # A failed push is repeated only on a dropped connection, and only once origin
+  # has been read again and found without the tag: a push that reached origin
+  # before the connection dropped is not pushed twice.
+  # already_there: origin turned out to have the tag at this commit, so there was
+  # nothing to push and the failure's own output is not printed again below. The
+  # run goes on to the verification either way: whether this run pushed the tag or
+  # found it there, what has to hold is the same.
+  already_there=0
+  push_try=1
+  while ! push_out=$(git push origin "refs/tags/$tag" 2>&1); do
+    printf '%s\n' "$push_out" >&2
+    remote_sha=$(retry_read git ls-remote origin "refs/tags/$tag^{}" | cut -f1)
+    if [ "$remote_sha" = "$head_sha" ]; then
+      echo "tag $tag is already on origin at $head_sha; nothing to push."
+      already_there=1
+      break
+    fi
+    if [ -z "$remote_sha" ] && [ "$push_try" -lt "$retry_tries" ] && retry_is_transient "$push_out"; then
+      echo "pushing tag $tag failed (try $push_try of $retry_tries) and origin does not have it; retrying in $((retry_seconds * push_try))s" >&2
+      sleep $((retry_seconds * push_try))
+      push_try=$((push_try + 1))
+      continue
+    fi
+    echo "pushing tag $tag failed. It exists locally at $head_sha; once the cause is fixed, push it with:
+  git push origin refs/tags/$tag
+or re-run $tag_rerun, which pushes it." >&2
+    exit 1
+  done
+  if [ "$already_there" = 0 ]; then
+    printf '%s\n' "$push_out"
+  fi
+
+  cat <<EOF
+tag $tag pushed. Watch:
+  https://github.com/$repo/actions/workflows/release.yml
+  https://github.com/$repo/actions/workflows/images.yml
+  https://github.com/$repo/actions/workflows/console-windows.yml
+
+Post-release checklist (docs/release.md):
+  - the first release of a new image package: make it public once (package settings, Danger Zone, Change visibility)
+EOF
+
+  # 7. Verify the release: every workflow the tag started has to conclude green,
+  # the images it published have to be pullable without a login, and -- on a patch
+  # tag -- the fixes it carries have to be on main. This waits (bounded), so it is
+  # the last thing the script does; scripts/verify-release.sh runs it on its own
+  # too, for a tag whose runs are already finished.
+  scripts/verify-release.sh "$tag" --timeout-minutes "$timeout_minutes"
 }
 
 # 1. Preconditions, checked in order; the first failure stops the script.
@@ -856,6 +1074,10 @@ if [ "$hotfix" = 1 ]; then
   exit 0
 fi
 
+# The checkout is main equal to origin/main on --at too: the flags differ only
+# in which commit the tag goes on, and this script, the gate, the release policy
+# and the verifier all run from the checkout, so a release read and gated from
+# whatever tree it happens to hold is no release at all. --at never moves it.
 current_branch=$(git rev-parse --abbrev-ref HEAD)
 if [ "$current_branch" != main ]; then
   echo "the current branch is '$current_branch', not main; switch to main first" >&2
@@ -887,29 +1109,89 @@ else
   fi
 fi
 
-trap 'cleanup_plugin_scratch; restore_main' EXIT
+if [ -n "$at" ]; then
+  trap cleanup_scratch EXIT
+else
+  trap 'cleanup_scratch; restore_main' EXIT
+fi
 trap on_signal INT TERM HUP
 
 retry_read git fetch --quiet origin main --tags --prune
-local_main=$(git rev-parse main)
+# The commit held to origin/main is HEAD's, which the branch check above has
+# already tied to main, and never the `main` ref's: what a release is read and
+# gated from is the working tree this script, the gate, the release policy and
+# the verifier all run out of, and the tree's own commit is what has to equal
+# origin/main. The ref is no part of the question, and asking it is a `set -eu`
+# abort lying in wait -- a substitution that fails ends the script with git's own
+# one-line fatal rather than the refusal below.
+local_main=$(git rev-parse HEAD)
 origin_main=$(git rev-parse origin/main)
 if [ "$local_main" != "$origin_main" ]; then
   echo "main ($local_main) is not origin/main ($origin_main); pull or push first" >&2
   exit 1
 fi
 
-# From 0.4.0 on a release needs its hand-written Highlights, committed on main
-# before the release PR: GoReleaser reads docs/releases/vX.Y.Z.md from the
-# tag's tree (docs/releases/README.md). Read from origin/main, which the
-# checks above tie to the working tree.
-if scripts/release-policy.sh highlights-required "$version"; then
-  highlights="docs/releases/$tag.md"
-  if ! git cat-file -e "origin/main:$highlights" 2>/dev/null; then
-    echo "$highlights does not exist on main, and releases from 0.4.0 need it (the Highlights section of the release notes). Write it (see docs/releases/README.md), merge it to main through a PR, then re-run scripts/release.sh $version" >&2
+# treeish is the commit the release's own text is read from and the commit the
+# tag goes on: origin/main for the ordinary path, and --at's commit for --at.
+# where says the same in words, for the refusals below; retry_cmd is the command
+# they point the user back at -- this run's own, except that --at's placeholder
+# stands for the commit the person has to land the missing piece in, which only
+# they know; tag_rerun re-runs this release for the commit being tagged, and so
+# names --at's commit outright.
+treeish=origin/main
+where="on main"
+retry_cmd="scripts/release.sh $version"
+tag_rerun="scripts/release.sh $version"
+if [ -n "$at" ]; then
+  if ! at_sha=$(git rev-parse --quiet --verify "$at^{commit}" 2>/dev/null); then
+    echo "--at $at is not a commit in this checkout; fetch it (git fetch origin), then re-run \"$rerun\"" >&2
     exit 1
   fi
-  if [ -z "$(git show "origin/main:$highlights" | tr -d '[:space:]')" ]; then
-    echo "$highlights on main is empty; write the Highlights (see docs/releases/README.md), merge it, then re-run scripts/release.sh $version" >&2
+  if ! git merge-base --is-ancestor "$at_sha" refs/remotes/origin/main; then
+    echo "--at $at is $at_sha, which is not an ancestor of origin/main, and a CLI release is tagged on a commit of main (a patch release, --hotfix, is cut from the maintenance branch release/X.Y instead; docs/release.md, \"Hotfix releases\")" >&2
+    exit 1
+  fi
+  treeish=$at_sha
+  where="at $at_sha"
+  retry_cmd="scripts/release.sh $version --at <the commit that carries it>"
+  tag_rerun="scripts/release.sh $version --at $at_sha"
+  # at_hint is what the refusals that a missing piece of the bump produces
+  # share: --at commits nothing and opens no pull request, so the commit it
+  # names has to carry every piece the release's own commit would have written.
+  at_hint="--at tags a commit that already carries $tag's bump -- the plugin version and every skill header (scripts/bump-plugin-version.sh $version), docs/releases/$tag.md, its line in website/data/release-summaries.yaml, the cli stream's current in docs/release-streams.yaml, the two doc lines that name the released version, FEATURES.md's stamp and website/data/compatibility.yaml's as_of.cli -- because this run opens no pull request and writes nothing itself: the bump lands on main through a PR first (docs/release.md, \"Before you tag\"), and re-running with that commit's sha is what cuts the release at it"
+  # The commit's own files are read from a scratch worktree at it: the stream
+  # read, the two doc lines and scripts/bump-plugin-version.sh --check all read
+  # the working directory, and the user's checkout is at neither that commit
+  # nor necessarily anywhere near it. One worktree serves all three.
+  scratch_dir=$(mktemp -d)
+  if ! worktree_out=$(git worktree add --quiet --detach "$scratch_dir/tree" "$at_sha" 2>&1); then
+    printf '%s\n' "$worktree_out" >&2
+    cleanup_scratch
+    echo "--at reads $at_sha's own files from a scratch worktree, and one could not be created at it (above); the checkout was not touched. Fix what git reported, then re-run \"$rerun\"" >&2
+    exit 1
+  fi
+  at_bump_out=""
+  if [ ! -f "$scratch_dir/tree/scripts/bump-plugin-version.sh" ] \
+    || ! at_bump_out=$(cd "$scratch_dir/tree" && scripts/bump-plugin-version.sh --check "$version" 2>&1); then
+    [ -z "$at_bump_out" ] || printf '%s\n' "$at_bump_out" >&2
+    echo "$at_sha does not carry every $version plugin version stamp (a tree with no scripts/bump-plugin-version.sh cannot carry one at all): $at_hint" >&2
+    exit 1
+  fi
+fi
+
+# From 0.4.0 on a release needs its hand-written Highlights, committed on main
+# before the release PR: GoReleaser reads docs/releases/vX.Y.Z.md from the
+# tag's tree (docs/releases/README.md). Read from $treeish: origin/main on the
+# ordinary path, which the checks above tie to the working tree, and the commit
+# --at names on --at.
+if scripts/release-policy.sh highlights-required "$version"; then
+  highlights="docs/releases/$tag.md"
+  if ! git cat-file -e "$treeish:$highlights" 2>/dev/null; then
+    echo "$highlights does not exist $where, and releases from 0.4.0 need it (the Highlights section of the release notes). Write it (see docs/releases/README.md), merge it to main through a PR, then re-run $retry_cmd" >&2
+    exit 1
+  fi
+  if [ -z "$(git show "$treeish:$highlights" | tr -d '[:space:]')" ]; then
+    echo "$highlights $where is empty; write the Highlights (see docs/releases/README.md), merge it, then re-run $retry_cmd" >&2
     exit 1
   fi
 
@@ -917,12 +1199,36 @@ if scripts/release-policy.sh highlights-required "$version"; then
   # prints above the Highlights. The site build reads one per release file and
   # stops, naming the file, when one is missing (website/README.md,
   # website/src/content.ts), so the entry ships in the same PR as the Highlights
-  # (docs/release.md). Read from origin/main for the same reason.
+  # (docs/release.md). Read from $treeish for the same reason.
   summaries="website/data/release-summaries.yaml"
-  summary_line=$(git show "origin/main:$summaries" 2>/dev/null | grep -F "  $tag: " | head -1 || true)
+  summary_line=$(git show "$treeish:$summaries" 2>/dev/null | grep -F "  $tag: " | head -1 || true)
   summary_text=${summary_line#"  $tag: "}
   if [ -z "${summary_text// /}" ]; then
-    echo "$summaries on main carries no entry for $tag, and the changelog page prints one per release (the site build stops when a release file has none). Write the line (see the file's header), in the same PR as $highlights, then re-run scripts/release.sh $version" >&2
+    echo "$summaries $where carries no entry for $tag, and the changelog page prints one per release (the site build stops when a release file has none). Write the line (see the file's header), in the same PR as $highlights, then re-run $retry_cmd" >&2
+    exit 1
+  fi
+fi
+
+# --at's own, and the only piece of the release's own PR that no check the
+# release gate reads could vouch for: the compatibility matrix's "as of" stamp,
+# website/data/compatibility.yaml's `as_of.cli`. The release's PR moves it to the
+# version whose notes file it adds, so the changelog page's "as of" names the
+# release being cut rather than the one before it (website/test/compatibility.mjs
+# refuses a stamp behind the newest notes file). That test owns the rule and runs
+# in no job of this repository's own -- the website's tests run in a preview
+# deploy, by hand -- so on --at, which tags a commit nobody has to look at
+# again, the one value the rule holds at release time is read here: $version is
+# the newest notes file and the cli stream's current by now, so the stamp has to
+# name it too. The ordinary path leaves the file to the person whose PR carries
+# it and to that test; this reads it only where neither does.
+if [ -n "$at" ]; then
+  compat="website/data/compatibility.yaml"
+  compat_cli=$(git show "$treeish:$compat" 2>/dev/null | awk '
+    /^as_of:/ { as_of = 1; next }
+    as_of && /^[^[:space:]]/ { as_of = 0 }
+    as_of && /^[[:space:]]+cli:/ { sub(/^[[:space:]]+cli:[[:space:]]*/, ""); print; exit }')
+  if [ "$compat_cli" != "$tag" ]; then
+    echo "$compat $where says the compatibility matrix was last read as of '${compat_cli:-nothing}', not $tag, and the release's own PR moves that stamp with the notes file it adds (website/test/compatibility.mjs refuses a stamp behind the newest notes file, so the page would name the release before this one): $at_hint" >&2
     exit 1
   fi
 fi
@@ -948,9 +1254,8 @@ fi
 
 # The feature matrix's stamp (docs/feature-matrix/contract.md). The release's
 # own PR refreshes the file, so the tree being released carries FEATURES.md
-# stamped for this version -- the line `as_of: vX.Y.Z`, read off origin/main
-# the way the checks above read the notes, with git and grep and no node
-# (D2447).
+# stamped for this version -- the line `as_of: vX.Y.Z`, read off $treeish the
+# way the checks above read the notes, with git and grep and no node (D2447).
 #
 # The stamp alone does not prove a refresh: a release's notes are written ahead
 # of it, so a file stamped mid-cycle would pass. The file must also have been
@@ -963,12 +1268,12 @@ fi
 # FEATURES.md and the matrix waits for the next ordinary release
 # (docs/release.md, "Hotfix releases").
 features=FEATURES.md
-if ! git show "origin/main:$features" 2>/dev/null | grep -qxF "as_of: $tag"; then
-  echo "$features on origin/main does not carry $tag's stamp: it needs the line as_of: $tag, which the release's own PR writes -- npm run features -- --as-of $tag in website/, committed beside the notes, the summary line and the compatibility stamp (docs/release.md, \"Before you tag\") -- and the generator refuses to write while any status.md name is unmapped, listing the names for that PR to map. Regenerate it, merge it to main, then re-run scripts/release.sh $version" >&2
+if ! git show "$treeish:$features" 2>/dev/null | grep -qxF "as_of: $tag"; then
+  echo "$features $where does not carry $tag's stamp: it needs the line as_of: $tag, which the release's own PR writes -- npm run features -- --as-of $tag in website/, committed beside the notes, the summary line and the compatibility stamp (docs/release.md, \"Before you tag\") -- and the generator refuses to write while any status.md name is unmapped, listing the names for that PR to map. Regenerate it, merge it to main, then re-run $retry_cmd" >&2
   exit 1
 fi
-if [ -n "$latest" ] && [ -z "$(git log --oneline "v$latest..origin/main" -- "$features")" ]; then
-  echo "$features on origin/main carries $tag's stamp but has no commit to it since v$latest, the previous release tag: the stamp alone does not prove the matrix was rebuilt, because a release's notes are written ahead of it. Commit $features in the release's own PR (docs/release.md, \"Before you tag\"), merge it to main, then re-run scripts/release.sh $version" >&2
+if [ -n "$latest" ] && [ -z "$(git log --oneline "v$latest..$treeish" -- "$features")" ]; then
+  echo "$features $where carries $tag's stamp but has no commit to it since v$latest, the previous release tag: the stamp alone does not prove the matrix was rebuilt, because a release's notes are written ahead of it. Commit $features in the release's own PR (docs/release.md, \"Before you tag\"), merge it to main, then re-run $retry_cmd" >&2
   exit 1
 fi
 
@@ -981,7 +1286,9 @@ fi
 # graph refuses it -- a symlink, an anchor, a tag prefix that is not this
 # stream's, a console version below the floor the console has shipped. It runs
 # after the clean-tree and main == origin/main checks, so `go run` builds the
-# helper from the checkout those checks verified.
+# helper from that checkout; on --at it runs in the scratch worktree, so the
+# helper comes from the commit's own tree, which is the tree whose file it
+# reads.
 #
 # `set --check` is step 2's write computed in memory: the floor (a version below
 # the stream's current is refused; the version it is already at is allowed, since
@@ -1001,15 +1308,30 @@ if [ -z "${RELEASE_SH_STREAMS_CMD:-}" ] && ! command -v go >/dev/null 2>&1; then
   echo "go is not on PATH, and the release reads the CLI stream (docs/release-streams.yaml) through internal/streams/cmd/streams with it, for the version it must not go behind and the name it is spoken with (--dry-run's plugin budget check needs go too). Install go (https://go.dev/dl)." >&2
   exit 1
 fi
-if ! stream_check=$($streams_cmd set --check cli "$version" 2>&1); then
-  echo "docs/release-streams.yaml cannot record $version as the cli stream's current, which step 2 writes in the release commit (docs/console-dependency-graph/reconciliation.md, GD7):
+if [ -n "$at" ]; then
+  # --at writes nothing into the file, so the write is not computed in memory:
+  # what the commit it names has to carry is that write's result, the cli
+  # stream's current already at $version.
+  if ! stream_get=$(in_release_tree $streams_cmd get cli 2>&1); then
+    echo "docs/release-streams.yaml $where could not be read (above): $at_hint" >&2
+    exit 1
+  fi
+  stream_current=$(printf '%s\n' "$stream_get" | sed -n 's/^current=//p')
+  if [ "$stream_current" != "$version" ]; then
+    echo "docs/release-streams.yaml $where says the cli stream's current is '${stream_current:-nothing}', not $version (step 2 records the version being released in it, in the release commit): $at_hint" >&2
+    exit 1
+  fi
+else
+  if ! stream_check=$(in_release_tree $streams_cmd set --check cli "$version" 2>&1); then
+    echo "docs/release-streams.yaml cannot record $version as the cli stream's current, which step 2 writes in the release commit (docs/console-dependency-graph/reconciliation.md, GD7):
 $stream_check" >&2
-  exit 1
+    exit 1
+  fi
 fi
 # The name the release is spoken with: the name of the minor it falls in and the
 # patch's word ("Camel two" for 0.11.2), as docs/release-streams.yaml's header
 # writes it. A version the check above accepted always has one.
-if ! stream_name=$($streams_cmd name cli "$version" 2>&1); then
+if ! stream_name=$(in_release_tree $streams_cmd name cli "$version" 2>&1); then
   echo "docs/release-streams.yaml names no release for $version:
 $stream_name" >&2
   exit 1
@@ -1017,12 +1339,33 @@ fi
 
 # The two doc lines the release commit rewrites must still read the way the
 # rewrite expects, so a reworded one is refused here, before a branch exists.
-released_version_docs check "$version" || exit 1
+# On --at the commit has to hold the rewrite already, so the same rewrite is
+# applied to the scratch worktree and nothing may come of it.
+if [ -n "$at" ]; then
+  in_release_tree released_version_docs check "$version" || exit 1
+  in_release_tree released_version_docs write "$version"
+  doc_rewrites=$(git -C "$scratch_dir/tree" diff --name-only)
+  if [ -n "$doc_rewrites" ]; then
+    echo "the doc lines that name the released version $where still name another one, and the release commit rewrites them to $version (changed: $(printf '%s' "$doc_rewrites" | tr '\n' ' ')): $at_hint" >&2
+    exit 1
+  fi
+else
+  released_version_docs check "$version" || exit 1
+fi
 
-# Checks still running on main (a just-merged PR) are waited for, up to
+# Checks still running on the commit are waited for -- main's tip on the
+# ordinary path (a just-merged PR); --at's commit, whose green checks are the
+# premise of the flag and which the gate refuses outright when it carries no
+# full ci run of its own, naming the command that puts one there -- up to
 # --timeout-minutes; a failed check fails at once.
-echo "checking that main's checks are green at $local_main (waiting up to ${timeout_minutes}m for any still running)..."
-GITHUB_SHA="$local_main" GITHUB_REPOSITORY="$repo" GATE_WAIT_SECONDS="$timeout_seconds" GATE_POLL_SECONDS="$poll_seconds" scripts/release-gate.sh "$tag"
+gate_sha=$local_main
+if [ -n "$at" ]; then
+  gate_sha=$at_sha
+  echo "checking that $tag's commit $at_sha carries green test, terraform and rules checks (waiting up to ${timeout_minutes}m for any still running)..."
+else
+  echo "checking that main's checks are green at $local_main (waiting up to ${timeout_minutes}m for any still running)..."
+fi
+GITHUB_SHA="$gate_sha" GITHUB_REPOSITORY="$repo" GATE_WAIT_SECONDS="$timeout_seconds" GATE_POLL_SECONDS="$poll_seconds" scripts/release-gate.sh "$tag"
 
 # plugin_budget_check applies the version bump to a scratch worktree of the
 # tree being released and runs the plugin tests there. The bump rewrites two
@@ -1058,17 +1401,17 @@ plugin_budget_check() {
       return 1
     fi
   fi
-  plugin_scratch=$(mktemp -d)
-  if ! git worktree add --quiet --detach "$plugin_scratch/tree" HEAD >/dev/null 2>&1; then
-    rm -rf "$plugin_scratch"
-    plugin_scratch=""
+  scratch_dir=$(mktemp -d)
+  if ! git worktree add --quiet --detach "$scratch_dir/tree" HEAD >/dev/null 2>&1; then
+    rm -rf "$scratch_dir"
+    scratch_dir=""
     plugin_check_line="the plugin budget check did not run (no scratch worktree could be created), so nothing has verified that the $want bump leaves every skill file inside its byte budget"
     echo "note: could not create a scratch worktree, so the plugin budget check ($test_cmd on a bumped tree) is skipped" >&2
     return 0
   fi
   rc=0
-  ( cd "$plugin_scratch/tree" && scripts/bump-plugin-version.sh "$want" >/dev/null && sh -c "$test_cmd" ) || rc=$?
-  cleanup_plugin_scratch
+  ( cd "$scratch_dir/tree" && scripts/bump-plugin-version.sh "$want" >/dev/null && sh -c "$test_cmd" ) || rc=$?
+  cleanup_scratch
   if [ "$rc" != 0 ]; then
     plugin_check_line="the plugin tests fail on a tree with the $want bump applied"
     echo "the plugin tests fail on a tree with the $want bump applied (above), so the bump commit would go red on main. The usual cause is a skill file the bump pushed over its byte budget (plugin/skills_lint_test.go's maxSkillBytes; 0.10.0's plugin/skills/setup/SKILL.md, #929): shorten the file, then tag." >&2
@@ -1078,9 +1421,39 @@ plugin_budget_check() {
   echo "$plugin_check_line"
 }
 
+# plan_rehearsal_line prints the dry-run plan's step 4b, which both paths share:
+# the rehearsal builds this repository's own go catalog entry from the commit
+# being released either way. The plan itself is one heredoc per path, since
+# --at steps 2 to 4 are not the ordinary ones.
+plan_rehearsal_line() {
+  if [ "$skip_rehearsal" = 1 ]; then
+    echo "  4b. SKIPPED: --skip-rehearsal, the owner's explicit word of 2026-11-21: no sandbox build is run and no record is read before the tag; the rehearsal is owed (scripts/release-rehearsal.sh run <sha>, once the sandbox exists)"
+  else
+    echo "  4b. build this repository's own go catalog entry for real in the sandbox project (FUGARO_LIVE_GCP_PROJECT), with the CLI built from $plan_commit (scripts/release-rehearsal.sh run: ONE billable Cloud Build, judged against the project's caps before it is submitted), and refuse the tag unless the record it writes is green for that commit (scripts/release-rehearsal.sh check): the build 0.26.0 left to the owner's next \"fugaro update\", and the last thing this run does before the tag"
+  fi
+}
+
 # 2. Branch, bump, PR (skipped by --dry-run; resumed from an existing PR).
 if [ "$dry_run" = 1 ]; then
+  if [ -n "$at" ]; then
+    plan_commit="$at_sha, the commit --at names"
+    cat <<EOF
+
+Dry run for $tag ($stream_name) at $at_sha: every precondition above passed. The plugin budget check did not run: --at tags a commit that carries the bump already, and its own test check ran the plugin tests on that tree (the release gate read it above).
+Nothing else was changed.
+Without --dry-run this would:
+  2. be skipped: --at tags a commit that already carries the bump, so no branch, no commit and no pull request of this run's own
+  3. be skipped: with --at there is no release pull request to wait for
+  4. dispatch no ci run -- a dispatch runs a workflow at a branch tip, and the commit being tagged is not main's tip -- and require the test, terraform and rules checks already on it to pass (the release gate; a commit with no full ci run of its own is refused there, with the command that puts one on it)
+EOF
+    plan_rehearsal_line
+    cat <<EOF
+  5. create and push the tag $tag on $at_sha (no prompt: the green release gate on the verified commit is the safeguard)
+EOF
+    exit 0
+  fi
   plugin_budget_check "$version" || exit 1
+  plan_commit="the merge commit"
   cat <<EOF
 
 Dry run for $tag ($stream_name): every precondition above passed; $plugin_check_line.
@@ -1090,16 +1463,26 @@ Without --dry-run this would:
   3. wait up to ${timeout_minutes}m for that PR to merge
   4. dispatch a full ci run on the merge commit when it has none (gh workflow run ci, with -f full=true and -f live_scripts=always where main's ci.yml declares them), then wait up to ${timeout_minutes}m for its test, terraform and rules checks, and require them to pass (the release gate)
 EOF
-  if [ "$skip_rehearsal" = 1 ]; then
-    echo "  4b. SKIPPED: --skip-rehearsal, the owner's explicit word of 2026-11-21: no sandbox build is run and no record is read before the tag; the rehearsal is owed (scripts/release-rehearsal.sh run <sha>, once the sandbox exists)"
-  else
-    cat <<EOF
-  4b. build this repository's own go catalog entry for real in the sandbox project (FUGARO_LIVE_GCP_PROJECT), with the CLI built from the merge commit (scripts/release-rehearsal.sh run: ONE billable Cloud Build, judged against the project's caps before it is submitted), and refuse the tag unless the record it writes is green for that commit (scripts/release-rehearsal.sh check): the build 0.26.0 left to the owner's next "fugaro update", and the last thing this run does before the tag
-EOF
-  fi
+  plan_rehearsal_line
   cat <<EOF
   5. create and push the tag $tag (no prompt: the green release gate on the verified merge commit is the safeguard)
 EOF
+  exit 0
+fi
+
+# --at from here: steps 2 and 3 are the ordinary path's alone -- no branch, no
+# commit and no pull request of this run's own -- and the commit named carries
+# the whole bump already, checked above. The tag goes on that commit, verified
+# by the same gate and the same tail as the ordinary path. Nothing is
+# dispatched on it: a workflow_dispatch runs a workflow at its ref's tip, and
+# that is not the commit being released; the gate reads the ci runs that commit
+# has, refuses at once one whose runs are all selected or missing, naming the
+# command that puts a full run on it, and waits out only what is still running.
+if [ -n "$at" ]; then
+  head_sha=$at_sha
+  echo "--at: the release is cut at $head_sha, the commit --at names, and no branch, commit or pull request of this run's own is made"
+  run_release_gate "$head_sha"
+  finish_the_release
   exit 0
 fi
 
@@ -1313,122 +1696,7 @@ ensure_full_ci_run "$head_sha"
 # --timeout-minutes), naming what is pending, and fails at once on a conclusive
 # failure. It does not wait for CI on a squash-merge commit whose tree equals the
 # green PR head's: it uses the head's checks and says so.
-echo "waiting for test, terraform and rules to pass on $head_sha (up to ${timeout_minutes}m)..."
-GITHUB_SHA="$head_sha" GITHUB_REPOSITORY="$repo" GATE_WAIT_SECONDS="$timeout_seconds" GATE_POLL_SECONDS="$poll_seconds" scripts/release-gate.sh "$tag"
+run_release_gate "$head_sha"
 
-# The pre-tag rehearsal, still inside step 4 because it is the last thing that
-# verifies the merged commit before the tag goes on it. 0.26.0's catalog build
-# failed for the owner on three things no hermetic test sees -- a stale pinned
-# branch, the leak scan's false positives on a real image, a layer-count
-# refusal -- and the tag was pushed by then, so the build that found them was
-# `fugaro update`'s on the owner's own installation. So the tag waits for a real
-# build of this repository's own `go` catalog entry, in the sandbox project
-# only, with the CLI built from the very commit being tagged.
-#
-# `run` is the billable half, and it refuses no session of its own: it builds in
-# the sandbox project only and tags nothing, so a coding agent may run it by hand
-# (the owner's ruling of 2026-11-19). What keeps this step the person's is the
-# release around it — the preconditions above refuse a coding agent's session,
-# before the branch, the pull request and the merge — and the CLI is not a fence
-# either: its gate admits an agent's session whose plan it admitted. `check` is
-# the gate: the record on disk --
-# commit, Cloud Build id, verdict -- is what the tag is cut on, never this run's
-# own memory of it, so a missing, red, or other-commit record refuses the tag
-# and names the Cloud Build to read. The record is a local convention and no
-# proof: nothing reads the build id back from Cloud Build, and a session that
-# can write the file can pass the gate (docs/release.md says so). `run` reuses a
-# green record for the same commit, so a release resumed after an interruption
-# rebuilds nothing.
-#
-# This is the CLI path's step alone. The hotfix path above does not run it: its
-# branch tip exists only inside its own run, in a scratch worktree removed on
-# exit, so there is no commit anyone could have rehearsed beforehand, and a
-# billable build is not what a patch release is for.
-if [ "$skip_rehearsal" = 1 ]; then
-  echo "--skip-rehearsal: no rehearsal was run for $head_sha, on the owner's explicit word of 2026-11-21; it is owed." >&2
-else
-  scripts/release-rehearsal.sh run "$head_sha" || exit 1
-  scripts/release-rehearsal.sh check "$head_sha" || exit 1
-fi
+finish_the_release
 
-# 5. Summary and confirmation.
-subject=$(git log -1 --format=%s "$head_sha")
-if [ "$skip_rehearsal" = 1 ]; then
-  rehearsal_summary="rehearsal: SKIPPED on the owner's explicit word of 2026-11-21 (--skip-rehearsal); it is owed"
-else
-  rehearsal_summary="rehearsal: this repository's own go catalog entry built for real in $FUGARO_LIVE_GCP_PROJECT (scripts/release-rehearsal.sh's record, above)"
-fi
-cat <<EOF
-
-Release summary
-  tag:     $tag
-  name:    $stream_name
-  commit:  $head_sha ($subject)
-  checks:  test, terraform and rules all succeeded, on $head_sha or on the identical-tree head of the merged PR (scripts/release-gate.sh says which, above)
-  $rehearsal_summary
-
-A pushed tag is permanent: the Go module proxy and the public ghcr.io images
-cache vX.Y.Z forever, so it is never moved or re-cut (docs/release.md#rolling-back).
-EOF
-
-if [ "$local_tag" = 1 ]; then
-  existing=$(git rev-parse "refs/tags/$tag^{commit}")
-  if [ "$existing" != "$head_sha" ]; then
-    echo "tag $tag already exists locally at $existing, not the verified merge commit $head_sha; delete it (git tag -d $tag) and re-run" >&2
-    exit 1
-  fi
-  echo "Tag $tag already exists locally at this commit but is not on origin; pushing it."
-fi
-
-# 6. Tag and push.
-if [ "$local_tag" != 1 ]; then
-  git tag -a "$tag" -m "Fugaro $tag" "$head_sha"
-fi
-# A failed push is repeated only on a dropped connection, and only once origin
-# has been read again and found without the tag: a push that reached origin
-# before the connection dropped is not pushed twice.
-# already_there: origin turned out to have the tag at this commit, so there was
-# nothing to push and the failure's own output is not printed again below. The
-# run goes on to the verification either way: whether this run pushed the tag or
-# found it there, what has to hold is the same.
-already_there=0
-push_try=1
-while ! push_out=$(git push origin "refs/tags/$tag" 2>&1); do
-  printf '%s\n' "$push_out" >&2
-  remote_sha=$(retry_read git ls-remote origin "refs/tags/$tag^{}" | cut -f1)
-  if [ "$remote_sha" = "$head_sha" ]; then
-    echo "tag $tag is already on origin at $head_sha; nothing to push."
-    already_there=1
-    break
-  fi
-  if [ -z "$remote_sha" ] && [ "$push_try" -lt "$retry_tries" ] && retry_is_transient "$push_out"; then
-    echo "pushing tag $tag failed (try $push_try of $retry_tries) and origin does not have it; retrying in $((retry_seconds * push_try))s" >&2
-    sleep $((retry_seconds * push_try))
-    push_try=$((push_try + 1))
-    continue
-  fi
-  echo "pushing tag $tag failed. It exists locally at $head_sha; once the cause is fixed, push it with:
-  git push origin refs/tags/$tag
-or re-run scripts/release.sh $version, which pushes it." >&2
-  exit 1
-done
-if [ "$already_there" = 0 ]; then
-  printf '%s\n' "$push_out"
-fi
-
-cat <<EOF
-tag $tag pushed. Watch:
-  https://github.com/$repo/actions/workflows/release.yml
-  https://github.com/$repo/actions/workflows/images.yml
-  https://github.com/$repo/actions/workflows/console-windows.yml
-
-Post-release checklist (docs/release.md):
-  - the first release of a new image package: make it public once (package settings, Danger Zone, Change visibility)
-EOF
-
-# 7. Verify the release: every workflow the tag started has to conclude green,
-# the images it published have to be pullable without a login, and -- on a patch
-# tag -- the fixes it carries have to be on main. This waits (bounded), so it is
-# the last thing the script does; scripts/verify-release.sh runs it on its own
-# too, for a tag whose runs are already finished.
-scripts/verify-release.sh "$tag" --timeout-minutes "$timeout_minutes"

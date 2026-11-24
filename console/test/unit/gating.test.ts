@@ -32,7 +32,7 @@ import {
 } from '../../src/renderer/gating'
 import type { Gate, GateDecision } from '../../src/renderer/gating'
 import { newOpsFrom } from '../../src/renderer/new-bridge'
-import { STUB_FIXTURES, stubBridge } from '../../src/renderer/stubs/bridge-stub'
+import { NEW_OP_ANSWERS } from '../support/newOpAnswers'
 import type { WhoAmIRole, WhoAmIScope, WhoAmIView } from '../../src/shared/new-ops'
 import { WHOAMI_CLI_FLOOR, whoamiSupported } from '../../src/shared/version'
 
@@ -262,15 +262,16 @@ describe('readGate', () => {
 
   it('reads a missing bridge method as no answer', async () => {
     // `newOpsFrom` answers `not-available` for a bridge with no such member --
-    // the old preload, or this build's own stub before I-OPS lands -- and that
-    // is no answer, so every control stays as it is.
+    // the old preload, or a console whose `whoami` row is not registered (a CLI
+    // below `WHOAMI_CLI_FLOOR`) -- and that is no answer, so every control stays
+    // as it is.
     const gate = await readGate(newOpsFrom({}), A_VERSION, A_FLOOR)
     expect(gate.role).toBeNull()
     expect(gate.can('launch').allowed).toBe(true)
   })
 
   it('reads a document it cannot decode as no answer', async () => {
-    const broken = JSON.parse(JSON.stringify(STUB_FIXTURES['whoami'])) as {
+    const broken = JSON.parse(JSON.stringify(NEW_OP_ANSWERS['whoami'])) as {
       document: Record<string, unknown>
     }
     delete broken.document['role']
@@ -283,11 +284,21 @@ describe('readGate', () => {
     expect(gate.can('manage-project').allowed).toBe(true)
   })
 
-  it('reads the role the console’s own stub answers', async () => {
-    // The fixture C-OPS's stub bridge answers with is an admin reaching one
-    // project, which is the shape that enables the writes; the read is that
-    // document, decoded by the contract and mapped here.
-    const gate = await readGate(newOpsFrom(stubBridge()), A_VERSION, A_FLOOR)
+  it('reads the role an admin reaching one project answers', async () => {
+    // The document is **this case's own** rather than a fixture: what it is
+    // about is the gate's mapping for the one role that enables every action,
+    // and the shared fixtures are the CLI's recordings now (I-OPS) -- WH1's is
+    // an operator at `repos` scope, which is a different case and is the one
+    // `ops-contract.test.ts` holds to its golden. A case that read a screen's
+    // fixture to assert a role would be asserting the fixture.
+    const admin = {
+      document: { version: 1, role: 'admin', scope: 'project', repos: ['acme/app'] },
+    }
+    const gate = await readGate(
+      newOpsFrom({ whoAmI: () => Promise.resolve({ ok: true, data: admin }) }),
+      A_VERSION,
+      A_FLOOR,
+    )
     expect(gate.role).toBe('admin')
     expect(gate.scope).toBe('project')
     for (const action of GATE_ACTION_NAMES) {

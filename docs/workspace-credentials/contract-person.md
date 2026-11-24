@@ -38,14 +38,28 @@ headers a workspace slip travels in, and the one class a refused grant comes bac
 | `ErrPersonGrantRefused` | (a sentinel) | the one class a refused grant is answered with |
 
 **Why the names live in `internal/creds` and not in the service.** `internal/credsvc` is the service
-and `internal/gateway` is the run's proxy, and neither may import the other's wire constants: the
-service imports the gateway (its provider route forwards with the gateway's helpers and its `Route`),
-so the dependency cannot run the other way — F26 of
+and `internal/gateway` is the run's proxy, and the gateway may not import the service's wire
+constants: the service imports the gateway (its provider route forwards with the gateway's helpers and
+its `Route`), so the dependency cannot run the other way — F26 of
 [keys-through-service](../keys-through-service/contract-provider.md), the same reason the provider
-route's names are where they are. `internal/creds` is the one package both already import, so the
-names a job's environment and a call's headers are spelled with live here, once, and no side respells
-them. C1's `TestPersonGrantDecodesStrictly` pins every value above, as `TestRouteNamesArePinned` pins
-this package's route names.
+route's names are where they are. Nor does the gateway import this package — `internal/creds` imports
+`internal/budget`, which imports the gateway, so that is a cycle as well. The package the sides of
+this wire do share is `internal/creds`: `internal/credsvc`, `internal/cli` and `internal/runner` all
+import it, so the names a job's environment and a call's headers are spelled with live here, once, and
+those three sides respell none of them. The gateway is the one side that will respell them, and that
+**mirror is WC8's to write**: a call WC8 builds to the workspace's service carries the slip that
+service granted, and the claim secret after the claim (R4), and `internal/gateway` can spell neither
+through this package — so WC8 declares the names above a second time under `internal/gateway`, the
+shape `internal/gateway/providerwire.go` already has for the provider route and
+`internal/gateway/service.go` for the model wire, and holds the two spellings to each other name by
+name with an external test (`package gateway_test`, which may import both). Until WC8 lands, this
+package is their only declaration. R18 is not the reason it
+could be otherwise: the slip that rule leaves off a call is a **member's**, whose claim secret would
+be handed to a service outside the member (F13 of [reconciliation.md](reconciliation.md)), and the
+slip the workspace's service grants is the workspace's own secret — the model wire's fields in
+`internal/gateway/gateway.go` say the same of their own. C1's
+`TestPersonGrantDecodesStrictly` pins every value above, as `TestRouteNamesArePinned` pins this
+package's route names.
 
 ## The switch (R9, U8)
 

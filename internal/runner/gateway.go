@@ -33,7 +33,10 @@ import (
 // VertexBudgetRefusal is what a Vertex workflow under a budget in enforce
 // mode is told: the gateway can't yet be relied on to cap Vertex spend.
 // fugaro validate, fugaro update and the runner's bootstrap all say it.
-const VertexBudgetRefusal = "Vertex budgets are not supported yet: use budget.mode observe or off for this repository (see docs/gcp-live-checklist.md, check 20)"
+//
+// It names observe alone (AB1b, F11): the word that was the third mode is not
+// one to send a reader to any more (D3009).
+const VertexBudgetRefusal = "Vertex budgets are not supported yet: use budget.mode observe for this repository (see docs/gcp-live-checklist.md, check 20)"
 
 // VertexPoolRefusal is what a pool holding a Vertex member is told under
 // budget.mode: enforce (D1626, F8). It is VertexBudgetRefusal with the reason
@@ -359,15 +362,14 @@ func (r *run) reviewClassRun() bool {
 // it asks about is the run's model path's (modelAuth), never the file's own:
 // the class is what decides where a review container's calls go.
 //
-// An api-key or oauth run on the switch is the one addition (B2.2, F30):
-// GatewayOn cannot answer for it — an oauth auth is not one the gateway ever
-// carried, and an api-key auth is carried for a run that holds the key, which
-// this one does not — so the run's own switch is asked beside it, and only in
-// the modes that start a gateway at all. A run whose mode is off is refused in
-// bootstrap rather than left with no gateway and no credential (D2071,
-// applyRouting), so this arm is never the one that decides such a run's fate.
+// An oauth run on the switch is the one addition (B2.2, F30): GatewayOn cannot
+// answer for it — an oauth auth is not one the gateway ever carried — so the
+// run's own switch is asked beside it. The mode is no longer a fact of either
+// answer (AB1b, D3009): GatewayOn carries every credential the gateway can
+// carry in every mode, and the budget is accounted for by every run (Spend.On),
+// so what is left here is the credential and the switch.
 func (r *run) gatewayOn() bool {
-	return GatewayOn(r.modelAuth(), r.spend.Mode) || (r.serviceSwitched() && r.spend.On())
+	return GatewayOn(r.modelAuth(), r.spend.Mode) || r.serviceSwitched()
 }
 
 // serviceSwitched reports whether this run's model calls go through the
@@ -427,30 +429,6 @@ func (r *run) servedAuth() string {
 		return config.AuthCascade
 	}
 	return r.modelAuth()
-}
-
-// serviceSwitchModeRefusal is D2071's refusal of a switched repository whose
-// installation has the budget off: the mode is the switch's own condition,
-// because the gateway is what reaches the service and the gateway exists only
-// in observe and enforce. The remedy is the operator's, either way: raise the
-// mode, or take the repository off the switch from its own checkout.
-//
-// A SHARED PROJECT JOB has the mode and nothing else, and the sentence says so:
-// its switch is its profile's (B5.7, internal/cli's credentialsServiceLaunchEnv
-// reads the same answer), so one repository cannot take it off — while any
-// repository the profile admits is on, every job of that profile is on, and so
-// is every other repository's run on it. A remedy naming `fugaro update --repo`
-// there would be one no checkout can carry out.
-func (r *run) serviceSwitchModeRefusal() error {
-	mode := r.spend.Mode
-	if mode == "" {
-		mode = policy.ModeOff
-	}
-	remedy := fmt.Sprintf("set budget.mode to %s or %s in the project policy and publish it (fugaro project policy publish), or take this repository off the switch (fugaro update --repo) and its runs keep their own credential", policy.ModeObserve, policy.ModeEnforce)
-	if job, shared := r.projectJob(); shared {
-		remedy = fmt.Sprintf("set budget.mode to %s or %s in the project policy and publish it (fugaro project policy publish) — the mode is the only one of the two remedies that reaches this job, whose switch is its profile %s's and not this repository's: `fugaro update --repo` in a checkout takes a repository off the switch, and this job stays on it while any other repository the profile admits is on", policy.ModeObserve, policy.ModeEnforce, job.Profile)
-	}
-	return fmt.Errorf("agent.auth is %s and this job carries the credentials service's URL (%s), so this repository is on the switch, and this installation's budget mode is %s: the service is reached through the gateway, which only budget.mode %s or %s starts, so this run has no way to the credential the installation serves it and does not fall back to one of its own (D2071, D143) — %s", r.modelAuth(), credentialsServiceURLEnv, mode, policy.ModeObserve, policy.ModeEnforce, remedy)
 }
 
 // gateway is where the agent's model calls go, nil until the gateway runs.
@@ -1436,6 +1414,11 @@ func (r *run) recordLedgerCost(led gateway.Ledger) {
 	// subscription part of them (C1.16, D140). The stages' own reports are
 	// what the splits (model_by, route_by) are built from.
 	r.gwUsed, r.gwNotional = led.Used, led.Notional
+	// And the part of that money a fallback bought (C1, CS8, D140), which is
+	// the ledger's alone for the same reason: a fallback call that settled
+	// after its stage's report was taken is in the run's figure and in no
+	// stage's.
+	r.gwFallback = led.FallbackUSD
 	r.gwCacheRead, r.gwCacheWrite = led.CacheReadTokens, led.CacheWriteTokens
 	// The run's token counts by model are the ledger's, like the totals
 	// beside them and for the same reason: a call that settled after its
@@ -1475,7 +1458,22 @@ func (r *run) routingKnob() bool {
 // checkManagedDirWritable is the gateway's precondition: Claude Code's
 // managed settings are what keep a repository's own settings from
 // rerouting the agent, so a directory that can't hold them fails the run.
+//
+// It is the image's precondition, and a local invocation has no image: the
+// path is Claude Code's own (agent.ManagedSettingsPath), a developer's
+// machine may hold no such directory and may not be the developer's to
+// write, and --managed-settings cannot be pointed elsewhere there
+// (checkTestHooks). What the file is for still holds without it: the
+// gateway's address and token reach the stage in its environment
+// (agent.BuildEnv), which is the runner's own, and checkSettingsRouting
+// below refuses any settings file that would send the agent elsewhere. So
+// the directory is the cloud's to require, and a local run goes on
+// without it — equally true of the write in writeManagedSettings, which
+// warns rather than refusing.
 func (r *run) checkManagedDirWritable() error {
+	if r.d.Local {
+		return nil
+	}
 	dir := filepath.Dir(r.managedPath())
 	f, err := os.CreateTemp(dir, agent.ManagedSettingsTmpPattern)
 	if err != nil {
@@ -1490,7 +1488,8 @@ func (r *run) checkManagedDirWritable() error {
 // before the lock: a Vertex run that enforces is refused (a misconfiguration,
 // so an infra_error), an api-key run that enforces without a cap halts (a
 // policy, so a halt), and a run through the gateway needs prices for its
-// models and a managed settings directory it can write.
+// models and — in the image, where Claude Code reads them — a managed
+// settings directory it can write.
 func (r *run) checkBudget(ctx context.Context) error {
 	auth, s := r.cfg.Agent.Auth, r.spend
 	if auth == "vertex" && s.Mode == "enforce" {

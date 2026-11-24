@@ -464,6 +464,50 @@ func TestModelsLsWithoutAProjectConfig(t *testing.T) {
 	}
 }
 
+// TestModelsLsDirectRouteClaimsOnlyClaudeModels: the embedded table prices more
+// than Claude now — Vertex's Gemini rows are in it (pricing/vertex_gemini.go,
+// GV3) — and the direct route is the Anthropic API, which serves no Google
+// model. A direct route claiming the whole table would answer a person asking
+// where their `google/gemini-*` pin goes with "Anthropic", a route that would
+// refuse the call (directRoute).
+func TestModelsLsDirectRouteClaimsOnlyClaudeModels(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+
+	raw, _, err := execute(t, "models", "ls", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, raw)
+	}
+	var doc modelsLsDoc
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatalf("%v\n%s", err, raw)
+	}
+	if len(doc.Routes) != 1 || doc.Routes[0].Name != config.RouteDirect {
+		t.Fatalf("the document's routes are %+v, and with no project config the direct route is the only one", doc.Routes)
+	}
+	claimed := doc.Routes[0].Models
+	if len(claimed) == 0 {
+		t.Fatal("the direct route claims no model at all, and the embedded table prices Claude ones")
+	}
+	for _, id := range claimed {
+		if !isClaudeModel(id) {
+			t.Errorf("the direct route claims %s, which is not a Claude ID: the Anthropic API serves no other publisher's model", id)
+		}
+	}
+	// Both halves by name, so the filter going away is not caught only by the
+	// predicate it is written with: the table carries these and the route must
+	// not, and it carries the Claude rows and the route must.
+	for _, id := range []string{"google/gemini-3-flash", "google/gemini-3-pro"} {
+		if slices.Contains(claimed, id) {
+			t.Errorf("the direct route claims %s: the Anthropic API does not serve it, and Vertex is the route that does", id)
+		}
+	}
+	for _, id := range []string{"claude-opus-5-5", "claude-sonnet-5"} {
+		if !slices.Contains(claimed, id) {
+			t.Errorf("the direct route does not claim %s, which the embedded table prices and Anthropic serves: %v", id, claimed)
+		}
+	}
+}
+
 // TestModelsLsShowsCatalogAgeAndSpread: a catalog-priced row carries the
 // catalog's own date and age, and the spread the row is charged over — the
 // dearest endpoint of the tier against the price charged (design D6, P11) —

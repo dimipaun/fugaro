@@ -19,8 +19,9 @@ import (
 // is the domain a launch agent is bootstrapped into.
 
 // launchdPlistTemplate is the unit's whole content. It is a fixed template with
-// the binary path substituted twice and nothing else: the program to run, and
-// the `--binary` argument the daemon compares the version at (O8's
+// the binary path substituted twice, the label, and the `--name` pair a named
+// orchestrator's plist carries, and nothing else: the program to run, and the
+// `--binary` argument the daemon compares the version at (O8's
 // orchestrator_version.go) — the same path both times, because the path the
 // unit re-runs is the one that survives a package manager's upgrade, and a
 // process's own os.Executable is the versioned path that upgrade deletes.
@@ -38,13 +39,13 @@ const launchdPlistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>` + Label + `</string>
+	<string>{{label}}</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>{{binary}}</string>
 		<string>orchestrator</string>
 		<string>run</string>
-		<string>--binary</string>
+{{name arguments}}		<string>--binary</string>
 		<string>{{binary}}</string>
 	</array>
 	<key>RunAtLoad</key>
@@ -62,7 +63,7 @@ type launchd struct{}
 
 func (launchd) Platform() string { return "launchd" }
 
-func (launchd) Render(getenv func(string) string, binaryPath string) (Unit, error) {
+func (launchd) Render(getenv func(string) string, binaryPath, name string) (Unit, error) {
 	if binaryPath == "" {
 		return Unit{}, errors.New("the unit names a binary and none was given")
 	}
@@ -70,12 +71,44 @@ func (launchd) Render(getenv func(string) string, binaryPath string) (Unit, erro
 	if !filepath.IsAbs(home) {
 		return Unit{}, errors.New("$HOME is not set to an absolute path, so ~/Library/LaunchAgents cannot be found")
 	}
+	label := launchdLabel(name)
+	text := strings.ReplaceAll(launchdPlistTemplate, "{{label}}", label)
+	text = strings.ReplaceAll(text, "{{name arguments}}", launchdNameArguments(name))
 	return Unit{
 		Platform: "launchd",
-		Name:     Label,
-		Path:     filepath.Join(home, "Library", "LaunchAgents", Label+".plist"),
-		Text:     strings.ReplaceAll(launchdPlistTemplate, "{{binary}}", xmlText(binaryPath)),
+		Name:     label,
+		Path:     filepath.Join(home, "Library", "LaunchAgents", label+".plist"),
+		Text:     strings.ReplaceAll(text, "{{binary}}", xmlText(binaryPath)),
 	}, nil
+}
+
+// launchdLabel is one orchestrator's launchd label: the project's own
+// orchestrator keeps dev.fugaro.orchestrator, and a named one takes
+// dev.fugaro.orchestrator.<name> (D3207). One label per name is what lets a
+// machine run the project's own orchestrator and any number of named ones side
+// by side, and a name that is one is a label segment already — a-z, 0-9 and `-`,
+// starting with a letter or a digit, which is the rule the flag that fills this
+// in applies (orchestrator.ValidOrchestratorName).
+func launchdLabel(name string) string {
+	if name == "" {
+		return Label
+	}
+	return Label + "." + name
+}
+
+// launchdNameArguments is the `--name` pair a named orchestrator's plist runs
+// the daemon with, empty for the project's own — whose plist is exactly the one
+// this release has always written, so an installation converging on the update
+// that brought named orchestrators in finds its file unchanged (O8's
+// orchestrator_version.go compares the two texts).
+//
+// The name reaches the plist as XML text like the path does, though the rule
+// admits nothing XML escapes: one substitution, one rule.
+func launchdNameArguments(name string) string {
+	if name == "" {
+		return ""
+	}
+	return "\t\t<string>--name</string>\n\t\t<string>" + xmlText(name) + "</string>\n"
 }
 
 // xmlText is s as XML character data: the five predefined entities escaped, so
@@ -94,14 +127,14 @@ func xmlText(s string) string {
 // package never goes.
 func launchdDomain() string { return "gui/" + strconv.Itoa(os.Getuid()) }
 
-func launchdTarget() string { return launchdDomain() + "/" + Label }
+func launchdTarget(u Unit) string { return launchdDomain() + "/" + u.Name }
 
 // Reload bootstraps the unit, booting out whatever the label was serving first.
 // The bootout's failure is ignored on purpose: a label that is not loaded is
 // the first install's ordinary case, and launchctl's error for it is not this
 // command's to report. The bootstrap is the load, and its failure is.
 func (launchd) Reload(ctx context.Context, u Unit) error {
-	_ = runManager(ctx, "launchctl", "bootout", launchdTarget())
+	_ = runManager(ctx, "launchctl", "bootout", launchdTarget(u))
 	if err := runManager(ctx, "launchctl", "bootstrap", launchdDomain(), u.Path); err != nil {
 		return fmt.Errorf("loading the login unit at %s: %w", u.Path, err)
 	}
@@ -113,6 +146,6 @@ func (launchd) Reload(ctx context.Context, u Unit) error {
 // label that was never loaded leaves the file the person's to delete, and
 // deleting it is what uninstall does either way.
 func (launchd) Remove(ctx context.Context, u Unit) error {
-	_ = runManager(ctx, "launchctl", "bootout", launchdTarget())
+	_ = runManager(ctx, "launchctl", "bootout", launchdTarget(u))
 	return nil
 }

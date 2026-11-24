@@ -13,7 +13,7 @@ Three things it deliberately does **not** claim:
   Answering D113c (which fixed the *shape* — a new `fugaro` command — and the *name* —
   `fugaro mailbox`) approves no task.
 - **Phase 6 is approved, and most of its modules are merged — this plan is written against what
-  landed.** The owner approved all of Phase 6 on 2026-10-18. **Merged on `main` today — six of its
+  landed.** The owner approved all of Phase 6 on 2026-10-18. **Merged on `main` today — seven of its
   tasks, each with the module that proves it:** **P6.1** (`shared/command/index.js` — the command
   grammar),
   **P6.2** (`shared/confirm/index.js`, with the confirmation machine's rules, its `vectors.json` and
@@ -28,11 +28,11 @@ Three things it deliberately does **not** claim:
   `deleteUsers`), and **P6.7** (the consumer's enforcement of the D128 amendment:
   `internal/mailbox/action.go`, the Go port of `shared/confirm`'s rules that the re-validation and
   the action allow-list live in, held to `shared/confirm/vectors.json`, and `internal/cli/mailbox.go`,
-  this plan's T5, which is where the runner it refuses from sits). **Partly built:** **P6.13** — the
-  command the sweeper hides behind is in the tree and the store-side deletion it adds to that same
-  file (`internal/cli/mailbox.go`) has landed with it, while this plan's own T7 half — the
-  sweeper's local delete set and the presence verdict it reports (`internal/mailbox/expiry.go`) —
-  is not. **Approved and not built:** **P6.12** (the phone's spoken
+  this plan's T5, which is where the runner it refuses from sits), and **P6.13** (the sweeper — the
+  hidden `fugaro mailbox sweep` and the stored prompts it deletes, in `internal/cli/mailbox.go`,
+  which landed with the pairing CLI plan's T7, and the half this plan's own T7 adds beside it,
+  `internal/mailbox/expiry.go`: the consumer's local delete set and the presence verdict the sweep
+  reports and writes nothing for). **Approved and not built:** **P6.12** (the phone's spoken
   confirmation, which consumes the merged confirmation machine). So the MAC **can** be
   computed today and the **key can** too: the pairing command's wait and its delivery landed with the
   pairing CLI plan's T2b and T3, so a phone that has paired holds a per-pairing MAC key. What that means for
@@ -88,7 +88,7 @@ that owns it.
 | The prompt queue, the TTL and the safe answer | `shared/prompts/index.js` — `PROMPT_TTL_MS` (72 h), `EXPIRED_REPLY`, `QUEUE_FULL_REPLY`, `initialQueue`, `enqueue`, `expire`, `answer`, `pending`, `announcement`, `evaluateInterrupt`, `SWITCH` | Ruling M3: the **TTL is the module's number, not this command's**; the pending file's shape is the module's queue |
 | The redactor (D118 requires it before anything is written) | `shared/digest/index.js` — `redact`, `REDACTED`, `redactFunc`, `redactForms`, `digest`, `SEVERITY`, `moreSevere`, `mostSevere` | Every field this command writes to its own state or prints passes it first |
 | The simulator, the fault model and the canonical schedule line | `shared/mailbox-sim/index.js` — `createSimulator`, `scheduleFromSeed`, `faultFor`, `scheduleText`, `parseScheduleText`, `replyId`; its README §"The fault model, which is data", §"What the actors do" | The corpus's scenarios are its schedules; a failing Go case prints `scheduleText()` |
-| The mailbox subtree, and who may write it | `internal/budget/rules/rules.json.tmpl`'s `mailbox` block, `config/admin/devices` and `pairing` — the **merged generation 3** — and the macros `MAILBOX` / `CONSUMER` / `userClaim` / `PAIRING` / `MACOK` / `KINDREQ` / `BOOTOK` in `internal/budget/rules/rules.go` | §2 below, whose quoted block `TestMailboxPlanQuotesTheRulesFile` derives from the file line by line, and whose grant claims `TestMailboxPlanMatchesTheMergedGrants` holds to it |
+| The mailbox subtree, and who may write it | `internal/budget/rules/rules.json.tmpl`'s `mailbox` block, `config/admin/devices` and `pairing` — the **merged generation 3** — and the macros `MAILBOX` / `CONSUMER` / `userClaim` / `PAIRING` / `MACOK` / `SIGOK` / `TAGOK` / `MODEOK` / `KINDREQ` / `BOOTOK` in `internal/budget/rules/rules.go` | §2 below, whose quoted block `TestMailboxPlanQuotesTheRulesFile` derives from the file line by line, and whose grant claims `TestMailboxPlanMatchesTheMergedGrants` holds to it |
 | The rules' emulator proof | `internal/budget/rules/emulator_mailbox_test.go` | The template's fence is already proven; this command does not re-prove it |
 | A long-lived consumer's local state | `internal/watch/acks.go` — `AckPath`, `LoadAcks`, tmp+rename, `0o600` | The ledger and the pending-prompt file are written the same way (Ruling M7) |
 | A lease-shaped claim, and its TTL | `internal/runstore/launch.go` — `Store.Claim`, `ClaimTTL` (10 min) | Not used directly: the launch claim is the runs bucket's. Cited as the shape this command's lease follows |
@@ -126,28 +126,37 @@ the template in a temp directory), and `TestMailboxPlanMatchesTheMergedGrants` p
 holds the grant claims to it. So a later rules change is a failing test rather than a stale
 paragraph.
 
+The quote is the template as it is now, so it carries two shapes the P6.3/P6.4 field set did not:
+the tag is exactly one of `mac` and `sig` (`TAGOK`, an unpadded base64url Ed25519 signature of 86
+characters where `mac` is 64 lowercase-hex — generation 11, mobile identity-pairing task J5r and
+O6, which amends D171), and an inbox action may be the typed `launch` — a `mode` in place of the
+`confirmation` every other verb carries, its target a repository alone (O10). Where the prose below
+says `mac` it is describing P6.3's field, which is one of the two the rules now admit.
+
 ```jsonc
 "$mb": {
   "inbox": {
     "$msg": {
       ".write": "MAILBOX && newData.exists() && !data.exists()",
-      ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at', 'mac']) && $msg.length <= {{.MaxKeyLength}} && KINDREQ",
+      ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at']) && TAGOK && $msg.length <= {{.MaxKeyLength}} && KINDREQ",
       "id": { ".validate": "newData.isString() && newData.val().length <= {{.MaxKeyLength}} && newData.val() == $msg" },
       "sender": { ".validate": "STR && newData.val() == $mb" },
       "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxTextLength}}" },
       "at": { ".validate": "TIMESTAMP" },
       "mac": { ".validate": "MACOK" },
+      "sig": { ".validate": "SIGOK" },
       "agent": { ".validate": "AGENTID" },
-      "kind": { ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action' || newData.val() == 'registration')" },
+      "kind": { ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action' || newData.val() == 'registration' || newData.val() == 'stop')" },
       "options": {
         ".validate": "PARENTKIND == 'prompt' && newData.hasChildren()",
         "$i": { ".validate": "OPTIONIDX && newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxOptionLength}}" }
       },
       "reply_to": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxKeyLength}} && (PARENTKIND == 'answer' || PARENTKIND == 'action')" },
       "action": {
-        ".validate": "PARENTKIND == 'action' && newData.hasChildren(['id', 'verb', 'target', 'confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)",
+        ".validate": "PARENTKIND == 'action' && newData.hasChildren(['id', 'verb', 'target']) && (newData.child('verb').val() == 'launch' ? newData.child('mode').exists() : (newData.hasChildren(['confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)))",
         "id": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxKeyLength}}" },
-        "verb": { ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm')" },
+        "verb": { ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm' || newData.val() == 'launch')" },
+        "mode": { ".validate": "newData.parent().child('verb').val() == 'launch' && MODEOK" },
         "target": {
           ".validate": "TARGETOK",
           "run": { ".validate": "RUNTARGET" },
@@ -171,7 +180,7 @@ paragraph.
     ".read": "MAILBOX",
     "$msg": {
       ".write": "CONSUMER && newData.exists() && !data.exists()",
-      ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at', 'mac']) && $msg.length <= {{.MaxKeyLength}} && KINDREQ",
+      ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at']) && TAGOK && $msg.length <= {{.MaxKeyLength}} && KINDREQ",
       "acked": {
         ".write": "MAILBOX && newData.exists() && !data.exists()",
         ".validate": "newData.isBoolean() && newData.val() == true && data.parent().exists()"
@@ -182,10 +191,11 @@ paragraph.
   "heartbeat": {
     ".read": "MAILBOX",
     ".write": "CONSUMER && newData.exists()",
-    ".validate": "newData.hasChildren(['at', 'boot', 'mac'])",
+    ".validate": "newData.hasChildren(['at', 'boot']) && TAGOK",
     "at": { ".validate": "TIMESTAMP" },
     "boot": { ".validate": "BOOTOK" },
     "mac": { ".validate": "MACOK" },
+    "sig": { ".validate": "SIGOK" },
     "agents": {
       ".validate": "newData.hasChildren()",
       "$i": {
@@ -537,7 +547,10 @@ kills the process mid-loop and restarts it.
   deletion-set test, and it is the rule this ruling exists to state rather than leave implied.
   **And the sweeper never answers**: expiring a prompt and delivering its safe answer is the
   consumer's, on its own clock, because a sweep can run while the consumer is down (P6.13's reason,
-  P6.7's work — M3).
+  P6.7's work — M3). **And it is not a second writer of the state §6 gives the consumer**: the two
+  files have one writer at a time, so the local half is **refused** — naming the process to wait for
+  and exiting 1 — while a consumer holds them, and a consumer starting inside that half is refused in
+  turn; the store half is not fenced by it, because it touches no file of the consumer's.
   Hidden because it is internal — and because a hidden command is not user documentation, which is
   exactly what `internal/clidoc`'s skip rule is for.
 
@@ -812,8 +825,8 @@ subcommand of it, so it needs no line of its own. What that line drags with it, 
 | The lease, and presence | `mailbox/$mb/heartbeat` = `{at, boot, mac}` (and `agents`, which is P6.7's to advertise — D161) | the consumer, under the **operator's ADC** (C0) — the phone **reads** it, and the consumer's own read of the ETag is an **ADC** read for the same reason: no grant admits it | ETag conditional write (M1); `boot` names the holder; **signed** with direction `heartbeat` (M4b) |
 | The consumer's answers | `mailbox/$mb/outbox/$msg` = `{id, sender, text, at, mac}` (+ `kind`, `reply_to`, `agent` as the message needs) | the consumer, under the same ADC | create-only **in code** (C0: an ADC write is not fenced by the grant); **signed** with direction `outbox` (M4b) |
 | The phone's receipt that an answer was spoken | `mailbox/$mb/outbox/$msg/acked` | **the phone** (`MAILBOX`) | not this command's (C2) |
-| The dedupe ledger, the actions performed, the window state | `$XDG_STATE_HOME/fugaro/mailbox/<project>/ledger.json` | the consumer | tmp+rename, `0o600` — the *prefix* and the discipline are `internal/watch/acks.go`'s (`AckPath` is the single file `…/fugaro/watch-acks.json`); the `<project>` level is **new here** (M7) |
-| Prompts waiting for an answer | `$XDG_STATE_HOME/fugaro/mailbox/<project>/pending.json`, holding `shared/prompts`'s queue | the consumer | same; the entry's shape is P6.5's (M3, M7) |
+| The dedupe ledger, the actions performed, the window state | `$XDG_STATE_HOME/fugaro/mailbox/<project>/ledger.json` | the consumer — and `fugaro mailbox sweep`'s local half, **only** while no consumer holds this machine's state | tmp+rename, `0o600` — the *prefix* and the discipline are `internal/watch/acks.go`'s (`AckPath` is the single file `…/fugaro/watch-acks.json`); the `<project>` level is **new here** (M7). The two writers exclude each other by the state lock beside both files — the consumer holds it shared for the life of its process and the sweep takes it exclusive across its own half, so each is **refused** (with the process to wait for) rather than allowed to commit a set read before the other's write, which would drop a delivery the consumer had already accepted |
+| Prompts waiting for an answer | `$XDG_STATE_HOME/fugaro/mailbox/<project>/pending.json`, holding `shared/prompts`'s queue | the consumer — and `fugaro mailbox sweep`'s local half, **only** while no consumer holds this machine's state | same; the entry's shape is P6.5's (M3, M7); the same state lock fences the two writers (see the ledger's row) |
 | The keychain **item name** | the project's local config block (`internal/localcfg`) | the operator | plain config, **not secret**, and it may be printed (M5) |
 | The **pairing key** | the OS keychain, read by that item name (P6.6 generates it there) | the OS, then never written | read once per pairing, memory only, never printed (M5) |
 | The **presence verdict** | **nowhere** — computed, never written | — | `shared/presence`'s `evaluatePresence` is a pure function and **no node and no grant** is designated for its output; the sweeper prints it and writes nothing (§4.2) |
@@ -1258,7 +1271,8 @@ table that can be walked around is not a fence.
 ### Task T7: The hidden sweeper, D118's TTL and the reported presence verdict
 
 **Files.** `internal/cli/mailbox.go`'s hidden `sweep` command + `internal/cli/mailbox_sweep_test.go`;
-`internal/mailbox/expiry.go` (new) + `expiry_test.go` (new).
+`internal/mailbox/expiry.go` (new) + `expiry_test.go` (new); `internal/mailbox/statelock.go` (new,
+added by review — see the paragraph below) + `statelock_test.go`.
 **Depends on.** T4; T5 (the surface and the hidden-command rule); **M3** (`shared/prompts`' number),
 **M8** and **§6** (the remit and the delete set); D118, D168 as amended, D173; `shared/presence`;
 `shared/prompts` (**merged**). The store-side half of the sweeper is **P6.13's** and is not built
@@ -1271,6 +1285,12 @@ nothing stored for this command to delete and the deletion of a stored prompt is
 and it **never answers a conversation** (P6.13's own rule): the consumer expires a prompt and
 delivers its safe answer, the sweeper reads and deletes. It computes and **reports** the presence
 verdict and writes nothing for it, because no node and no grant is designated for one (§4.2).
+**And it is not a second writer of that state** (added by review): §6 gives the consumer both files
+and it holds what it read in memory for the life of its process, so the sweep takes this machine's
+state lock around the whole of its local half — the consumer holds it shared for the life of its
+process, so the store's lease stays the fence between two consumers (M1), and a sweep takes it
+exclusive — and is **refused**, with the process to wait for, while a consumer holds it. The store
+half is not fenced: it touches no file of the consumer's.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/cli ./internal/mailbox -run 'Sweep|Expiry' -count=1`:
 `fugaro mailbox sweep` is **absent** from `website/content/cli-reference.md` (asserted, its own
 test, the `newBudgetHistoryCmd` precedent); the expiry boundary is exact and the Go constant
@@ -1285,7 +1305,10 @@ that records every deletion, and the record is empty — and the set it would de
 name **no `m~…` and no `r~…` key**, so the `m~` rule P6.6 owns (in `internal/budget/sweep.go`,
 approved and not built) is **refused and reported** if it ever appears, never performed (M8);
 **`TestSweeperNeverAnswers`** asserts no outbox write and no "answered" ledger row from a sweep
-whose set held an expired prompt.
+whose set held an expired prompt; and the **one writer at a time** rule is asserted both ways —
+a sweep whose local half has work refuses it (exit 1, naming the process) while a consumer's lock
+is held, leaves both files byte for byte as they were, and still deletes the stored prompt past
+the TTL, while a consumer that starts inside a sweep's half is refused in turn.
 **Red step.** (a) Change the TTL to 6 hours and watch `TestPromptExpiresAt72h` fail (the assertion
 is against `PROMPT_TTL_MS`, not against a literal — this is M3's mutation, and it is what proves
 the plan did not declare the number of its own); (b) unhide the sweeper and watch the reference
@@ -1549,8 +1572,10 @@ and P6.13 own, and the corpus's known gap.
   delete set cannot contain one: it deletes the consumer's own state and **refuses and reports** if
   it is ever about to delete an `m~…` — or an `r~…` — user (M8, §6, §17). The `m~`-keyed deletion
   is a **finding for the owner**, never a silent fix here.
-- **The stored-prompt deletion is P6.13's** and is not built: at P4.1 `fugaro mailbox sweep` deletes
-  the consumer's own expired state and **no store node** (§6's last row, T7).
+- **The sweeper's two halves are two tasks'.** The stored-prompt deletion is P6.13's and has landed
+  (the pairing CLI plan's T7); what this plan's T7 adds is the other half — the consumer's own
+  expired state, which is where the sweeper's delete set starts (§6's last row). Neither half
+  reaches the other's: T7's set holds no store path, and the sweep asserts it.
 - **The shared package's CI job (P4.3) is written and staged, not running.** The job that installs
   the shared package's dependencies, runs its test script and runs its mutation proofs — alongside
   the Go job and the `rules` job, which is the only job that sets up Node today — is committed at

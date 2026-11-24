@@ -66,12 +66,14 @@
 // only thing that reaches a point's `title` through this path is a date this
 // file wrote.
 //
-// **The person breakdown is off by default** (design D15 and section 2.3): the
-// report can group by `person`, the document still carries those rows, and the
-// screen draws none of them until the operator turns the view on. When it is on,
-// a person key is drawn through `sanitize.ts`'s `person` class, which draws the
-// identity the document named (D3213, 2026-11-21) -- who spent the money is the
-// answer this view exists to give.
+// **The person breakdown is on by default** (D3214, 2026-11-21, amending D15):
+// the report groups by `person` when the operator asks it to, and the by-person
+// panel beside it is drawn from the screen's own read. A person key is drawn
+// through `sanitize.ts`'s `person` class, which draws the identity the document
+// named (D3213, 2026-11-21) -- who spent the money is the answer this view
+// exists to give -- and the knob beside the chart turns the view off for the
+// session, after which no person row is drawn and no read naming a person is
+// made.
 //
 // **The by-person view is `runs stats --json`, and it is fail-private.** The
 // knob above turns on a *second read* beside the report (`peopleArguments` and
@@ -123,12 +125,12 @@
 // file's business. It was written before that caller existed and kept whole, so
 // the entry point had nothing left to decide about the Spend screen's controls.
 //
-// **And the person view is off until the operator says otherwise.** `--by
-// person` is not a read this screen makes while the knob is off, and the
-// document's person rows are not drawn either (see the D15 paragraph above):
-// both halves are held by `spend-controls.test.ts` against a default of `on`.
-// The knob is per session, and nothing here writes it anywhere -- the console
-// never writes to disk (design section 5.1 rule 10).
+// **And the person view is on until the operator says otherwise.** `--by
+// person` is a read this screen may make without being asked, and the
+// document's person rows are drawn (see the D3214 paragraph above): both halves
+// are held by `spend-controls.test.ts` against the default it opens on. The
+// knob is per session, and nothing here writes it anywhere -- the console never
+// writes to disk (design section 5.1 rule 10).
 //
 // **What is deliberately not here.** No stylesheet and no colour: the design's
 // density rules are markup and CSS, and `src/renderer/theme/tokens.css` is in
@@ -159,7 +161,10 @@ import type { Reading } from '../../shared/availability'
 import type { KillView } from '../../shared/schema'
 import { sanitizeRefusal } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
+import type { BudgetStreamFeed, NewOpsDocument, NewOpsReply, SpendStreamFeed } from '../../shared/new-ops'
 import type { JSONDoc } from '../../source/source'
+import { budgetFeedRows, feedRows, readStream } from '../stream'
+import type { StreamPaint, StreamSource, StreamStatus } from '../stream'
 import { putReading, putText } from '../app'
 import type { ElementLike } from '../app'
 import { BUSY_SLOT_CLASS } from '../section'
@@ -313,6 +318,21 @@ const CAPS_BILLED_WORD = 'billed'
 const CAPS_NOTIONAL_WORD = 'notional'
 const CAPS_COMPUTE_WORD = 'compute'
 const CAPS_HEADROOM_WORD = 'headroom'
+
+/** CAPS_MODE_ABSENT_WORD is what the caps panel draws where the mode cell would
+ * be when the read carried no `mode` member at all. It is not the CLI's `""`
+ * ("unset, which acts as observe"): a streamed caps read has no `mode` to report
+ * (`CAPS_STREAM_ABSENT`), and the two facts are drawn apart because only one of
+ * them is a setting. */
+const CAPS_MODE_ABSENT_WORD = 'mode not in this read'
+
+/** CAPS_MODE_UNSET_WORD is what the caps panel draws for the CLI's empty `mode`,
+ * which is the one mode the whole caps document carries and no other read does:
+ * `""` means "unset, which acts as observe" (the CLI's own help), and the words
+ * are the console's -- the JSON carries the empty string and never the phrase.
+ * Drawing the empty string would be an empty cell and drawing `observe` would be
+ * inventing a setting the document did not make. */
+const CAPS_MODE_UNSET_WORD = 'mode unset (acts as observe)'
 
 /** CAPS_BAR_UNITS is the cap bar's own drawing unit: the `viewBox` is a hundred
  * units wide, so the filled `rect`'s width is the share of the cap the counted
@@ -606,6 +626,13 @@ export interface SpendCaps {
    * carries (the contract's section 3 note), and it is read as **unset** --
    * described below -- rather than drawn as an empty cell. */
   readonly mode: string | null
+  /** modeCarried is whether the read had a `mode` member at all. It is what
+   * keeps the panel from reading an **absence** as the CLI's own "unset": a
+   * streamed caps read carries no `mode` (`internal/cli/budget_stream.go`), and
+   * a panel that drew "mode unset (acts as observe)" for it would be claiming a
+   * setting nobody read. `false` with `mode: null` is "this read did not carry
+   * it", and the panel says that instead. */
+  readonly modeCarried: boolean
   /** the document's top-level `max_reserve_usd`: the largest single lease this
    * project may take (`budget.Limits.MaxReserveMicros`), which is a **limit**
    * rather than a cap and belongs to the project, not to the `global` block. */
@@ -614,6 +641,13 @@ export interface SpendCaps {
   readonly defaults: SpendDefaultCaps | null
   readonly repos: readonly SpendCapRow[]
   readonly warnings: readonly string[]
+  /** note is the console's own sentence about what this panel is **not**
+   * drawing, and it is `null` for a whole-document read: the document carries
+   * everything the panel draws. A streamed caps read carries the repository
+   * rows and the project's kill switch and nothing else of the document, which
+   * is a fact about the panel a reader is owed in words rather than inferred
+   * from the cells that are not there (`CAPS_STREAM_ABSENT`). */
+  readonly note: string | null
 }
 
 /** SpendSwitchEntry is one word of the breakdown switch: the CLI's own word,
@@ -631,10 +665,11 @@ export interface SpendSwitchEntry {
 /** SpendOptions is what the caller of `buildSpendModel` decides. */
 export interface SpendOptions {
   /**
-   * `persons` turns the `person` breakdown on. It is **off by default** (design
-   * D15): the report can name the people whose runs spent the money, and a
-   * desktop window is not a terminal. The rows are in the document either way;
-   * this decides whether the screen draws them.
+   * `persons` turns the `person` breakdown on. It is **on by default** (D3214,
+   * 2026-11-21, amending D15): the report can name the people whose runs spent
+   * the money, and the operator turns the view off for the session rather than
+   * on. The rows are in the document either way; this decides whether the screen
+   * draws them.
    */
   readonly persons?: boolean
   /**
@@ -653,6 +688,17 @@ export interface SpendOptions {
    * different facts.
    */
   readonly peopleReason?: string | null
+  /**
+   * `streamed` says the report behind this model came from a `report --stream`
+   * feed rather than from the whole document (RS5, D2906/O3). The model then
+   * carries `SPEND_STREAM_ABSENT` among its own notes, because the feed does not
+   * carry the document's header -- the window the CLI resolved, the history it
+   * was read from, a degraded notice and the warnings -- and a screen that drew
+   * the rows without saying so would leave the operator to infer a range from a
+   * chart that has none. It is `false` for the whole-document read, which is
+   * where those members are.
+   */
+  readonly streamed?: boolean
 }
 
 /** SpendPersons says whether the person breakdown is on, and whether the
@@ -813,8 +859,9 @@ export interface SpendModel {
   /**
    * the by-person view (`runs stats --json`, console L5b), or `null` when the
    * person view is off: the panel exists only while the operator's own knob is
-   * on (design D15), so a screen with the knob off has no question to answer
-   * about whose rows it may draw and no read to make.
+   * on, which is the default (D3214, amending D15), so a screen the operator has
+   * turned the knob off on has no question to answer about whose rows it may
+   * draw and no read to make.
    */
   readonly people: SpendPeople | null
   readonly warnings: readonly string[]
@@ -1629,11 +1676,13 @@ export function capsOf(raw: JSONDoc | null): SpendCaps {
       project: null,
       day: null,
       mode: null,
+      modeCarried: false,
       reserve: unavailable('no budget show document was read'),
       global: null,
       defaults: null,
       repos: [],
       warnings: [],
+      note: null,
     }
   }
   const global = objectAt(document['global'])
@@ -1649,6 +1698,7 @@ export function capsOf(raw: JSONDoc | null): SpendCaps {
     // setting, so it is `null` and the screen says "unset" in the console's own
     // words.
     mode: mode === null || mode === '' ? null : mode,
+    modeCarried: Object.prototype.hasOwnProperty.call(document, 'mode'),
     // The top-level field, read at the top level: `max_reserve_usd` is not
     // inside `global` (see `SpendGlobalCaps`), and reading it from there would
     // make the panel claim a project limit is a global cap.
@@ -1674,6 +1724,9 @@ export function capsOf(raw: JSONDoc | null): SpendCaps {
           },
     repos: arrayAt(document['repos']).map(capRowOf).filter((row): row is SpendCapRow => row !== null),
     warnings: arrayAt(document['warnings']).filter((warning): warning is string => typeof warning === 'string'),
+    // The whole document is what this panel draws from, so there is nothing it
+    // is not drawing and no sentence to owe a reader.
+    note: null,
   }
 }
 
@@ -1703,16 +1756,17 @@ function capRowOf(raw: unknown): SpendCapRow | null {
 // ---------------------------------------------------------------------------
 
 /** PERSON_OFF_NOTE is the one-line reason the design asks for beside a view
- * that is off by default (`section 2.3`: "with a one-line note on what it
- * shows"). It is the console's own sentence, drawn as a literal. */
+ * the operator has turned off (`section 2.3`: "with a one-line note on what it
+ * shows"). It is the console's own sentence, drawn as a literal, and it states
+ * the scope of the switch -- this session only -- because nothing persists it. */
 const PERSON_OFF_NOTE =
-  'the person breakdown is off by default, and when turned on it is on for this session only and not remembered: these rows name the people whose runs spent the money'
+  'the person breakdown is off for this session only and not remembered: these rows name the people whose runs spent the money'
 
-/** PERSON_ON_NOTE is the same line for the view once the operator has turned it
- * on: what it shows, and that an address on the wire is drawn as the console's
- * own marker (`sanitize.ts`'s `person` class). */
+/** PERSON_ON_NOTE is the same line for the view in the state the screen opens
+ * on: what it shows, and that an identity on the wire is drawn as the run
+ * recorded it (`sanitize.ts`'s `person` class, D3213). */
 const PERSON_ON_NOTE =
-  'the person breakdown is on for this session only and not remembered (off by default): it names the people whose runs spent the money, and each address is drawn as the console’s own marker'
+  'the person breakdown is on by default, and on for this session only and not remembered: it names the people whose runs spent the money, and each identity is drawn as the run recorded it'
 
 /** dimensionOf reads the document's `by`. */
 function dimensionOf(raw: string | null): SpendDimension | null {
@@ -1766,7 +1820,9 @@ export function buildSpendModel(
   budget: JSONDoc | null,
   options: SpendOptions = {},
 ): SpendModel {
-  const personsEnabled = options.persons === true
+  // On unless the operator's own knob turned it off (D3214): the screen opens
+  // on, so an absent option is the default rather than the exception.
+  const personsEnabled = options.persons !== false
   const source = textAt(report['source'])
   const since = textAt(report['since'])
   const until = textAt(report['until'])
@@ -1786,6 +1842,9 @@ export function buildSpendModel(
 
   const notes: string[] = []
   if (withheld) notes.push(PERSON_OFF_NOTE)
+  // The stream's own note comes first: it is a fact about the read, and the
+  // notes under it are about the document that read produced.
+  if (options.streamed === true) notes.push(SPEND_STREAM_ABSENT)
   if (!rowsReadable) {
     notes.push('the document carries no rows array, so this screen has no figures to draw')
   } else if (hasGapDay(drawn, days)) {
@@ -1891,13 +1950,13 @@ export interface SpendControls {
   readonly until: string | null
   /** the breakdown switch's `--by` */
   readonly by: SpendDimension
-  /** the person view's own knob (design D15) */
+  /** the person view's own knob (D3214, amending design D15) */
   readonly persons: boolean
 }
 
 /**
  * SPEND_DEFAULT_CONTROLS is the screen as it opens: the recent week, by day,
- * with the person view off (D15).
+ * with the person view on (D3214, 2026-11-21, amending D15).
  *
  * **`7d` is the owner's choice and not the CLI's default** (console 0.118.0,
  * "when going to the Spend screen, let's default to 7d/day"): the question this
@@ -1916,7 +1975,7 @@ export const SPEND_DEFAULT_CONTROLS: SpendControls = Object.freeze({
   since: '7d',
   until: null,
   by: 'day',
-  persons: false,
+  persons: true,
 })
 
 /** SpendArguments is the argument object this screen sends: `spend.report`'s
@@ -1938,7 +1997,7 @@ const WINDOW_UNKNOWN =
 const UNTIL_NOT_A_DAY = 'the range picker’s end of the range is not a UTC day (YYYY-MM-DD)'
 const BREAKDOWN_UNKNOWN = 'the breakdown switch asked for a breakdown this console does not know'
 const PERSON_OFF_BECAUSE =
-  'the breakdown switch asked for the person breakdown, which is off by default, and on for this session only and not remembered, until the operator turns the person view on'
+  'the breakdown switch asked for the person breakdown, which the operator turned off for this session only and did not remember, so no read naming a person is made'
 
 /** pickerSince is the picker's `since` as `report --since`, or `null` for a
  * value outside the picker's own two forms: a window of `SPEND_PICKER_WINDOWS`,
@@ -1971,9 +2030,10 @@ export function spendArguments(controls: SpendControls): SpendArgumentDecision {
   }
   const by = dimensionOf(controls.by)
   if (by === null) return { ok: false, reason: BREAKDOWN_UNKNOWN }
-  // The person breakdown is off until its own knob is on (D15), and that is
-  // enforced here and not only in the drawing: a switch word the operator never
-  // turned on must not become a read, however the state was reached.
+  // The person breakdown is a read only while its own knob is on -- the state
+  // the screen opens on (D3214) -- and that is enforced here and not only in the
+  // drawing: a switch word the operator turned off must not become a read,
+  // however the state was reached.
   if (by === 'person' && !controls.persons) return { ok: false, reason: PERSON_OFF_BECAUSE }
   // `--until` is omitted rather than sent empty: absent is `report`'s own
   // today, and an empty string is not a day.
@@ -2042,11 +2102,12 @@ function refusalSentence(cause: unknown): string {
  *
  * `people` is the by-person read (`runs.stats`, console L5b), and it is a
  * parameter of its own for the same reason: it is a *different operation*, and
- * it is made **only while the operator's knob is on** (design D15) -- so a
- * screen with the knob off spawns once, exactly as it did before this task. It
- * is optional and defaults to `null`, which is the state "this caller wired no
- * by-person read": the panel then draws the console's own sentence for that
- * (`NO_PEOPLE_READ`) rather than an empty list, and nothing is spawned.
+ * it is made **only while the operator's knob is on** (D3214, amending design
+ * D15) -- the state the screen opens on, so a screen the operator turned the
+ * knob off on spawns once. It is optional and defaults to `null`, which is the
+ * state "this caller wired no by-person read": the panel then draws the
+ * console's own sentence for that (`NO_PEOPLE_READ`) rather than an empty list,
+ * and nothing is spawned.
  *
  * **The by-person read's refusal is the panel's and not the screen's.** The
  * report read is the screen's subject -- its refusal is `SpendOutcome`'s
@@ -2069,38 +2130,388 @@ export async function readSpend(
   } catch (cause) {
     return { ok: false, args: decision.args, reason: refusalSentence(cause) }
   }
-  let peopleDocument: JSONDoc | null = null
-  let peopleReason: string | null = null
-  if (controls.persons) {
-    const peopleDecision = peopleArguments(controls)
-    if (!peopleDecision.ok) {
-      peopleReason = peopleDecision.reason
-    } else if (people === null) {
-      peopleReason = NO_PEOPLE_READ
-    } else {
-      try {
-        peopleDocument = await people(peopleDecision.args)
-      } catch (cause) {
-        peopleReason = refusalSentence(cause)
-      }
-    }
-  }
+  const peopleRead = await readPeople(controls, people)
   return {
     ok: true,
     args: decision.args,
     model: buildSpendModel(document, caps, {
       persons: controls.persons,
-      people: peopleDocument,
-      peopleReason,
+      people: peopleRead.document,
+      peopleReason: peopleRead.reason,
     }),
   }
 }
 
+/** PeopleRead is what the screen's second read answered: the by-person document,
+ * or the console's own sentence for why there is none. */
+interface PeopleRead {
+  readonly document: JSONDoc | null
+  readonly reason: string | null
+}
+
+/** readPeople makes the by-person read, and it is shared by this file's two
+ * report reads -- `readSpend`, the whole-document one, and `readReportStream`,
+ * RS5's -- because they differ in how they read the *report* and not in how they
+ * read the people. Both make it **only while the knob is on** (D3214, amending
+ * design D15), and both draw a refusal as the panel's own sentence rather than
+ * as the screen's.
+ *
+ * The order is the report first and the people after, which is what this read
+ * has always been: the panel is one part of a screen the report has already
+ * drawn. */
+async function readPeople(controls: SpendControls, people: PeopleReader | null): Promise<PeopleRead> {
+  if (!controls.persons) return { document: null, reason: null }
+  const decision = peopleArguments(controls)
+  if (!decision.ok) return { document: null, reason: decision.reason }
+  if (people === null) return { document: null, reason: NO_PEOPLE_READ }
+  try {
+    return { document: await people(decision.args), reason: null }
+  } catch (cause) {
+    return { document: null, reason: refusalSentence(cause) }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The streamed reads (RS5, D2906/O3).
+// ---------------------------------------------------------------------------
+
+/** SPEND_STREAM_ABSENT is what a streamed report read does **not** carry, in the
+ * console's own words: the feed is the report's rows and its totals, and the
+ * document's header is not a row of it (`report --stream`'s own comment,
+ * `ee/report/cli/report_stream.go`). The report section draws it as a note
+ * beside the table, because a screen that silently stopped drawing the window it
+ * resolved, the history it read from and the warnings would be answering a
+ * question the operator did not ask. A caller that needs them reads
+ * `report --json`, which is what the whole-document fallback does. */
+export const SPEND_STREAM_ABSENT =
+  'a streamed read carries the report’s rows and, with its end line, the totals: the document’s header — the history it was read from, the window the CLI resolved, a degraded notice and the warnings — comes with `fugaro report --json`'
+
+/** CAPS_STREAM_ABSENT is the caps read's own version of that sentence: the feed
+ * carries one element of the document's `repos` per repository and the
+ * project's kill switch, and nothing else of it (`budget_stream.go`). */
+export const CAPS_STREAM_ABSENT =
+  'a streamed read carries the repositories’ rows and the project’s kill switch: the project’s own figures, the repository defaults, the mode and the warnings are not rows of the feed and come with `fugaro budget show --json`'
+
+/** SPEND_STREAM_HIDDEN and CAPS_STREAM_HIDDEN are what these two reads answer
+ * with when the reduced mode withholds their view (`hidesView`). They are the
+ * sentences the Live screen and the Coordinator's queue already draw for the
+ * same withholding (`LIVE_CAPS_HIDDEN_WORD`): one mode withholding one view
+ * under two sentences would read as two different modes. The caps word is
+ * exported because the Project tab reads the same view and asks the same gate. */
+export const SPEND_STREAM_HIDDEN = 'the spend is withheld for the installation this console is driving'
+export const CAPS_STREAM_HIDDEN = 'the caps are withheld for the installation this console is driving'
+
+/** SPEND_PEOPLE_READING is the one state the by-person panel has on the stream
+ * path that the whole-document read never showed: the report's rows are being
+ * drawn while `runs stats` -- made **after** the report answered, as it always
+ * is -- has not come back yet. Saying `NO_PEOPLE_READ` there would be the
+ * console claiming it never asked, and an empty panel would be the other wrong
+ * fact (`peoplePanel`'s rule). */
+const SPEND_PEOPLE_READING = 'the by-person read is still going: this panel fills when it lands'
+
+/** SpendStreamOutcome is what a streamed read of either of this screen's two
+ * documents answers, and it is a union for `SpendOutcome`'s reason: the model
+ * exists **only** where the read is `complete`, and a caller that drew one for
+ * any other status would be drawing the rows of a list no read finished.
+ *
+ * Every other status is a section with a sentence in its own place and, for all
+ * but `withheld`, R1's Retry -- which is the caller's to draw, because it is the
+ * caller's read that is asked again. `dropped` is the exception with no sentence
+ * (`readStream`'s own answer for a section that moved on): a caller reaching it
+ * has already answered `current` false and returned. */
+export type SpendStreamOutcome =
+  | { readonly status: 'complete'; readonly source: StreamSource; readonly model: SpendModel }
+  | {
+      readonly status: Exclude<StreamStatus, 'complete'>
+      readonly source: StreamSource
+      readonly sentence: string | null
+    }
+
+/** CapsStreamOutcome is the caps read's: the panel's own model, and the whole
+ * document when one was read.
+ *
+ * `document` is the rail's spend and the fleet gauge (`railSpend`,
+ * `gaugeFromBudget`), which read the document's `global` block and its counters
+ * -- neither of which is a row of the feed -- so it is `null` on the stream path
+ * and those two figures are left as the Live poll last filled them rather than
+ * drawn from a read that does not carry them. */
+export type CapsStreamOutcome =
+  | {
+      readonly status: 'complete'
+      readonly source: StreamSource
+      readonly caps: SpendCaps
+      readonly document: JSONDoc | null
+    }
+  | {
+      readonly status: Exclude<StreamStatus, 'complete'>
+      readonly source: StreamSource
+      readonly sentence: string | null
+    }
+
 /**
- * personView is the operator's own knob (design D15: the person breakdown is off
- * by default and turned on per installation; **this knob is per session only
- * and is not remembered**, because persisting it needs a write channel this
- * console does not have -- an open owner question). Turning it on
+ * reportFromFeed is the document a streamed report read can assemble: the rows
+ * the feed wrote, the totals its `end` line carried, and the two members of the
+ * header this console knows without reading anything -- the open installation's
+ * project and the breakdown the operator asked for (the same `dimensionOf` the
+ * document's own `by` goes through).
+ *
+ * **It is not a document the CLI wrote, and it does not pretend to be one.** The
+ * members the feed does not carry (`since`, `until`, `weeks`, `source`,
+ * `degraded`, `notice`, `warnings`) are left out rather than guessed at: an
+ * absent `since`/`until` is what stops `dayRange` enumerating a range -- there is
+ * no day the console could claim is a gap -- and the model draws
+ * `SPEND_STREAM_ABSENT` beside the table (`SpendOptions.streamed`). Every
+ * consumer of this value is this file's own reader.
+ */
+export function reportFromFeed(
+  rows: readonly NewOpsDocument[],
+  totals: unknown,
+  project: string,
+  controls: SpendControls,
+): JSONDoc {
+  const by = dimensionOf(controls.by)
+  return {
+    project,
+    by: by ?? controls.by,
+    rows,
+    totals: totals ?? null,
+  }
+}
+
+/** SpendReportStreamRead is the report's streamed read: RS2's `readStream`
+ * around the two reads of one command -- `report --stream --json` and the
+ * `report --json` this screen read before the stream existed -- plus what this
+ * screen knows without reading anything. */
+export interface SpendReportStreamRead {
+  /** the opt-in feed, typed by C-OPS (`spend.stream`); the caller closes over
+   * the operation, and this read hands it the payload `spendArguments` built --
+   * so a caller cannot send a control value the screen would not (`readSpend`'s
+   * own rule, kept) */
+  readonly stream: (args: SpendArguments) => Promise<NewOpsReply<SpendStreamFeed>>
+  /** the fallback, read through the screen's own reader, which throws a
+   * `SourceRefusal` carrying the CLI's sentence when the command refused
+   * (`SpendReader`) */
+  readonly report: (args: SpendArguments) => Promise<JSONDoc>
+  readonly controls: SpendControls
+  /** the caps document this screen already holds, for the model's own `caps`
+   * field -- the report section draws no caps, and this read starts before the
+   * caps read may have answered (`readSpend`'s division, kept) */
+  readonly caps: JSONDoc | null
+  /** the open installation's project, which the console knows from the rail and
+   * the feed does not carry */
+  readonly project: string
+  readonly withheld: boolean
+  /** the by-person read (`runs.stats`, console L5b), made only while the knob is
+   * on, after the report has answered -- `readSpend`'s own second read, through
+   * the same `readPeople` */
+  readonly people?: PeopleReader | null
+  /** called once per chunk with the model built from the rows read **so far**,
+   * in the CLI's order, so a caller draws the rows as they arrive; the totals
+   * are not there yet, because they are the `end` line's (`readStream`) */
+  readonly onRows?: (model: SpendModel) => void
+  readonly current?: () => boolean
+  readonly paint?: StreamPaint
+}
+
+/**
+ * readReportStream makes the report's read and answers the model to draw.
+ *
+ * **The feed's rows are drawn as they arrive, and the `end` line completes the
+ * section.** `readStream` hands each chunk to `onRows`, which builds a model
+ * from the rows read so far, and the model this function answers carries the
+ * totals the `end` line wrote -- so the table fills line by line and the totals
+ * line lands with the last one. A feed that stopped with no `end` is
+ * **interrupted**, and a feed the CLI ended with a sentence is **failed**: both
+ * answer `model: null` and the sentence R1 draws with a Retry, and neither ever
+ * draws the rows it happened to read as the list.
+ *
+ * **The whole-document read is the fallback and not a second read.** Where the
+ * operation cannot be asked -- no handler, a CLI below the floor, a refusal --
+ * `readStream` calls `report` instead, and what is drawn then is that *document*
+ * and not rows reassembled from it: the header the feed does not carry is
+ * exactly what makes it the fallback.
+ */
+export async function readReportStream(read: SpendReportStreamRead): Promise<SpendStreamOutcome> {
+  // A set of controls this screen will not send is nothing spawned and no
+  // status of RS2's: the sentence is this file's own (`spendArguments`) and
+  // there is no read to name, which is what `source: 'none'` says.
+  const decision = spendArguments(read.controls)
+  if (!decision.ok) {
+    return { status: 'failed', source: 'none', sentence: decision.reason }
+  }
+  const args = decision.args
+  /** modelOf builds the model from the rows read so far and the totals the `end`
+   * line carried, or `null` totals while the feed is still writing them. The
+   * by-person read is made **after** the report answered (`readSpend`'s order),
+   * so a chunk drawn before it lands says so (`SPEND_PEOPLE_READING`) rather
+   * than drawing the console's "no such read" sentence over a read that is
+   * coming. */
+  const modelOf = (rows: readonly NewOpsDocument[], totals: unknown): SpendModel =>
+    buildSpendModel(reportFromFeed(rows, totals, read.project, read.controls), read.caps, {
+      persons: read.controls.persons,
+      peopleReason: read.controls.persons ? SPEND_PEOPLE_READING : null,
+      streamed: true,
+    })
+  let whole: JSONDoc | null = null
+  const result = await readStream<NewOpsDocument>({
+    withheld: read.withheld,
+    stream: () => read.stream(args),
+    document: async () => {
+      try {
+        whole = await read.report(args)
+        return { ok: true, rows: feedRows(whole['rows']) }
+      } catch (cause) {
+        return { ok: false, sentence: refusalSentence(cause) }
+      }
+    },
+    // A whole-document read is one answer and one drawing, and `readStream` does
+    // not call this for it.
+    onRows: (rows) => {
+      read.onRows?.(modelOf(rows, null))
+    },
+    current: read.current,
+    paint: read.paint,
+  })
+  if (result.status === 'withheld') {
+    return { status: 'withheld', source: 'none', sentence: SPEND_STREAM_HIDDEN }
+  }
+  if (result.status !== 'complete') {
+    return { status: result.status, source: result.source, sentence: result.sentence }
+  }
+  const people = await readPeople(read.controls, read.people ?? null)
+  const options: SpendOptions = {
+    persons: read.controls.persons,
+    people: people.document,
+    peopleReason: people.reason,
+  }
+  // The whole-document read is drawn as the document it is, header and all:
+  // `streamed` is false there, because the sentence about what a feed does not
+  // carry is not a fact about that read.
+  const model =
+    whole !== null
+      ? buildSpendModel(whole, read.caps, options)
+      : buildSpendModel(
+          reportFromFeed(result.rows, result.end?.totals ?? null, read.project, read.controls),
+          read.caps,
+          { ...options, streamed: true },
+        )
+  return { status: 'complete', source: result.source, model }
+}
+
+/**
+ * capsFromFeed turns a streamed caps read's rows into the caps panel.
+ *
+ * **The feed carries the table and not the document round it**: one row per
+ * repository, unchanged, and the project's kill switch as the row whose slug is
+ * `kill` (`budgetFeedRows`). So the panel draws the repository table and the
+ * project's switch, says in its own words what the read did not carry
+ * (`SpendCaps.note`), and draws the figures the feed has no member for as `n/a`
+ * with that reason -- never as `$0.00`, and never as the empty `defaults` and
+ * `global` blocks a whole document's absence would be. `available` is true: a
+ * read *was* made and these rows are its answer.
+ *
+ * The mode is the one cell this changes: a document that does not carry `mode`
+ * at all is not the CLI's `""` ("unset, which acts as observe"), so
+ * `modeCarried` is false and the panel says the read did not carry it instead.
+ */
+export function capsFromFeed(rows: readonly NewOpsDocument[]): SpendCaps {
+  const feed = budgetFeedRows(rows)
+  const repos = feed.repos.map(capRowOf).filter((row): row is SpendCapRow => row !== null)
+  const why = unavailable(CAPS_STREAM_ABSENT)
+  return {
+    available: true,
+    project: null,
+    day: null,
+    mode: null,
+    modeCarried: false,
+    reserve: why,
+    // The project's own block: the feed carries its kill switch and none of its
+    // figures, so the block is drawn (its switch is a fact this read has) with
+    // every cap in it unavailable.
+    global: feed.killed
+      ? {
+          dailyCap: why,
+          perRunCap: why,
+          counted: why,
+          spent: why,
+          notional: why,
+          headroom: why,
+          kill: killOf(feed.kill),
+        }
+      : null,
+    defaults: null,
+    repos,
+    warnings: [],
+    note: CAPS_STREAM_ABSENT,
+  }
+}
+
+/** CapsStreamRead is the caps section's streamed read: `budget show --stream
+ * --json` and the `budget show --json` this screen read before the stream
+ * existed. */
+export interface CapsStreamRead {
+  readonly stream: () => Promise<NewOpsReply<BudgetStreamFeed>>
+  /** the fallback document, read through the screen's own reader, which throws
+   * a `SourceRefusal` when the command refused */
+  readonly budget: () => Promise<JSONDoc>
+  readonly withheld: boolean
+  /** once per chunk, with the panel built from the rows read so far */
+  readonly onRows?: (caps: SpendCaps) => void
+  readonly current?: () => boolean
+  readonly paint?: StreamPaint
+}
+
+/**
+ * readCapsStream makes the caps section's read. It is `readReportStream`'s shape
+ * one document over: the feed's rows fill the table as they arrive, the `end`
+ * line completes the section, an interrupted feed is R1's interrupted read, and
+ * the whole document is the fallback and what is drawn where the operation
+ * cannot be asked.
+ *
+ * `document` is answered only from the fallback: the rail's spend and the fleet
+ * gauge read the document's `global` block and its counters, and the feed
+ * carries neither, so those two are left to the call site -- which makes this
+ * same whole-document read for them where the feed answered (`entry.ts`'s
+ * `railBudget`, design section 4.1).
+ */
+export async function readCapsStream(read: CapsStreamRead): Promise<CapsStreamOutcome> {
+  let whole: JSONDoc | null = null
+  const result = await readStream<NewOpsDocument>({
+    withheld: read.withheld,
+    stream: read.stream,
+    document: async () => {
+      try {
+        whole = await read.budget()
+        return { ok: true, rows: feedRows(whole['repos']) }
+      } catch (cause) {
+        return { ok: false, sentence: refusalSentence(cause) }
+      }
+    },
+    onRows: (rows) => {
+      read.onRows?.(capsFromFeed(rows))
+    },
+    current: read.current,
+    paint: read.paint,
+  })
+  if (result.status === 'withheld') {
+    return { status: 'withheld', source: 'none', sentence: CAPS_STREAM_HIDDEN }
+  }
+  if (result.status !== 'complete') {
+    return { status: result.status, source: result.source, sentence: result.sentence }
+  }
+  return {
+    status: 'complete',
+    source: result.source,
+    caps: whole !== null ? capsOf(whole) : capsFromFeed(result.rows),
+    document: whole,
+  }
+}
+
+/**
+ * personView is the operator's own knob (D3214, amending design D15: the person
+ * breakdown is on by default and turned off per session; **this knob is per
+ * session only and is not remembered**, because persisting it needs a write
+ * channel this console does not have -- an open owner question). Turning it on
  * asks for the person breakdown -- the same `runReport` with `by person` and
  * nothing more -- and turning it off leaves no read that names a person: the
  * switch's own word goes back to `day`, because `--by person` with the view off
@@ -2667,9 +3078,9 @@ function picker(factory: ScreenFactory, controls: SpendControls): ScreenElement 
 }
 
 /**
- * personKnob draws the person view's own switch (design D15): a real `button`
- * whose word names the view and whose state says whether it is on, and the
- * one-line note the design asks for beside a view that is off by default.
+ * personKnob draws the person view's own switch (D3214, amending design D15): a
+ * real `button` whose word names the view and whose state says whether it is on,
+ * and the one-line note the design asks for beside it.
  *
  * It is a control of its own rather than a state of the breakdown switch: the
  * switch's `person` word is one of the eight the CLI has, and the operator's
@@ -3019,8 +3430,12 @@ export function fillSpendCaps(
   if (caps.mode !== null) {
     textCell(element, factory, 'span', caps.mode, 'label', 'caps.mode', 'spend-caps-mode')
   } else {
+    // An empty mode and a mode the read never carried are two facts: the first
+    // is the CLI's own "unset, which acts as observe" and the second is this
+    // read's gap (`capsFromFeed`), and drawing the second as the first would
+    // claim a setting nobody read.
     const unset = cell(element, factory, 'span', 'spend-caps-mode')
-    literal(unset, 'mode unset (acts as observe)')
+    literal(unset, caps.modeCarried ? CAPS_MODE_UNSET_WORD : CAPS_MODE_ABSENT_WORD)
   }
   // The largest single lease, drawn outside the block whose word is `global`
   // and above it -- the CLI prints it above the `project` block too. A
@@ -3078,6 +3493,12 @@ export function fillSpendCaps(
     capsBar(item, factory, row, atCap)
     capScopeCell(item, factory, CAPS_PER_RUN_CAP_WORD, row.perRunCap, row.perRunScope, 'data-per-run-scope', 'spend-cap-per-run')
     if (row.kill !== null) item.append(killBanner(factory, row.kill))
+  }
+  if (caps.note !== null) {
+    // The console's own sentence about what this read did not carry, drawn in
+    // the same register as the screen's other notes (`literal`, because it is
+    // not a document's string).
+    literal(cell(element, factory, 'p', 'spend-note'), caps.note)
   }
   for (const warning of caps.warnings) {
     // The CLI's own sentences, drawn verbatim (contract section 3: "CLI-worded,
@@ -3174,8 +3595,8 @@ const NO_PEOPLE_TOTAL =
  * fail-private sentence above it.
  *
  * It is drawn only while the operator's knob is on (`renderSpend`): with the
- * knob off there is no read and no panel, which is D15's rule and not a state of
- * this function.
+ * knob off there is no read and no panel, which is the knob's rule and not a
+ * state of this function.
  */
 function peoplePanel(factory: ScreenFactory, people: SpendPeople): ScreenElement {
   const element = make(factory, 'section', 'spend-people')
@@ -3358,7 +3779,8 @@ export function fillSpendReport(
 
   // The by-person panel sits beside the report's own totals -- it is the same
   // window read a second way -- and it is drawn only while the operator's knob
-  // is on: `buildSpendModel` has no panel when it is off (design D15).
+  // is on, which is the default (D3214): `buildSpendModel` has no panel when it
+  // is off.
   if (model.people !== null) element.append(peoplePanel(factory, model.people))
 
   for (const note of model.notes) {
