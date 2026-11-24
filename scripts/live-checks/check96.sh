@@ -874,8 +874,11 @@ step_app_key() {
   if ! run_capture "$SCRATCH/secrets.json" gcloud secrets list --project "$P" --format=json; then
     stop "gcloud secrets list did not answer for $P: the check needs an account that may read Secret Manager there"
   fi
-  answer=$(reader secrets "$SLUG" <"$SCRATCH/secrets.json") \
-    || stop "the project's secret list is not the shape this check reads, or it holds no single container labelled fugaro_secret=github-app-key for the sandbox repository (fugaro_repo is its slug) and no single bundle container (fugaro_project and no fugaro_secret). Q6: the App key's container and the bundle are one each"
+  # The reader's own words are carried into the stop: it names what it read for
+  # the bundle when the count is not one, which is the whole fix for a listing
+  # that holds two of them.
+  answer=$(reader secrets "$SLUG" "$FPROJ" <"$SCRATCH/secrets.json" 2>"$SCRATCH/secrets.err") \
+    || stop "the project's secret list is not the shape this check reads: $(sed -n '1,3p' "$SCRATCH/secrets.err" | tr '\n' ' '). It has to hold at most one container labelled fugaro_secret=github-app-key for the sandbox repository (fugaro_repo is its slug), and exactly one container named as this installation's bundle — fugaro-project-$FPROJ-creds-bundle-<hash>, the name internal/backend/gcp's CredsBundleSecretID derives from FUGARO_PROJECT and the one the service reads its document out of. Q6: the App key's container and the bundle are one each"
   APPKEY_SECRET=$(field_of appkey "$answer")
   BUNDLE_SECRET=$(field_of bundle "$answer")
   if ! run_capture "$SCRATCH/policy-bundle.json" gcloud secrets get-iam-policy "$BUNDLE_SECRET" --project "$P" --format=json; then
@@ -1842,24 +1845,67 @@ def cmd_job():
     print("url=%s" % ("present" if env.get("FUGARO_CREDENTIALS_SERVICE_URL") else "absent"))
 
 
-def cmd_secrets(slug):
-    """The App key's container (fugaro_secret=github-app-key) and the bundle
-    (fugaro_project and deliberately NO fugaro_secret, credentials.tf). The App
-    key's container may be absent -- a release that drops it is one of the two
-    readings this row is written for -- while the bundle cannot be, because the
-    service that reads it exists (that is what step_service established)."""
+def basename(secret):
+    return (secret.get("name") or "").split("/")[-1]
+
+
+def sanitize_name(name):
+    """internal/backend/gcp's sanitize: the readable part of a derived name, in
+    lower case with every run of characters Secret Manager IDs do not allow
+    collapsed to one '-' and the ends trimmed. A Fugaro project name is already
+    one of these (the installation module validates it as [a-z0-9-]), so this is
+    the identity for every installation that exists, and it is what the Go side
+    does for one that is not."""
+    s = re.sub(r"[^a-z0-9-]+", "-", name.lower())
+    while "--" in s:
+        s = s.replace("--", "-")
+    return s.strip("-")
+
+
+def cmd_secrets(slug, fugaro_project):
+    """The App key's container (fugaro_secret=github-app-key) and the bundle, by
+    its whole NAME and not by a label. The App key's container may be absent -- a
+    release that drops it is one of the two readings this row is written for --
+    while the bundle cannot be, because the service that reads it exists (that is
+    what step_service established).
+
+    The name is internal/backend/gcp's CredsBundleSecretID: the readable stem
+    fugaro-project-<fp>-creds-bundle, then '-' and a 16-hex hash of the
+    (fp, "creds-bundle") pair. The STEM is what matches and the hash is not
+    computed here -- check191.sh's bundle-id reads the same container the same
+    way, and for the same reason: the hash is a derivation this file would then
+    hold a second copy of, while the stem alone would be too loose, since every
+    other container of the installation carries the same fugaro-project-<fp>
+    prefix.
+
+    A LABEL cannot be the handle, and this is the bug this reading replaces: the
+    labels the bundle's container wears (fugaro=managed and fugaro_project=<fp>,
+    credentials.tf) are the two ownership marks every one of the installation's
+    own containers carries, and the orchestrator's pairing container
+    (orchestrator.tf) and the voice hop's provider-key container (secrets.tf)
+    wear exactly that pair with deliberately no fugaro_secret -- so a selector
+    reading "fugaro_project and no fugaro_secret" finds three containers of a
+    live installation rather than the one the service reads.
+
+    Exactly one, still: a listing that names no container of the bundle's name,
+    and one that names two of them (a changed derivation leaves the container the
+    service no longer reads behind, and prevent_destroy keeps it), each settle
+    nothing and are refused rather than picked between -- and the refusal names
+    what it read."""
     secrets = load()
     key = [s for s in secrets if (s.get("labels") or {}).get("fugaro_secret") == "github-app-key"
            and (not slug or not (s.get("labels") or {}).get("fugaro_repo")
                 or (s.get("labels") or {}).get("fugaro_repo") == slug)]
     if len(key) > 1:
         fail("expected at most one container labelled fugaro_secret=github-app-key, found %d" % len(key))
-    bundle = [s for s in secrets if (s.get("labels") or {}).get("fugaro_project")
-              and not (s.get("labels") or {}).get("fugaro_secret")]
-    if len(bundle) != 1:
-        fail("expected exactly one container labelled fugaro_project and no fugaro_secret, found %d" % len(bundle))
-    print("appkey=%s" % (key[0]["name"].split("/")[-1] if key else ""))
-    print("bundle=%s" % bundle[0]["name"].split("/")[-1])
+    stem = sanitize_name("fugaro-project-%s-creds-bundle" % fugaro_project)
+    like = re.compile(r"^%s-[0-9a-f]{16}$" % re.escape(stem))
+    named = sorted(basename(s) for s in secrets if like.match(basename(s)))
+    if len(named) != 1:
+        fail("expected exactly one container of the installation's bundle name %s-<hash>, found %d%s"
+             % (stem, len(named), " (%s)" % ", ".join(named) if named else ""))
+    print("appkey=%s" % (basename(key[0]) if key else ""))
+    print("bundle=%s" % named[0])
 
 
 def cmd_policy(jobsa, svcsa):
@@ -2040,7 +2086,7 @@ def main(argv):
     elif cmd == "job":
         cmd_job()
     elif cmd == "secrets":
-        cmd_secrets(rest[0] if rest else "")
+        cmd_secrets(rest[0] if rest else "", rest[1] if len(rest) > 1 else "")
     elif cmd == "policy":
         cmd_policy(rest[0], rest[1])
     elif cmd == "switch":
