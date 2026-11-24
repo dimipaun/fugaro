@@ -11,13 +11,14 @@
 # a Cloud Run service deployed WITH IAM REQUIRED, a build account granted
 # roles/run.invoker ON THAT SERVICE ALONE, and a Cloud Build whose step runs as
 # that account, fetches the token and calls the service — and reads the answer
-# back from the build's OWN RECORD: the step ends with one exit code per outcome
-# (see write_build_config), Cloud Build writes that code into the build the step
-# ran in, and that record is not Cloud Logging at all. The step's own line,
-# `CHK195 status=… email=…`, is read too, for the email claim and the status text,
-# but nothing rests on it: on 2026-11-24 the owner's run came back with a FAILURE
-# build and an empty `gcloud builds log`, and a check that could only read the log
-# had no reading at all. B4.4 writes the Terraform that gives a
+# back from TWO places that are not the log: the build's OWN RECORD, where the
+# step's exit code ends (one code per outcome, see write_build_config), and an
+# OBJECT the step writes its one line into, in a throwaway bucket this check
+# creates. The line is read out of the log too when the log arrives, for the same
+# status and email claim as text; nothing rests on it — on 2026-11-24 the owner's
+# run came back with a FAILURE build and an empty `gcloud builds log`, and a check
+# that could only read the log had no reading at all. B4.4 writes the Terraform
+# that gives a
 # repository's build account exactly that one grant (on the credentials service)
 # and B4.3 serves it, and this is the reading both are built on: a FAIL stops S4
 # and returns to the owner as a decision.
@@ -25,14 +26,15 @@
 # Usage:      bash scripts/live-checks/check195.sh
 #             bash scripts/live-checks/check195.sh --dry-run   (prints the plan
 #             and calls NOTHING: no gcloud, no fugaro, no curl)
-# Needs:      bash, mktemp, gcloud (authenticated as you, as an account that can
-#             create a service account, a Cloud Run service and a build, add and
-#             remove one project-level IAM binding, and read the build's own
-#             record and its lines — a project Owner can), curl (one
-#             unauthenticated request, to find a project-level public invoker
-#             the service's own IAM policy cannot show) and fugaro (doctor, to
-#             assert that this project is the installation's). Nothing is
-#             installed and nothing is fetched.
+# Needs:      bash, mktemp, date, gcloud (authenticated as you, as an account that
+#             can create a service account, a Cloud Run service, a bucket and a
+#             build, add and remove one project-level IAM binding and one
+#             bucket-level one, read the bucket's own policy and an object in it,
+#             and read the build's own record and its lines — a project Owner
+#             can), curl (one unauthenticated request, to find a project-level
+#             public invoker the service's own IAM policy cannot show) and fugaro
+#             (doctor, to assert that this project is the installation's).
+#             Nothing is installed and nothing is fetched.
 # Where:      installation `fugaro` ONLY — project fugaro-dev, region us-east5.
 #             Both are HARD-CODED in this file and never read from `gcloud
 #             config get-value project`, and `fugaro doctor` must answer that
@@ -42,10 +44,16 @@
 # Creates:    one throwaway Cloud Run service (fugaro-chk195), deployed from a
 #             stock public container image and left IAM-only; one throwaway
 #             service account (fugaro-chk195-caller); the roles/run.invoker
-#             binding on that service which admits it; and one Cloud Build. A
-#             service or an account of those two names that was already there is
-#             a hard stop: this check never adopts, writes into or deletes what
-#             it did not create.
+#             binding on that service which admits it; one throwaway Cloud
+#             Storage bucket (fugaro-dev-chk195-<the moment this run started>),
+#             which the build's step writes its one line into and this check reads
+#             it back out of, with the account granted roles/storage.objectCreator
+#             ON THAT BUCKET ALONE; and one Cloud Build. A service or an account
+#             of those two names that was already there is a hard stop: this check
+#             never adopts, writes into or deletes what it did not create. Bucket
+#             names are global, so this one is neither a constant nor adopted: it
+#             carries the moment this run started and a label only this run
+#             writes, and a bucket without that label is never deleted.
 # Costs:      one build and a moment of Cloud Run — minutes at the terminal,
 #             not money.
 # Runs:       by YOU. No agent runs any step of it, and no agent has: what it
@@ -61,10 +69,11 @@
 #             still there — and what the refusal said was not captured, so the
 #             re-read covers both ways that happens: a delete refused as still
 #             referenced by a policy binding, and a delete that landed whose
-#             account the list had not stopped naming yet. Each of the three is
-#             READ BACK rather than assumed —
-#             the `service-deleted`, `account-deleted` and `binding-removed` rows
-#             are that reading. The
+#             account the list had not stopped naming yet. The bucket goes last,
+#             and with it the object and the bucket-level grant. Each of the four
+#             is READ BACK rather than assumed — the `service-deleted`,
+#             `account-deleted`, `bucket-deleted` and `binding-removed` rows are
+#             that reading. The
 #             build's own RECORD stays in the project's Cloud Build history: it
 #             is the project's log of what ran, not a resource this check made.
 # Output:     progress on stderr, ONE block on stdout headed CHECK 195 RESULT,
@@ -79,8 +88,10 @@
 # whole path is minted inside the build, by the metadata server, for the build's
 # own step, and it is used where it is minted. What reaches this script's output
 # is the token's `email` CLAIM alone — the build account's own address, which is
-# a name and not a credential — and every line it reads out of the build's log
-# is cut to a short plain-word shape before it is printed.
+# a name and not a credential — and every line it reads out of the build's log or
+# out of the object is cut to a short plain-word shape before it is printed. The
+# step never prints the access token it writes the object with either: its upload
+# is `-o /dev/null`, and the token lives in a shell variable for one command.
 #
 # Knobs, all read with a default so an unset shell runs it as written:
 # CHECK195_DRY_RUN (anything non-empty is the dry run), CHECK195_IMAGE (the
@@ -91,14 +102,17 @@
 # reads exactly like a missing grant), CHECK195_BUILD_WAIT_SECONDS (how long the
 # build is waited for), CHECK195_LOG_WAIT_SECONDS (how long the build's own
 # lines are waited for in Cloud Logging, whose ingestion lags the request),
-# CHECK195_LOGWRITER_WAIT_SECONDS (the bound on re-reading the project's own
-# policy until the roles/logging.logWriter binding this check added is in it —
-# IAM is eventually consistent, and a build that starts inside that window writes
-# no log at all) and CHECK195_LOGWRITER_SETTLE_SECONDS (the one short fixed
-# settle given to that binding before the build, so the propagation has happened
-# whatever the read-back said). None of them can point this check at another
-# project, another region or another service: the two names it creates are
-# constants in this file.
+# CHECK195_LINE_WAIT_SECONDS (how long the object the step wrote is re-read for),
+# CHECK195_LINE_TRIES (how many times the step itself retries that write, and
+# CHECK195_LINE_RETRY_SECONDS the pause between attempts: IAM is eventually
+# consistent, and a build that starts inside the window is refused the write),
+# CHECK195_GRANTS_WAIT_SECONDS (the bound on re-reading the project's own policy
+# and the bucket's until the roles/logging.logWriter and
+# roles/storage.objectCreator bindings this check added are in them) and
+# CHECK195_GRANTS_SETTLE_SECONDS (the one short fixed settle given to those
+# bindings before the build, so the propagation has happened whatever the
+# read-back said). None of them can point this check at another project, another
+# region or another service: the two names it creates are constants in this file.
 set -euo pipefail
 
 # No xtrace, whatever the shell it was started from had: the block this check
@@ -144,6 +158,16 @@ L=us-east5
 SVC=fugaro-chk195
 CALLER=fugaro-chk195-caller
 CALLER_EMAIL="${CALLER}@${P}.iam.gserviceaccount.com"
+# The bucket the step writes its one line into, and the object in it. This is the
+# one name here that is NOT a constant, and it cannot be: bucket names are global
+# to all of Google Cloud, so a fixed one either already belongs to somebody or is
+# one this check could not create. It carries the moment this run started and this
+# process's id, and it carries a LABEL of the same text — which is what says a
+# bucket is this run's, since the name alone cannot.
+BUCKET_NONCE="$(date -u +%Y%m%d-%H%M%S)-$$"
+BUCKET="${P}-chk195-${BUCKET_NONCE}"
+LINE_OBJECT="chk195-line.txt"
+LINE_URI="gs://${BUCKET}/${LINE_OBJECT}"
 # The container the throwaway service runs. A stock public image, on purpose:
 # this check's subject is the IAM grant and the metadata token, never the
 # service's own code, and building an image of its own would add a registry, a
@@ -155,22 +179,29 @@ DRY_RUN=${CHECK195_DRY_RUN:-}
 GRANT_SECONDS=${CHECK195_GRANT_SECONDS:-30}
 BUILD_WAIT_SECONDS=${CHECK195_BUILD_WAIT_SECONDS:-1800}
 LOG_WAIT_SECONDS=${CHECK195_LOG_WAIT_SECONDS:-60}
-LOGWRITER_WAIT_SECONDS=${CHECK195_LOGWRITER_WAIT_SECONDS:-120}
-LOGWRITER_SETTLE_SECONDS=${CHECK195_LOGWRITER_SETTLE_SECONDS:-30}
+# The object the step wrote, re-read for this long: Cloud Storage hands an object
+# back the moment it is written, so this is only slack for a transient read, and
+# the step's own write is retried inside the build (LINE_TRIES) for the IAM window.
+LINE_WAIT_SECONDS=${CHECK195_LINE_WAIT_SECONDS:-30}
+LINE_TRIES=${CHECK195_LINE_TRIES:-6}
+LINE_RETRY_SECONDS=${CHECK195_LINE_RETRY_SECONDS:-5}
+GRANTS_WAIT_SECONDS=${CHECK195_GRANTS_WAIT_SECONDS:-120}
+GRANTS_SETTLE_SECONDS=${CHECK195_GRANTS_SETTLE_SECONDS:-30}
 # The unauthenticated probe's cap, so a service that never answers cannot hang
 # the run.
 CURL_SECONDS=30
-# How long the build's own lines are re-read for, and how many of them.
-LOG_POLL_SECONDS=10
+# How long a reading that lags the request is re-read for, and how many of the
+# build's own lines are read.
+READ_POLL_SECONDS=10
 LOG_AGE=30m
 LOG_LIMIT=100
-# How often the project's own policy is re-read while waiting for the
-# roles/logging.logWriter binding to land, and how many times the throwaway
-# account's deletion is attempted before the Restore gives up and says so. Every
+# How often the two policies are re-read while waiting for the bindings the
+# build's own writes need to land, and how many times the throwaway account's
+# deletion is attempted before the Restore gives up and says so. Every delete
 # attempt is preceded by a policy read and followed by a read of the account's
 # own state, so a delete that landed but reported failure is not repeated: the
 # state is the answer.
-LOGWRITER_POLL_SECONDS=5
+GRANTS_POLL_SECONDS=5
 ACCOUNT_DELETE_TRIES=6
 
 # The one deploy line, in one place, so guard_deploy_is_iam_only can read exactly
@@ -205,6 +236,7 @@ SCRATCH=""
 SCRATCH_MARKER=".chk195-mine"
 SERVICE_MINE=""
 ACCOUNT_MINE=""
+BUCKET_MINE=""
 BUILD_ID=""
 SCRATCH_REMOVED=no
 PRINTED=""
@@ -220,6 +252,7 @@ scratch_up() {
   : >"$FACTS_FILE"
   SERVICE_MINE="$SCRATCH/service-mine"
   ACCOUNT_MINE="$SCRATCH/account-mine"
+  BUCKET_MINE="$SCRATCH/bucket-mine"
   say "scratch directory: $SCRATCH (mode 0700, removed at the end)"
   fact scratch PASS "$SCRATCH (mode 0700, made by this check, removed by its Restore)"
 }
@@ -309,16 +342,21 @@ delete_account_retrying() {
 }
 
 # The Restore: everything this run created, deleted in the one order that works
-# — the invoker binding goes with the service, and the project-level binding is
+# — the invoker binding goes with the service and the bucket-level
+# roles/storage.objectCreator binding goes with the bucket (with the object the
+# step wrote in it), and the project-level binding is
 # removed BEFORE the account, because a binding that outlives its member reads
 # back as `deleted:serviceAccount:...` and could never be removed again. It runs
 # from the exit trap too, so a Ctrl-C in the middle still leaves nothing behind.
+# The bucket is deleted only when this run's own record of creating it is there,
+# and the record is only kept when the bucket carries this run's own label.
 restore_run() {
-  if [ ! -f "$SERVICE_MINE" ] && [ ! -f "$ACCOUNT_MINE" ]; then
+  if [ ! -f "$SERVICE_MINE" ] && [ ! -f "$ACCOUNT_MINE" ] && [ ! -f "$BUCKET_MINE" ]; then
     fact restore PASS "nothing of this check's was created, so there is nothing to delete"
     fact service-deleted PASS "this run deployed no service, so there is none to delete"
     fact account-deleted PASS "this run created no service account, so there is none to delete"
     fact binding-removed PASS "this run added no project-level binding, so there is none to remove"
+    fact bucket-deleted PASS "this run created no bucket, so there is none to delete"
     return 0
   fi
   say "Restore: deleting what this check created"
@@ -329,6 +367,14 @@ restore_run() {
   fi
   if [ -f "$SERVICE_MINE" ]; then
     gcloud run services delete "${SVC:?}" --project="${P:?}" --region="${L:?}" --quiet >&2 || true
+  fi
+  if [ -f "$BUCKET_MINE" ]; then
+    # Deleted BEFORE the account below, so the bucket's own
+    # roles/storage.objectCreator binding goes with it: a binding that outlives its
+    # member reads back as deleted:serviceAccount:... and could never be removed.
+    # The object the step wrote — the whole reason the bucket existed — goes with
+    # the bucket.
+    gcloud storage buckets delete "gs://${BUCKET:?}" --quiet >&2 || true
   fi
   # Attempted whenever this run created anything at all, and NOT only when the
   # grant call came back: a Ctrl-C during that call reaches gcloud too, so a
@@ -342,10 +388,11 @@ restore_run() {
   if [ -f "$ACCOUNT_MINE" ]; then
     delete_account_retrying || true
   fi
-  local st ac bind left=""
+  local st ac bind bst left=""
   st=$(service_state)
   ac=$(account_state)
   bind=$(project_naming_account)
+  bst=$(bucket_state)
   if [ ! -f "$SERVICE_MINE" ]; then
     fact service-deleted PASS "this run deployed no service, so there is none to delete"
   elif [ "$st" = not-there ]; then
@@ -356,6 +403,17 @@ restore_run() {
   else
     left="$left whether the service ${SVC} is gone;"
     fact service-deleted FAIL "whether ${SVC} is gone cannot be read (the list failed), so nothing is claimed about it: check it with gcloud run services list --project=${P} --region=${L} --filter=metadata.name=${SVC} and delete it if it is there"
+  fi
+  if [ ! -f "$BUCKET_MINE" ]; then
+    fact bucket-deleted PASS "this run created no bucket, so there is none to delete"
+  elif [ "$bst" = not-there ]; then
+    fact bucket-deleted PASS "gs://${BUCKET}, the line the step wrote into it and the roles/storage.objectCreator binding beside it are gone (read back by a listing)"
+  elif [ "$bst" = there ]; then
+    left="$left the bucket gs://${BUCKET};"
+    fact bucket-deleted FAIL "gs://${BUCKET} is still in ${P}: delete it by hand with gcloud storage buckets delete gs://${BUCKET} --project=${P} --quiet"
+  else
+    left="$left whether the bucket gs://${BUCKET} is gone;"
+    fact bucket-deleted FAIL "whether gs://${BUCKET} is gone cannot be read (the list failed), so nothing is claimed about it: check it with gcloud storage buckets list --project=${P} --format=value(name) and delete it if it is there"
   fi
   if [ ! -f "$ACCOUNT_MINE" ]; then
     fact account-deleted PASS "this run created no service account, so there is none to delete"
@@ -380,7 +438,7 @@ restore_run() {
     ;;
   esac
   if [ -z "$left" ]; then
-    fact restore PASS "everything this check created was deleted and READ BACK: the service (and the invoker binding with it), the project-level roles/logging.logWriter binding, and the account. The only thing this run leaves in ${P} is the build's own RECORD, in Cloud Build's history: it is the project's log of what ran, not a resource this check made"
+    fact restore PASS "everything this check created was deleted and READ BACK: the service (and the invoker binding with it), the bucket (and with it the object the step wrote its one line into and the bucket-level roles/storage.objectCreator binding), the project-level roles/logging.logWriter binding, and the account. The only thing this run leaves in ${P} is the build's own RECORD, in Cloud Build's history: it is the project's log of what ran, not a resource this check made"
   else
     fact restore FAIL "the Restore did not finish:$left delete it by hand from one of the rows above. (The build's own record in Cloud Build's history is left on purpose: it is the project's log of what ran)"
   fi
@@ -441,6 +499,15 @@ guard_constants() {
   case "$L" in "" | /* | */) stop "the region this check runs in must be a region name and it is '${L}'" ;; esac
   case "$SVC" in "" | /* | */) stop "the throwaway service's name must be a name and it is '${SVC}'" ;; esac
   case "$CALLER" in "" | /* | */) stop "the throwaway account's name must be a name and it is '${CALLER}'" ;; esac
+  # The bucket is the one name here that is built rather than written, so it is
+  # checked for the two ways a shell can leave it empty or shaped like a path: an
+  # empty BUCKET would make the create, the grant and the delete all read as a
+  # command with a missing argument.
+  case "$BUCKET" in
+  "") stop "the throwaway bucket's name came out empty: it is built from the project, the moment this run started and this shell's own process id, so this is a shell that could not run date" ;;
+  /* | */) stop "the throwaway bucket's name must be a bucket name and it is '${BUCKET}'" ;;
+  esac
+  case "$BUCKET_NONCE" in "" | */*) stop "the throwaway bucket's label came out '${BUCKET_NONCE}': it is what says a bucket is this run's, so an empty one would make every bucket read as this run's" ;; esac
   case "$IMAGE" in
   "") stop "CHECK195_IMAGE is empty: the throwaway service has to be deployed from some container, and the check's own default is Google's Cloud Run sample" ;;
   esac
@@ -531,6 +598,81 @@ project_naming_account() {
     return 0
   fi
   if grep -q -- "${CALLER_EMAIL:?}" "$doc"; then printf 'named'; else printf 'clean'; fi
+}
+
+# bucket_naming_account: the same three answers for the BUCKET's own IAM policy,
+# which is where the roles/storage.objectCreator binding the step's write needs
+# lives. Read as a document and searched for the address, like the project's: this
+# reading has no business interpreting roles or conditions either.
+bucket_naming_account() {
+  local doc="$SCRATCH/bucket-policy.json"
+  if ! gcloud storage buckets get-iam-policy "gs://${BUCKET:?}" --format=json >"$doc" 2>"$SCRATCH/bucket-policy.err"; then
+    printf 'unread'
+    return 0
+  fi
+  if grep -q -- "${CALLER_EMAIL:?}" "$doc"; then printf 'named'; else printf 'clean'; fi
+}
+
+# bucket_state: whether the bucket is there, read from a LIST for the reason the
+# two probes above use one — absence is an empty list, and a list that FAILED is
+# `unreadable` rather than the answer "it is not there". `describe` cannot make
+# that reading: it fails the same way for a bucket that is gone and for a session
+# that expired. Bucket resource names are printed with the scheme by one gcloud
+# version and without it by another, so both forms are looked for by name.
+bucket_state() {
+  local out rc=0
+  out=$(gcloud storage buckets list --project="${P:?}" --format='value(name)' 2>/dev/null) || rc=$?
+  out=$(printf '%s' "$out" | tr -d '\r' | sed -e 's/[[:space:]]*$//' | grep -v '^$' || true)
+  if [ "$rc" != 0 ]; then
+    printf 'unreadable'
+    return 0
+  fi
+  if printf '%s\n' "$out" | grep -qx -e "${BUCKET:?}" -e "gs://${BUCKET}"; then
+    printf 'there'
+  else
+    printf 'not-there'
+  fi
+}
+
+# bucket_owner_state: who the bucket this run created says it belongs to — the
+# label this run wrote at creation, or `other` for a bucket of the same name that
+# does not carry it. A bucket name is global, so a create that reported failure can
+# have been refused because SOMEBODY ELSE holds that name: the label is what keeps
+# the Restore from deleting a stranger's bucket.
+bucket_owner_state() {
+  local out
+  out=$(gcloud storage buckets describe "gs://${BUCKET:?}" --format='value(labels.chk195)' 2>/dev/null \
+    | tr -d '\r' | grep -v '^$' | head -n 1 || true)
+  if [ "$out" = "$BUCKET_NONCE" ]; then printf 'mine'; else printf 'other'; fi
+}
+
+# step_line_bucket: the throwaway bucket the step writes its one line into, created
+# before anything else this check makes. The object in it is the reading that needs
+# no Cloud Logging at all, and the bucket is this run's by its LABEL rather than by
+# its name: the name carries this run's own moment and process id, and a create
+# that reported failure may have been refused because that name is already taken —
+# which is not this run's bucket to delete.
+step_line_bucket() {
+  : >"$BUCKET_MINE"
+  local create_err=$SCRATCH/bucket-create.err rc=0
+  say "creating the throwaway bucket gs://${BUCKET} for the step's own line"
+  gcloud storage buckets create "gs://${BUCKET:?}" --project="${P:?}" --location="${L:?}" \
+    --uniform-bucket-level-access --labels="chk195=${BUCKET_NONCE}" --quiet >&2 2>"$create_err" || rc=$?
+  if [ "$rc" != 0 ]; then
+    case "$(bucket_owner_state)" in
+    mine)
+      stop "the bucket create reported failure, but gs://${BUCKET} IS there with this run's own label ${BUCKET_NONCE}, so it is this check's: the record says so and this run's Restore deletes it. Nothing else ran. What gcloud said: $(last_lines "$create_err")"
+      ;;
+    *)
+      # Either no bucket of that name at all — the ordinary refusal — or one that
+      # does not carry this run's label, which is somebody else's and is never
+      # touched. The record goes either way: this check deletes only its own.
+      rm -f "$BUCKET_MINE" || true
+      stop "the bucket gs://${BUCKET} could not be created (${rc}): $(last_lines "$create_err"). YOUR account needs storage.buckets.create and, on this project, storage.buckets.list (a project Owner has them). Nothing of this check's is there, so its record is removed again, and the service is deleted by this run's Restore"
+      ;;
+    esac
+  fi
+  fact line-bucket PASS "gs://${BUCKET} is this run's — created here, labelled chk195=${BUCKET_NONCE}, private (--uniform-bucket-level-access) — and it exists for one reason: the build's step writes its one line into ${LINE_URI}, so the reading does not go through Cloud Logging at all. It is deleted, with the object in it, by this run's Restore"
 }
 
 guard_resources() {
@@ -746,6 +888,19 @@ step_caller() {
     stop "${CALLER_EMAIL} could not be granted roles/logging.logWriter on ${P}, which a build that names its own service account needs to write its log: without it the build's own line — the token's email claim — is never written anywhere this check can read. YOUR account needs resourcemanager.projects.setIamPolicy (an Owner has it). Nothing was built; the account and the service are deleted by this run's Restore"
   fi
 
+  # The bucket-level binding the step's own WRITE needs, and the one the owner's
+  # brief asks for by name: roles/storage.objectCreator ON THIS BUCKET ALONE, so
+  # the throwaway account can put one object in it and cannot read it, list the
+  # bucket or write anywhere else. The step's upload is the raw JSON API
+  # (uploadType=media), which asks for storage.objects.create and nothing more:
+  # `gcloud storage cp` would also need storage.buckets.get, which this role does
+  # not carry, so the step does not use it.
+  if ! gcloud storage buckets add-iam-policy-binding "gs://${BUCKET:?}" \
+    --member="serviceAccount:${CALLER_EMAIL}" --role=roles/storage.objectCreator --quiet >&2 2>"$SCRATCH/objectcreator.err"; then
+    fact invoker-grant FAIL "${CALLER_EMAIL} could not be granted roles/storage.objectCreator on gs://${BUCKET}: $(last_lines "$SCRATCH/objectcreator.err")"
+    stop "${CALLER_EMAIL} could not be granted roles/storage.objectCreator on gs://${BUCKET}, so the step could not write its one line there and the reading would fall back on the step's exit code alone. YOUR account needs storage.buckets.setIamPolicy on that bucket (an Owner has it). Nothing was built; the bucket, the account and the service are deleted by this run's Restore"
+  fi
+
   # The grant, read back from the service's own IAM policy: exactly one member,
   # the throwaway account, with the invoker role — which is what "on it alone"
   # means. This is read BEFORE the build, so a binding that did not land stops
@@ -762,7 +917,7 @@ step_caller() {
   members=$(printf '%s' "$pol" | grep -o '"serviceAccount:[^"]*"' | tr -d '"' | sort -u | tr '\n' ' ' || true)
   case "$members" in
   *"serviceAccount:${CALLER_EMAIL}"*)
-    fact invoker-grant PASS "the service's own IAM policy names ${CALLER_EMAIL} with roles/run.invoker, and the only member it names is ${members% } — one grant, on this service alone: ${CALLER_EMAIL} may invoke ${SVC} and nothing else. It also holds roles/logging.logWriter on ${P}, which Cloud Build requires of a build's own service account to write its log; the Restore removes that binding before it deletes the account"
+    fact invoker-grant PASS "the service's own IAM policy names ${CALLER_EMAIL} with roles/run.invoker, and the only member it names is ${members% } — one grant, on this service alone: ${CALLER_EMAIL} may invoke ${SVC} and nothing else. It also holds roles/logging.logWriter on ${P} (which Cloud Build requires of a build's own service account to write its log) and roles/storage.objectCreator on gs://${BUCKET} alone (which is what lets the step write its one line, and nothing else, there); the Restore removes each of those and deletes the account"
     ;;
   *)
     fact invoker-grant FAIL "the service's own IAM policy does not name ${CALLER_EMAIL} after the binding was added (it names: ${members:-nobody}), so the build's step would be refused whatever the grant call said"
@@ -776,65 +931,98 @@ step_caller() {
     owner "waiting ${GRANT_SECONDS} s for the grant to take effect"
     sleep_bg "$GRANT_SECONDS"
   fi
-  wait_for_logwriter
+  wait_for_write_grants
 }
 
-# wait_for_logwriter: the build's own line is one of the two places the answer is
-# read from, and the ONE thing that lets the build write it is the project-level
-# roles/logging.logWriter binding just added — a build that names its own service
-# account writes its log with that account's credentials. IAM is eventually
-# consistent and a build that starts inside the window writes nothing at all:
-# that is how the owner's run of 2026-11-24 came back with a build record that
-# said FAILURE and a `gcloud builds log` that printed an empty body, on a binding
-# granted seconds earlier. So the grant is read back out of the project's OWN
-# policy, re-read while it is not there, and then given ONE short fixed settle
-# before the build starts. The wait is BOUNDED (CHECK195_LOGWRITER_WAIT_SECONDS,
-# and CHECK195_LOGWRITER_SETTLE_SECONDS for the settle) and the row says how long
-# it waited and what it read. Nothing rests on it: a build whose line never
-# arrives is read from its own step's exit code, so a wait that runs out costs
+# wait_for_write_grants: the two bindings the build's own WRITES need, and neither
+# of them is what this check measures. A build that names its own service account
+# writes its log with that account's credentials, which is the project-level
+# roles/logging.logWriter binding just added; the step writes its one line into the
+# bucket's object with the same account's token, which is the bucket-level
+# roles/storage.objectCreator binding just added. IAM is eventually consistent and
+# a build that starts inside the window writes neither: that is how the owner's run
+# of 2026-11-24 came back with a build record that said FAILURE and a `gcloud
+# builds log` that printed an empty body, on a binding granted seconds earlier. So
+# each binding is read back out of the policy that holds it — the project's own, and
+# the bucket's own — re-read while it is not there, and then given ONE short fixed
+# settle before the build starts. The wait is BOUNDED (CHECK195_GRANTS_WAIT_SECONDS,
+# and CHECK195_GRANTS_SETTLE_SECONDS for the settle) and the row says how long each
+# was waited for and what each read back. Nothing rests on it: a build whose writes
+# did not land is read from its own step's exit code, so a wait that runs out costs
 # this run the email claim's text, never the reading.
-wait_for_logwriter() {
-  local waited=0 pol=""
+wait_for_write_grants() {
+  local waited=0 pol="" bpol="" pol_at="" bpol_at=""
   while :; do
     pol=$(project_naming_account)
-    if [ "$pol" = named ]; then break; fi
-    if [ "$waited" -ge "$LOGWRITER_WAIT_SECONDS" ]; then break; fi
-    sleep_bg "$LOGWRITER_POLL_SECONDS"
-    waited=$((waited + LOGWRITER_POLL_SECONDS))
+    bpol=$(bucket_naming_account)
+    # When each policy was READ, whether it named the account or not: the row says
+    # how long the read-back took for the naming case and for the case where the
+    # binding never landed, and neither may be quoted as a time that was never
+    # waited.
+    if [ "$pol" != unread ] && [ -z "$pol_at" ]; then pol_at=$waited; fi
+    if [ "$bpol" != unread ] && [ -z "$bpol_at" ]; then bpol_at=$waited; fi
+    if [ "$pol" = named ] && [ "$bpol" = named ]; then break; fi
+    if [ "$waited" -ge "$GRANTS_WAIT_SECONDS" ]; then break; fi
+    sleep_bg "$GRANTS_POLL_SECONDS"
+    waited=$((waited + GRANTS_POLL_SECONDS))
   done
-  # What the row says about the settle, per reading: only a policy that was READ
-  # and did not name the account can be said to carry no binding to settle. A
-  # policy that could not be read says nothing either way, and the row for it may
-  # not claim the binding is absent.
-  local settle="no settle, because whether the policy names the account could not be read"
-  if [ "$pol" = named ]; then
-    settle="${LOGWRITER_SETTLE_SECONDS} s of settle"
-    if [ "$LOGWRITER_SETTLE_SECONDS" -gt 0 ]; then
-      owner "waiting ${LOGWRITER_SETTLE_SECONDS} s for the roles/logging.logWriter grant to propagate"
-      sleep_bg "$LOGWRITER_SETTLE_SECONDS"
+  # What the row says about the settle, per reading: only the two policies READ and
+  # both naming the account can be settled. A policy that could not be read says
+  # nothing either way, and the row for it may not claim the binding is absent.
+  local settle="no settle, because whether both policies name the account was not read"
+  if [ "$pol" = named ] && [ "$bpol" = named ]; then
+    settle="${GRANTS_SETTLE_SECONDS} s of settle"
+    if [ "$GRANTS_SETTLE_SECONDS" -gt 0 ]; then
+      owner "waiting ${GRANTS_SETTLE_SECONDS} s for the roles/logging.logWriter and roles/storage.objectCreator grants to propagate"
+      sleep_bg "$GRANTS_SETTLE_SECONDS"
     fi
-  elif [ "$pol" = clean ]; then
-    settle="no settle, because the binding is not in the policy to settle"
+  elif [ "$pol" = clean ] || [ "$bpol" = clean ]; then
+    settle="no settle, because a binding that never landed is not in its policy to settle"
   fi
+  # Each side read on its own, so a row names only what it read: a policy that
+  # names the account in no binding is a binding that did not land, and a policy
+  # that could not be read says nothing either way.
+  local log_said bucket_said bad=""
   case "$pol" in
-  named)
-    fact logwriter-wait PASS "${P}'s own IAM policy named ${CALLER_EMAIL} ${waited} s after the roles/logging.logWriter binding was added (read back from the policy, not assumed), and the build was then held back a fixed ${settle}: the wait is bounded at ${LOGWRITER_WAIT_SECONDS} s by CHECK195_LOGWRITER_WAIT_SECONDS, because IAM's propagation is not something this check can wait out indefinitely. The verdict does not rest on the log this buys: the build's own record carries the same reading in its step's exit code"
-    ;;
+  named) log_said="${P}'s own IAM policy named ${CALLER_EMAIL} ${pol_at} s after the roles/logging.logWriter binding was added (read back from the policy, not assumed)" ;;
   clean)
-    fact logwriter-wait FAIL "${P}'s own IAM policy names ${CALLER_EMAIL} in no binding ${waited} s after the roles/logging.logWriter binding was reported added, so the build may write no log at all: ${settle}, and the wait is bounded at ${LOGWRITER_WAIT_SECONDS} s by CHECK195_LOGWRITER_WAIT_SECONDS. The build still runs and its step's exit code still carries the reading, but read ${P}'s policy by hand — gcloud projects get-iam-policy ${P} --format=json — and check whether the binding is there"
+    log_said="${P}'s own IAM policy names ${CALLER_EMAIL} in no binding ${pol_at} s after the roles/logging.logWriter binding was reported added"
+    bad="the build may write no log"
     ;;
   *)
-    fact logwriter-wait FAIL "whether ${P}'s own IAM policy names ${CALLER_EMAIL} ${waited} s after the roles/logging.logWriter binding was added cannot be read (the policy read failed), so the build may write no log at all: ${settle}, and the wait is bounded at ${LOGWRITER_WAIT_SECONDS} s by CHECK195_LOGWRITER_WAIT_SECONDS. Read the policy by hand with gcloud projects get-iam-policy ${P} --format=json — the build still runs, and its step's exit code still carries the reading"
+    log_said="whether ${P}'s own IAM policy names ${CALLER_EMAIL} could not be read"
+    bad="nothing is claimed about the build's log"
     ;;
   esac
+  case "$bpol" in
+  named) bucket_said="the bucket's own policy named ${CALLER_EMAIL} ${bpol_at} s after the roles/storage.objectCreator binding was added (read back from that policy too)" ;;
+  clean)
+    bucket_said="the bucket's own policy names ${CALLER_EMAIL} in no binding ${bpol_at} s after the roles/storage.objectCreator binding was reported added"
+    bad="${bad:+${bad}; }the step may write no line into ${LINE_URI}"
+    ;;
+  *)
+    bucket_said="could not be read"
+    bad="${bad:+${bad}; }nothing is claimed about the step's write into ${LINE_URI}"
+    ;;
+  esac
+  local readback="${log_said}, and ${bucket_said}"
+  local bounded="the wait is bounded at ${GRANTS_WAIT_SECONDS} s by CHECK195_GRANTS_WAIT_SECONDS, because IAM's propagation is not something this check can wait out indefinitely"
+  if [ -z "$bad" ]; then
+    fact write-grants PASS "${readback}. The build was then held back a fixed ${settle}, and ${bounded}. Nothing rests on either write: the object the step writes carries the reading as text, and the build's own record carries it as its step's exit code"
+  else
+    fact write-grants FAIL "${readback}: ${bad}. ${settle}, and ${bounded}. The build runs either way and its step's exit code still carries the reading; read the two policies by hand with gcloud projects get-iam-policy ${P} --format=json and gcloud storage buckets get-iam-policy gs://${BUCKET} --format=json"
+  fi
 }
 
 # write_build_config: the one step — mint an ID token for this service's URL out
 # of the build's own metadata server, call the service with it, print the
-# token's email claim and the answer's status, and end with ONE exit code per
-# outcome. The exit code is the reading that does not need Cloud Logging: Cloud
-# Build writes it into the build the step ran in, and `gcloud builds describe`
-# hands it back. The codes, and the row each one becomes:
+# token's email claim and the answer's status, write that same ONE line into the
+# object this check made for it, and end with ONE exit code per outcome. The
+# line and the exit code are the two readings that do not need Cloud Logging:
+# the object is read back with `gcloud storage cat` (put_line below), and the
+# exit code is written by Cloud Build into the build the step ran in, where
+# `gcloud builds describe` hands it back. The codes, and the row each one
+# becomes:
 #
 #   0   the service answered 200 AND the token's email claim is the throwaway
 #       account — the reading S4's build exception rests on. This is the one code
@@ -856,10 +1044,11 @@ wait_for_logwriter() {
 #
 # `$$` is Cloud Build's escape for a literal `$`: the step's script is a shell
 # script inside a YAML block scalar, and without the escape Cloud Build would
-# substitute its own variables into it. The URL and the account go in through
-# placeholders rather than through the shell, so no `$` of the check's own ever
-# reaches this file. options.logging is CLOUD_LOGGING_ONLY — the mode Fugaro's
-# own image builds use (internal/backend/gcp/build.go, images/derived/
+# substitute its own variables into it. The URL, the account, the bucket and the
+# object go in through placeholders rather than through the shell, so no `$` of
+# the check's own ever reaches this file. options.logging is CLOUD_LOGGING_ONLY
+# — the mode Fugaro's own image builds use (internal/backend/gcp/build.go,
+# images/derived/
 # cloudbuild.yaml) — because the build names its own service account and the API
 # refuses a build that does not say where its logs go.
 write_build_config() {
@@ -873,17 +1062,54 @@ steps:
         set -uo pipefail
         url="__AUDIENCE__"
         meta="http://metadata.google.internal/computeMetadata/v1/instance/service-accounts"
+        upload="https://storage.googleapis.com/upload/storage/v1/b/__BUCKET__/o?uploadType=media&name=__OBJECT__"
+        atok=""
+
+        # put_line: the ONE line this step measured, into the object the check
+        # created for it — the reading that does not go through Cloud Logging at
+        # all. The upload is the JSON API's own media upload with the metadata
+        # server's access token, because the grant this check makes on the bucket
+        # is roles/storage.objectCreator alone: `gcloud storage cp` would also
+        # need storage.buckets.get, which that role does not carry. The token
+        # lives in this one variable for this one command and is never echoed;
+        # the upload prints nothing (-o /dev/null). IAM is eventually consistent
+        # and this step may start inside the window of the grant that lets it
+        # write, so the write is retried; a line that could not be written leaves
+        # the step's own exit code as the reading, which is why every attempt
+        # failing does not change the code this step ends with.
+        put_line() {
+          if [ -z "$${atok}" ]; then
+            atok="$$(curl -f -sS -H 'Metadata-Flavor: Google' "$${meta}/default/token" 2>/dev/null \
+              | sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+          fi
+          [ -n "$${atok}" ] || return 1
+          try=0
+          while [ "$${try}" -lt "__LINE_TRIES__" ]; do
+            try=$$((try + 1))
+            if curl -f -sS -o /dev/null -X POST -H "Authorization: Bearer $${atok}" \
+              -H 'Content-Type: text/plain' --data-binary "$$1" "$${upload}" 2>/dev/null; then
+              return 0
+            fi
+            sleep "__LINE_RETRY_SECONDS__"
+          done
+          return 1
+        }
+
         tok="$$(curl -f -sS -H 'Metadata-Flavor: Google' "$${meta}/default/identity?audience=__AUDIENCE__&format=full" 2>/dev/null || true)"
         if [ -z "$${tok}" ]; then
           tok="$$(curl -f -sS -H 'Metadata-Flavor: Google' "$${meta}/__ACCOUNT__/identity?audience=__AUDIENCE__&format=full" 2>/dev/null || true)"
         fi
         if [ -z "$${tok}" ]; then
-          echo "CHK195 status=notoken email=unread"
+          line="CHK195 status=notoken email=unread"
+          echo "$${line}"
+          put_line "$${line}" || echo "CHK195 line-not-written to __BUCKET__/__OBJECT__"
           exit 14
         fi
         code="$$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $${tok}" "$${url}" 2>/dev/null || true)"
         email="$$(printf '%s' "$${tok}" | python3 -c 'import base64,json,sys; p=sys.stdin.read().strip().split(".")[1]; p+="="*(-len(p)%4); print(json.loads(base64.urlsafe_b64decode(p)).get("email",""))' 2>/dev/null || true)"
-        echo "CHK195 status=$${code:-none} email=$${email:-unread}"
+        line="CHK195 status=$${code:-none} email=$${email:-unread}"
+        echo "$${line}"
+        put_line "$${line}" || echo "CHK195 line-not-written to __BUCKET__/__OBJECT__"
         case "$${code}" in
         401) exit 11 ;;
         403) exit 12 ;;
@@ -896,6 +1122,8 @@ options:
   logging: CLOUD_LOGGING_ONLY
 CONFIG_EOF
   sed -e "s|__AUDIENCE__|${URL}|" -e "s|__ACCOUNT__|${CALLER_EMAIL}|" \
+    -e "s|__BUCKET__|${BUCKET}|" -e "s|__OBJECT__|${LINE_OBJECT}|" \
+    -e "s|__LINE_TRIES__|${LINE_TRIES}|" -e "s|__LINE_RETRY_SECONDS__|${LINE_RETRY_SECONDS}|" \
     "$SCRATCH/cloudbuild.tmpl" >"$SCRATCH/cloudbuild.yaml" \
     || stop "the build config could not be written into the scratch directory"
 }
@@ -914,8 +1142,29 @@ build_log() { # build_log ID
       --limit="$LOG_LIMIT" --format='value(textPayload,jsonPayload.message)' >"$SCRATCH/build-log.txt" 2>"$SCRATCH/build-log.err" || true
     if grep -q 'CHK195 ' "$SCRATCH/build-log.txt" 2>/dev/null; then return 0; fi
     if [ "$waited" -ge "$LOG_WAIT_SECONDS" ]; then return 1; fi
-    sleep "$LOG_POLL_SECONDS"
-    waited=$((waited + LOG_POLL_SECONDS))
+    sleep "$READ_POLL_SECONDS"
+    waited=$((waited + READ_POLL_SECONDS))
+  done
+}
+
+# line_object: the step's own one line, read back OUT of the object it wrote it
+# into — `gcloud storage cat gs://<bucket>/chk195-line.txt`, the one command this
+# reading is, and the one a person runs by hand when it comes back empty. This is
+# the reading the owner's brief asks for: Cloud Storage hands an object back the
+# moment it is written (reads are strongly consistent, unlike Cloud Logging's
+# ingestion), so nothing here waits on a log pipeline, and the object is in a
+# bucket this check created and deletes. Retried only for a transient read: the
+# write itself is retried inside the build (LINE_TRIES).
+line_object() {
+  local waited=0
+  while :; do
+    if gcloud storage cat "${LINE_URI:?}" >"$SCRATCH/line-object.txt" 2>"$SCRATCH/line-object.err" \
+      && grep -q 'CHK195 ' "$SCRATCH/line-object.txt" 2>/dev/null; then
+      return 0
+    fi
+    if [ "$waited" -ge "$LINE_WAIT_SECONDS" ]; then return 1; fi
+    sleep "$READ_POLL_SECONDS"
+    waited=$((waited + READ_POLL_SECONDS))
   done
 }
 
@@ -1002,9 +1251,28 @@ step_build() {
   # status and the email claim it was refused with. It is the reading that
   # carries the email claim as TEXT; the exit code above carries the same
   # verdict without it.
+  #
+  # It is read OUT OF THE OBJECT first — the bucket this check made, which the
+  # step wrote its one line into — and out of Cloud Logging only if the object
+  # did not carry it. That order is the whole point of the object: Cloud Storage
+  # hands an object back the moment it is written, while Cloud Logging's
+  # ingestion is a pipeline that can simply not carry a line at all — the
+  # owner's run of 2026-11-24 came back with a FAILURE build and an empty
+  # `gcloud builds log`. So the object is the reading, the log is the fallback,
+  # and the exit code read above is under both.
   local got=""
-  if build_log "$BUILD_ID"; then
-    got=$(sed -n 's/.*CHK195 //p' "$SCRATCH/build-log.txt" | head -n 1)
+  if line_object; then
+    got=$(sed -n 's/.*CHK195 //p' "$SCRATCH/line-object.txt" | head -n 1)
+    fact line-object PASS "the step's own line was read OUT OF the object it wrote: gcloud storage cat ${LINE_URI} printed '$(printf '%s' "$got" | redact | cut -c1-200)' (the step's own words, redacted and cut short like every other line this block prints). No Cloud Logging was involved in this reading"
+  else
+    local obj_why
+    obj_why=$(last_lines "$SCRATCH/line-object.err")
+    if build_log "$BUILD_ID"; then
+      got=$(sed -n 's/.*CHK195 //p' "$SCRATCH/build-log.txt" | head -n 1)
+      fact line-object INFO "the object the step writes its one line into carried nothing this reading could take: gcloud storage cat ${LINE_URI} answered '${obj_why}' within ${LINE_WAIT_SECONDS} s. The line was read out of the build's own log instead, so the step's WRITE to the bucket is what to look at rather than this reading: the account holds roles/storage.objectCreator on that bucket alone (the write-grants row says whether that binding was read back from the bucket's own policy) and the step retries the write ${LINE_TRIES} times, ${LINE_RETRY_SECONDS} s apart. Read the object by hand with gcloud storage cat ${LINE_URI}"
+    else
+      fact line-object INFO "the step's own line could not be read from EITHER place: neither the object it writes it into — gcloud storage cat ${LINE_URI}, answered '${obj_why}' within ${LINE_WAIT_SECONDS} s — nor the build's own log, which carried nothing within ${LOG_WAIT_SECONDS} s ($(last_lines "$SCRATCH/build-log.err")). Read it by hand with gcloud storage cat ${LINE_URI}, and read the build's lines with gcloud builds log ${BUILD_ID} --project=${P}. The reading below is the step's own exit code, out of the build's own record, which goes through neither"
+    fi
   fi
   local code email
   code=$(field_of "$got" status)
@@ -1049,11 +1317,13 @@ step_build() {
 }
 
 # call_from_step_exit_code EXIT_CODE DETAIL [ZERO_OMITTED]: the `call` row when
-# the step's own line was not read. The step ends with ONE exit code per outcome
+# the step's own line was read from neither the object it writes it into nor the
+# build's log. The step ends with ONE exit code per outcome
 # (the list is on write_build_config), Cloud Build writes it into the build's own
 # record, and `gcloud builds describe` hands it back — so the one thing this
 # reading never depends on is Cloud Logging, whose ingestion is what the owner's
-# run of 2026-11-24 came back empty from. What the row loses by not having the
+# run of 2026-11-24 came back empty from, or on the object the step wrote with
+# the account's own token. What the row loses by not having the
 # line is the email claim as TEXT; the step's exit code 0 is only written when
 # that claim IS the throwaway account, so the verdict is the same one. ZERO_OMITTED
 # is `yes` when the record carried no code at all on a build that ended SUCCESS:
@@ -1064,34 +1334,40 @@ step_build() {
 # shell's own status — means the step died before it decided anything.
 call_from_step_exit_code() {
   local code=$1 detail=$2 zero_omitted=${3:-no}
+  # Where the line would have been, said once and not repeated per code: the
+  # object the step writes it into (gcloud storage cat, the reading that needs no
+  # Cloud Logging) and the build's own log, with the exact command to read each
+  # by hand. Every row below is a code that was read WITHOUT the line, so every
+  # one of them carries this.
+  local nowhere="the step's own line was read from NEITHER place: not out of the object it writes it into (gcloud storage cat ${LINE_URI} answered '$(last_lines "$SCRATCH/line-object.err")' within ${LINE_WAIT_SECONDS} s) and not out of the build's log (which carried nothing within ${LOG_WAIT_SECONDS} s, $(last_lines "$SCRATCH/build-log.err")) — read the object by hand with gcloud storage cat ${LINE_URI} and the build's lines with gcloud builds log ${BUILD_ID} --project=${P}"
   case "$code" in
   0)
     local read_as="the build's own record says its step exited 0"
     if [ "$zero_omitted" = yes ]; then
       read_as="the build ended SUCCESS with no steps[0].exitCode in its record, and that empty column IS the code 0: Cloud Build omits a zero exit code (the field is a proto3 int64 with no presence), this build has no step other than this one, and a build that ended SUCCESS is a step that ran and exited 0"
     fi
-    fact call PASS "${read_as}, and the step is written to exit 0 for one outcome alone: the service answered 200 and the token's email claim is ${CALLER_EMAIL}, the throwaway account this check granted roles/run.invoker on ${SVC} alone. The step's own line was NOT read — it did not arrive in Cloud Logging within ${LOG_WAIT_SECONDS} s ($(last_lines "$SCRATCH/build-log.err")) — so the email claim is asserted by the exit code rather than printed: read it with 'gcloud builds log ${BUILD_ID} --project=${P}'. The token itself is in no line of this block"
+    fact call PASS "${read_as}, and the step is written to exit 0 for one outcome alone: the service answered 200 and the token's email claim is ${CALLER_EMAIL}, the throwaway account this check granted roles/run.invoker on ${SVC} alone. ${nowhere}. The email claim is therefore asserted by the exit code rather than printed. The token itself is in no line of this block"
     ;;
   11)
-    fact call FAIL "the build's own record says its step exited 11, the code the step exits for one outcome alone: the service answered 401, the front end refusing the token itself. The step's own line was NOT read (it did not arrive in Cloud Logging within ${LOG_WAIT_SECONDS} s), so the token's email claim was not printed; read it with 'gcloud builds log ${BUILD_ID} --project=${P}'. A 401 is a refusal of the token rather than of the grant, so this is not yet the reading S4 rests on"
+    fact call FAIL "the build's own record says its step exited 11, the code the step exits for one outcome alone: the service answered 401, the front end refusing the token itself. ${nowhere}, so the token's email claim was not printed. A 401 is a refusal of the token rather than of the grant, so this is not yet the reading S4 rests on"
     ;;
   12)
-    fact call FAIL "the build's own record says its step exited 12, the code the step exits for one outcome alone: the service answered 403, Cloud Run refusing this caller. The step's own line was NOT read (it did not arrive in Cloud Logging within ${LOG_WAIT_SECONDS} s), so the token's email claim was not printed; read it with 'gcloud builds log ${BUILD_ID} --project=${P}'. This is the reading S4's build exception would rest on: the grant this check made does not admit the account's own token"
+    fact call FAIL "the build's own record says its step exited 12, the code the step exits for one outcome alone: the service answered 403, Cloud Run refusing this caller. ${nowhere}, so the token's email claim was not printed. This is the reading S4's build exception would rest on: the grant this check made does not admit the account's own token"
     ;;
   13)
-    fact call FAIL "the build's own record says its step exited 13, the code the step exits for one outcome alone: the service answered with a status that is neither 200, 401 nor 403, or answered nothing at all. The step's own line was NOT read (it did not arrive in Cloud Logging within ${LOG_WAIT_SECONDS} s), so the token's email claim and the status itself were not printed; read them with 'gcloud builds log ${BUILD_ID} --project=${P}', and read the build's own failureInfo.detail: ${detail:-none given}"
+    fact call FAIL "the build's own record says its step exited 13, the code the step exits for one outcome alone: the service answered with a status that is neither 200, 401 nor 403, or answered nothing at all. ${nowhere}, so the token's email claim and the status itself were not printed. The build's own failureInfo.detail: ${detail:-none given}"
     ;;
   14)
-    fact call FAIL "the build's own record says its step exited 14, the code the step exits for one outcome alone: the build's own metadata server minted it no ID token, so ${SVC} was never called and nothing about the grant was measured. The step's own line was NOT read (it did not arrive in Cloud Logging within ${LOG_WAIT_SECONDS} s); read it with 'gcloud builds log ${BUILD_ID} --project=${P}'. The build's own default service account and the metadata server are the two things to read"
+    fact call FAIL "the build's own record says its step exited 14, the code the step exits for one outcome alone: the build's own metadata server minted it no ID token, so ${SVC} was never called and nothing about the grant was measured. ${nowhere}. The build's own default service account and the metadata server are the two things to read"
     ;;
   15)
-    fact call FAIL "the build's own record says its step exited 15, the code the step exits for one outcome alone: the service answered 200, but the token's email claim is NOT ${CALLER_EMAIL} — the token was minted for another identity, so the 200 says nothing about the account this check granted. The step's own line was NOT read (it did not arrive in Cloud Logging within ${LOG_WAIT_SECONDS} s), so the claim itself was not printed; read it with 'gcloud builds log ${BUILD_ID} --project=${P}'. The build's serviceAccount field, the grant, and the metadata server's default account are the three things to read"
+    fact call FAIL "the build's own record says its step exited 15, the code the step exits for one outcome alone: the service answered 200, but the token's email claim is NOT ${CALLER_EMAIL} — the token was minted for another identity, so the 200 says nothing about the account this check granted. ${nowhere}, so the claim itself was not printed. The build's serviceAccount field, the grant, and the metadata server's default account are the three things to read"
     ;;
   "")
-    fact call FAIL "the build's own line was not read (nothing arrived in Cloud Logging within ${LOG_WAIT_SECONDS} s: $(last_lines "$SCRATCH/build-log.err")) and the build's own record carries no steps[0].exitCode either — and the build did NOT end SUCCESS, so this empty column is not the zero Cloud Build omits — so the token's email claim and the status the service answered are NOT measured. A record with no step exit code on a build that did not succeed is a build whose step never ran: a container that could not start, or an API that refused the step, and its failureInfo.detail says so: ${detail:-none given}. Read the build with 'gcloud builds describe ${BUILD_ID} --project=${P}' and its lines with 'gcloud builds log ${BUILD_ID} --project=${P}'"
+    fact call FAIL "${nowhere}, and the build's own record carries no steps[0].exitCode either — and the build did NOT end SUCCESS, so this empty column is not the zero Cloud Build omits — so the token's email claim and the status the service answered are NOT measured. A record with no step exit code on a build that did not succeed is a build whose step never ran: a container that could not start, or an API that refused the step, and its failureInfo.detail says so: ${detail:-none given}. Read the build with 'gcloud builds describe ${BUILD_ID} --project=${P}' and its lines with 'gcloud builds log ${BUILD_ID} --project=${P}'"
     ;;
   *)
-    fact call FAIL "the build's own line was not read (nothing arrived in Cloud Logging within ${LOG_WAIT_SECONDS} s) and the build's own record says its step exited ${code}, which is not a code this check's step writes — 0, 11, 12, 13, 14 and 15 are the only ones it can end with — so the cause is NOT named and nothing about the grant was measured. It is a step that died before it decided anything: a shell that could not run the script, a pull the container could not make. The build's own failureInfo.detail says: ${detail:-none given}. Read the build with 'gcloud builds describe ${BUILD_ID} --project=${P}' and its lines with 'gcloud builds log ${BUILD_ID} --project=${P}'"
+    fact call FAIL "${nowhere}, and the build's own record says its step exited ${code}, which is not a code this check's step writes — 0, 11, 12, 13, 14 and 15 are the only ones it can end with — so the cause is NOT named and nothing about the grant was measured. It is a step that died before it decided anything: a shell that could not run the script, a pull the container could not make. The build's own failureInfo.detail says: ${detail:-none given}. Read the build with 'gcloud builds describe ${BUILD_ID} --project=${P}' and its lines with 'gcloud builds log ${BUILD_ID} --project=${P}'"
     ;;
   esac
 }
@@ -1101,26 +1377,31 @@ call_from_step_exit_code() {
 # curl is called, so this mode is safe on a machine with no credentials at all.
 print_plan() {
   say "dry run: NOTHING below was run, and no tool was called at all — not gcloud, not fugaro, not curl. A real run would first check that this is the fugaro-dev installation (fugaro doctor --project fugaro), then read whether the two names below already exist — a filtered list for the service, a filtered list for the account, and the project's own IAM policy, which must not already name the account — and stop there on a name that is already there or on a list that could not be read; then run, in this order:"
+  say "  [network, writes] gcloud storage buckets create gs://${BUCKET} --project=${P} --location=${L} --uniform-bucket-level-access --labels=chk195=${BUCKET_NONCE}  (the throwaway bucket the step writes its one line into; the name carries the moment this run started and this shell's process id, and the label is what says a bucket of that name is this run's — a bucket without it is never deleted)"
   say "  [network, writes] gcloud run deploy ${SVC} ${DEPLOY_FLAGS[*]}"
   say "  [network] gcloud run services describe ${SVC} --project=${P} --region=${L} --format=value(status.url)  (the URL the token's audience is)"
   say "  [network] gcloud run services get-iam-policy ${SVC} --project=${P} --region=${L} --format=json  (no public member, or the run stops)"
   say "  [network] curl -sS -o /dev/null -w '%{http_code}' --max-time ${CURL_SECONDS} https://<the URL of the service just deployed>  (an unauthenticated GET: a 401 or 403 is the pass, anything else stops the run before a token is sent)"
   say "  [network, writes] gcloud iam service-accounts create ${CALLER} --project=${P}"
   say "  [network, writes] gcloud run services add-iam-policy-binding ${SVC} --project=${P} --region=${L} --member=serviceAccount:${CALLER_EMAIL} --role=roles/run.invoker  (on THIS service alone)"
-  say "  [network, writes] gcloud projects add-iam-policy-binding ${P} --member=serviceAccount:${CALLER_EMAIL} --role=roles/logging.logWriter --condition=None  (which Cloud Build requires of a build's own service account to write its log — the log this check reads the token's email claim out of)"
+  say "  [network, writes] gcloud projects add-iam-policy-binding ${P} --member=serviceAccount:${CALLER_EMAIL} --role=roles/logging.logWriter --condition=None  (which Cloud Build requires of a build's own service account to write its log — the log this check reads the token's email claim out of when it arrives)"
+  say "  [network, writes] gcloud storage buckets add-iam-policy-binding gs://${BUCKET} --member=serviceAccount:${CALLER_EMAIL} --role=roles/storage.objectCreator  (on THIS bucket alone: it is what lets the step write its one line into ${LINE_URI}, which is the reading that needs no Cloud Logging at all)"
   say "  [network] gcloud run services get-iam-policy ${SVC} --format=json  (read back: the account, and nobody else, may invoke it)"
   say "  [local] a ${GRANT_SECONDS} s wait for the grant to take effect"
-  say "  [network, local] gcloud projects get-iam-policy ${P} --format=json, re-read until it names ${CALLER_EMAIL}, bounded at ${LOGWRITER_WAIT_SECONDS} s (CHECK195_LOGWRITER_WAIT_SECONDS), then one fixed ${LOGWRITER_SETTLE_SECONDS} s settle (CHECK195_LOGWRITER_SETTLE_SECONDS): the roles/logging.logWriter grant is what lets the build write its own line and IAM is eventually consistent, so a build started in the window writes no log at all — the logwriter-wait row records what was waited and what was read"
+  say "  [network, local] gcloud projects get-iam-policy ${P} --format=json and gcloud storage buckets get-iam-policy gs://${BUCKET} --format=json, each re-read until it names ${CALLER_EMAIL}, bounded at ${GRANTS_WAIT_SECONDS} s (CHECK195_GRANTS_WAIT_SECONDS), then one fixed ${GRANTS_SETTLE_SECONDS} s settle (CHECK195_GRANTS_SETTLE_SECONDS): the roles/logging.logWriter and roles/storage.objectCreator grants are what let the build write its own line and IAM is eventually consistent, so a build started in the window writes neither — the write-grants row records what was waited for and what each policy read back"
   say "  [network, writes] gcloud builds submit --project=${P} --no-source --config=${SCRATCH}/cloudbuild.yaml --service-account=projects/${P}/serviceAccounts/${CALLER_EMAIL} --async (nothing is staged anywhere: the build has no source, and the installation's gs://${P}_cloudbuild is not touched)"
   say "  [network] gcloud builds describe <build id> --project=${P}, every 10 s until the build ends, then once more for its serviceAccount field and once more for steps[0].exitCode — the account field is a RESOURCE NAME, and this reading reduces it to the account it ends in (the bare address, or the account's numeric uniqueId, which then costs one gcloud iam service-accounts describe) so that a build that ran as somebody else still fails and a build that ran as this check's own account is not reported as another identity"
-  say "  [network] gcloud logging read 'resource.type=\"build\" resource.labels.build_id=\"<build id>\"' --project=${P}  (the build's own line: retried while Cloud Logging catches up; when it does not arrive, the step's exit code above is the reading instead)"
+  say "  [network] gcloud storage cat gs://${BUCKET}/${LINE_OBJECT}  (the step's own line, OUT of the object it wrote it into: re-read for up to ${LINE_WAIT_SECONDS} s (CHECK195_LINE_WAIT_SECONDS) — this is the reading that needs no Cloud Logging)"
+  say "  [network] gcloud logging read 'resource.type=\"build\" resource.labels.build_id=\"<build id>\"' --project=${P}  (the same line out of the build's log, read only when the object did not carry it: retried while Cloud Logging catches up. Nothing rests on it)"
+  say "  [network, local] when NEITHER the object nor the log carried the line, the row says so in one line, with the exact command to read it by hand (gcloud storage cat gs://${BUCKET}/${LINE_OBJECT}) and the step's exit code above as the reading that is left"
   say "  [the build itself, which is the point of the check] one step in ${IMAGE}: mint an ID token for the service's URL from the build's own metadata server (http://metadata.google.internal/…/default/identity?audience=<the service URL>&format=full), call the service with it, print CHK195 status=<code> email=<the token's email claim> — never the token — and end with ONE exit code per outcome, which Cloud Build writes into the build's own record: 0 = 200 and the claim is ${CALLER_EMAIL} (the one code the record does not carry: Cloud Build omits a zero exit code, and this check reads it from the build's own SUCCESS), 11 = 401, 12 = 403, 13 = any other status or none at all, 14 = the metadata server minted no token, 15 = the claim is another identity"
   say "and its Restore (also from the exit trap) would run:"
   say "  [network, writes] gcloud builds cancel <build id> --project=${P} (refused, harmlessly, when the build already ended)"
   say "  [network, deletes] gcloud run services delete ${SVC} --project=${P} --region=${L}  (which takes the roles/run.invoker binding with it)"
+  say "  [network, deletes] gcloud storage buckets delete gs://${BUCKET} --quiet  (which takes the object the step wrote its one line into and the bucket-level roles/storage.objectCreator binding with it; it is deleted only when the bucket carries this run's own label chk195=${BUCKET_NONCE}, and a bucket that does not is never touched)"
   say "  [network, deletes] gcloud projects remove-iam-policy-binding ${P} --member=serviceAccount:${CALLER_EMAIL} --role=roles/logging.logWriter --condition=None"
   say "  [network, deletes] gcloud iam service-accounts delete ${CALLER_EMAIL} --project=${P}, re-reading the project policy first and retrying up to ${ACCOUNT_DELETE_TRIES} times: the binding removal and the account deletion are ordered IAM writes that IAM's own consistency can put out of order — the owner's run of 2026-11-24 came back with the account still there and the refusal was not captured, so the re-read covers both causes: a delete refused as still referenced by a policy binding, and a delete that landed whose account the list was still naming"
-  say "  [network] three reads that say the service, the account and the binding are gone"
+  say "  [network] four reads that say the service, the bucket, the account and the project binding are gone"
   say "What is left behind either way: the build's own RECORD, in the project's Cloud Build history. It is the project's log of what ran rather than a resource this check made, and nothing here deletes it."
 }
 
@@ -1139,6 +1420,7 @@ main() {
 
   guard_project
   guard_resources
+  step_line_bucket
   step_service
   step_caller
   step_build
@@ -1148,9 +1430,9 @@ main() {
 # printed in this order whatever happened, one that was never reached reads
 # FAIL — not reached, and any other recorded key follows, in the order the run
 # recorded it. That is what makes the block safe to diff between two runs.
-BLOCK_KEYS=(fugaro-version project-region image deploy-iam-only baseline scratch service iam-policy
-  unauthenticated-request invoker-grant logwriter-wait build call service-deleted account-deleted
-  binding-removed restore scratch-removed)
+BLOCK_KEYS=(fugaro-version project-region image deploy-iam-only baseline scratch line-bucket service
+  iam-policy unauthenticated-request invoker-grant write-grants build line-object call
+  service-deleted bucket-deleted account-deleted binding-removed restore scratch-removed)
 
 print_block() { # print_block FACTS STATUS — always on the owner's own stdout
   local facts=$1 status=$2
