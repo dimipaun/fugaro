@@ -3877,19 +3877,38 @@ func policyRepoChildren(ctx context.Context, db *rtdb.Client, lc *localcfg.Confi
 	return slices.Sorted(maps.Keys(m)), nil
 }
 
-// runsInFlight counts the runs the registry still holds: a run's entry is
-// written when it starts and removed when it ends, which is the same source
-// `fugaro budget show` lists as running.
-func runsInFlight(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (int, error) {
+// inFlightRegistry is the registry's own document: one entry per running run,
+// keyed by repository then by run ID. It is one read rather than a count and a
+// second read beside it, because the two questions asked of it — how many runs
+// are running, and which of them the update's note is about — are asked by the
+// same reader in the same breath, and the read is the expensive one on an
+// installation with many runs.
+func inFlightRegistry(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (map[string]map[string]budget.AgentEntry, error) {
 	var agents map[string]map[string]budget.AgentEntry
 	if _, err := db.Get(ctx, "agents", &agents); err != nil {
-		return 0, dbErr(lc, err, false)
+		return nil, dbErr(lc, err, false)
 	}
+	return agents, nil
+}
+
+// runsCount is how many runs one registry document holds.
+func runsCount(agents map[string]map[string]budget.AgentEntry) int {
 	n := 0
 	for _, runs := range agents {
 		n += len(runs)
 	}
-	return n, nil
+	return n
+}
+
+// runsInFlight counts the runs the registry still holds: a run's entry is
+// written when it starts and removed when it ends, which is the same source
+// `fugaro budget show` lists as running.
+func runsInFlight(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (int, error) {
+	agents, err := inFlightRegistry(ctx, db, lc)
+	if err != nil {
+		return 0, err
+	}
+	return runsCount(agents), nil
 }
 
 // confirmRemovalStrict asks for the project's name before an un-enrollment,

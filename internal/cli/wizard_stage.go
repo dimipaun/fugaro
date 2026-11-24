@@ -248,9 +248,14 @@ func (s *wizardStage) ask(ctx context.Context) error {
 	if !s.creating {
 		// The config a first run wrote when it paused at billing, this run's to
 		// finish: it creates, so it is the run the questions about a new project
-		// are asked on, and the one it still owes is the rigor answer — the
-		// paused run asked it and stopped before the layer stage, which is the
-		// only writer of it (wizardResumesCreation).
+		// are asked on, and the ones it still owes are the answers the paused run
+		// could not carry anywhere — the rigor answer, which the paused run gave
+		// before it stopped and which only the layer stage writes, and the budget
+		// answer, which no config member holds either and which a resumed
+		// creation records like any other creating run (R8 of
+		// docs/managed-flag-ergonomics; askBudget). The bake answer is not among
+		// them: the paused run wrote it into the config itself
+		// (carryBakeAnswer), which is why it needs no question here.
 		if r.wizardResumesCreation(ctx) {
 			if len(s.missing) > 0 && !r.canAsk() {
 				s.stop(initflow.LeftCommand, wizardFlagsLeft(s.missing))
@@ -259,7 +264,19 @@ func (s *wizardStage) ask(ctx context.Context) error {
 			if err := r.settleCreation(true); err != nil {
 				return s.answer(err)
 			}
-			return s.answer(s.askRigor())
+			if err := s.askRigor(); err != nil {
+				return s.answer(err)
+			}
+			if err := s.askBudget(); err != nil {
+				return s.answer(err)
+			}
+			// settleBudget follows the question here for the reason it follows it
+			// on a first run: a budget is an alert on a billing account, and this
+			// run links none (the pause is past), so an amount with no account is
+			// dropped with the one line that says what adds it rather than
+			// reaching the installation's Terraform, whose own rule refuses a
+			// budget without an account.
+			return s.answer(s.settleBudget())
 		}
 		// A project config is selected: this run's inputs are already settled
 		// and nothing is asked. Nothing is created either.
