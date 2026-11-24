@@ -624,6 +624,60 @@ func TestPreventDestroy(t *testing.T) {
 	}
 }
 
+// The consumer's signing key is the second resource of this tree with the
+// opt-out shape credentials.tf's bundle has, and the first version of
+// mailbox_key.tf's comment claimed the opposite of what happens: that turning
+// the switches off "removes the role and the binding and leaves the key", with
+// the key's own removal meeting the guard. It does not — the key carries
+// prevent_destroy and is counted on local.mailbox_key_on, so with the key in
+// state the whole plan fails ("Instance cannot be destroyed") and applies
+// nothing, and the ring, the role and orchestrator.tf's binding cannot be
+// removed in it either. Opting out is two owner steps, the bundle's order:
+// forget the key with `terraform state rm` (which deletes nothing in GCP and
+// leaves every pinned public half alone), then an ordinary plan with the
+// switches off. This test pins that account, as
+// TestCredentialsServiceOptOutIsTwoSteps does for the bundle and
+// TestVoiceProviderKeyOptOutIsTwoSteps for the hop — nothing else in the tree
+// states the order, and a reader left with the plan failure has no path.
+func TestMailboxKeyOptOutIsTwoSteps(t *testing.T) {
+	const path = "gcp/modules/installation/mailbox_key.tf"
+	data, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	text := string(data)
+	// The address as an owner types it: module-prefixed, because the key is a
+	// resource of `module "installation"` and the bare address names nothing in
+	// the root's state (terraform state rm refuses it), and single-quoted,
+	// because `[0]` is a glob to zsh, which fails the command with "no matches
+	// found" before terraform runs (re-review N1 in credentials.tf's test).
+	const step = "terraform state rm 'module.installation.google_kms_crypto_key.mailbox_consumer[0]'"
+	if !strings.Contains(text, step) {
+		t.Errorf("%s does not document the opt-out's first step (%q): without it a reader is left with the plan failure and no path", path, step)
+	}
+	for _, wrong := range []string{
+		"terraform state rm google_kms_crypto_key.mailbox_consumer[0]",
+		"terraform state rm module.installation.google_kms_crypto_key.mailbox_consumer[0]",
+	} {
+		if strings.Contains(text, wrong) {
+			t.Errorf("%s carries the opt-out's first step as %q: the address needs the module prefix and single quotes, %q", path, wrong, step)
+		}
+	}
+	// The claim that was wrong: a plan may not make this removal.
+	if strings.Contains(text, "removes the role and the binding and leaves the key") {
+		t.Errorf("%s still claims the opt-out is a plan this root may make: the key's prevent_destroy refuses the whole plan, and the role and the binding go with it", path)
+	}
+	// The two facts the two steps rest on: the key is counted on both switches
+	// (so the opt-out is reachable at all), and it carries prevent_destroy.
+	keys := resourceBlocks(t, path, data, "google_kms_crypto_key")
+	if len(keys) != 1 || !hasAttr(keys[0].body, "prevent_destroy", "true") {
+		t.Errorf("%s: the signing key must be exactly one crypto key with prevent_destroy = true (got %d blocks), which is what makes the state rm step necessary", path, len(keys))
+	}
+	if !strings.Contains(keys[0].body, "local.mailbox_key_on") {
+		t.Errorf("%s: the key's count must be local.mailbox_key_on, so that an installation with neither end plans nothing here — and so that the opt-out is a count of zero rather than nothing to remove", path)
+	}
+}
+
 // The service holds no data of its own, and the container beside it is the
 // one thing worth keeping, so turning the opt-in off is NOT "a removal a plan
 // may make": with the container in state, `credentials_service = null` fails

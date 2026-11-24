@@ -23,6 +23,20 @@ import (
 //     the one writer (`fugaro update`, UP1) and the one reader (`fugaro pair`,
 //     P2) cannot drift into a fingerprint that pins nothing.
 //
+// **What this file is, and what it is not.** J6 asks for the key, the signer
+// and the node contract, and that is all this is: the contract is a shape, not
+// a write and not a read. Nothing in this binary publishes
+// `config/admin/mailbox_key` — the writer is the `update` step that applies the
+// key and reads its public half back (UP1, which the plan's own task list names
+// for exactly that), and it lands with the key it publishes — and the pairing
+// ENDPOINT's read is not here either: the service's pair response (C1's
+// `SessionResponse.ConsumerPublicKey`, O16) comes with the endpoint. What reads
+// the node today is `fugaro pair` in `internal/cli` (P2), which pins the
+// fingerprint into the QR. So the two sides of this contract are held together
+// by `TestConsumerKeyNodeIsThePairReader` between the shape here and that
+// reader, and the writer and the endpoint's read are recorded as deferred in
+// the pull request that carried this file.
+//
 // **Why a signature and not the MAC.** `mac.go`'s tag is an HMAC: the process
 // that signs holds the same secret the phone verifies with, so a phone that
 // holds the key can forge the laptop's replies, and the key has to be carried
@@ -89,8 +103,10 @@ func ConsumerCryptoKeyVersionPath(project, region string) string {
 	return ConsumerCryptoKeyPath(project, region) + "/cryptoKeyVersions/" + ConsumerKeyVersionName
 }
 
-// The published half. `fugaro update` writes the consumer's public key to one
-// node under `config/admin`, which the database rules deny every client
+// The published half. `fugaro update` will write the consumer's public key to
+// one node under `config/admin` — the writer is UP1's step, deferred with the
+// key it publishes and not written by this file — and the database rules deny
+// every client
 // outright (`config/admin/**` carries `.read: false`, `.write: false`, and the
 // children inherit both) — so the node is reachable with IAM alone, exactly as
 // the roster and the invites beside it are, and a phone reads the key from the

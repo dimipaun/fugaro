@@ -62,9 +62,32 @@
 # signs again, with no error anywhere until someone re-pairs by hand. So it
 # carries prevent_destroy (deploy/terraform's TestPreventDestroy), and
 # internal/infra/tf classifies google_kms_crypto_key as data-bearing (D1551),
-# which is what refuses a plan that would delete or replace it. Turning the
-# switch off removes the role and the binding and leaves the key: a removal of
-# it asks its owner by name (tf.Guard).
+# which is what refuses a plan that would delete or replace it.
+#
+# TURNING THE SWITCH OFF IS NOT A PLAN THIS ROOT MAY MAKE, and the first
+# lesson of the opt-out is that. Both switches off drops local.mailbox_key_on
+# to false and the key's count to zero, and the key carries prevent_destroy —
+# so Terraform refuses the WHOLE plan ("Instance cannot be destroyed") and
+# applies nothing, and the ring, the role and orchestrator.tf's binding cannot
+# be removed in that plan either. Taking the key out for good is two owner
+# steps, the credentials bundle's and the voice hop's shape (credentials.tf,
+# voice.tf; each is pinned by its own test in deploy/terraform), in this order:
+#
+#   1. terraform state rm 'module.installation.google_kms_crypto_key.mailbox_consumer[0]'
+#      — forgets the key. It deletes nothing in GCP, destroys no material and
+#      leaves every public half a phone has pinned exactly as it was. The
+#      address is the installation ROOT's (the resource is inside
+#      `module "installation"`, so the bare address names nothing in that state
+#      and `terraform state rm` refuses it), and the single quotes are: `[0]`
+#      is a glob to zsh, which would refuse the command before terraform ran.
+#   2. an ordinary plan and apply with the switches off, which removes the
+#      ring, the role and the binding and touches no key.
+#
+# A plan that typed that removal without these steps would meet D1551's guard
+# instead, which asks its owner by name (tf.Guard) — but it never gets the
+# chance, because Terraform refuses first. Teaching `update` to do step 1
+# itself, so that an owner types nothing, is UP1's: that is the task that
+# applies this key and publishes its public half.
 #
 # THE API IS ENABLED HERE OR NOT AT ALL (apis.tf): a key cannot be created in a
 # project whose Cloud KMS API is off, and enabling it is free.
