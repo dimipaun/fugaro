@@ -603,7 +603,9 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 		// update writes its block and the service takes the revision that names
 		// the daemon's account: the one step that does reach the run, and the
 		// line says it is served by either revision rather than refused.
-		if !strings.Contains(got, "resident orchestrator:") || strings.Count(got, "resident orchestrator:") != strings.Count(got, "\n  ") {
+		// The old access record's own step (MG3) is named beside it when the run
+		// resolves from that record, and is not the credentials service's window.
+		if !strings.Contains(got, "resident orchestrator:") || strings.Count(got, "resident orchestrator:") != strings.Count(got, "\n  ")-strings.Count(got, "old access record:") {
 			t.Errorf("the note names more or less than the orchestrator's revision over a run this update otherwise leaves where it is:\n%s", got)
 		}
 	})
