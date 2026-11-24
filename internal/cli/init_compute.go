@@ -20,19 +20,27 @@ import (
 )
 
 // The compute stage: the Batch backend's installation-level provisioning
-// (design docs/compute-backend/spec.md §3.2, §3.7, §8.1 task 6). It is the
-// owner's step, and it is behind --provision-batch: what it creates is money
-// and infrastructure `fugaro update` does not apply, and a run that never asks
-// for it never reaches this root.
+// (design docs/compute-backend/spec.md §3.2, §3.7, §8.1 task 6).
+//
+// The FIRST provisioning is the owner's step and it is behind
+// --provision-batch: that is money and infrastructure created on purpose, and
+// a run that never asks for it never reaches this root. Converging a root that
+// already exists is the other path, and `fugaro update` reaches it by the
+// installation's own opt-in fact (R2, D3110) — and so does the `fugaro apply`
+// that answers a step this machine owes, which registers the stage on the same
+// fact (initStages). A run whose installation never opted in reaches this root
+// on neither door.
 //
 // It is money and it is permanent — a preloaded boot image's Cloud Build, a
 // Cloud NAT's hours, a custom role and a scheduled job — so --yes cannot
 // cover it (the stage is registered noYes, and the step is one no answer a run
-// carries reaches either) and its confirmation is the owner's own session: a person at a real
-// terminal is what applies it, and nothing is typed at them (D1540). A coding
-// agent's session is refused rather than left for the owner like a session
-// that merely cannot answer (D1555, Apply), and what it reads beside the
-// refusal is the command its owner runs themselves (Left).
+// carries reaches either): the FIRST provisioning is confirmed by a person at a
+// real terminal, who types the project's name, and nothing else is asked of
+// them (D1540); the update's converge asks nothing at all, the opt-in fact
+// being what authorizes it. A coding agent's session is refused rather than
+// left for the owner like a session that merely cannot answer (D1555, Apply),
+// and what it reads beside the refusal is the command its owner runs
+// themselves (Left).
 //
 // What it does NOT do: touch the installation's own root (a workdir and a
 // state of its own, see infra.ComputeWorkdir), handle a secret, or delete
@@ -156,8 +164,10 @@ func (s *computeStage) updateSkip(ctx context.Context) (string, error) {
 
 // Left is what a person does about this stage. Under `--provision-batch` it is
 // that flag's own command; under update it is the update, run at a terminal:
-// the stage is never left to `fugaro apply`, whose own runs are unattended and
-// which a step the loop does not confirm is left running nowhere.
+// the stage is noYes, so the loop hands it to the person instead of applying it
+// wherever the session has no terminal (initflow's converge), and the `fugaro
+// apply` that answers a step this machine owes reaches the same stage by the
+// same opt-in fact (initStages).
 func (s *computeStage) Left() initflow.Left {
 	if s.underUpdate {
 		return promptLeft(initflow.Compute, "run the command below at a terminal: it asks you nothing and applies the compute root the installation opted in to", updateDoor.name)
@@ -320,6 +330,17 @@ func (s *computeStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outc
 // is the runs on this backend, read the way the update's own note reads them.
 func (s *computeStage) updateApply(ctx context.Context) (initflow.Outcome, error) {
 	r := s.e.r
+	// The read-only preview pass prepared this root, and it ran before the
+	// stages that change what prepare reads: the images stage records this
+	// release's base pin and hands the engine the refreshed config, and the
+	// installation stage rewrites the outputs this root takes as its inputs. A
+	// memo of that pass would land this release's pin one update late — the
+	// tfvars would carry the release behind's pin, terraform would compare it
+	// against a state holding the same value and report no change — so R12's
+	// rebuild would never start in the run that changed its inputs. The
+	// converge prepares again, as init.go's writeConfig drops the policy
+	// stage's own preview read for the same reason.
+	s.t = nil
 	plan, err := s.plan(ctx)
 	if err != nil {
 		return initflow.Outcome{}, err
@@ -557,10 +578,11 @@ func (s *computeStage) readOutputs(ctx context.Context) error {
 // pinned base image.
 func (s *computeStage) prepare(ctx context.Context) error {
 	e := s.e
-	// Done once: under update the stage's own Check prepares the root to read
-	// its state, and the Apply behind it plans the same workdir -- a second
-	// pass would write the same tfvars, run the same init and reach the same
-	// state for the same answer.
+	// Memoized for one pass: under update the stage's own Check prepares the
+	// root to read its state, and the plan behind it reuses the same workdir.
+	// The answer is the same only within a pass — the stages before this one
+	// change what prepare reads — so the update door's converge drops the memo
+	// before it plans (updateApply).
 	if s.t != nil {
 		return nil
 	}

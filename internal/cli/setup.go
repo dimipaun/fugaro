@@ -1000,9 +1000,16 @@ func (e *initEngine) firstRun() bool {
 // the `fugaro apply` that runs a step the machine owes -- and a block whose fact
 // says this installation is on Batch.
 //
-// A machine's own `backend:` is not read: the fact is the installation's and it
-// is published, so a machine that has selected nothing, or one that has selected
-// cloud-run, converges the same root (F32). A nil config, an absent fact and a
+// What is read is the run's effective local config, which is this machine's own
+// file wherever it has one and the published copy of the block only where it has
+// none (localcfg's selection, F33). A machine whose own file states no `batch:`
+// block therefore converges nothing, and R15/R16 leave that file alone until a
+// run writes the fact onto it (BR16); a machine's copy follows the published one
+// at every publish in the meantime (refreshLocalOptIn, R15).
+//
+// A machine's own `backend:` is not read either way: a machine that has selected
+// nothing, or one that has selected cloud-run, converges the same root as one
+// that selected cloud-batch (F32). A nil config, an absent fact and a
 // withdrawn one are all "not in", and a withdrawn one is BR20's and BR21's own
 // step rather than this one's.
 func (e *initEngine) updatesComputeRoot() bool {

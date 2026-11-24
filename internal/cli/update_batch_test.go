@@ -2,12 +2,15 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -16,14 +19,21 @@ import (
 )
 
 // update_batch_test.go is task BR6 of docs/batch-run-identity's plan: `fugaro
-// update` applies the compute root where the PUBLISHED block carries the opt-in
-// fact (R2, D3110), whatever the updating machine's own `backend:` says, and
-// leaves alone an installation nobody opted in.
+// update` applies the compute root where the installation's block carries the
+// opt-in fact (R2, D3110), whatever the updating machine's own `backend:` says,
+// and leaves alone an installation nobody opted in.
+//
+// The fact is the installation's and it is published; what the run reads is its
+// own effective config, which is the machine's file wherever it has one and the
+// published copy only where it has none (updatesComputeRoot has the rule, R15).
+// These fixtures write it onto the machine's file, which is the state BR16
+// leaves every machine in; a machine with a file of its own and no `batch:`
+// block states no fact and converges nothing.
 //
 // The fixture is the update door's own light rig (updateRig: a checkout-less
 // update of an installation one release behind) plus the compute stage's
 // preparatives — computeReadyWith adds the state bucket, the base pin, the run
-// account, the preload job and the root's outputs — so the eight cases below
+// account, the preload job and the root's outputs — so the cases below
 // drive `fugaro update` itself rather than a hand-built stage list: what the
 // door registers is half of what these tests are about.
 
@@ -37,6 +47,12 @@ const updateBatchOperator = "user:ops@example.com"
 // here because the Fugaro job-name condition the compute module grants its
 // launchers under is built from it.
 const updateBatchRegion = "us-east5"
+
+// updateBatchReleasePin stands for the base pin THIS release records, as the
+// images stage writes it into the config the run holds: a pin other than the
+// one the installation was on, which is what makes a stale read visible in the
+// root's tfvars.
+const updateBatchReleasePin = "us-east5-docker.pkg.dev/" + initProject + "/" + infra.BaseRegistry + "/fugaro-base:9.9.9"
 
 // updateBatchRig is the update door's rig on an installation that opted in to
 // Batch, with an operator's credential on this machine: the installation R2's
@@ -401,4 +417,53 @@ func TestAGrantOnlyApplyStartsNoPreloadRebuild(t *testing.T) {
 			t.Errorf("the update does not say what the rebuild costs:\n%s", out)
 		}
 	})
+}
+
+// TestTheComputeStageUnderUpdateConvergesThePinTheRunRecorded: the read-only
+// preview pass prepares the root before the stages that change what prepare
+// reads have run — the images stage records this release's base pin and hands
+// the engine the refreshed config — so the converge prepares again. A memo of
+// the preview's read would put the release behind's pin in the root's tfvars,
+// terraform would compare it against a state holding the same value and report
+// no change, and R12's rebuild would never start in the run that changed the
+// image's inputs.
+func TestTheComputeStageUnderUpdateConvergesThePinTheRunRecorded(t *testing.T) {
+	r := updateBatchRig(t)
+	computeProvisioned(t, r)
+	computePlans(t, r, change("module.compute.google_cloud_scheduler_job.preload_rebuild", "update"))
+	fakeTerminal(t)
+
+	ctx := context.Background()
+	e := rigEngine(t, r, &initOptions{door: updateDoor.name})
+	s := newUpdateComputeStage(e)
+	// The preview pass's own read, before any stage of the run has applied.
+	if _, err := s.Check(ctx); err != nil {
+		t.Fatalf("the preview's check: %v", err)
+	}
+	// The images stage's own write: this release's pin, with the engine's view
+	// of the config following it exactly as init_images.go leaves it.
+	next := *e.lc
+	next.BaseImages[config.BaseKind] = updateBatchReleasePin
+	e.lc = &next
+	if _, err := s.Apply(ctx, initflow.Env{}); err != nil {
+		t.Fatalf("the converge: %v", err)
+	}
+	dir, err := infra.ComputeWorkdir(os.Getenv, initProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := infra.ReadWorkdirVars(dir, "compute")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b == nil {
+		t.Fatal("the converge wrote no tfvars for the compute root")
+	}
+	var vars map[string]any
+	if err := json.Unmarshal(b, &vars); err != nil {
+		t.Fatalf("the compute root's tfvars: %v", err)
+	}
+	if got := vars["base_image"]; got != updateBatchReleasePin {
+		t.Errorf("the compute root was planned on the pin %v, want this release's %s: the converge used the config as of the run's start, so the pin would land one update late and R12's rebuild would never start in the run that changed the image's inputs", got, updateBatchReleasePin)
+	}
 }
