@@ -66,11 +66,12 @@ type Tick struct {
 	// already recorded.
 	Launcher Launcher
 	// Claims is the project's claims (claim.go, D3209): what a cycle takes on
-	// an item before its work starts, re-stamps while it holds it and releases
-	// once the item is finished, so that two orchestrators of one project never
-	// start a run for one plan task or one backlog item. Nil is a cycle that
-	// claims nothing — a process that makes no write to this subtree — and then
-	// every item is this daemon's as it was before there were claims.
+	// an item before its work starts, re-stamps while it holds it and settles
+	// once the item is finished — a plan task's claim marked finished and left
+	// standing, a work item's released — so that two orchestrators of one
+	// project never start a run for one plan task or one backlog item. Nil is
+	// a cycle that claims nothing — a process that makes no write to this
+	// subtree — and then every item is this daemon's as it was before claims.
 	Claims ClaimGuard
 	// Mint mints that run id. It is the daemon's (internal/task in O8): this
 	// package knows no run ids of its own.
@@ -724,14 +725,17 @@ func (c *cycle) run(ctx context.Context) error {
 		c.settle()
 	}
 
-	// The claims of the finished items come off last, once every write that
+	// The claims of the finished items are settled last, once every write that
 	// finished them has landed (D3209): an item the fold's own reading of a run,
 	// the merge read or a split moved to done or cancelled is work nobody is on
-	// any more, and the project's other orchestrators may take it the next time
-	// one of them has it in front of them. It is last because it is about what
-	// landed — and it is every finished item the nodes carry and not only what
-	// moved in this cycle, which is what releases a claim this daemon's earlier
-	// cycle failed to release or died before releasing.
+	// any more. What settling it means is the item's identity (claim.go): a plan
+	// task's claim is marked finished and stays, because a rival whose own node
+	// still carries the task approved would take a freed node as unclaimed work
+	// and start a second run of it, while a work item's claim comes off, its id
+	// being this one node's own. It is last because it is about what landed —
+	// and it is every finished item the nodes carry and not only what moved in
+	// this cycle, which is what settles a claim this daemon's earlier cycle
+	// failed to settle or died before settling.
 	if err := c.releaseClaims(ctx); err != nil {
 		return err
 	}
@@ -739,14 +743,14 @@ func (c *cycle) run(ctx context.Context) error {
 	return nil
 }
 
-// releaseClaims releases this orchestrator's claim on every item a node of this
+// releaseClaims settles this orchestrator's claim on every item a node of this
 // project has finished, over the nodes as they now stand, and re-stamps the
 // claims it still holds (Claim.Refresh, D3209). Every finished item and not
-// only the ones this cycle moved, so that a release that failed, and one a
+// only the ones this cycle moved, so that a settlement that failed, and one a
 // cycle that died after the item's own write had landed never made, are made by
-// the next cycle that reads the node. A claim that cannot be released fails the
+// the next cycle that reads the node. A claim that cannot be settled fails the
 // cycle: the item is finished and its claim is stale, so the next cycle reads
-// the same nodes and releases it then, and a daemon that swallowed the refusal
+// the same nodes and settles it then, and a daemon that swallowed the refusal
 // would leave the item blocked for every other orchestrator of the project with
 // nothing said.
 func (c *cycle) releaseClaims(ctx context.Context) error {

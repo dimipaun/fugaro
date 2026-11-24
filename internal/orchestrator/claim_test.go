@@ -243,16 +243,21 @@ func TestClaimFirstWins(t *testing.T) {
 // finds the item claimed starts nothing for it, and one that finds it free
 // starts the run it planned.
 //
-// The plan is the same in both halves — one approved plan item, one launch —
+// The plan is the same in all three steps — one approved plan item, one launch —
 // so what changes between them is the claim alone, and the launch that does
-// happen proves the skip was the claim rather than a plan that held nothing.
-// The rival has no lease node at all, which is the clean exit this rule exists
-// for: a daemon that stopped driving while its run is still going keeps the
-// item, and the claim comes off only once the item is finished.
+// happen proves the skip was the claim rather than a plan that held nothing. The
+// rival has no lease node at all, which is the clean exit this rule exists for:
+// a daemon that stopped driving while its run is still going keeps the item, and
+// nothing about its lease frees it (the owner's ruling of 2026-11-23).
 //
-// Mutation: have Starter.claim answer that every claim is this daemon's (or
-// drop the call) and the second half's run is started while another
-// orchestrator holds the item.
+// The middle step is the second run the claim exists to stop, and it is the
+// reason a finished plan task's claim is recorded rather than deleted: the rival
+// finishes the item, and this daemon — whose own node still carries the task
+// approved — is refused exactly as it was while the work was going (D3209).
+//
+// Mutation: have Starter.claim answer that every claim is this daemon's (or drop
+// the call) and the second step's run is started while another orchestrator
+// holds the item.
 func TestLaunchSkipsClaimed(t *testing.T) {
 	ctx := context.Background()
 	f := gcpfake.NewRTDB(t)
@@ -299,16 +304,29 @@ func TestLaunchSkipsClaimed(t *testing.T) {
 		t.Errorf("the claim names %q after a daemon skipped it, not the rival", holder)
 	}
 
-	// The rival finishes the item and releases its claim — the release a
-	// cycle's own read of the node makes (Refresh) — and then the same plan and
-	// the same daemon launch.
+	// The rival finishes the item, and the cycle's own read of the node settles
+	// its claim (Refresh): the node is marked finished and stands, so this
+	// daemon — which has no way to learn that the task the rival ran is done —
+	// is refused again rather than starting the second run of it.
 	settled := map[string]bool{cg4PathOf(t, orchestrator.ClaimRef(cg4Rival, item)): true}
 	if err := rival.Refresh(ctx, settled); err != nil {
-		t.Fatalf("the rival's release: %v", err)
+		t.Fatalf("the rival's settlement of its own finished item: %v", err)
 	}
-	if v := f.Value(cg4Path(t, cg4Rival)); v != nil {
-		t.Fatalf("the rival's claim is still on the node as %#v after the item finished", v)
+	doc := nodeObject(t, f.Value(cg4Path(t, cg4Rival)), "the claim")
+	if fin, _ := doc["finished"].(bool); !fin {
+		t.Fatalf("the claim node is %#v after the item finished, and the finish is what keeps the task from being run twice", doc)
 	}
+	if _, err := d.Start(ctx, s, a, now); !errors.Is(err, orchestrator.ErrItemClaimed) {
+		t.Fatalf("the launch of a plan task another orchestrator has finished ended in %v, not ErrItemClaimed", err)
+	}
+	if len(l.asked) != 0 || commits != 0 || m.calls != 0 {
+		t.Errorf("a finished plan task was asked of the launcher %d time(s), committed %d time(s) and minted %d run id(s)", len(l.asked), commits, m.calls)
+	}
+
+	// And with no claim standing at all — an item nobody has taken — the same
+	// plan and the same daemon start the run they planned, which is the half
+	// that proves the claim is what the two other steps were refused by.
+	f.Set(cg4Path(t, cg4Rival), nil)
 	if _, err := d.Start(ctx, s, a, now); err != nil {
 		t.Fatalf("the launch of an item no orchestrator holds: %v", err)
 	}
@@ -414,41 +432,77 @@ func TestAClaimSkipIsInFlightNotEmpty(t *testing.T) {
 	}
 }
 
-// TestCycleReleasesTheClaimOfAnItemThatFinished: the release is the cycle's own
-// read of its nodes and not a step that must follow the run's own report, which
-// is what makes it survive the two ways a release is missed — a cycle that died
-// after the write that finished the item had landed, and a release whose own
-// write was refused by a moved ETag. Either leaves a claim standing on an item
-// nobody is on, and the first cycle that reads the node afterwards takes it off
-// (Refresh, settledClaimPaths).
-func TestCycleReleasesTheClaimOfAnItemThatFinished(t *testing.T) {
+// TestAFinishedPlanTaskIsNotTakenByARival is the second run the claim exists to
+// stop, arriving from the other side: the orchestrator that held the plan task
+// finishes it, and the rival that skipped it still carries the task approved in
+// its own node — which nothing updates, because the two orchestrators hold two
+// nodes and the plan's own copy of the task is each node's own.
+//
+// So the finish must not free the item: the holder's cycle records it on the
+// claim node the project shares (marking it, not deleting it), and the rival's
+// next cycle skips the task exactly as it did while the work was going. Deleting
+// the node instead is what the finding on this test reported: the rival, whose
+// own copy reads approved, takes a path that is not there and starts a second run
+// of one piece of work — two pull requests for one plan task (D3209).
+//
+// Mutation (run, restored): release a finished plan task the way a work item is
+// released (delete its claim node) and the rival's last cycle carries the task the
+// holder has finished, minting and starting a second run for it.
+func TestAFinishedPlanTaskIsNotTakenByARival(t *testing.T) {
 	now := o6Now()
 	approvedAt := now.Add(-time.Minute)
 	item := cg4PlanItem("wi-1", approvedAt)
 	const runID = "20261107-120000-aaaa"
 
 	f := gcpfake.NewRTDB(t)
-	o := cg4OrchestratorAt(t, f, cg4First, "demo", now, item, runID)
-	if rep := o.step(); rep.Carried != 1 {
+	holder := cg4OrchestratorAt(t, f, cg4First, "demo", now, item, runID)
+	rival := cg4OrchestratorAt(t, f, cg4Second, "demo", now, item, "20261107-120000-bbbb")
+
+	if rep := holder.step(); rep.Carried != 1 {
 		t.Fatalf("the first cycle carried %d action(s) for the plan's one approved item", rep.Carried)
 	}
 	if v := f.Value(cg4Path(t, cg4First)); v == nil {
 		t.Fatal("the claim node is empty after the launch it was taken for")
 	}
+	if rep := rival.step(); rep.Carried != 0 || rep.Skipped != 1 {
+		t.Fatalf("the rival's cycle carried %d action(s) and skipped %d where the holder is on the plan task", rep.Carried, rep.Skipped)
+	}
 
-	// The run finished, and the cycle that reads that report folds the item done
-	// and releases the claim on the same pass: the item is the only thing that
-	// releases a claim, and nothing has to have moved for this cycle to release
-	// it.
-	o.reader.reports = []orchestrator.RunReport{{RunID: runID, Started: true, Finished: true, Outcome: orchestrator.OutcomeSucceeded}}
-	if rep := o.step(); rep.Folded != 1 {
+	// The holder's run finished, and the cycle that reads that report folds the
+	// item done and settles the claim on the same pass: the item is the only
+	// thing that settles a claim, and nothing has to have moved for this cycle
+	// to settle it.
+	holder.reader.reports = []orchestrator.RunReport{{RunID: runID, Started: true, Finished: true, Outcome: orchestrator.OutcomeSucceeded}}
+	if rep := holder.step(); rep.Folded != 1 {
 		t.Fatalf("the cycle folded %d finished runs where the item's own reported", rep.Folded)
 	}
-	if w, ok := o.planState().Item(item.ID); !ok || w.Phase != orchestrator.PhaseDone {
+	if w, ok := holder.planState().Item(item.ID); !ok || w.Phase != orchestrator.PhaseDone {
 		t.Fatalf("the item reads back as %+v after its run reported", w)
 	}
-	if v := f.Value(cg4Path(t, cg4First)); v != nil {
-		t.Errorf("the claim is still on the node as %#v after the item finished: a plan task is released when its item is done or cancelled and at no other time (D3209)", v)
+	doc := nodeObject(t, f.Value(cg4Path(t, cg4First)), "the claim")
+	if fin, _ := doc["finished"].(bool); !fin {
+		t.Fatalf("the claim node is %#v after the plan task finished, and the finish is recorded on the node rather than the node being taken away", doc)
+	}
+
+	// The rival's own node still carries the task approved, so this is the cycle
+	// that would start the second run if the finish had freed the item: it asks
+	// its launcher for nothing, mints nothing, and leaves its item queued.
+	askedBefore := len(rival.launcher.asked)
+	rep := rival.step()
+	if rep.Carried != 0 || rep.Skipped != 1 || rep.Outcome != orchestrator.CycleInFlight {
+		t.Fatalf("the rival's cycle after the plan task finished carried %d action(s), skipped %d and read as %s, and one plan task is one run for the whole project (D3209)", rep.Carried, rep.Skipped, rep.Outcome)
+	}
+	if len(rival.launcher.asked) != askedBefore {
+		t.Errorf("the rival asked its launcher to start %v for a plan task the other orchestration has finished", rival.launcher.asked[askedBefore:])
+	}
+	if rival.mint.calls != 0 {
+		t.Errorf("the rival minted %d run id(s) for a plan task the other orchestration has finished", rival.mint.calls)
+	}
+	if w, ok := rival.planState().Item(item.ID); !ok || w.Phase != orchestrator.PhaseQueued {
+		t.Errorf("the rival's item reads back as %+v, and an item it does not hold is left where it stands", w)
+	}
+	if holder, _ := cg4Held(t, f, cg4Path(t, cg4First)); holder != cg4First {
+		t.Errorf("the claim names %q after the finish, not the orchestration that finished the task", holder)
 	}
 }
 
@@ -745,94 +799,159 @@ func cg4PathOf(t *testing.T, ref orchestrator.ItemRef) string {
 	return path
 }
 
-// TestClaimReleasedWhenTheItemSettles is the claim coming off the item that is
-// finished: a plan task or a backlog item that is done or cancelled is work
-// nobody is on, and the claim on it is what would keep another orchestrator from
-// taking the item the next time one of them has it in front of them.
+// TestClaimOnAFinishedItem is what a finished item does to the claim standing on
+// it, for the two kinds of item a claim keys differently (ClaimRef).
 //
-// The release is the cycle's own read of the nodes (Refresh with what they
-// say), so a node that finished its work in an earlier cycle releases the claim
-// on its next read rather than on the write that finished it: a cycle that died
-// between the two, or a release the server refused, is retried — and the item
-// is the only thing that releases a claim (the owner's ruling of 2026-11-23).
+// A plan task's claim is **recorded, not deleted**. Every orchestrator of the
+// project that imported the plan carries the task in its own node, and that copy
+// still reads approved long after the holder's run for it has finished, so a path
+// deleted on the finish is an item nobody has taken to that orchestrator: it takes
+// it and starts a second run of one piece of work — the two pull requests this
+// claim exists to prevent, arrived at from the other side. The node therefore
+// stays, marked finished, and the rival keeps skipping it exactly as it did while
+// the work was going.
 //
-// Mutation: release only what the caller says moved, and the second half below
-// leaves the claim of an item that settled before the read standing for ever.
-func TestClaimReleasedWhenTheItemSettles(t *testing.T) {
+// A work item's claim is one orchestrator's own — its id is minted inside one node
+// (D26) — so nothing else can be misled by its absence, and its node comes off when
+// the item is done or cancelled: the claims this one node keeps are then bounded by
+// the work in flight rather than by everything it ever ran.
+//
+// The settlement is the cycle's own read of the nodes (Refresh with what they
+// say), so an item that finished in an earlier cycle is settled on the next read
+// rather than on the write that finished it: a cycle that died between the two, or
+// a write the server refused, is retried. The item is the only thing that settles a
+// claim, and a finished plan task's is settled while it stands (the owner's ruling
+// of 2026-11-23).
+//
+// Mutation: settle a plan task's claim the way a work item's is (delete the node)
+// and the rival below takes the task the holder has finished and starts a second
+// run of it — the finding this test answers; settle nothing and the node never says
+// the task is done.
+func TestClaimOnAFinishedItem(t *testing.T) {
 	ctx := context.Background()
 	now := o6Now()
 
-	// Both phases that finish an item: a task whose run landed its work and one
-	// a person cancelled are the same thing to the claim — work nobody is on.
-	for _, phase := range []orchestrator.Phase{orchestrator.PhaseDone, orchestrator.PhaseCancelled} {
-		t.Run(string(phase), func(t *testing.T) {
-			f := gcpfake.NewRTDB(t)
-			item := workItemOf("wi-1")
-			item.PlanTask = cg4PlanTask
-			item.Phase = orchestrator.PhaseRunning
-			item.RunID = "20261107-120000-aaaa"
-			item.Attempts = 1
-			s := o6Node(t, now, item)
-			s.AgentID = cg4First
+	for _, kind := range []struct {
+		name     string
+		planTask string
+		// stands is whether the claim node is still there once the item is
+		// finished: it is for a plan task, which is the project's own record
+		// that the task is done, and it is not for a work item.
+		stands bool
+	}{
+		{name: "a plan task", planTask: cg4PlanTask, stands: true},
+		{name: "a work item", stands: false},
+	} {
+		for _, phase := range []orchestrator.Phase{orchestrator.PhaseDone, orchestrator.PhaseCancelled} {
+			t.Run(kind.name+"/"+string(phase), func(t *testing.T) {
+				f := gcpfake.NewRTDB(t)
+				item := workItemOf("wi-1")
+				item.PlanTask = kind.planTask
+				item.Phase = orchestrator.PhaseRunning
+				item.RunID = "20261107-120000-aaaa"
+				item.Attempts = 1
+				s := o6Node(t, now, item)
+				s.AgentID = cg4First
 
-			claims := cg4Claim(t, rtdbClient(t, f), cg4First, clockAt(now))
-			ref := orchestrator.ClaimRef(cg4First, item)
-			if took, err := claims.Take(ctx, ref); err != nil || !took {
-				t.Fatalf("the take before the item settles: took=%v, err=%v", took, err)
-			}
-			path, err := orchestrator.ClaimPath(ref)
-			if err != nil {
-				t.Fatalf("building the claim path: %v", err)
-			}
-
-			// What a cycle reads at its own last step: the claim path of every
-			// item its nodes carry finished.
-			settledPhase := phase
-			after := o6Apply(t, s, orchestrator.Op{Op: orchestrator.OpWorkItemUpsert, WorkItem: &orchestrator.WorkItemOp{ID: item.ID, Phase: &settledPhase}}, orchestrator.Actor{Class: orchestrator.Daemon, Now: now})
-			settled := map[string]bool{}
-			for _, w := range after.WorkItems {
-				if !w.Phase.Done() {
-					continue
+				db := &countingCAS{inner: rtdbClient(t, f)}
+				claims := cg4Claim(t, db, cg4First, clockAt(now))
+				ref := orchestrator.ClaimRef(cg4First, item)
+				if took, err := claims.Take(ctx, ref); err != nil || !took {
+					t.Fatalf("the take before the item settles: took=%v, err=%v", took, err)
 				}
-				p, err := orchestrator.ClaimPath(orchestrator.ClaimRef(after.AgentID, w))
-				if err != nil {
-					t.Fatalf("building the claim path of %q: %v", w.ID, err)
+				path := cg4PathOf(t, ref)
+
+				// What a cycle reads at its own last step: the claim path of
+				// every item its nodes carry finished.
+				settledPhase := phase
+				after := o6Apply(t, s, orchestrator.Op{Op: orchestrator.OpWorkItemUpsert, WorkItem: &orchestrator.WorkItemOp{ID: item.ID, Phase: &settledPhase}}, orchestrator.Actor{Class: orchestrator.Daemon, Now: now})
+				settled := map[string]bool{}
+				for _, w := range after.WorkItems {
+					if !w.Phase.Done() {
+						continue
+					}
+					settled[cg4PathOf(t, orchestrator.ClaimRef(after.AgentID, w))] = true
 				}
-				settled[p] = true
-			}
-			if !settled[path] {
-				t.Fatalf("the node's %s item is claimed at %v, and the cycle's own reading does not name it", phase, settled)
-			}
+				if !settled[path] {
+					t.Fatalf("the node's %s item is claimed at %v, and the cycle's own reading does not name it", phase, settled)
+				}
 
-			if err := claims.Refresh(ctx, settled); err != nil {
-				t.Fatalf("releasing the claims of what settled: %v", err)
-			}
-			if v := f.Value(path); v != nil {
-				t.Errorf("the claim is still on the node as %#v after the item settled", v)
-			}
+				if err := claims.Refresh(ctx, settled); err != nil {
+					t.Fatalf("settling the claims of what finished: %v", err)
+				}
+				v := f.Value(path)
+				if !kind.stands {
+					if v != nil {
+						t.Errorf("the claim is still on the node as %#v after a work item finished, and a work item's id is one node's own", v)
+					}
+				} else {
+					if v == nil {
+						t.Fatalf("the claim is gone after the plan task finished, and a rival whose own node still carries the task approved takes a freed node as unclaimed work and starts a second run of it (D3209)")
+					}
+					doc := nodeObject(t, v, "the claim")
+					if holder := nodeText(t, doc, "holder"); holder != cg4First {
+						t.Errorf("the finished plan task's claim names %q, not the orchestration that finished it", holder)
+					}
+					if fin, _ := doc["finished"].(bool); !fin {
+						t.Errorf("the claim node is %#v, and a plan task its holder finished is recorded as finished", doc)
+					}
 
-			// The same read again releases nothing and fails nothing: the node is
-			// gone, which is the state a release that already landed left behind.
-			if err := claims.Refresh(ctx, settled); err != nil {
-				t.Fatalf("the second release pass: %v", err)
-			}
-			if v := f.Value(path); v != nil {
-				t.Errorf("the claim came back as %#v on a second pass over the same finished item", v)
-			}
+					// A rival keeps skipping it, and the holder may take its own
+					// item again: the task is finished for the project, and
+					// putting it back to work is that orchestrator's own act.
+					rivalDB := &countingCAS{inner: rtdbClient(t, f)}
+					rival := cg4Claim(t, rivalDB, cg4Rival, clockAt(now))
+					if took, err := rival.Take(ctx, ref); err != nil || took {
+						t.Errorf("the rival's take of a finished plan task: took=%v, err=%v, and one plan task is one run for the whole project", took, err)
+					}
+					if rivalDB.puts != 0 {
+						t.Errorf("the rival wrote %d time(s) over a claim that is not its own", rivalDB.puts)
+					}
+					if took, err := claims.Take(ctx, ref); err != nil || !took {
+						t.Errorf("the holder's take of its own finished plan task: took=%v, err=%v, and the node names this orchestrator", took, err)
+					}
+				}
 
-			// And a claim taken on an item that settled before the read is released
-			// by it: the item is finished whatever cycle wrote it, so the claim of
-			// a holder that died after the write landed does not stand for ever.
-			if took, err := claims.Take(ctx, ref); err != nil || !took {
-				t.Fatalf("the take of a settled item: took=%v, err=%v", took, err)
-			}
-			if err := claims.Refresh(ctx, settled); err != nil {
-				t.Fatalf("the pass over a node whose item had already settled when the cycle read it: %v", err)
-			}
-			if v := f.Value(path); v != nil {
-				t.Errorf("the claim is still on the node as %#v, and the item was finished before the read that releases it", v)
-			}
-		})
+				// A second pass over the same finished item writes nothing: the
+				// record is what it is, and the beat does not rewrite it.
+				before := db.puts
+				if err := claims.Refresh(ctx, settled); err != nil {
+					t.Fatalf("the second pass over the same finished item: %v", err)
+				}
+				if db.puts != before {
+					t.Errorf("the second pass wrote the finished item's claim %d time(s)", db.puts-before)
+				}
+
+				if kind.stands {
+					// A path the caller does not name as finished — the item put
+					// back to work, whose node the next reading carries as
+					// unfinished — is re-stamped, so the claim stops reading
+					// finished while the work is going again.
+					if err := claims.Refresh(ctx, map[string]bool{}); err != nil {
+						t.Fatalf("re-stamping the claim of a plan task put back to work: %v", err)
+					}
+					doc := nodeObject(t, f.Value(path), "the claim")
+					if fin, _ := doc["finished"].(bool); fin {
+						t.Errorf("the claim node is %#v with the item back to work, and the node records a finish only while the item is finished", doc)
+					}
+					return
+				}
+
+				// And a claim taken again on an item that is already finished is
+				// released by that same read: the item is finished whatever cycle
+				// wrote it, so the claim of a holder that died after the write
+				// landed does not stand for ever.
+				if took, err := claims.Take(ctx, ref); err != nil || !took {
+					t.Fatalf("the take of a finished item: took=%v, err=%v", took, err)
+				}
+				if err := claims.Refresh(ctx, settled); err != nil {
+					t.Fatalf("the pass over a node whose item had already finished when the cycle read it: %v", err)
+				}
+				if f.Value(path) != nil {
+					t.Errorf("the claim is still on the node as %#v, and the item was finished before the read that releases it", f.Value(path))
+				}
+			})
+		}
 	}
 }
 

@@ -688,12 +688,14 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		Runs:     &orchestratorRunView{bucket: d.env.bucket.Bucket, env: d.env, warn: d.warn},
 		Launcher: d.launcher,
 		// The project's claims (D3209): the daemon takes the claim of a plan
-		// task or a backlog item before it starts the run for it and releases it
-		// when the item is finished, so a second orchestrator of this project
-		// skips the item rather than starting a second run for the same task.
-		// The node is one under `orchestrator/~claims`, which the daemon writes
-		// with the credential it writes the state with — over IAM, since every
-		// token is refused there (F33, and no rules change).
+		// task or a backlog item before it starts the run for it and settles it
+		// when the item is finished — a plan task's claim marked finished and
+		// left standing, so that a second orchestrator of this project, whose
+		// own node still carries the task as approved, skips it rather than
+		// starting a second run of one piece of work — while a backlog item's
+		// claim comes off. The node is one under `orchestrator/~claims`, which
+		// the daemon writes with the credential it writes the state with — over
+		// IAM, since every token is refused there (F33, and no rules change).
 		Claims:  claims,
 		Mint:    func(now time.Time) (string, error) { return task.NewRunID(now, crand.Reader) },
 		Caps:    caps,
@@ -1306,14 +1308,16 @@ func (d *orchestratorDaemon) report(rep orchestrator.Report, err error) {
 // change; the waker passes over each one it reads.
 //
 // The wait beats the id while it runs, on the lease's own cadence. The
-// interval is a person's value and the claim expires at LeaseTTL, so a wait
-// that honoured the flag alone would leave the id un-beaten for a whole
-// interval: an interval a little under the TTL is a claim that lapses under the
+// interval is a person's value and the id's lease expires at LeaseTTL, so a
+// wait that honoured the flag alone would leave the id un-beaten for a whole
+// interval: an interval a little under the TTL is a lease that lapses under the
 // daemon holding it, and a second daemon takes that id while this one is still
-// driving it. A beat that failed is not answered here — it ends the wait, and
-// the loop's own Beat at the top of the cycle decides it, because a lease
-// failure has one answer and it is not this function's (a claim that went to
-// another machine stops the daemon, a database error is the process's).
+// driving it. An item's claim is a different thing with no clock of its own
+// (claim.go): it lapses under nobody, so nothing here is about it. A beat that
+// failed is not answered here — it ends the wait, and the loop's own Beat at the
+// top of the cycle decides it, because a lease failure has one answer and it is
+// not this function's (a lease that went to another machine stops the daemon, a
+// database error is the process's).
 func (d *orchestratorDaemon) wait(ctx context.Context) error {
 	if d.wake != nil {
 		return d.wake(ctx)
