@@ -962,8 +962,8 @@ row that used to repeat it went with the run list.
 
 Reached from a `live-run` row. The header, its status strip and its halt banner sit above
 the two columns: the main column (stages → spend by stage → tolerated by the mode →
-diagnosis → logs → replay) beside the aside (ledger → pull request), with the warnings
-after both. Two steps drew it — 3a the header, at a glance at the run, the timeline and
+review levels → diagnosis → logs → replay) beside the aside (ledger → pull request), with
+the warnings after both. Two steps drew it — 3a the header, at a glance at the run, the timeline and
 the log window, 3b the ledger, the pull request and the replay scrubber.
 
 | Group | Class hooks |
@@ -978,6 +978,7 @@ the log window, 3b the ledger, the pull request and the replay scrubber.
 | Spend splits | `run-split`, `run-split-word`, `run-split-caption`, `run-split-absent`, `run-route`, `run-route-name`, `run-route-usd`, `run-model`, `run-model-name`, `run-model-usd` |
 | Spend by stage | `run-spend-stages`, `run-spend-stage-list`, `run-spend-stage`, `run-spend-stage-name`, `run-spend-stage-duration`, `run-spend-stage-calls`, `run-spend-stage-agents`, `run-spend-stage-usd`, `run-spend-stage-notional`, `run-spend-stages-more`, `run-spend-stage-more` |
 | Tolerated by the mode | `run-tolerated`, `run-tolerated-total`, `run-tolerated-count`, `run-tolerated-list`, `run-tolerated-finding`, `run-tolerated-title`, `run-tolerated-label`, `run-tolerated-mode`, `run-tolerated-likelihood`, `run-tolerated-impact`, `run-tolerated-fix-cost`, `run-tolerated-class`, `run-tolerated-more`, `run-tolerated-dropped`, `run-tolerated-absent` |
+| Review levels | `run-levels`, `run-level-list`, `run-level`, `run-level-name`, `run-level-bar`, `run-level-bar-absent`, `run-level-cap-mark`, `run-level-figures`, `run-level-rounds`, `run-level-of`, `run-level-cap`, `run-level-rounds-word`, `run-levels-absent` |
 | Stages | `run-stages`, `run-stage-list`, `run-stage`, `run-stage-icon`, `run-stage-dot`, `run-stage-check`, `run-stage-cross`, `run-stage-name`, `run-stage-body`, `run-stage-passed`, `run-stage-bar`, `run-stage-track`, `run-stage-fill`, `run-stage-fill-failed`, `run-stage-count`, `run-stage-tests`, `run-stage-tests-word`, `run-stage-failures`, `run-stage-failures-word`, `run-stage-meta`, `run-stage-duration`, `run-stage-spend`, `run-stage-deadline` |
 | Pull request | `run-pr`, `run-pr-repo`, `run-pr-number`, `run-pr-sep`, `run-pr-url`, `run-pr-reason` |
 | Logs | `run-logs`, `run-log-list`, `run-log-line`, `run-log-time`, `run-log-severity`, `run-log-stage`, `run-log-message`, `run-log-note`, `run-log-dropped`, `run-log-of`, `run-log-total`, `run-log-refused`, `run-log-refused-count`, `run-log-link`, `run-log-link-note`, `run-log-tail`, `run-log-tail-line` |
@@ -1015,7 +1016,14 @@ be (`svg.run-ledger-bar` is absent when the total is not a measured figure above
 the model line is not billed money or when the compute is neither measured nor estimated);
 the reconciliation's difference drawn only when both figures were measured, in
 `p.run-recon-diff-warn` only when it is not zero; an empty or absent spend split as the
-console's `n/a` with its reason (`p.run-split-absent`); a pull
+console's `n/a` with its reason (`p.run-split-absent`); a review level's rounds against its
+cap (`div.run-level-bar`, its text the share or the console's `n/a` and its tone carried by
+the class `run-level-bar-absent` where there is no share to draw -- §2.9's rule holds here as
+everywhere on this screen: the availability of the figure is the text and, where there is no
+number, the reason in `title`, and the class only paints it), and **the cap's own edge on that
+track drawn only where the cap is a number** (`span.run-level-cap-mark` is absent for a level
+whose cap the record does not resolve, so a bar can never look full against a cap nobody set);
+a pull
 request with **no link at all** (`run.link` is typed `null`, and `PR_NO_LINK_REASON`
 explains why); logs bounded ("lines not drawn: N of M") and a count of refused lines; replay
 scrubbed / not scrubbed (`p.run-replay-scrubbed`), a window with fewer than two distinct
@@ -1026,7 +1034,9 @@ the position is what carries the fact and the tone is the second channel).
 Readings: money (`usd`) throughout the ledger (the hero, the two legend rows, the plan's
 part and the reconciliation's three lines), the spend-by-stage rows, the spend splits; counts for tests, failures, dropped lines,
 calls, sub-agents, tolerated findings and their score axes, follow-up PRs and comments,
-replay records; **seconds** for a stage's duration and the replay window.
+replay records, and **the review levels' rounds and their caps**; **seconds** for a stage's
+duration and the replay window; **percent** for the one share this screen draws, the
+iterations bar's fill, which is the CLI's own two figures divided and nothing else.
 
 **The ledger is one billed total and everything else read against it.** `p.run-ledger-hero`
 carries the caption `TOTAL CHARGED` and `total_usd` -- the dollars the table **billed**,
@@ -1230,11 +1240,11 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 | Kind | Unit | Where | Format |
 |---|---|---|---|
 | **Money** | `usd` | Live (spend, counted, cap, notional, burn rate, sparkline title), Spend (points, peaks, rows, totals, every cap), Projects (reserve, caps, job model/compute/total), Run (ledger, stage spend, reported, charged, routes, models), degraded (all totals) | `$` + grouping + **2 decimals**, sign before the `$` |
-| **Share** | `percent` | Live (cap percent, bar fills), Spend (`data-height`) | 1 decimal + `%` |
+| **Share** | `percent` | Live (cap percent, bar fills), Spend (`data-height`), Run (the iterations bar's fill, drawn as that bar's own text) | 1 decimal + `%` |
 | **Duration / time** | `seconds` | Live (connection age, silence), Run (stage duration, replay window), degraded (feed age) | 0 decimals + ` s` |
 | **A span, as a person says it** | `duration` | Live (**a run's age only**, the ELAPSED column of the runs table) | `21s`, `29m 21s`, `1h 02m` — the three scales, never a raw count |
 | **Time (money-shaped)** | `hours` | Spend (run hours, totals) | 2 decimals + ` h` |
-| **Count** | `count` | Live (the review inbox's three, the fleet panel's ACTIVE and QUEUED, and the `max_parallel` limit beside the runs cap bar), Spend (runs, tokens), Projects (counts, versions), Run (tests, lines, records), Coordinator (a repository's records, how many of them are in flight, its collisions, and what a bound left out), degraded (runs, searched) | 0 decimals + grouping |
+| **Count** | `count` | Live (the review inbox's three, the fleet panel's ACTIVE and QUEUED, and the `max_parallel` limit beside the runs cap bar), Spend (runs, tokens), Projects (counts, versions), Run (tests, lines, records, the review levels' rounds and caps), Coordinator (a repository's records, how many of them are in flight, its collisions, and what a bound left out), degraded (runs, searched) | 0 decimals + grouping |
 
 **Live's money, shares and durations are what its *run* rows are made of.** Its `count`
 readings are the review inbox's three (v2 plan Task V2.7.1), the fleet panel's `ACTIVE` and

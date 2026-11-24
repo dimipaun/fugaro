@@ -194,6 +194,7 @@ function model(over: Partial<RunModel> = {}, rowOver: Partial<RunRow> = {}): Run
     spendStages: [],
     spendStagesDropped: measured(0),
     tolerated: null,
+    levels: [],
     stages: [],
     halt: null,
     pullRequest: { repository: TRACKED_REPO, number: 412, url: null, link: null, because: 'no link' },
@@ -543,6 +544,73 @@ describe('renderRun: the diagnosis chips', () => {
 })
 
 // ---------------------------------------------------------------------------
+// The review levels (V1.3): one bar per level, the rounds its own loop spent
+// against the cap the run's plan resolved for it.
+// ---------------------------------------------------------------------------
+
+/** levelsFrame is a `diagnose RUN --json` document carrying a `review_levels`
+ * block beside its row, for the cases that read what the screen draws from a
+ * block the CLI wrote rather than from a hand-built reading. */
+function levelsFrame(levels: readonly Record<string, unknown>[]): Record<string, unknown> {
+  return { row: { run: TRACKED, run_id: TRACKED, repo: TRACKED_REPO }, review_levels: levels }
+}
+
+/** levelsTree renders the screen from one `review_levels` block. */
+function levelsTree(levels: readonly Record<string, unknown>[]): ScreenElement {
+  return renderRun(factory, buildRunModel({ diagnosis: levelsFrame(levels), logs: [], logLink: null }), 'light')
+}
+
+describe('renderRun: the review levels', () => {
+  it('draws the iterations bar per level, its rounds against the cap it was given', () => {
+    const tree = levelsTree([
+      { level: 'l1', rounds: 3, cap: 3 },
+      { level: 'l2', rounds: 2, cap: 5 },
+      { level: 'l3', rounds: 1, cap: 2 },
+    ])
+    expect(texts(tree, 'run-level-name')).toEqual(['l1', 'l2', 'l3'])
+    expect(all(tree, 'run-level')).toHaveLength(3)
+    // The fill is the two figures the document carries, as a share: 3/3, 2/5 and
+    // 1/2. The screen divides nothing it was not handed, and every level here
+    // has a cap, so every share is a measurement -- drawn as the bar's own text,
+    // with no state attribute anywhere on this screen (§2.9: Run writes no
+    // `data-state`), and no bar in the absent class.
+    const bars = all(tree, 'run-level-bar')
+    expect(bars.map((bar) => bar.getAttribute('data-state'))).toEqual([null, null, null])
+    expect(bars.map((bar) => bar.getAttribute('data-fill'))).toEqual([null, null, null])
+    expect(bars.filter((bar) => bar.classes.includes('run-level-bar-absent'))).toHaveLength(0)
+    // The bar's text is that same share, so the bar is readable with the CSS
+    // gone -- the rule every reading on this screen follows.
+    expect(bars.map((bar) => bar.textContent)).toEqual(['100.0%', '40.0%', '50.0%'])
+    // And both figures are beside it in words, so a person reads "2 of 5" rather
+    // than dividing two cells.
+    expect(texts(tree, 'run-level-rounds')).toEqual(['3', '2', '1'])
+    expect(texts(tree, 'run-level-cap')).toEqual(['3', '5', '2'])
+    expect(all(tree, 'run-level-cap-mark'), 'a cap is an edge on the track, and each level has one').toHaveLength(3)
+  })
+
+  it('draws a level with no resolvable cap as n/a with no full mark', () => {
+    // A record written before the plan block existed, and a run that built no
+    // plan, both carry `null`: the bar must not be drawn full, which would say
+    // the level used a budget nobody resolved.
+    const tree = levelsTree([{ level: 'l2', rounds: 4, cap: null }])
+    const bar = one(tree, 'run-level-bar')
+    expect(bar.classes, 'no cap is not a cap of zero').toContain('run-level-bar-absent')
+    expect(bar.getAttribute('data-state'), 'and it is still no state attribute: the class paints, the text and the title say').toBeNull()
+    expect(bar.textContent).toBe(UNAVAILABLE_MARK)
+    expect(bar.getAttribute('title')).toContain('no cap')
+    expect(one(tree, 'run-level-rounds').textContent, 'the rounds are the document\'s own figure and are still drawn').toBe('4')
+    expect(one(tree, 'run-level-cap').textContent).toBe(UNAVAILABLE_MARK)
+    expect(all(tree, 'run-level-cap-mark'), 'a cap nobody resolved has no edge to mark').toHaveLength(0)
+  })
+
+  it('says which key is missing when the document carries no review levels', () => {
+    const tree = renderRun(factory, model(), 'light')
+    expect(one(tree, 'run-levels-absent').textContent).toContain('review_levels')
+    expect(all(tree, 'run-level')).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // The ledger, the reconciliation and the two splits.
 // ---------------------------------------------------------------------------
 
@@ -767,6 +835,7 @@ describe('renderRun: the two columns', () => {
       'console-busy-slot',
       'run-stages',
       'run-tolerated-absent',
+      'run-levels-absent',
       'run-diagnosis',
     ])
 
