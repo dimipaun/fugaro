@@ -56,10 +56,7 @@ func TestValidateNamesACraftModelProblemAtItsOwnPath(t *testing.T) {
 	// an owner's price, because the price rule reaches them: every run has a
 	// gateway now (AB1b, D3009), so `validate` prices the crafts' models in
 	// every mode, and "no price" would otherwise be a problem this test's
-	// fixture contributed rather than the allow-list rule it is about. Those
-	// two prices are the fixture's own (craftLocalExtra, AB4, D3020); the
-	// installation config carries one model_prices block, and a second one
-	// appended here is a duplicate key its strict decode refuses.
+	// fixture contributed rather than the allow-list rule it is about.
 	craftFixtureWith(t, "budget: { allowed_models: [\"claude-opus-4\"] }\n")
 	testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": validateCraftModelYAML})
 	out, errOut, err := execute(t, "validate", "--offline", "fugaro.yaml")
