@@ -248,7 +248,7 @@
       "required": ["name", "source"],
       "description": "The recipe the launching CLI resolved; absent means, for a first run, agent.recipe in fugaro.yaml at the ref, else default; for a follow-up, default (docs/recipes/spec.md).",
       "properties": {
-        "name": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$" },
+        "name": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,44}[a-z0-9])?-[0-9a-f]{8})?$", "description": "The recipe the launcher resolved: a recipe name, or the name of the project's copy of one (recipe.IsNameOrCopy) — the copy a migrated repository's runs embed." },
         "source": { "enum": ["repo", "project", "catalog"] },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "yaml": { "type": "string", "minLength": 1, "maxLength": 16384 }
