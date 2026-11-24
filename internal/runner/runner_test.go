@@ -19,11 +19,11 @@ import (
 
 	"gocloud.dev/blob"
 	"gocloud.dev/blob/memblob"
-	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backlog"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/headroomproc"
@@ -205,60 +205,6 @@ func oauthEnv(h *harness) {
 	h.deps.Env = append(filterEnv(h.deps.Env, "ANTHROPIC_API_KEY"), "CLAUDE_CODE_OAUTH_TOKEN="+oauthToken)
 }
 
-// fixturePins is the models line withFixturePins puts under agent:, spelled
-// the way firstLineCfg and gwConfig name theirs.
-const fixturePins = "models: { coder: claude-sonnet-5-5, reviewer: claude-opus-5, background: claude-haiku-4-5 }"
-
-// withFixturePins gives a config the fixture's own model pins when the test's
-// config names none: the coder and the first line on sonnet, the senior review
-// on opus, the background model on haiku.
-//
-// Every run has a gateway now (AB1b, D3009), and a run behind a gateway must
-// name models the price table knows (CheckPins, D3020): a configuration that
-// pins nothing is refused at bootstrap, so a test that hands the harness the
-// bare fixture — a repository, as the fixture stands in for one — would run
-// nothing at all. A real installation's pins arrive from the project layer's
-// defaults (config.ProjectLayer); the harness puts them in the file instead,
-// because a test's file is the one thing it reads.
-//
-// It inserts a line rather than re-encoding the document, so a test that reads
-// the file back and edits it by line (project_test's withProject, policy_test's
-// own replacements) still finds the lines it wrote.
-//
-// What this does not touch: a config that names a model, or names a models
-// block at all — even an empty one, which is how a test about the pin rules
-// itself asks for a run that pins nothing; a config with no agent block, which
-// is a layer or a fragment rather than a repository's own file; a config the
-// gateway does not carry — every oauth one, whose runs are the only ones with
-// no pins to price — and a config that does not parse, which is the config
-// under test in tests of their own.
-func withFixturePins(cfg string) string {
-	var doc struct {
-		Agent *struct {
-			Model  string         `yaml:"model"`
-			Models map[string]any `yaml:"models"`
-			Auth   string         `yaml:"auth"`
-		} `yaml:"agent"`
-	}
-	if err := yaml.Unmarshal([]byte(cfg), &doc); err != nil || doc.Agent == nil {
-		return cfg
-	}
-	if doc.Agent.Model != "" || doc.Agent.Models != nil {
-		return cfg
-	}
-	// One auth kind is left alone: oauth, the credential the gateway does not
-	// carry (D3026, R12), whose runs are the only ones with no pins to price.
-	// An auth the file leaves empty is vertex by default (config.
-	// DefaultAgentAuth), which is a credential the gateway carries.
-	if doc.Agent.Auth == "oauth" {
-		return cfg
-	}
-	if strings.Contains(cfg, "agent: {") {
-		return strings.Replace(cfg, "agent: {", "agent: { "+fixturePins+",", 1)
-	}
-	return strings.Replace(cfg, "agent:\n", "agent:\n  "+fixturePins+"\n", 1)
-}
-
 // newHarnessFiles is newHarness with extra files committed to the remote.
 func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string]string) *harness {
 	t.Helper()
@@ -267,7 +213,15 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 	if cfg != "" {
 		files["fugaro.yaml"] = cfg
 	}
-	files["fugaro.yaml"] = withFixturePins(files["fugaro.yaml"])
+	// A run behind a gateway must name models the price table knows (CheckPins,
+	// D3020): a configuration that pins nothing is refused at bootstrap, so a
+	// test that hands the harness the bare fixture — a repository, as the
+	// fixture stands in for one — would run nothing at all. The pins go to the
+	// project layer, where an installation's arrive from (config.ProjectLayer);
+	// a repository's own file may no longer name one (S1, D3237), and the file
+	// is anchored to the project and GCP project that layer applies by.
+	pinned, pins := testutil.FixturePins(files["fugaro.yaml"])
+	files["fugaro.yaml"] = pinned
 	for k, v := range extra {
 		files[k] = v
 	}
@@ -283,6 +237,9 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 		// in, and every test here that gives the run a Cloud Run execution
 		// would stop on that instead of on what it is about.
 		spec = &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature"}
+	}
+	if pins != "" && spec.ProjectLayer == nil {
+		spec.ProjectLayer = &task.ProjectLayer{SHA256: config.LayerSum([]byte(pins)), Generation: 3, YAML: pins}
 	}
 	store := runstore.Open(bucket, repoSlug, spec.RunID)
 	if err := store.WriteTask(context.Background(), spec); err != nil {

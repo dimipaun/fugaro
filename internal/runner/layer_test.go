@@ -9,6 +9,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // runnerLayer's profile app is the fixture's workflow app, minus its
@@ -64,9 +65,16 @@ func TestRunnerRecordsTheLayer(t *testing.T) {
 }
 
 // Review Focus 5: a launch from outside a checkout may carry the layer for
-// a file that is not anchored; the runner ignores it and says so.
+// a file that is not anchored; the runner ignores it and says so. The run it
+// leaves is one the gateway does not carry (oauth): a file no layer applies to
+// can name no model of its own (S1, D3237 — config.Resolve drops the file's
+// models, and a repository's file may not name one at all), so the credential
+// whose runs have no pins to price is the only one that still runs.
 func TestRunnerIgnoresTheLayerForAnUnanchoredFile(t *testing.T) {
-	h := newHarness(t, "", layerSpec(runnerLayer)) // the fixture's own fugaro.yaml: no gcp_project
+	unanchored := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"],
+		"project: aurora\n", "project: aurora\ngcp_project: other-gcp-project\n", 1)
+	h := newHarness(t, oauthCfg(t, unanchored), layerSpec(runnerLayer))
+	oauthEnv(h)
 	rec, err := h.run(t, implement("feature"), review("ship", 0))
 	if err != nil {
 		t.Fatal(err)
@@ -112,8 +120,12 @@ func TestRunnerRefusesALayerForAnotherProject(t *testing.T) {
 	}
 }
 
+// TestRunnerWithoutALayerRecordsOnlyTheConfig: a run whose task carries no
+// layer records only its config. The run is an oauth one: a file that names no
+// model of its own is refused at bootstrap when the gateway carries it (the
+// pins rule), and since S1 a repository's file may not name one.
 func TestRunnerWithoutALayerRecordsOnlyTheConfig(t *testing.T) {
-	h := newHarness(t, "", nil)
+	h := oauthHarness(t, "", nil)
 	rec, err := h.run(t, implement("feature"), review("ship", 0))
 	if err != nil {
 		t.Fatal(err)

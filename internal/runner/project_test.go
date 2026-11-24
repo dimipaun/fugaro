@@ -30,12 +30,13 @@ func withProject(t *testing.T, yaml, project string) string {
 	return strings.Replace(yaml, line, "project: "+project+"\n", 1)
 }
 
-// fixtureYAML is the fixture repository's fugaro.yaml, naming aurora, with the
-// pins every run behind a gateway needs (withFixturePins): the tests here write
-// it straight to a branch, so they never pass through the harness's own call.
+// fixtureYAML is the fixture repository's fugaro.yaml, naming aurora and
+// anchored to the GCP project the project layer applies by (testutil.FixturePins
+// adds it): the tests here write it straight to a branch, so they never pass
+// through the harness's own call.
 func fixtureYAML(t *testing.T) string {
 	t.Helper()
-	return withFixturePins(testutil.FixtureFiles(t)["fugaro.yaml"])
+	return testutil.AnchorFile(testutil.FixtureFiles(t)["fugaro.yaml"])
 }
 
 // pushBranch pushes a branch off main whose fugaro.yaml is yaml.
