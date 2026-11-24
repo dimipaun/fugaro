@@ -47,6 +47,7 @@ var prodCheckoutTempRoots = checkoutTempRoots
 // tests run a command that succeeds and can only fail by what it does beside
 // it.
 const checkoutsYAML = "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\n" +
+	"agent:\n" + pinnedAgent + "\n" +
 	"workflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n"
 
 // checkoutsFixture points XDG_CONFIG_HOME at a directory of the test's own
