@@ -34,6 +34,14 @@
 # that cannot lose the gate: a source naming no figure is recorded as INFO,
 # never as a finding about the check.
 #
+# The verdict is read from the question's own row (`utilisation`) and from no
+# other: a source whose answer named nothing, a source the service never served,
+# a name you gave it does not know and a scratch directory that outlived the trap
+# are reported as their own rows and move no verdict — read as the verdict they
+# would answer "no" or "nothing to judge" on evidence that says yes. What makes
+# that row FAIL is a figure's absence where names were read, or a record that is
+# not the shape the service writes.
+#
 # Verdicts:
 #   PASS (exit 0)        a source's record names a utilisation figure: U1 is
 #                        answered yes on this evidence, and PL8 may be launched
@@ -189,16 +197,29 @@ cleanup() {
   [ -e "$SCRATCH" ] || SCRATCH_REMOVED=yes
 }
 
+# verdict reads the question's OWN row, and nothing else. Every fact this
+# check writes is a row of the block, and the rows beside the question are not
+# the question: a source whose last answer carried no rate-limit header, a
+# source the service has never served and a scratch directory that outlived the
+# trap are all rows a run writes beside a recorded utilisation figure, and
+# reading any of them as the verdict answers U1 "no" or "nothing to judge" on
+# evidence that says yes. The row that answers it is `utilisation`, which the
+# analysis writes PASS, FAIL or UNVERIFIED — FAIL for a record that is not the
+# shape the service writes, because the question needs a record to be read at
+# all.
 verdict() { # verdict <facts>
-  if printf '%s\n' "$1" | grep -q '^aborted|'; then
-    printf 'INCOMPLETE'
-  elif printf '%s\n' "$1" | grep -q '|FAIL|'; then
-    printf 'FAIL'
-  elif printf '%s\n' "$1" | grep -q '|UNVERIFIED|'; then
-    printf 'INCOMPLETE'
-  else
-    printf 'PASS'
-  fi
+  local key state row=""
+  while IFS='|' read -r key state _detail; do
+    if [ "$key" = aborted ]; then
+      printf 'INCOMPLETE'
+      return 0
+    fi
+    if [ "$key" = utilisation ]; then row=$state; fi
+  done <<<"$1"
+  case "$row" in
+  PASS|FAIL) printf '%s' "$row" ;;
+  *) printf 'INCOMPLETE' ;;
+  esac
 }
 
 print_block() { # print_block <facts> <status>
@@ -355,11 +376,18 @@ except Exception as exc:  # a body that is not JSON is not a record
 else:
     parse_error = ""
 
+# Whether the record is the shape the service writes, which is the one thing
+# beside a figure's absence that makes the question's row FAIL: a record that is
+# not a shape this release's service writes is a fact about the service, and the
+# check may not conclude "there is nothing to judge" on it.
+shape_failed = False
+
 if doc is None:
     doc = {}
     fact("record", "UNVERIFIED", "the record node is absent: no answer of any source has been recorded on it, so nothing can be judged (run a run on the subscription token and run this again)")
 elif not isinstance(doc, dict):
     doc = {}
+    shape_failed = True
     fact("record", "FAIL", "the record node is not an object of sources%s: it is not the shape the service writes" % (" (%s)" % parse_error if parse_error else ""))
 elif not doc:
     # An empty object is the JSON a node with nothing under it answers with,
@@ -391,6 +419,7 @@ for src in order:
         continue
     m = doc[src]
     if not isinstance(m, dict):
+        shape_failed = True
         fact("source", "FAIL", "%s holds something that is not an observation: it is not the shape the service writes" % shown)
         table.append("  %s  names=-  utilisation=?" % shown)
         continue
@@ -419,17 +448,20 @@ for src in order:
         fact("source", "INFO", "%s records %s — none of them is a utilisation figure. It answers nothing about a subscription token's own answer: this check asks whether ANY source names one" % (shown, ", ".join(got)))
     table.append("  %s  names=%s  utilisation=%s" % (shown, ", ".join(got), ", ".join(util) or "-"))
 
-# The verdict row. It is existential because the question is: one source naming a
-# utilisation figure answers U1 yes, whatever the sources beside it hold, and a
-# gate read the other way round would be withdrawn by a key's own rate-limit
-# headers. When no source names one, the answer is FAIL only if the record really
-# holds names to read — otherwise there is nothing to conclude (UNVERIFIED, exit
-# 3) and PL8 is not launched.
+# The verdict row, and the ONLY row the verdict is read from (verdict, above).
+# It is existential because the question is: one source naming a utilisation
+# figure answers U1 yes, whatever the sources beside it hold, and a gate read the
+# other way round would be withdrawn by a key's own rate-limit headers. When no
+# source names one, the answer is FAIL only if the record really holds names to
+# read or is not the shape the service writes — otherwise there is nothing to
+# conclude (UNVERIFIED, exit 3) and PL8 is not launched.
 if with_figure:
     fact("utilisation", "PASS", "%s: a utilisation figure is recorded%s, so U1 is answered yes and PL8 may be launched" % (
         ", ".join(with_figure), "" if not without else " (no figure on %s, which does not answer this question)" % ", ".join(without)))
 elif without:
     fact("utilisation", "FAIL", "no source's record names a utilisation figure: %s recorded rate-limit names and none of them is one, so U1 is answered no on this evidence and PL8 is withdrawn" % ", ".join(without))
+elif shape_failed:
+    fact("utilisation", "FAIL", "the record is not the shape this release's service writes, so no source's names can be read from it: nothing is concluded about U1 and PL8 is not launched on it")
 else:
     fact("utilisation", "UNVERIFIED", "no source recorded a rate-limit header name at all, so there is nothing to judge and PL8 is not launched on it")
 

@@ -270,6 +270,35 @@ test_a_source_whose_answer_named_nothing_is_unverified() {
   expect_no_row_state "$out" source PASS "no names is never a positive"
 }
 
+# The verdict is read from the question's own row, and the rows beside it move
+# nothing: a source whose answer named nothing is UNVERIFIED, and the figure a
+# source beside it recorded is still the answer U1 asks for. Read as the verdict
+# — a FAIL or an UNVERIFIED row anywhere in the block — this case exits 1 or 3
+# on the very evidence that answers U1 yes, which is the one outcome the gate
+# must not be withdrawn on.
+test_a_figure_beside_a_source_with_no_names_is_a_pass() {
+  case_dir figure_beside_no_names
+  write_observed '{"tool-alpha":{"headers":["Anthropic-Ratelimit-Unified-5h-Utilization"]},
+                "tool-beta":{"headers":[]}}'
+  run880
+  expect_status "$status" 0 "a figure beside a source whose answer named nothing"
+  expect_contains "$out" "CHECK 880 RESULT: PASS (exit 0)" "the verdict is the question's own row"
+  expect_row "$out" utilisation PASS "the question is answered yes"
+  expect_row "$out" source PASS "the source with a figure"
+  expect_row "$out" source UNVERIFIED "the source whose answer named nothing"
+}
+
+# The same for a source the service never served: a name you gave it that the
+# record does not hold is UNVERIFIED, and it does not withdraw a figure another
+# source recorded.
+test_a_figure_beside_a_source_never_served_is_a_pass() {
+  case_dir figure_beside_unknown
+  run880 tool-alpha tool-ghost
+  expect_status "$status" 0 "a figure beside a name the record does not hold"
+  expect_row "$out" utilisation PASS "the question is answered yes"
+  expect_row "$out" source UNVERIFIED "the name the record does not hold"
+}
+
 # A node with no names member at all is not a shape this release's service
 # writes, and nothing can be read from it.
 test_a_node_with_no_names_member_is_unverified() {
@@ -502,6 +531,8 @@ t test_a_utilisation_figure_is_found
 t test_rate_limit_headers_without_a_figure_fail
 t test_no_record_at_all_is_unverified
 t test_a_source_whose_answer_named_nothing_is_unverified
+t test_a_figure_beside_a_source_with_no_names_is_a_pass
+t test_a_figure_beside_a_source_never_served_is_a_pass
 t test_a_node_with_no_names_member_is_unverified
 t test_only_the_sources_named_are_judged
 t test_a_named_source_the_service_never_served_is_unverified
