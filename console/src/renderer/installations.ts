@@ -145,6 +145,12 @@ export const NO_INSTALLATION_STATUS = 'No installations yet.'
  */
 export const NO_CHOICE_STATUS = 'No installation is chosen. Choose one below.'
 
+/** ADD_PROJECT_LABEL is the window's door to the setup wizard (SW3c, R4). It is
+ * drawn beside the list -- with installations present, which is what makes it a
+ * *second* project rather than a first -- and it is the same word the rail's own
+ * button carries: one affordance, two windows. */
+export const ADD_PROJECT_LABEL = 'Add project'
+
 /**
  * viewOf turns one reply into the view.
  *
@@ -399,7 +405,7 @@ export interface PickerDocument {
   createElement(tag: string): PickerElement
 }
 
-/** PickerBridge is the view's whole capability: the picker's seven operations,
+/** PickerBridge is the view's whole capability: the picker's eight operations,
  * and nothing else. It is an interface rather than the preload's own type so a
  * test can hand in a fake without pretending to be Electron.
  *
@@ -421,6 +427,13 @@ export interface PickerBridge {
    * `wsl.exe` for (Part G, T-G3). It takes **no arguments**: the section below
    * is this machine's answer and not something the document asked about. */
   distros(): Promise<InstallationReply>
+  /** `addProject` opens the setup wizard (SW3c, R4). It takes **no arguments**
+   * either, and it is the one row whose answer is a window rather than a
+   * document: the wizard is the dashboard's screen, so this window hands the
+   * request over and the main process brings that window up on it. The five
+   * answers a wizard collects never cross this boundary -- they go to the
+   * dashboard's own operations from the dashboard's document. */
+  addProject(): Promise<InstallationReply>
 }
 
 /** PickerMount is the mounted view. `refresh` re-reads the list, which is what
@@ -500,6 +513,7 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge, wind
   // `isWindowsPlatform` is the one place the platform is asked about, and the
   // mount stays a wiring a unit test can drive both ways.
   const distros = windows ? document.getElementById('picker-distros') : null
+  const addProject = document.getElementById('picker-new-project')
 
   const say = (sentence: string): void => {
     // Every sentence here is the main process's, and it is drawn through the
@@ -699,10 +713,30 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge, wind
    * replaced wholesale rather than patched, so a row that is gone from the
    * answer is gone from the page -- and a warning line the CLI printed is on the
    * page for as long as the CLI prints it. */
+  /** addProjectNodes is the Add project door (SW3c, R4): one button, drawn only
+   * where there is an installation to add a project **beside** -- a console with
+   * none is already showing the first-run screen, and a second way to the same
+   * wizard there would be two controls answering one state.
+   *
+   * Nothing is re-read after the click. Every other control here ends in a
+   * `reRead` because the main process changed the list; this one asks for a
+   * window, and the answer is either a refusal -- whose sentence is the main
+   * process's and is drawn verbatim -- or a window this one is leaving. */
+  const addProjectNodes = (view: InstallationView): PickerElement[] =>
+    view.rows.length === 0
+      ? []
+      : [
+          button(ADD_PROJECT_LABEL, async () => {
+            const reply = await bridge.addProject()
+            if (!reply.ok) say(reply.reason)
+          }),
+        ]
+
   const render = (next: InstallationView): void => {
     say(next.status)
     controls = []
     if (list !== null) list.replaceChildren(...next.rows.map(rowElement))
+    if (addProject !== null) addProject.replaceChildren(...addProjectNodes(next))
     if (warnings !== null) {
       warnings.replaceChildren(...next.warnings.map((line) => label('li', line, 'the CLI’s warning')))
     }
