@@ -168,7 +168,10 @@ func backfillRunSummariesIn(ctx context.Context, b *blob.Bucket, now time.Time, 
 
 // summarizedRuns is the runs of one repository that already hold a summary, in
 // one flat listing of it (indexedRuns' shape): every object whose base name is
-// the summary's is one run's, and the run is the key's parent segment.
+// the summary's is one run's, and the run is the key's parent segment. It lists
+// a repository whole rather than the window, because the summary sits inside
+// the run's own directory; what bounds it is the bucket's own aging, which
+// retires `runs/` at 90 days -- the same window the walk reads.
 func summarizedRuns(ctx context.Context, b *blob.Bucket, slug string) (map[string]bool, error) {
 	prefix := "runs/" + slug + "/"
 	out := map[string]bool{}
