@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -762,8 +763,15 @@ type engineStage struct {
 	name string
 	// skip is why the stage does not apply to this run ("" when it does).
 	skip func() string
-	run  func(ctx context.Context) error
-	left initflow.Left
+	// check, when set, is the stage's Check instead of skip, for a reply that
+	// costs a read and so cannot be given without one: the Firebase stage's,
+	// whose skip holds only while the Firebase root's state carries the run
+	// index's composite indexes (RI2). It answers the same two states skip can
+	// answer (skipped, will-do) and never an error for a read that did not
+	// answer — a plain update must not fail over one (firebaseSkip).
+	check func(ctx context.Context) (initflow.Status, error)
+	run   func(ctx context.Context) error
+	left  initflow.Left
 	// leftFor, when set, is the stage's left-for-you as a function of the run's
 	// own arm instead of one fixed line: the installation-2 stage has two, and
 	// the command they name differs (--firebase-project's history job, the
@@ -802,7 +810,10 @@ func (s *engineStage) Left() initflow.Left {
 	return s.left
 }
 
-func (s *engineStage) Check(context.Context) (initflow.Status, error) {
+func (s *engineStage) Check(ctx context.Context) (initflow.Status, error) {
+	if s.check != nil {
+		return s.check(ctx)
+	}
 	if why := s.skip(); why != "" {
 		return initflow.Status{State: initflow.Skipped, Detail: why}, nil
 	}
@@ -2004,9 +2015,10 @@ func firebaseProjectIDWord(id string) string {
 // flag asked for the history job, whose apply is the one that reads them.
 //
 // What it is NOT is "the installation has a budget backend": an installation
-// whose config already records the database never reaches the Firebase root in
-// a plain update (the stage is skipped, F34), and the history job for such a
-// run is composed by the FIRST apply from the recorded backend
+// whose config already records the database reaches the Firebase root in a
+// plain update only while that root's state is still missing the run index's
+// composite indexes (RI2, firebaseSkip), and the history job for every other
+// such run is composed by the FIRST apply from the recorded backend
 // (installOptionsCarrying) and deployed there.
 func (e *initEngine) historyJobOfThisRun() bool {
 	return e.r.fb != nil || e.r.o.firebase != ""
@@ -2018,7 +2030,10 @@ func (e *initEngine) historyJobOfThisRun() bool {
 // machine (F6 — the address is what a run's session is opened against, and the
 // Firebase project alone is what a config that has never seen one names). The
 // stage that adopts or creates a database is skipped where this answers true
-// (F34), which is every converged installation after this release.
+// (F34), which is every converged installation — except for the one thing such
+// an installation can still owe, the Firebase root's run index composite
+// indexes, which firebaseSkip decides on the state because nothing else can
+// create them (RI2).
 func (e *initEngine) budgetDatabaseKnown() bool {
 	return e.lc.Budget != nil && e.lc.Budget.RTDBURL != ""
 }
@@ -2052,24 +2067,51 @@ func (e *initEngine) budgetBackendOn() bool {
 // database (F34) and where nothing would answer the confirmation a creation
 // needs (F4, cannotCreateTheDatabase), and the flag's own path — the one value
 // it could always take, the installation's own project — is untouched.
+// The skip is the one that reads (Check and not skip): the run index's
+// composite indexes are the Firebase root's and only its apply creates them
+// (RI2, F10), so a converged installation is still this stage's while the
+// root's state does not carry them — and while the credential may make the
+// IAM changes that root's apply makes, which is F34's own operator case.
+//
+// firebaseSkip answers it, and everything it cannot read leaves F34's line
+// standing, because the update of a converged installation must not fail over
+// a read the stage does not need to run: the indexes it does not create this
+// time are created by the update that can read them.
+func (e *initEngine) firebaseSkip(ctx context.Context) string {
+	if e.r.o.firebase != "" {
+		return ""
+	}
+	if e.budgetDatabaseKnown() {
+		const known = "the project config already records the budget database: this stage with no --firebase-project only adopts or creates one, and there is one"
+		// setup's own failure is the run's to report and not this check's: every
+		// stage that, unlike this one, has to run calls it too.
+		if err := e.setup(ctx); err != nil {
+			return known
+		}
+		wait, why := e.r.runIndexIndexesWait(ctx, e.c, e.bin, e.spec.StateBucket, cmp.Or(e.r.o.firebaseProject(), e.lc.GCPProject))
+		if !wait {
+			return known + why
+		}
+		return ""
+	}
+	// F4/R2's answer is asked HERE and not in the stage's own arm,
+	// because the arm is only reached by a run that can answer: the
+	// loop leaves a stage whose steps nothing can confirm to the user,
+	// which is the stop R2 replaces with one line and a run that
+	// carries on.
+	if why, yes := e.r.cannotCreateTheDatabase(); yes {
+		return why
+	}
+	return ""
+}
+
 func newFirebaseStage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.Firebase,
-		skip: func() string {
-			if e.r.o.firebase != "" {
-				return ""
+		check: func(ctx context.Context) (initflow.Status, error) {
+			if why := e.firebaseSkip(ctx); why != "" {
+				return initflow.Status{State: initflow.Skipped, Detail: why}, nil
 			}
-			if e.budgetDatabaseKnown() {
-				return "the project config already records the budget database: this stage with no --firebase-project only adopts or creates one, and there is one"
-			}
-			// F4/R2's answer is asked HERE and not in the stage's own arm,
-			// because the arm is only reached by a run that can answer: the
-			// loop leaves a stage whose steps nothing can confirm to the user,
-			// which is the stop R2 replaces with one line and a run that
-			// carries on.
-			if why, yes := e.r.cannotCreateTheDatabase(); yes {
-				return why
-			}
-			return ""
+			return initflow.Status{State: initflow.Todo, Detail: "plans when applied"}, nil
 		},
 		run: func(ctx context.Context) error {
 			// This run's own answer, cleared before the stage speaks: the plan
