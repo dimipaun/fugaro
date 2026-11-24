@@ -137,7 +137,7 @@ func TestUnreadRepoViewCarriesTheReasonAlone(t *testing.T) {
 	}
 
 	t.Run("a repository that reads", func(t *testing.T) {
-		t.Chdir(repoCheckout(t, "https://github.com/acme/app.git", minimalAnchored))
+		t.Chdir(repoCheckout(t, "https://github.com/acme/app.git", noBaseBranchYAML))
 
 		views, _ := enrolledReposImpl(context.Background(), enrolledIn{})
 		if len(views) != 1 {
