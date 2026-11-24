@@ -2111,8 +2111,8 @@ func (s *Spec) Validate() error {
 	}
 	if rc := s.Recipe; rc != nil {
 		switch {
-		case !recipe.NameRE.MatchString(rc.Name):
-			bad("task spec: recipe.name %q is not a recipe name", rc.Name)
+		case !recipe.IsNameOrCopy(rc.Name):
+			bad("task spec: recipe.name %q is not a recipe name or the name of the project's copy of one", rc.Name)
 		case rc.Source == string(recipe.SourceRepo):
 			if rc.YAML != "" || rc.SHA256 != "" {
 				bad("task spec: a repo recipe is read from the checkout; recipe.yaml and recipe.sha256 must be empty")

@@ -895,6 +895,25 @@ export const NO_ORCHESTRATOR_MAP =
   'the orchestrator map needs a newer fugaro CLI: this installation’s version has no `orchestrator map` command'
 
 /**
+ * NO_PLAN_NO_MERGES is what `plan.status` answers for a `noMerges` argument on
+ * an installation whose CLI predates the release that carries `plan status
+ * --no-merges` (`PLAN_STATUS_NO_MERGES_CLI_FLOOR`, `src/shared/version.ts`).
+ * The read is refused before `resolve` -- no binary is probed and no child is
+ * spawned -- so an older CLI never meets the flag as `unknown flag:
+ * --no-merges`, which is a failure the operator can do nothing about.
+ *
+ * **A refusal of the argument is not a refusal of the screen.** The Graph tab
+ * asks the same floor before it builds the argument (`planStatusNoMergesSupported`,
+ * IR4), so the two are one fact read from two sides: a console whose CLI is below
+ * the floor makes the single read it has always made and draws the canvas from
+ * it, and a renderer that asked for the flag anyway is refused here rather than
+ * silently served the merges-included document under a `merges_read: false`
+ * contract.
+ */
+export const NO_PLAN_NO_MERGES =
+  'reading the plan without merge state needs a newer fugaro CLI: this installation’s version has no `plan status --no-merges` flag'
+
+/**
  * handlersFor answers the whole IPC surface from one source. It is a function
  * rather than a class because the surface is a table: one handler per operation,
  * each a one-line call.

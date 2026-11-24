@@ -78,15 +78,17 @@ export const SESSION_EVENTS = Object.freeze({
  * The policy values C1's session response carries to the phone, which are the
  * only ones a surface may read: J3's confirmation policy reads `costly_modes`
  * (a start in one of them needs the read-back, and with `biometric_on_costly`
- * the biometric path too) and Z2's auto-compaction reads
- * `compaction_threshold`. Their names are the project policy's `mobile.*` fields
- * with the prefix stripped, so the session response and the policy file cannot
- * drift into two spellings of one value.
+ * the biometric path too), Z2's auto-compaction reads
+ * `compaction_threshold`, and the app's one collection switch reads
+ * `crash_reports` (D731, D738, the app's name for the project policy's top-level
+ * `mobile_crash_reports` key). The names are this list's own, fixed here so the
+ * session response and the policy file cannot drift into two spellings of one value.
  */
 export const SESSION_POLICY_FIELDS = Object.freeze([
   'costly_modes',
   'biometric_on_costly',
   'compaction_threshold',
+  'crash_reports',
 ]);
 
 /** The longest opaque project id, in characters: an id is short by construction. */
@@ -226,6 +228,11 @@ function checkPolicy(policy) {
   }
 
   if (typeof policy.biometric_on_costly !== 'boolean') refuse(PORT_CODES.BAD_POLICY_VALUE, 'policy.biometric_on_costly');
+
+  // The crash-report switch is a boolean and never absent: an absent member is
+  // refused as MISSING_MEMBER above, and the phone must not read a missing
+  // value as "on" -- nothing is sent before the switch has been read (D734).
+  if (typeof policy.crash_reports !== 'boolean') refuse(PORT_CODES.BAD_POLICY_VALUE, 'policy.crash_reports');
 
   // A fraction of the session's context window, or null when the project sets
   // no threshold: the phone renders it as a percentage, so the unit is fixed

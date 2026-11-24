@@ -670,8 +670,9 @@ export const BUDGET_STREAM_CLI_FLOOR: string | null = null
  * binary's two argvs -- and no CLI answers either word before it.
  *
  * `null` until that release names itself, which is where the wizard stands
- * today: the two rows exist in the allow-list and the handlers behind them
- * answer 'not available in this build'.
+ * today: the two rows exist in the allow-list and the handler behind each
+ * refuses in the wizard's own words (`SETUP_FLOOR_UNSET`), so no child is
+ * spawned for either.
  */
 export const SETUP_CLI_FLOOR: string | null = null
 
@@ -753,6 +754,50 @@ export const ORCHESTRATOR_MAP_CLI_FLOOR: string | null = null
 export function orchestratorMapSupported(
   version: string,
   floor: string | null = ORCHESTRATOR_MAP_CLI_FLOOR,
+): boolean {
+  if (floor === null) return false
+  return meetsCliFloor(version, floor)
+}
+
+/**
+ * PLAN_STATUS_NO_MERGES_CLI_FLOOR is the release that first carries `plan
+ * status --no-merges` (D3217 as amended, the indexed-reads spec): the flag the
+ * Graph's first paint passes so the canvas is drawn without waiting for the
+ * merge lookups. Below the floor the read is the single `plan status --json
+ * --all` it has always been -- the node set is the same either way, and only the
+ * merge state of a task whose run recorded a ready pull request differs -- so an
+ * installation on an older CLI gets today's drawing rather than a child that
+ * answers `unknown flag: --no-merges`.
+ *
+ * **No release carries the flag yet, so the constant is `null`** and the
+ * console's first paint is the single read on every installation today. It is
+ * `ORCHESTRATOR_MAP_CLI_FLOOR`'s state and its own rules: a floor is a claim
+ * about a release that exists, a guessed version is a child spawned to fail, and
+ * the release that ships the flag sets this constant to its own version in a
+ * one-line pull request -- a release step, not a task of the plan.
+ */
+export const PLAN_STATUS_NO_MERGES_CLI_FLOOR: string | null = null
+
+/**
+ * planStatusNoMergesSupported answers whether one version line may be asked for
+ * `plan status --json --all --no-merges`, by comparing the line against
+ * `PLAN_STATUS_NO_MERGES_CLI_FLOOR` at the patch level.
+ *
+ * **Its callers are the two places the flag could reach a child.** The Graph tab
+ * (`src/renderer/entry.ts`, the plan's IR4) asks it before the canvas read and
+ * passes the flag only when the answer is yes; `CliSource`'s `planStatus`
+ * handler (`src/source/cli.ts`) refuses a `noMerges` argument below the floor
+ * with `NO_PLAN_NO_MERGES`, before a binary is probed and before any word of an
+ * argv is built -- so the flag is behind the floor rather than merely beside it.
+ *
+ * `floor` is the constant by default and an argument only so that the branch a
+ * release will take can be tested: with the constant unset every version is
+ * refused, which is the state this console is in until a release carries the
+ * flag (`version.test.ts` drives both).
+ */
+export function planStatusNoMergesSupported(
+  version: string,
+  floor: string | null = PLAN_STATUS_NO_MERGES_CLI_FLOOR,
 ): boolean {
   if (floor === null) return false
   return meetsCliFloor(version, floor)

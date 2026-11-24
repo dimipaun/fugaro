@@ -122,7 +122,7 @@ func TestDecideByMode(t *testing.T) {
 		if tc.verdict != "" {
 			last = &runstore.ReviewSummary{Round: tc.round, Verdict: tc.verdict, Findings: len(tc.findings)}
 		}
-		dec := Decide(tc.records, "abc", last, findingsPolicyOf(optedIn, tc.mode, tc.round, tc.findings, ""), nil)
+		dec := Decide(tc.records, "abc", last, findingsPolicyOf(optedIn, "", tc.mode, tc.round, tc.findings, ""), nil)
 		ready, reason := dec.Ready, dec.Reason
 		if ready != tc.ready || reason != tc.reason {
 			t.Errorf("%s: Decide = %v %q, want %v %q", tc.name, ready, reason, tc.ready, tc.reason)
@@ -202,7 +202,7 @@ func TestDecideAtTheStop(t *testing.T) {
 	}
 	for _, tc := range cases {
 		last := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: len(tc.findings)}
-		dec := Decide(tc.records, "abc", last, findingsPolicyOf(tc.cfg, tc.mode, 2, tc.findings, tc.at), tc.owner)
+		dec := Decide(tc.records, "abc", last, findingsPolicyOf(tc.cfg, "", tc.mode, 2, tc.findings, tc.at), tc.owner)
 		ready, reason := dec.Ready, dec.Reason
 		if ready != tc.ready || reason != tc.reason {
 			t.Errorf("%s: Decide = %v %q, want %v %q", tc.name, ready, reason, tc.ready, tc.reason)
@@ -218,7 +218,7 @@ func TestDecideUnscoredFindingBlocksEveryMode(t *testing.T) {
 	pass := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}
 	last := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 2}
 	for _, mode := range rigor.Rigors {
-		dec := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(optedIn, mode, 2, []rigor.Score{unscored, small}, ""), nil)
+		dec := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(optedIn, "", mode, 2, []rigor.Score{unscored, small}, ""), nil)
 		ready, reason := dec.Ready, dec.Reason
 		if ready || reason != "review round 2 still has 2 findings" {
 			t.Errorf("%s: an unscored finding was tolerated: Decide = %v %q", mode, ready, reason)
@@ -252,7 +252,7 @@ func TestDecideStopBlockingNamesTheLevelThatLeftTheCatastrophicFinding(t *testin
 			{Round: 3, Verdict: "changes", Findings: 2, Tier: runstore.TierAdversarial},
 		}, "review level 2 left a finding the stop does not accept in round 2 on 0123456 and review level 3 left a finding the stop does not accept in round 3, so the pull request is a draft"},
 	} {
-		pol := findingsPolicyOf(optedIn, rigor.Startup, 1, []rigor.Score{accepted}, runstore.StopRoundsSpent)
+		pol := findingsPolicyOf(optedIn, "", rigor.Startup, 1, []rigor.Score{accepted}, runstore.StopRoundsSpent)
 		pol.StopBlocking = tc.blocking
 		dec := Decide([]verify.Record{pass}, "abc", last, pol, nil)
 		ready, reason, class := dec.Ready, dec.Reason, dec.Class
@@ -264,7 +264,7 @@ func TestDecideStopBlockingNamesTheLevelThatLeftTheCatastrophicFinding(t *testin
 		}
 	}
 	// Without it, the same round and policy are the acceptance itself.
-	pol := findingsPolicyOf(optedIn, rigor.Startup, 1, []rigor.Score{accepted}, runstore.StopRoundsSpent)
+	pol := findingsPolicyOf(optedIn, "", rigor.Startup, 1, []rigor.Score{accepted}, runstore.StopRoundsSpent)
 	if !Decide([]verify.Record{pass}, "abc", last, pol, nil).Ready {
 		t.Error("startup did not accept the round it stopped on, so the case above proves nothing")
 	}
@@ -292,7 +292,7 @@ func TestDecideToleratesOnlyWhatTheRunCanFile(t *testing.T) {
 		{"a repository that configured critical", optedIn, rigor.Critical, false},
 		{"a repository that configured nothing", rigor.Config{}, rigor.Pro, false},
 	} {
-		dec := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(tc.cfg, tc.mode, 2, []rigor.Score{tiny}, ""), nil)
+		dec := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(tc.cfg, "", tc.mode, 2, []rigor.Score{tiny}, ""), nil)
 		ready, reason := dec.Ready, dec.Reason
 		if ready != tc.tolerated {
 			t.Errorf("%s: Decide = %v %q, want tolerated %v", tc.name, ready, reason, tc.tolerated)
@@ -318,8 +318,8 @@ func TestDecideBlocksAPolicyItCannotPlace(t *testing.T) {
 		name string
 		pol  FindingsPolicy
 	}{
-		{"a split from another round", findingsPolicyOf(optedIn, rigor.Startup, 1, []rigor.Score{tiny}, "")},
-		{"a split from fewer findings than the record counts", findingsPolicyOf(optedIn, rigor.Startup, 2, nil, "")},
+		{"a split from another round", findingsPolicyOf(optedIn, "", rigor.Startup, 1, []rigor.Score{tiny}, "")},
+		{"a split from fewer findings than the record counts", findingsPolicyOf(optedIn, "", rigor.Startup, 2, nil, "")},
 	} {
 		dec := Decide([]verify.Record{pass}, "abc", last, tc.pol, nil)
 		ready, reason := dec.Ready, dec.Reason
@@ -342,7 +342,7 @@ func TestToleratedRecordKeepsWhatTheModeLetThrough(t *testing.T) {
 		{Severity: "minor", Summary: "a long comment restates the function", Likelihood: 2, Impact: 2, FixCost: 1, Class: "cosmetic"},
 	}
 	r := &run{lastSenior: seniorRound{Round: 2, Findings: findings}}
-	pol := findingsPolicyOf(optedIn, rigor.Startup, 2, scoresOf(findings), "")
+	pol := findingsPolicyOf(optedIn, "", rigor.Startup, 2, scoresOf(findings), "")
 	// The deciding round is the second argument because the stop reads it and
 	// these policies carry no stop: nil is the whole of what they ask it for.
 	got := r.toleratedRecord(pol, nil)
@@ -362,7 +362,7 @@ func TestToleratedRecordKeepsWhatTheModeLetThrough(t *testing.T) {
 	const secret = "super-secret-token"
 	r.addSecret(secret)
 	r.lastSenior.Findings = []Finding{{Summary: "the token " + secret + " is logged", Likelihood: 1, Impact: 1, FixCost: 1, Class: "correctness"}}
-	got = r.toleratedRecord(findingsPolicyOf(optedIn, rigor.Startup, 2, scoresOf(r.lastSenior.Findings), ""), nil)
+	got = r.toleratedRecord(findingsPolicyOf(optedIn, "", rigor.Startup, 2, scoresOf(r.lastSenior.Findings), ""), nil)
 	if got == nil || strings.Contains(got.Findings[0].Title, secret) {
 		t.Fatalf("toleratedRecord left a credential in the record: %+v", got)
 	}
@@ -378,7 +378,7 @@ func TestToleratedRecordKeepsWhatTheModeLetThrough(t *testing.T) {
 		{"poc files nothing so it tolerates nothing", optedIn, rigor.POC},
 		{"a repository that configured nothing", rigor.Config{}, rigor.Pro},
 	} {
-		if pol := findingsPolicyOf(tc.cfg, tc.mode, 2, scoresOf(findings), ""); r.toleratedRecord(pol, nil) != nil {
+		if pol := findingsPolicyOf(tc.cfg, "", tc.mode, 2, scoresOf(findings), ""); r.toleratedRecord(pol, nil) != nil {
 			t.Errorf("%s: the record kept findings the mode did not tolerate", tc.name)
 		}
 	}
@@ -636,7 +636,7 @@ func TestAllDeferredRoundReadsAsTolerated(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			last := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: len(tc.findings)}
-			pol := findingsPolicyOf(optedIn, rigor.Startup, 2, tc.findings, "").withDeferred(tc.deferred)
+			pol := findingsPolicyOf(optedIn, "", rigor.Startup, 2, tc.findings, "").withDeferred(tc.deferred)
 			dec := Decide([]verify.Record{{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}}, "abc", last, pol, nil)
 			if dec.Ready != tc.ready || dec.Reason != tc.reason {
 				t.Errorf("Decide = %v %q, want %v %q", dec.Ready, dec.Reason, tc.ready, tc.reason)
@@ -837,7 +837,7 @@ func TestDecideRefusalsCarryTheirClass(t *testing.T) {
 	changes := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 3}
 	// A round the mode tolerates is ready, not a refusal: it is the one row
 	// below that asserts a class of its own.
-	tolerated := findingsPolicyOf(optedIn, rigor.Startup, 2, []rigor.Score{tiny}, "")
+	tolerated := findingsPolicyOf(optedIn, "", rigor.Startup, 2, []rigor.Score{tiny}, "")
 	cases := []struct {
 		name    string
 		records []verify.Record
@@ -928,10 +928,10 @@ func TestDecideClassMatchesTheReadiness(t *testing.T) {
 	noVerdict := &runstore.ReviewSummary{Round: 2, Verdict: "none"}
 	changes := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 1}
 	waiting := runstore.NewOwnerDecisions([]runstore.OwnerDecision{{Summary: "clear the licence with legal"}})
-	acceptedAtStop := findingsPolicyOf(optedIn, rigor.Startup, 2, []rigor.Score{big}, runstore.StopRoundsSpent)
-	unreadFix := findingsPolicyOf(optedIn, rigor.Startup, 2, []rigor.Score{tiny}, "")
+	acceptedAtStop := findingsPolicyOf(optedIn, "", rigor.Startup, 2, []rigor.Score{big}, runstore.StopRoundsSpent)
+	unreadFix := findingsPolicyOf(optedIn, "", rigor.Startup, 2, []rigor.Score{tiny}, "")
 	unreadFix.UnreadFix = changes
-	stopBlocking := findingsPolicyOf(optedIn, rigor.Startup, 2, []rigor.Score{big}, runstore.StopRoundsSpent)
+	stopBlocking := findingsPolicyOf(optedIn, "", rigor.Startup, 2, []rigor.Score{big}, runstore.StopRoundsSpent)
 	stopBlocking.StopBlocking = []runstore.ReviewSummary{{Round: 1, Verdict: "changes", Findings: 3, Tier: runstore.TierSenior}}
 	cases := []struct {
 		name    string
@@ -943,7 +943,7 @@ func TestDecideClassMatchesTheReadiness(t *testing.T) {
 	}{
 		{"a shipped round is ready", []verify.Record{pass}, ship, FindingsPolicy{}, nil, KindReady},
 		{"a tolerated round is ready", []verify.Record{pass}, changes,
-			findingsPolicyOf(optedIn, rigor.Startup, 2, []rigor.Score{tiny}, ""), nil, KindReady},
+			findingsPolicyOf(optedIn, "", rigor.Startup, 2, []rigor.Score{tiny}, ""), nil, KindReady},
 		{"a round accepted at the stop is ready", []verify.Record{pass}, changes, acceptedAtStop, nil, KindReady},
 
 		{"no test record is blocked", nil, ship, FindingsPolicy{}, nil, KindBlocked},
@@ -993,7 +993,7 @@ func TestFindingsBlocksStayFailed(t *testing.T) {
 	// rows of TestDecideByMode above are the modes' tolerances, and this is the
 	// finding none of them holds.
 	for _, mode := range rigor.Rigors {
-		dec := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(optedIn, mode, 2, []rigor.Score{catastrophic}, ""), nil)
+		dec := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(optedIn, "", mode, 2, []rigor.Score{catastrophic}, ""), nil)
 		if dec.Kind != KindBlocked || dec.Ready {
 			t.Errorf("%s: Decide = %+v, want the refusal `failed` names", mode, dec)
 		}
@@ -1146,7 +1146,7 @@ func TestCapDeferralsNeedACapAndAnOptIn(t *testing.T) {
 	}
 
 	unconfigured := capRun(t, "", capRound[:1])
-	if unconfigured.rigorCfg.Configured() {
+	if unconfigured.rigorCfg.Configured(unconfigured.spec.Repo) {
 		t.Fatal("the case's repository counts as opted in, so it proves nothing")
 	}
 	if got := unconfigured.capDeferrals(); got != nil {
