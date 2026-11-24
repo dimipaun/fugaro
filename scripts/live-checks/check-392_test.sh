@@ -118,11 +118,19 @@ saved_line() {
   printf 'Run `fugaro apply` again to finish the steps it can answer: every step checks the state first, so the ones that already ran cost nothing.\n'
 }
 
-# stage_row NAME WORD: one stage's own row, in the shape the run prints it (a
-# mark, a space, the word padded to the status column, then the stage's name),
-# on stderr -- the command points its own output there for the length of a run.
+# stage_row NAME [WORD]: one stage's own line, in the shape the run prints it
+# (the result's glyph, a space, the stage's name, then the detail that result
+# carries), on stderr -- the command points its own output there for the length
+# of a run so a stage's output can never land on its answer. The plan-view table
+# (a mark, a state word, then the name) is NOT this line: an applying run sends
+# that table to the log, and a fake that printed it here would hide a reader that
+# matched the wrong shape.
 stage_row() {
-  printf '  %s %-13s %-16s %s\n' "✔" "${2:-done}" "$1" "the $1 stage ran" >&2
+  if [ "${2:-done}" = "left for you" ]; then
+    printf '%s %s: %s\n' "!" "$1" "the $1 stage is left for you" >&2
+    return
+  fi
+  printf '%s %s %s\n' "✔" "$1" "the $1 stage ran" >&2
 }
 
 # publish: what a run that really answered the policy step leaves behind -- the

@@ -457,33 +457,51 @@ def pending(path):
             print("applied=%s" % a)
 
 
-# A stage's own row in a run's transcript: the status column (a mark, a space,
-# and the stage's word, padded), then the stage's name, then whatever it says.
-# The words are initflow's own (stateLabel) and the two-word ones are here whole
-# so a line is matched by what it is rather than by where its columns fell.
-STAGE_WORDS = ("billing pending", "waiting for billing", "left for you", "will do",
-               "done", "changed", "skipped", "failed", "waiting")
-STAGE_ROW = re.compile(r"^\s*\S+[ \t]+(?:%s)[ \t]+(\S+)"
-                       % "|".join(re.escape(w) for w in STAGE_WORDS))
+# A stage's own line in a run's transcript, as internal/report prints it: the
+# result's glyph, a space, the stage's name, and then the detail that result
+# carries — `sep` is " " for a tick and a skip and ": " for a failure or a step
+# left for you (report.go's end). The glyphs are the ones a step's own result
+# can carry (style.go: a tick, a skip, a cross, the left-for-you marker), and
+# NOT the waiting arrow: `↳ <text>` carries no stage name. The plan-view table —
+# a mark, a state word, then the name — is deliberately not matched here: an
+# applying run points that table at the log (Options.Detail) and what the run's
+# own stream carries is these step lines, which is what a check reading the
+# command's stderr sees. This is check 391's reading, and the two have to agree:
+# a reader matching the other shape finds no row at all on a real run.
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+STEP_GLYPHS = ("✔", "+", "–", "-", "✖", "x", "!")
+STEP_ROW = re.compile(r"^(?:%s) +([^\s:]+)(?:$|[ \t:])"
+                      % "|".join(re.escape(g) for g in STEP_GLYPHS))
 
 
-def transcript(path):
-    """The stage rows of a run's own transcript, one `row=<name> count=<n>` line
-    per stage it printed, and the `applied <names>` line the command ends on.
-    For the forced run the rows are what carries the refusal: the loop reports a
-    coding agent's session as the stage's own reason there, and the sentence
-    goes to the run's writer, which this command points at stderr for the length
-    of the run."""
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            text = fh.read()
-    except OSError:
+def transcript(*paths):
+    """The stages of a run's own transcript, one `row=<name> count=<n>` line per
+    stage it printed a result for, and the `applied <names>` line the command
+    ends on. The count is the whole reading: a stage the loop reached once
+    prints one line, and a record that queued the same step per change would
+    reach it more than once.
+
+    Both of the run's streams are read, because the two lines live on different
+    ones: the stages are the step lines the reporter writes to stderr for the
+    length of a run, and `applied <names>` is the account the command ends on,
+    which goes to stdout. `read=no` is a reading that could open no file at all,
+    which is not the same answer as a run whose stages printed nothing."""
+    text = ""
+    got = False
+    for path in paths:
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                text += fh.read() + "\n"
+            got = True
+        except OSError:
+            continue
+    if not got:
         print("read=no")
         return
     print("read=yes")
     counts = {}
-    for line in text.splitlines():
-        m = STAGE_ROW.match(line)
+    for line in ANSI.sub("", text).splitlines():
+        m = STEP_ROW.match(line)
         if m:
             counts[m.group(1)] = counts.get(m.group(1), 0) + 1
             continue
@@ -507,7 +525,7 @@ if __name__ == "__main__":
     elif cmd == "pending":
         pending(sys.argv[2])
     elif cmd == "transcript":
-        transcript(sys.argv[2])
+        transcript(*sys.argv[2:])
     else:
         sys.exit(64)
 PY
