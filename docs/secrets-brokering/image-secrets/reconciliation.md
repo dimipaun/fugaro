@@ -8,10 +8,11 @@
 of it is built. Images declare no secrets; **workflows** do (`workflows.<w>.secrets` in `fugaro.yaml`),
 and the parent plan's slice S3 (flip B3.8, shipped in 0.27.0) already serves them through the
 credentials service with no mount and no job accessor, fetched by the runner at bootstrap, fail
-closed, audited per call. The Cloud Batch (VM) backend mounts nothing (D3104) and there is no gen-1
-Cloud Run job. What this plan does is close what is left: workflow secrets of repositories the switch
-holds off, the catalog build's git credential, the Terraform that a new secret name still needs, file
-exposure, and a guard that keeps a mount from coming back. The owner turned the rest of the spec into
+closed, audited per call; and the owner's own D2313 already switched repository-level secrets off, so
+every run reads the project copy alone. The Cloud Batch (VM) backend mounts nothing (D3104) and there is no gen-1
+Cloud Run job. What this plan does is close what is left: workflow secrets of vertex repositories, the catalog
+build's git credential, the Terraform that a new secret name still needs, file exposure, and a guard
+that keeps a workflow-secret mount from coming back. The owner turned the rest of the spec into
 decisions D3320–D3333 below.
 
 ## 1. Assumptions
@@ -88,10 +89,15 @@ decisions D3320–D3333 below.
 - **F7 (Wrong).** §5 step 3 says the credential-service value wins when both exist. The code says a
   mounted value always wins (`fetchWorkflowSecrets` fetches only a variable the job does not carry).
   Moot once nothing mounts; the plan keeps the code's rule during the migration.
-- **F8 (Gap).** Adding a workflow secret needs Terraform today: `modules/repo/secrets.tf` creates each
-  repository's container (`google_secret_manager_secret.this`), and the service's per-container
-  accessor is `modules/workflow/sa.tf` `google_secret_manager_secret_iam_member.service` (D2074).
-  Changing a value needs nothing. *Consequence:* D3323, D3324, D3325.
+- **F8 (Gap; amended after review).** Adding a workflow secret needs Terraform today. The copy a run
+  reads is the project copy (F16), created by `modules/installation/secrets.tf`
+  `google_secret_manager_secret.project` (with `prevent_destroy`, so it can only gain keys), named by
+  `gcp.ProjectSecretID`, and admitted per repository by the operator-local `workflow_secrets`
+  allow-list; the service's per-container accessor is `modules/workflow/sa.tf`
+  `google_secret_manager_secret_iam_member.service` (D2074). `modules/repo/secrets.tf`'s repository
+  containers still exist but are dormant under D2313. Changing a value needs nothing.
+  *Consequence:* D3323, D3324, D3325; retiring a project copy needs a state removal before the
+  container is deleted (U5).
 - **F9 (Exists).** The grant D3323 asks for is on `main`: `credentials_prefix_accessor` covers the
   `fugaro_p_` prefix, and `config.SecretNameRE` (`^[a-z0-9][a-z0-9-]{0,62}$`) fits the grammar's name
   rule (`internal/secretname` `nameRE`). *Consequence:* no new IAM for the service. The header comment
@@ -113,6 +119,35 @@ decisions D3320–D3333 below.
 - **F14 (Rule).** "Fugaro asks for nothing" (CLAUDE.md, `docs/no-prompt-policy/`) and the owner-only
   fence on `fugaro secrets allow`/`deny` (D1552) hold for the new commands: storing and allow-listing
   a secret is the owner's own step, refused in an agent's session, with no prompt.
+- **F16 (Rule; found in review round 1).** D2313 (docs/shared-jobs-default) already disables
+  repository-level secrets: `config.RepoSecretsOff = true` (`internal/config/secrets_disabled.go`),
+  readiness mounts no repository-level name, `fugaro secrets set` answers
+  `config.RepoSecretsDisabledNotice` for one, and the record names only the project copy
+  (`internal/cli/update_workflowsecrets.go` `workflowSecretMountID`). The ruling keeps the dormant code
+  so the feature can return. *Consequence:* D3324 and D3334 rested on a wrong fact and are amended
+  below; this plan leaves D2313's dormant code alone.
+- **F17 (Gap; review round 1).** An address is a model switch: `internal/runner/gateway.go`
+  `serviceSwitched` is true for `api-key`/`oauth` whenever the job carries the service's address, so
+  handing the address to a repository held off by budget mode `off` or a not-ready root would move its
+  model calls. *Consequence:* D3326 amended to vertex only.
+- **F18 (Gap; review round 1).** `fugaro_p_` holds admin-chosen credential names: the intake stores
+  any grammar-conforming name, and `config.ReservedSecrets` is a closed list of four. A closed-list
+  check cannot keep a workflow secret off a shared credential's container. *Consequence:* a workflow
+  secret's container carries a marker label written when it is stored; a store refuses a container
+  that exists without it, and the service serves only names the record holds as workflow secrets
+  whose container carries it (G2).
+- **F19 (Gap; review round 1).** The agent runs as the runner's own uid (no `SysProcAttr` in
+  `internal/agent` or `internal/runner`), so a `0400` file does not keep a review stage from reading
+  it. *Consequence:* a secret file exists only outside review stages and never in a review run (G3).
+- **F20 (Gap; review round 1).** Shared project jobs, the default for most runs, carry no workflow
+  secret: `infra.projectJobSecrets` admits only reserved names and provider keys. *Consequence:* D3335.
+- **F21 (Gap; review round 1).** S3's route binds a variable to one workflow, and its review-class
+  refusal rests on that (`internal/runner/workflowsecrets.go` header). D3333 makes the repository the
+  unit, so the refusal of every caller class that is not a per-repository coding job (review, shared,
+  build identity, coordinator, a person) has to be restated and tested on version 2.
+- **F22 (Gap; review round 1).** A repository's `fugaro.yaml` is repository-controlled (an agent can
+  edit it). A declaration must never become a grant: the allow-list is the owner's alone, seeded only
+  from the operator's `workflow_secrets` `allow_data_to`.
 - **F15 (Rule).** "`fugaro update` is the whole upgrade" and "safe while runs are in flight"
   (CLAUDE.md; `docs/design/update-in-flight.md`): the migration of existing containers (D3325) runs
   inside `update` with a convergence test, and changes nothing a running execution holds.
@@ -127,9 +162,9 @@ this document.
 | D3320 | What does this spec become, given F2? | A closure plan: the leftover classes no other plan owns; KS16 and C2.3 by reference | **As recommended** (2026-11-23): no duplicate machinery |
 | D3321 | Scope of "nothing else reads Secret Manager" | Run jobs only (per-repository, shared, Batch, build, image check); installation services stay listed exceptions under B0.2 | **As recommended** (2026-11-23) |
 | D3323 | Adding, removing or changing a workflow secret needs no Terraform: which grant? | The prefix-conditioned grant (one, at install), over per-container grants or a project-wide accessor | **As recommended, after the owner asked why a grant is needed at all** (2026-11-23). First asked as "keep per-container grants (D2074)"; the owner rejected that framing. Reopens D2074 for workflow secrets |
-| D3324 | Per-repository or project secrets? | Project only: every workflow secret is `fugaro_p_<name>`; the repository copy and D1262's repo-then-project order go | **As recommended, on the owner's own question** (2026-11-23). First asked as a naming question with a repository prefix recommended; the owner asked whether per-repository should exist at all |
+| D3324 | Per-repository or project secrets? | Project only: every workflow secret is `fugaro_p_<name>`; the repository copy and D1262's repo-then-project order go | **As recommended, on the owner's own question** (2026-11-23). First asked as a naming question with a repository prefix recommended; the owner asked whether per-repository should exist at all. **Amended after review** (2026-11-23, F16): project-only is already the state under D2313; the plan moves the project copies into the grammar and leaves D2313's dormant repository-level code as that ruling keeps it (the owner's answer to the amendment) |
 | D3325 | How does `update` converge existing containers? | Copy each latest enabled version into its `fugaro_p_` container as the operator, rewrite the record, then drop the old grants and containers | **As recommended** (2026-11-23) |
-| D3326 | Serve workflow secrets to repositories the switch holds off? | Yes: serving workflow secrets stops depending on the model-auth switch | **As recommended** (2026-11-23). Rests on U1 |
+| D3326 | Serve workflow secrets to repositories the switch holds off? | Yes: serving workflow secrets stops depending on the model-auth switch | **As recommended** (2026-11-23). Rests on U1. **Amended after review** (2026-11-23, F17): vertex repositories only; the flip waits for always-a-budget's removal of mode `off`, and a not-ready root converges when update re-applies it (the owner's answer to the amendment) |
 | D3327 | Add file exposure? | Yes: `file: true` on a secret entry; the runner writes a `0400` tmpfs file and sets the variable to its path | **As recommended** (2026-11-23) |
 | D3328 | Which repositories may fetch a project secret by default? | An explicit list per secret (`--repo`, or `--all-repos`); unlisted is refused with the fix | **As recommended** (2026-11-23) |
 | D3329 | A batch `secrets:resolve` route? | No: keep `/v1/workflow-secrets`, one variable per call | **As recommended** (2026-11-23) |
@@ -137,31 +172,37 @@ this document.
 | D3331 | What regression guard to add? | A mount rule in B0.2 (no `secret_key_ref`/`availableSecrets` in run-job modules and Go job builders) plus a doctor check listing any deployed job with a `value_source` | **As recommended** (2026-11-23) |
 | D3332 | Refetch during long runs? | No: fetch once at bootstrap | **As recommended** (2026-11-23) |
 | D3333 | How does the service learn what a run may fetch? | The run names the logical secret from its own `fugaro.yaml` (a new request field, format version bumped); the service checks the verified job's repository against the secret's allow-list | **As recommended** (2026-11-23). The unit of access becomes the repository, not the workflow |
-| D3334 | Two repositories hold different values under one name when `update` copies them into `fugaro_p_<name>` (D3325): what does update do? | Stop that name only: converge every other name, leave the colliding name on its current path, print one line naming both repositories and the fix (rename one in `fugaro.yaml`, store it with `fugaro secrets shared set`); the next update finishes it | **As recommended** (2026-11-23). Asked during planning, after the reconciliation was written |
+| D3334 | *(withdrawn after review, F16: under D2313 one name has one project copy, so no collision can occur)* Two repositories hold different values under one name when `update` copies them into `fugaro_p_<name>` (D3325): what does update do? | Stop that name only: converge every other name, leave the colliding name on its current path, print one line naming both repositories and the fix (rename one in `fugaro.yaml`, store it with `fugaro secrets shared set`); the next update finishes it | **As recommended** (2026-11-23). Asked during planning, after the reconciliation was written |
 
 ### Consequences of the answers, stated once
 
-- **The record changes shape (D3324, D3328, D3333).** `creds/workflowsecrets/<slug>` (one record per
-  repository, mapping each workflow's variables to containers) is replaced by one project record:
-  for each secret name, the list of repository patterns allowed to fetch it. The service no longer
-  needs to know a workflow's variables; the run sends `{name}` and the service answers the value of
-  `fugaro_p_<name>` when the verified job's repository matches the list. The response still echoes
-  what was asked. This is a new wire version of the request and the record (CLAUDE.md, "a field never
-  changes meaning"); the `env` field is not reused.
+- **The record changes shape (D3324, D3328, D3333).** Beside `creds/workflowsecrets/<slug>` (one
+  record per repository, mapping each workflow's variables to containers, read by version 1 until the
+  follow-up removes it), one project record `creds/projectsecrets` holds, for each workflow-secret
+  name, the repository patterns allowed to fetch it. The run sends `{name, version: 2}`; the service
+  answers the value of `fugaro_p_<name>` when the name is in the record, its container carries the
+  workflow-secret marker (F18), the caller is a per-repository coding job (F21) and its verified
+  repository matches the list, and otherwise refuses with the fix. The `env` field is not reused for
+  another meaning (CLAUDE.md, "a field never changes meaning").
 - **Commands (D3323, D3328, F14).** `fugaro secrets shared set NAME` stores the value through the
   intake (exists). `fugaro secrets allow NAME PATTERN...` / `deny` write the allow-list to the
   service's record instead of the operator-local `workflow_secrets` block, behind the same owner-only
   fence. `fugaro secrets set NAME` for a workflow secret's name is redirected to the shared form.
   No command touches Terraform; none prompts.
-- **Terraform leaves (D3323, D3324).** `modules/repo/secrets.tf` stops creating workflow-secret
-  containers, `modules/workflow/sa.tf` stops granting the job and the service on them, and
-  `local.vault_secret_names` is no longer needed for that class. The git credential and model
-  credentials keep their own containers and paths; this plan does not move them.
-- **Held-off repositories (D3326).** A repository the model switch holds off still gets the
-  service's address and the invoker grant whenever the installation has a service, so its runner can
-  fetch workflow secrets. Its model credentials stay as the switch says.
+- **Terraform leaves (D3323, D3324).** `modules/installation/secrets.tf` stops creating a project
+  copy for a workflow-secret name (each instance is removed from state first, `prevent_destroy`
+  being on the resource, then update deletes the container once its value is in `fugaro_p_<name>`),
+  `modules/workflow/sa.tf` stops granting the job and the service on one, and
+  `local.vault_secret_names` is no longer needed for that class. `modules/repo/secrets.tf`'s dormant
+  containers stay (D2313). The git credential and model credentials keep their own containers and
+  paths; this plan does not move them.
+- **Vertex repositories (D3326 as amended).** A vertex repository gets the service's address and the
+  invoker grant whenever the installation has a service, so its runner can fetch workflow secrets;
+  vertex is never model-switched, so its model path does not move (F17).
 - **Granularity (D3333).** Any workflow of an allowed repository may fetch the secret, where S3 bound
   a variable to one workflow (G19). Accepted with the answer.
+
+| D3335 | Serve workflow secrets to shared-job runs (F20)? | No: out of scope, a gap with its own follow-up spec; version 2 refuses a shared-job caller, with a test | **As recommended** (2026-11-23, asked after review round 1) |
 
 ### Resolutions (one defensible answer, stated rather than asked)
 
@@ -183,7 +224,14 @@ this document.
   their plans. **Answer:** the guard allows exactly two named "until" rows, the shared jobs' App key
   (until C2.3) and provider keys (until KS16); the owning task's pull request deletes its row, and
   nothing else may be added.
-- **T2 (answered 2026-11-23).** D3334 leaves a colliding name "on its current path", and for a
+- **T3 (answered 2026-11-23, after review round 1).** T1's absolute rule cannot pass: vertex
+  repositories keep git and model mounts (G7), the image-check job and unserved builds keep the git
+  credential, and per-repository provider keys still mount. **Answer:** the mount rule is scoped to
+  the workflow-secret class (no workflow or build secret mounted in a run job, no accessor on one for
+  the catalog build identity); every other class stays its existing `secret-readers.md` row with the
+  plan that ends it. This amends T1's "exactly two": the two until-rows remain for the shared jobs'
+  classes C2.3 and KS16 own, inside a rule that no longer claims the other classes.
+- **T2 (withdrawn after review, F16).** Recorded as first answered: D3334 leaves a colliding name "on its current path", and for a
   held-off (vertex) repository that path is a mount, which T1's two-row guard does not admit.
   **Answer:** a colliding name stays on S3's per-container fetch (`/v1/workflow-secrets` version 1
   and the service's per-container grant), for held-off repositories too (they gain the address,
@@ -204,5 +252,8 @@ this document.
   that task widens the filter to workflow-secret names and pins G2.
 - **U3.** Whether `internal/infra/retire.go` can retire a workflow-secret container that has a live
   version without an operator step. *Settles it:* the migration task's convergence test.
+- **U5.** Whether Terraform 1.9's `removed` block can forget one `for_each` instance of
+  `google_secret_manager_secret.project`, or whether `internal/infra` must run `terraform state rm`
+  per instance before the apply. *Settles it:* IS6's convergence test. *Who:* that task's run.
 - **U4.** That no deployed job of the owner's installations still carries a workflow-secret
   `value_source` after the release. *Settles it:* Check 920, owner-run.

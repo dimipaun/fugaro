@@ -15,6 +15,7 @@
         "paths": [
           "internal/credsvc/wire.go",
           "internal/config/config.go",
+          "internal/config/validate.go",
           "schemas/fugaro.schema.json",
           "docs/secrets-brokering/image-secrets/contract.md",
           "internal/credsvc/workflowsecrets_stub.go"
@@ -92,14 +93,14 @@
           "internal/cli/secrets.go",
           "internal/cli/secrets_test.go",
           "internal/intake/handlers.go",
-          "internal/intake/server_test.go",
-          "internal/config/validate.go"
+          "internal/intake/gcp.go",
+          "internal/intake/server_test.go"
         ]
       }
     },
     {
       "id": "IS5",
-      "title": "fugaro update migrates workflow secrets to the project",
+      "title": "fugaro update copies workflow secrets into the grammar",
       "run": null,
       "version": null,
       "tier": "large",
@@ -109,7 +110,6 @@
         "paths": [
           "internal/cli/update_workflowsecrets.go",
           "internal/cli/update_workflowsecrets_test.go",
-          "internal/infra/retire.go",
           "internal/backend/gcp/secrets.go",
           "internal/cli/update_in_flight_test.go"
         ]
@@ -134,7 +134,7 @@
     },
     {
       "id": "IS9",
-      "title": "repositories the model switch holds off get the address",
+      "title": "vertex repositories get the address",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -152,7 +152,7 @@
     },
     {
       "id": "IS6",
-      "title": "the flip: no workflow-secret mount, container or per-container grant",
+      "title": "the flip: no workflow-secret mount, grant or project copy",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -160,18 +160,18 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "deploy/terraform/gcp/modules/repo/secrets.tf",
+          "deploy/terraform/gcp/modules/installation/secrets.tf",
           "deploy/terraform/gcp/modules/workflow/sa.tf",
           "internal/infra/spec.go",
+          "internal/infra/retire.go",
           "internal/cli/recipes_skew.go",
-          "deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl",
           "deploy/terraform/terraform_test.go"
         ]
       }
     },
     {
       "id": "IS7",
-      "title": "the guard's mount rule",
+      "title": "the guard's mount rule for the workflow-secret class",
       "run": null,
       "version": null,
       "tier": "small",
@@ -204,7 +204,7 @@
     },
     {
       "id": "IS10",
-      "title": "doctor lists a deployed job's mounts",
+      "title": "doctor lists a deployed job's workflow-secret mounts",
       "run": null,
       "version": null,
       "tier": "small",
@@ -300,12 +300,12 @@
     {
       "task": "IS6",
       "needs": "IS5",
-      "reason": "data: the values must be in the project containers before the old ones go"
+      "reason": "data: the values must be in fugaro_p_ containers before the old ones go"
     },
     {
       "task": "IS6",
       "needs": "IS9",
-      "reason": "behaviour and files: held-off repositories fetch before their mounts go; both edit spec.go, sa.tf and repo.tftest.hcl"
+      "reason": "behaviour and files: vertex repositories fetch before their mounts go; both edit spec.go and sa.tf"
     },
     {
       "task": "IS7",
@@ -354,7 +354,7 @@
       "change": "R-request",
       "contract": "C1",
       "raised_by": "IS1",
-      "reason": "if the version-1 fallback for a colliding name cannot be answered from env alone",
+      "reason": "if version 2's refusal codes cannot tell the runner unlisted from unmarked well enough to print the right fix (IS2 would raise the same change)",
       "affects": [
         "IS1",
         "IS2",
