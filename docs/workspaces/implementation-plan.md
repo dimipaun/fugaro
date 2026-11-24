@@ -4,12 +4,13 @@
 **answered**, every one as recommended, so no task below is waiting on a decision any more. **Two of
 them were amended on 2026-11-04, after the design merged and its security review ran** — D1299,
 D1300 and D1301, marked below [reconciliation.md](reconciliation.md) §4 and §8 — and the tasks they
-bind (W4–W7) carry the amended shape. **No task is approved**: the owner approves each task by name.
-The one gate this file used to hold is open: [spec.md](spec.md) §8's threat model was reviewed
+bind (W4–W7) carry the amended shape. **A task starts only on the owner's approval of it by name, and every task below has it**: the owner approves each task by name, the ten were approved
+afterwards, and each is merged. The one gate this file used to hold is open:
+[spec.md](spec.md) §8's threat model was reviewed
 independently in the post-merge round — the coordinator runs that review, not this plan's author and
 not the runs that implement anything — and the review's **seven findings and the owner's answers to
-all of them are [reconciliation.md](reconciliation.md) §2f's F33**. What is left shut is the owner's
-approval of each task.
+all of them are [reconciliation.md](reconciliation.md) §2f's F33**. Both gates are behind it: the
+review has run, and the approval by name is what launched each task.
 
 Repository names in this file are placeholders (`owner/repo-a`, `owner/repo-b`), a person is
 `person-1`, and a workspace is `workspace-alpha`. No test named here uses a real credential, a real

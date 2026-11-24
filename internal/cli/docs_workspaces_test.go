@@ -98,7 +98,7 @@ func TestDocsWorkspacesIsWritten(t *testing.T) {
 		// SECURITY review of spec.md §8, which the coordinator runs.
 		"independent SECURITY review is **mandatory before this design merges**",
 		"**the coordinator runs it**",
-		"**No task is approved**",
+		"**A task starts only on the owner's approval of it by name, and every task below has it**",
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s does not state %q: the plan gates every task on the security review and on the owner approving each task by name, so a later edit that dropped either would leave a task looking startable",
