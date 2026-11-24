@@ -429,6 +429,11 @@ func appendProjectConfig(t *testing.T, path, yaml string) {
 // the file this follow-up reads sets nothing.
 func TestBaseBranchOnAFollowUp(t *testing.T) {
 	f := newCloudFixture(t)
+	// The image the launch runs on has to read the task's base_branch
+	// (baseBranchSince), and a titled --pr follow-up needs one that knows
+	// titles too: an older record would have the field dropped before the
+	// assertion below, which is what this test is about.
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+baseBranchSince)
 	root := firstRunSpec(rootID)
 	root.Ref, root.BaseBranch = "master", "master"
 	seedSpec(t, f, root, false)

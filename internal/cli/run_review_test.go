@@ -21,7 +21,7 @@ import (
 // ReviewPRs empty.
 func TestRunRecipeReviewModeWritesReviewPRs(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	seedTitleAwareImage(t, f)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "review-only", "--pr", "7"); err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestRunRecipeReviewModeWritesReviewPRs(t *testing.T) {
 // recipe or ref would end up embedded instead of review-only's.
 func TestRunRecipeReviewModeIgnoresAnyExistingChain(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	seedTitleAwareImage(t, f)
 	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--recipe", "review-only"); err != nil {
 		t.Fatal(err)
@@ -78,7 +78,7 @@ func TestRunSeveralPRNeedsReviewRecipe(t *testing.T) {
 // when --recipe is absent.
 func TestRunSeveralPRWithNonReviewRecipeNeedsReviewRecipe(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	seedTitleAwareImage(t, f)
 	wantRefused(t, f, "several --pr need a review-mode recipe such as pick", "run", "--repo", "acme/app", "--recipe", "solo", "--pr", "7", "--pr", "8")
 }
 
@@ -96,7 +96,7 @@ func TestRunAtMostFourPR(t *testing.T) {
 // both, in order.
 func TestRunPickWritesSeveralReviewPRs(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	seedTitleAwareImage(t, f)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "pick", "--pr", "7", "--pr", "9"); err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestRunPickWritesSeveralReviewPRs(t *testing.T) {
 // two --pr.
 func TestRunReviewOnlyRefusesSeveralPR(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	seedTitleAwareImage(t, f)
 	wantRefused(t, f, "review-only needs exactly 1 --pr, got 2", "run", "--repo", "acme/app", "--recipe", "review-only", "--pr", "7", "--pr", "9")
 }
 
@@ -129,7 +129,7 @@ func TestRunReviewOnlyRefusesSeveralPR(t *testing.T) {
 // finding no error for --recipe pick with one --pr.
 func TestRunPickRefusesSinglePR(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	seedTitleAwareImage(t, f)
 	wantRefused(t, f, "pick needs 2 to 4 --pr, got 1", "run", "--repo", "acme/app", "--recipe", "pick", "--pr", "7")
 }
 
@@ -138,7 +138,7 @@ func TestRunPickRefusesSinglePR(t *testing.T) {
 // from a pull request's own history).
 func TestRunReviewModeKeepsRefWorkflowFlags(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	seedTitleAwareImage(t, f)
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "review-only", "--pr", "7", "--ref", "main", "--workflow", "web")
 	if err != nil {
 		t.Fatal(err)
@@ -155,7 +155,7 @@ func TestRunReviewModeKeepsRefWorkflowFlags(t *testing.T) {
 // pins the exact invocation the plan names.)
 func TestRunReviewModeWithoutPR(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	seedTitleAwareImage(t, f)
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", "review-only", "x")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "mode: review") {
 		t.Fatalf("err = %v", err)
