@@ -78,7 +78,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/mobilesession"
-	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // mobileRequestBytes bounds either route's body. A refresh is a token of a few
@@ -101,7 +100,7 @@ type MobileRefresh interface {
 	Owner(ctx context.Context, project, token string) (uid string, ok bool, err error)
 }
 
-// MobileDevice is the device node (D2791) as a session reads it: the address
+// MobileSessionDevice is the device node (D2791) as a session reads it: the address
 // the roster is re-checked against, the role the pairing resolved and this
 // route rewrites (O14), and the public key the caller's signature is verified
 // with (O6).
@@ -110,7 +109,7 @@ type MobileRefresh interface {
 // provider and the sub are the pairing's and the policy's business (P3), and a
 // field read here that nothing here uses would be a field this route would
 // refuse a node for lacking.
-type MobileDevice struct {
+type MobileSessionDevice struct {
 	// Email is the address the device was paired for, and it is the who of
 	// this act: the audit line's caller and the roster's key.
 	Email string `json:"email"`
@@ -129,7 +128,7 @@ type MobileDeviceStore interface {
 	// Device reads the node at config/admin/devices/$uid, reporting false when
 	// there is none — an admin's revoke, a re-pairing's retirement of the old
 	// node, or a node this route removed itself.
-	Device(ctx context.Context, uid string) (MobileDevice, bool, error)
+	Device(ctx context.Context, uid string) (MobileSessionDevice, bool, error)
 	// SetRole rewrites the node's role and nothing else, which is what O14
 	// asks for at every refresh: the roster is the one source, and a copy on
 	// the node that no refresh rewrote would be a second one.
@@ -153,14 +152,14 @@ type RTDBDevices struct {
 }
 
 // Device reads one device node.
-func (d RTDBDevices) Device(ctx context.Context, uid string) (MobileDevice, bool, error) {
+func (d RTDBDevices) Device(ctx context.Context, uid string) (MobileSessionDevice, bool, error) {
 	if err := checkMobileUID(uid); err != nil {
-		return MobileDevice{}, false, err
+		return MobileSessionDevice{}, false, err
 	}
-	var node MobileDevice
+	var node MobileSessionDevice
 	found, err := d.DB.Get(ctx, mobileDevicePath(uid), &node)
 	if err != nil || !found {
-		return MobileDevice{}, false, err
+		return MobileSessionDevice{}, false, err
 	}
 	return node, true, nil
 }
@@ -469,11 +468,11 @@ func (m *MobileSession) owner(ctx context.Context, w http.ResponseWriter, refres
 // a custom token keeps working until the node is deleted). So a family whose
 // node is gone is a family with nothing behind it, and the refresh removes it
 // rather than leaving a live token pointing at no device.
-func (m *MobileSession) device(ctx context.Context, w http.ResponseWriter, uid string) (MobileDevice, bool) {
+func (m *MobileSession) device(ctx context.Context, w http.ResponseWriter, uid string) (MobileSessionDevice, bool) {
 	dev, found, err := m.cfg.Devices.Device(ctx, uid)
 	if err != nil {
 		m.unavailable(w, "the device node could not be read", err)
-		return MobileDevice{}, false
+		return MobileSessionDevice{}, false
 	}
 	if !found {
 		if err := m.cfg.Refresh.Revoke(ctx, m.cfg.Project, uid); err != nil {
@@ -481,7 +480,7 @@ func (m *MobileSession) device(ctx context.Context, w http.ResponseWriter, uid s
 		}
 		m.refuseMobile(w, http.StatusForbidden, mobilesession.CodeDeviceRevoked,
 			"this device is not paired with this project, so the phone signs the project out")
-		return MobileDevice{}, false
+		return MobileSessionDevice{}, false
 	}
 	return dev, true
 }
@@ -494,7 +493,7 @@ func (m *MobileSession) device(ctx context.Context, w http.ResponseWriter, uid s
 // for a signature its device never made would be recording a person for an act
 // that was somebody else's. The service's own log carries it instead, with the
 // uid and no other value.
-func (m *MobileSession) possession(w http.ResponseWriter, uid string, dev MobileDevice, refreshToken, signature string, purpose mobilesession.SignaturePurpose) bool {
+func (m *MobileSession) possession(w http.ResponseWriter, uid string, dev MobileSessionDevice, refreshToken, signature string, purpose mobilesession.SignaturePurpose) bool {
 	key, err := mobileDecode(dev.DevicePublicKey, mobilesession.DevicePublicKeySize)
 	if err != nil {
 		m.unavailable(w, "the device node's public key cannot be read, so no signature can be checked against it", err)
@@ -522,7 +521,7 @@ func (m *MobileSession) possession(w http.ResponseWriter, uid string, dev Mobile
 // written first, then the family is revoked and the device node deleted (F32,
 // O14), so the Firebase refresh token the app holds stops opening the database
 // at the same moment.
-func (m *MobileSession) membership(ctx context.Context, w http.ResponseWriter, uid string, dev MobileDevice) (access.Role, bool) {
+func (m *MobileSession) membership(ctx context.Context, w http.ResponseWriter, uid string, dev MobileSessionDevice) (access.Role, bool) {
 	role, err := m.cfg.Roster.RoleAtProject(ctx, dev.Email)
 	if err != nil {
 		m.unavailable(w, "the roster could not be read, so this session's membership cannot be re-checked", err)
@@ -577,7 +576,7 @@ func (m *MobileSession) sessionPolicy(ctx context.Context, w http.ResponseWriter
 // consumer resolves the role from the roster at every action anyway (D2791), so
 // what this buys is that a CLI or a console reading the node sees the same role
 // the roster would answer.
-func (m *MobileSession) rewriteRole(ctx context.Context, w http.ResponseWriter, uid string, dev MobileDevice, role access.Role) bool {
+func (m *MobileSession) rewriteRole(ctx context.Context, w http.ResponseWriter, uid string, dev MobileSessionDevice, role access.Role) bool {
 	if dev.Role == string(role) {
 		return true
 	}
@@ -607,7 +606,7 @@ func (m *MobileSession) mint(ctx context.Context, w http.ResponseWriter, uid str
 // path writes one line and never two, so a rotation that fails once the line is
 // written is answered with the refusal and the service's own log, and the
 // operator reads one act where there was one attempt.
-func (m *MobileSession) auditOK(ctx context.Context, w http.ResponseWriter, dev MobileDevice, purpose string) bool {
+func (m *MobileSession) auditOK(ctx context.Context, w http.ResponseWriter, dev MobileSessionDevice, purpose string) bool {
 	if err := m.cfg.Audit.Write(ctx, AuditEvent{Caller: dev.Email, Purpose: purpose, Status: StatusOK}); err != nil {
 		m.log.Error("credsvc: a mobile act's audit line was not written", "error", err)
 		m.refuseMobile(w, StatusUnavailable, "", "the act could not be recorded, so it was not made")
@@ -682,21 +681,6 @@ func (m *MobileSession) answer(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
-}
-
-// mobileSessionPolicy is C1's SessionPolicy from the published policy: the
-// costly modes and the biometric switch (P6, D2786).
-//
-// CompactThresholdPercent stays 0, which the contract reads as "this project
-// set no automatic compaction": the policy member behind it is a task of its
-// own (Z2), and a threshold this build invented would be a phone offering to
-// compact on a number the project never chose.
-func mobileSessionPolicy(p *projectpolicy.Policy) mobilesession.SessionPolicy {
-	out := mobilesession.SessionPolicy{BiometricOnCostly: p.MobileBiometricOnCostly()}
-	for _, mode := range p.MobileCostlyModes() {
-		out.CostlyModes = append(out.CostlyModes, string(mode))
-	}
-	return out
 }
 
 // mobileDevicePath is one device node: the allowlist the rules read (D166) and

@@ -312,19 +312,19 @@ func (f *fakeMobileRefresh) Revoke(_ context.Context, _, family string) error {
 // fakeMobileDevices is the device node store, recording what it was asked to
 // write so that "the node went with the family" is a fact a test can read.
 type fakeMobileDevices struct {
-	nodes   map[string]MobileDevice
+	nodes   map[string]MobileSessionDevice
 	deleted []string
 	roles   map[string]access.Role
 	readErr error
 }
 
-func newFakeMobileDevices(nodes map[string]MobileDevice) *fakeMobileDevices {
+func newFakeMobileDevices(nodes map[string]MobileSessionDevice) *fakeMobileDevices {
 	return &fakeMobileDevices{nodes: nodes, roles: map[string]access.Role{}}
 }
 
-func (f *fakeMobileDevices) Device(_ context.Context, uid string) (MobileDevice, bool, error) {
+func (f *fakeMobileDevices) Device(_ context.Context, uid string) (MobileSessionDevice, bool, error) {
 	if f.readErr != nil {
-		return MobileDevice{}, false, f.readErr
+		return MobileSessionDevice{}, false, f.readErr
 	}
 	node, ok := f.nodes[uid]
 	return node, ok, nil
@@ -421,7 +421,7 @@ func newMobileFixture(t *testing.T, opts ...func(*mobileFixture)) *mobileFixture
 	for _, opt := range opts {
 		opt(f)
 	}
-	f.devices = newFakeMobileDevices(map[string]MobileDevice{
+	f.devices = newFakeMobileDevices(map[string]MobileSessionDevice{
 		uid: {Email: f.person, Role: f.nodeRole, DevicePublicKey: f.pub},
 	})
 	f.roster = &fakeMobileRoster{roles: map[string]access.Role{f.person: access.RoleAdmin}}
@@ -580,7 +580,7 @@ func TestMobileSessionRefreshAnswersASuccessorAndACustomToken(t *testing.T) {
 func TestMobileSessionRefreshRewritesARoleThatMoved(t *testing.T) {
 	f := newMobileFixture(t)
 	f.nodeRole = string(access.RoleViewer)
-	f.devices.nodes[f.uid] = MobileDevice{Email: f.person, Role: f.nodeRole, DevicePublicKey: f.pub}
+	f.devices.nodes[f.uid] = MobileSessionDevice{Email: f.person, Role: f.nodeRole, DevicePublicKey: f.pub}
 	f.roster.roles[f.person] = access.RoleOperator
 
 	rec := f.post(t, mobilesession.RouteRefresh, f.refreshRequest(t, f.live))
