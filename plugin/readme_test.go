@@ -27,7 +27,7 @@ func readRepoFile(t *testing.T, rel string) string {
 
 // TestReadmeGettingStartedIsTwoSteps: the section has exactly two numbered
 // steps, `fugaro setup` and `/fugaro:setup`; the third step the skill carries
-// is one sentence, and the plugin note says where setup wires it.
+// is one sentence, and the plugin note says where setup installs it.
 func TestReadmeGettingStartedIsTwoSteps(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
 	_, rest, ok := strings.Cut(readme, "\n## Getting started\n")
@@ -45,7 +45,7 @@ func TestReadmeGettingStartedIsTwoSteps(t *testing.T) {
 	if !strings.Contains(steps[1], "`/fugaro:setup`") {
 		t.Errorf("step 2 is %q, want `/fugaro:setup`", steps[1])
 	}
-	for _, want := range []string{"merge", "`fugaro setup` again", "`.claude/settings.json`", "install"} {
+	for _, want := range []string{"merge", "`fugaro setup` again", "in your own Claude Code", "install"} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Getting started never says %q", want)
 		}

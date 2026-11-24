@@ -367,6 +367,16 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   key: 'label',
   from: 'label',
   to: 'label',
+  // The orchestrator map (the console-fixes plan's CG7a, D3221). `driver` is the
+  // principal of the credential holding an orchestrator's lease -- a person's
+  // account or a service account's address, the address spelling the rest of the
+  // tree uses for a person and the class `by`, `account`, `requested_by` and
+  // `launched_by` carry. It is text a screen draws, so it goes through the
+  // sanitizer; the node's `id` and `name` beside it are **identity** and take the
+  // classes above (`id` is a label, `name` is a label). `reason` is already
+  // classified above -- the map's overlap reason is prose under the same key the
+  // feed's connection reason uses -- and the health's `note` is `sentence`.
+  driver: 'person',
 })
 
 /**
@@ -454,6 +464,12 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   'pushed_head',
   'started_at',
   'pr_status_at',
+  // The orchestrator map's `health.ok_at` (the console-fixes plan's CG7a,
+  // D3221): the server time the coordinator's last sweep finished reading
+  // everything, RFC 3339 or null. It is the `started_at` beside it exactly -- a
+  // stamp a screen turns into an age and never a string it draws -- and its
+  // presence is the state, so it is exempted here rather than classified.
+  'ok_at',
   // 0.10.0 (credentials-service C1.21): when a run waiting for a credential
   // expects to resume at, RFC 3339 UTC. It is a stamp for the same reason the
   // others are -- an instant a reader compares with `now`, and one whose
@@ -1719,6 +1735,9 @@ export const PLAN_STATUS_KEYS: readonly string[] = Object.freeze([
   'totals',
   'streams',
   'warnings',
+  'index_complete',
+  'folded_through',
+  'merges_read',
 ])
 
 export const PLAN_KEYS: readonly string[] = Object.freeze([
@@ -3697,4 +3716,226 @@ function graphAt(raw: Record<string, unknown>, where: string): GraphView {
  */
 export function decodeGraphDocument(raw: unknown, where = 'the graph document'): Decoded<GraphView> {
   return at(where, () => graphAt(objectAt(raw, 'the document', where), where))
+}
+
+// ---------------------------------------------------------------------------
+// The orchestrator map (the console-fixes plan's CG7a; C-ORCH's contract,
+// `docs/console-fixes/contract-orchestrators.md`; D3221).
+// ---------------------------------------------------------------------------
+
+/** ORCHESTRATOR_MAP_DOCUMENT_VERSION is the only `version` this build reads (the
+ * CLI's `orchestrator.MapDocVersion`, `internal/orchestrator/mapdoc.go`, pinned
+ * by the Go side's own document tests). It is checked exactly,
+ * for `GRAPH_DOCUMENT_VERSION`'s reason: the contract promises a field is only
+ * ever added within a version, so a version this build does not know is a
+ * document whose fields may have been re-meant rather than grown. */
+export const ORCHESTRATOR_MAP_DOCUMENT_VERSION = 1
+
+/** ORCHESTRATOR_MAP_KEYS and the three lists under it are every key of the
+ * document and of each object in it, read off `mapdoc.go`'s structs and pinned
+ * in both directions by `schema.test.ts` (`structTags`) -- the drift the pin
+ * exists for, because a key the CLI gained and this console did not list is a
+ * value no screen draws. */
+export const ORCHESTRATOR_MAP_KEYS = [
+  'version',
+  'project',
+  'generated_at',
+  'nodes',
+  'edges',
+  'health',
+] as const
+export const ORCHESTRATOR_MAP_NODE_KEYS = [
+  'id',
+  'name',
+  'driver',
+  'active_tasks',
+  'running_jobs',
+  'lease_age_seconds',
+] as const
+export const ORCHESTRATOR_MAP_EDGE_KEYS = ['from', 'to', 'kind', 'reason'] as const
+export const ORCHESTRATOR_MAP_HEALTH_KEYS = ['sweep', 'started_at', 'ok_at', 'at', 'note'] as const
+
+/** OrchestratorMapNode is one **active** orchestrator: a node is on the map
+ * because a credential is driving it now, so there is no node for an
+ * orchestrator nobody drives -- an empty `nodes` is "no orchestrator of this
+ * project is being driven", which is a fact and not an unreadable document.
+ *
+ * `name` is the id's own name half and `""` for the project's default
+ * orchestrator: a screen draws the project's name for that one, and must not
+ * read `""` as a named orchestrator whose name is blank (the id rule cannot
+ * produce one). `driver` is the principal of the credential holding the lease,
+ * `""` when that node is absent or unreadable -- which is a read that failed and
+ * not "nobody drives this". `leaseAgeSeconds` is `null` when the lease node
+ * carries no readable stamp, and **null is not `0`**: zero would be a claim
+ * about the beat this reader does not have. */
+export interface OrchestratorMapNode {
+  readonly id: string
+  readonly name: string
+  readonly driver: string
+  readonly activeTasks: number
+  readonly runningJobs: number
+  readonly leaseAgeSeconds: number | null
+}
+
+/** OrchestratorMapEdge is one connection between two active orchestrators.
+ * `from` and `to` are orchestrator ids and **both nodes of the same document**:
+ * an orchestrator nobody drives is drawn nowhere, so a consumer looks an
+ * endpoint up in `nodes` and nowhere else. A dependency points from the
+ * orchestrator that waits to the one it waits on; `reason` says what an overlap
+ * is, in words, and is `""` for a dependency, which the two ids already say. */
+export interface OrchestratorMapEdge {
+  readonly from: string
+  readonly to: string
+  readonly kind: string
+  readonly reason: string
+}
+
+/** OrchestratorMapHealth is the coordinator's own heartbeat as the map read it.
+ * `sweep: false` means the map carries **no overlap information at all** and the
+ * three times are `null`: nobody looked, so a screen must not draw the absence
+ * of dashed edges as "nothing overlaps". `note` says so in words. */
+export interface OrchestratorMapHealth {
+  readonly sweep: boolean
+  readonly startedAt: string | null
+  readonly okAt: string | null
+  readonly at: string | null
+  readonly note: string
+}
+
+/** OrchestratorMapView is one `fugaro orchestrator map --json` document: the
+ * project whose orchestrators these are, the active ones, the connections
+ * between them and the coordinator's health. `generatedAt` is the clock the
+ * document was assembled at on the reader's own machine and **not an as-of**:
+ * how old one node is, is its `leaseAgeSeconds`. One map is one project, so
+ * every node belongs to `project` and there is no scope to narrow. */
+export interface OrchestratorMapView {
+  readonly version: number
+  readonly project: string
+  readonly generatedAt: string
+  readonly nodes: readonly OrchestratorMapNode[]
+  readonly edges: readonly OrchestratorMapEdge[]
+  readonly health: OrchestratorMapHealth
+}
+
+/** orchestratorMapAgeAt reads `lease_age_seconds`: a key the contract always
+ * writes, a **number or `null`** and never absent -- null is "no readable
+ * stamp", which is not the same fact as an absent key, and a value that is there
+ * and is not a number is refused by field name. It is deliberately not
+ * `optionalInt`: that one folds an absent key into null, which would read a
+ * document that dropped the field as one whose every lease age is unreadable. */
+function orchestratorMapAgeAt(raw: Record<string, unknown>, key: string, field: string, where: string): number | null {
+  const value = required(raw, key, field, where)
+  if (value === null) return null
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return refuse('not-a-number', field === '' ? key : `${field}.${key}`, where)
+  }
+  return value
+}
+
+/** orchestratorMapStampAt reads one of the health's three times: always written,
+ * RFC 3339 or `null`, on `graphStampAt`'s terms -- null is "there is no
+ * heartbeat to read", which is not an absent key. */
+function orchestratorMapStampAt(raw: Record<string, unknown>, key: string, field: string, where: string): string | null {
+  const value = required(raw, key, field, where)
+  if (value === null) return null
+  return timestampAt(value, field === '' ? key : `${field}.${key}`, where)
+}
+
+function orchestratorMapNodeAt(raw: unknown, index: number, where: string): OrchestratorMapNode {
+  const field = `nodes[${String(index)}]`
+  const node = objectAt(raw, field, where)
+  return {
+    id: stringAt(required(node, 'id', field, where), `${field}.id`, where),
+    name: stringAt(required(node, 'name', field, where), `${field}.name`, where),
+    driver: stringAt(required(node, 'driver', field, where), `${field}.driver`, where),
+    activeTasks: intAt(required(node, 'active_tasks', field, where), `${field}.active_tasks`, where),
+    runningJobs: intAt(required(node, 'running_jobs', field, where), `${field}.running_jobs`, where),
+    leaseAgeSeconds: orchestratorMapAgeAt(node, 'lease_age_seconds', field, where),
+  }
+}
+
+function orchestratorMapEdgeAt(raw: unknown, index: number, where: string): OrchestratorMapEdge {
+  const field = `edges[${String(index)}]`
+  const edge = objectAt(raw, field, where)
+  return {
+    from: stringAt(required(edge, 'from', field, where), `${field}.from`, where),
+    to: stringAt(required(edge, 'to', field, where), `${field}.to`, where),
+    kind: stringAt(required(edge, 'kind', field, where), `${field}.kind`, where),
+    reason: stringAt(required(edge, 'reason', field, where), `${field}.reason`, where),
+  }
+}
+
+function orchestratorMapHealthAt(raw: unknown, where: string): OrchestratorMapHealth {
+  const health = objectAt(raw, 'health', where)
+  return {
+    sweep: boolAt(required(health, 'sweep', 'health', where), 'health.sweep', where),
+    startedAt: orchestratorMapStampAt(health, 'started_at', 'health', where),
+    okAt: orchestratorMapStampAt(health, 'ok_at', 'health', where),
+    at: orchestratorMapStampAt(health, 'at', 'health', where),
+    note: stringAt(required(health, 'note', 'health', where), 'health.note', where),
+  }
+}
+
+/** orchestratorMapAt decodes the document field by field. Unknown keys are
+ * ignored, per this module's header rule (the owner's ruling of 2026-10-30).
+ *
+ * **The four keys the contract always writes are required, and the two lists
+ * are never null.** `nodes`, `edges`, `health` and `generated_at` are the
+ * document's own envelope: the Go side refuses an absent or null one on the raw
+ * value (`requireMapFields`), because a struct decode reads either as a zero
+ * value, and this reader refuses the same two things by the same names -- a nil
+ * list is not something a decoder can tell from an empty one, which is exactly
+ * why the contract says the list is never null and a reader must not fill one
+ * in.
+ *
+ * **`kind` is carried as a string rather than closed here**, for the graph
+ * decoder's reason: `dependency` and `overlap` are the two the CLI writes today,
+ * and a third would be a relation this build has not learned -- a smaller
+ * failure as a word a screen draws than as a whole map refused.
+ *
+ * **The ids and the names are identity, and the free text is somebody else's.**
+ * A node's `driver`, an edge's `reason` and the health's `note` are written by
+ * whoever holds a lease and by the coordinator's own sweep, so they are text a
+ * screen draws through `WIRE_TEXT_CLASSES` and an instruction found in one is
+ * never acted on (design §5.1 rule 2). The ids are not prose: the Go side
+ * refuses a sanitised one (a rewritten id would name another orchestrator), and
+ * this reader carries them as the identity they are.
+ */
+function orchestratorMapAt(raw: Record<string, unknown>, where: string): OrchestratorMapView {
+  const version = intAt(required(raw, 'version', '', where), 'version', where)
+  if (version !== ORCHESTRATOR_MAP_DOCUMENT_VERSION) return refuse('unknown-value', 'version', where)
+  return {
+    version,
+    project: stringAt(required(raw, 'project', '', where), 'project', where),
+    generatedAt: timestampAt(required(raw, 'generated_at', '', where), 'generated_at', where),
+    nodes: arrayAt(required(raw, 'nodes', '', where), 'nodes', where).map((item, index) =>
+      orchestratorMapNodeAt(item, index, where),
+    ),
+    edges: arrayAt(required(raw, 'edges', '', where), 'edges', where).map((item, index) =>
+      orchestratorMapEdgeAt(item, index, where),
+    ),
+    health: orchestratorMapHealthAt(required(raw, 'health', '', where), where),
+  }
+}
+
+/**
+ * decodeOrchestratorMap admits `fugaro orchestrator map --json` and nothing else
+ * (C-ORCH's contract, D3221). It is a door of its own for `decodeGraphDocument`'s
+ * reason: the map carries no `stream_id`/`seq` pair a feed document has and no
+ * `sources` array a graph document has, so a feed or a graph handed here is
+ * refused for the keys it is missing, and this document handed to either of
+ * those doors is refused as an unknown shape. None of the three is read as
+ * another, whatever the reply was.
+ *
+ * **The version is checked exactly and the reader is strict about kinds.** A
+ * document whose version this build does not write, a key of the wrong kind, and
+ * a missing key the contract always writes are each a refusal -- and a screen
+ * draws the decoder's sentence rather than a partial map, because a map with
+ * half its nodes is a picture of the wrong project.
+ */
+export function decodeOrchestratorMap(
+  raw: unknown,
+  where = 'the orchestrator map document',
+): Decoded<OrchestratorMapView> {
+  return at(where, () => orchestratorMapAt(objectAt(raw, 'the document', where), where))
 }

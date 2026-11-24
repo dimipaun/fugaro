@@ -218,50 +218,44 @@ orchestrator)
     esac
     ;;
   state)
-    # The brief is the daemon's own text: real newlines here, escaped on the way
-    # into the JSON, exactly as the daemon's own writer does it.
-    state_brief=""
+    # The document carries the capped brief (which never lists the running item
+    # in the `eight` case, as the old generator did not) and the `items` array
+    # the check reads.
+    state_brief="work items: 8, 1 still open
+  old0 [done] Task: finished — ${FAKE640_REPO}, standard, strict
+(and more: this summary is capped, so read the state itself for the rest of it)"
+    spec_json=""
+    [ -z "${FAKE640_SPEC:-}" ] || spec_json=",\"spec\":\"${FAKE640_SPEC}\""
+    live_item="{\"id\":\"${FAKE640_ITEM}\",\"phase\":\"running\",\"run_id\":\"${FAKE640_RUN}\",\"attempts\":1,\"repo\":\"${FAKE640_REPO}\"${spec_json}}"
     case "${FAKE640_STATE:-ok}" in
     fail)
       echo "orchestrator state: the node refused the call" >&2
       exit 4
       ;;
     no-item)
-      state_brief="work items: 1, 0 still open
-  ${FAKE640_ITEM} [done] Task: a finished one — ${FAKE640_REPO}, standard, strict
-    run ${FAKE640_RUN}"
+      items="{\"id\":\"${FAKE640_ITEM}\",\"phase\":\"${FAKE640_ENDED_PHASE:-done}\",\"run_id\":\"${FAKE640_RUN}\",\"attempts\":1,\"repo\":\"${FAKE640_REPO}\"}"
+      ;;
+    empty)
+      items=""
       ;;
     no-run)
-      state_brief="work items: 1, 1 still open
-  ${FAKE640_ITEM} [running] Task: an item with no run — ${FAKE640_REPO}, standard, strict
-    approved by owner@example.com at 2026-11-18T01:00:00Z, attempt 1 of 2"
+      items="{\"id\":\"${FAKE640_ITEM}\",\"phase\":\"running\",\"attempts\":1,\"repo\":\"${FAKE640_REPO}\"}"
       ;;
     two-items)
-      state_brief="work items: 2, 2 still open
-  ${FAKE640_ITEM} [running] Task: the one with a spec — ${FAKE640_REPO}, standard, strict
-    run ${FAKE640_RUN}
-    spec: ${FAKE640_SPEC}
-  other [running] Task: another one — ${FAKE640_REPO}, standard, quick
-    run ${FAKE640_RUN2}"
+      items="${live_item},{\"id\":\"other\",\"phase\":\"running\",\"run_id\":\"${FAKE640_RUN2}\",\"attempts\":1,\"repo\":\"${FAKE640_REPO}\"}"
+      ;;
+    eight)
+      items=""
+      for i in 0 1 2 3 4 5 6; do
+        items="${items}{\"id\":\"old${i}\",\"phase\":\"done\",\"run_id\":\"20260101-000000-000${i}\",\"attempts\":1,\"repo\":\"${FAKE640_REPO}\"},"
+      done
+      items="${items}${live_item}"
       ;;
     *)
-      if [ -n "${FAKE640_SPEC:-}" ]; then
-        state_brief="work items: 1, 1 still open
-  ${FAKE640_ITEM} [running] Task: forge-labels CK — ${FAKE640_REPO}, standard, strict
-    approved by owner@example.com at 2026-11-18T01:00:00Z, attempt 1 of 2
-    run ${FAKE640_RUN}
-    spec: ${FAKE640_SPEC}
-    note: watch the labels"
-      else
-        state_brief="work items: 1, 1 still open
-  ${FAKE640_ITEM} [running] Task: forge-labels CK — ${FAKE640_REPO}, standard, strict
-    approved by owner@example.com at 2026-11-18T01:00:00Z, attempt 1 of 2
-    run ${FAKE640_RUN}
-    note: this item carries no spec"
-      fi
+      items="${live_item}"
       ;;
     esac
-    printf '{"version":1,"kind":"state","id":"fugaro","brief":"%s"}\n' "$(json_string "$state_brief")"
+    printf '{"version":1,"kind":"state","id":"fugaro","brief":"%s","items":[%s]}\n' "$(json_string "$state_brief")" "$items"
     ;;
   *) echo "fugaro: unknown orchestrator call" >&2; exit 2 ;;
   esac
@@ -965,9 +959,17 @@ test_no_item_in_flight_is_a_failure() {
   run640 no-item
   expect_status "$status" 2 "a daemon with nothing in flight"
   expect_contains "$out" "FACT item: FAIL" "the item row is the failure"
+  expect_contains "$out" "the item has already ended" "an ended item is named as ended"
+  expect_contains "$out" "is phase done (run ${RUN})" "the row says the item's phase and run"
+  expect_contains "$out" "Only the settled rows are measurable" "the row says which rows can still be read"
+  expect_contains "$out" "--suffix <word>" "the row says how to get a fresh item"
+  [ ! -s "$work/no-item/gh.log" ] || fail "no item: a pull request was read anyway"
+
+  RUN640_STATE=empty
+  run640 empty-state
+  expect_status "$status" 2 "a daemon with no item at all"
   expect_contains "$out" "NO work item in phase running with a run id" "the row says what it looked for"
   expect_contains "$out" "Approve one task in the daemon's own backlog" "the row says what to do"
-  [ ! -s "$work/no-item/gh.log" ] || fail "no item: a pull request was read anyway"
 
   RUN640_STATE=no-run
   run640 item-without-run
@@ -978,6 +980,14 @@ test_no_item_in_flight_is_a_failure() {
   run640 state-fail
   expect_status "$status" 2 "a state that could not be read"
   expect_contains "$out" "exited 4" "the row carries the exit status"
+}
+
+test_the_running_item_is_found_among_eight() {
+  RUN640_STATE=eight
+  run640 eight-items
+  expect_status "$status" 0 "eight items with the running one last"
+  expect_contains "$out" "FACT item: PASS" "the running item is found from the items array"
+  expect_contains "$out" "its attempt's run is ${RUN}" "the row names the run"
 }
 
 test_two_items_in_flight_ask_for_run_id() {
@@ -1250,6 +1260,7 @@ t test_a_run_that_never_finishes_is_read_as_such
 t test_f19_stops_the_run_at_one_named_row
 t test_the_daemon_must_be_running_here
 t test_no_item_in_flight_is_a_failure
+t test_the_running_item_is_found_among_eight
 t test_two_items_in_flight_ask_for_run_id
 t test_a_run_id_that_is_not_the_items_is_a_failure
 t test_the_runs_row_must_be_in_the_listing

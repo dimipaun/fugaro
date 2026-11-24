@@ -130,7 +130,7 @@ async function ask<Name extends NewOperationName>(
  * newOpsFrom is the renderer's typed read of the nine operations, over the
  * structural bridge (`window.fugaro`, or a fake of it -- which is what a
  * screen's own test hands it, built from the contract's types rather than from
- * the stub I-OPS deletes).
+ * a fixture bridge).
  *
  * The argument is `unknown` on purpose: this module is the boundary that checks
  * a bridge, so a caller that hands it a wrong object gets nine gaps and not a

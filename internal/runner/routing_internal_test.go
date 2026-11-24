@@ -156,30 +156,39 @@ func TestClaudePinWithoutOptInIsUnchanged(t *testing.T) {
 	}
 }
 
-// TestRoutingDoesNothingWithTheGatewayOff (plan Task 1b.2 step 3): routing
-// exists only with the gateway, so with the budget off nothing changes — not
-// for a switch that names a pin, and not for one this run could not resolve
-// either: the switch has nothing to act on. A pin reaches the agent as --model
-// on every stage, where a route's own ID is a model Anthropic does not serve,
-// so a budget-off run keeps the direct spelling and stagePins keeps returning
-// nil.
+// TestRoutingDoesNothingWithoutAGateway (plan Task 1b.2 step 3): routing
+// exists only with the gateway, and since AB1b the gateway is a fact about the
+// run's credential rather than about a mode — so the run without one is the
+// credential the gateway cannot carry, an oauth run the credentials service
+// does not serve. Nothing changes for it: not with a switch that names a pin,
+// and not with one this run could not resolve either, because the switch has
+// nothing to act on. A pin reaches the agent as --model on every stage, where a
+// route's own ID is a model Anthropic does not serve, so such a run keeps the
+// direct spelling and stagePins keeps returning nil.
+//
+// The mode-half of this test is gone with the mode (AB1b, F15): a run whose job
+// named no mode, or the word off, is the api-key run the gateway now always
+// carries, and its switch is applied like any other's.
 //
 // Hand mutation this fails on: applying the switch before the gateway check,
-// which hands a mode-off run the route's ID — and halts it on a switch it has
-// nothing to route.
-func TestRoutingDoesNothingWithTheGatewayOff(t *testing.T) {
+// which hands a gateway-less run the route's ID — and halts it on a switch it
+// has nothing to route.
+func TestRoutingDoesNothingWithoutAGateway(t *testing.T) {
 	const canonical = "claude-sonnet-5-5"
 	r := routedRun(t, &config.RoutingClaude{Via: config.RouteOpenRouter, Models: []string{canonical}}, canonical, canonical)
-	r.spend = Spend{Mode: "off"}
+	r.cfg.Agent.Auth = "oauth"
 	r.d.Providers = map[string]config.ModelProvider{} // not even resolvable
+	if r.gatewayOn() {
+		t.Fatal("an oauth run the service does not serve has a gateway")
+	}
 	if err := r.applyRouting(r.projPolicy.policy, true); err != nil {
-		t.Fatalf("a budget-off run was halted by the switch: %v", err)
+		t.Fatalf("a run with no gateway was halted by the switch: %v", err)
 	}
 	if got := r.cfg.Agent.ModelFor(config.RoleCoder); got != canonical {
-		t.Errorf("the budget-off run's coder pin = %q, want %q: routing exists only with the gateway (D11)", got, canonical)
+		t.Errorf("the gateway-less run's coder pin = %q, want %q: routing exists only with the gateway (D11)", got, canonical)
 	}
 	if pins := r.stagePins("implement"); pins != nil {
-		t.Errorf("stagePins = %+v with the gateway off, want none", pins)
+		t.Errorf("stagePins = %+v with no gateway, want none", pins)
 	}
 }
 
@@ -239,7 +248,7 @@ func TestAutoDoesNotRouteAVertexRun(t *testing.T) {
 // doctor claimed the halt for every run. applyRouting now branches on this one
 // function, and the readers ask it: one decision, four states, and the tests
 // above and beside this one pin the run's own end of it
-// (TestRoutingDoesNothingWithTheGatewayOff, TestAutoDoesNotRouteAVertexRun,
+// (TestRoutingDoesNothingWithoutAGateway, TestAutoDoesNotRouteAVertexRun,
 // TestRoutingAutoFollowsTheAnthropicKey).
 //
 // Hand mutation this fails on: dropping the key-presence branch, which claims
@@ -263,8 +272,7 @@ func TestRoutingInertReasonIsTheLadderTheRunWalks(t *testing.T) {
 		{"via: auto with a key stored", sw(config.RouteAuto), "api-key", true, true, RoutingInertAutoKey},
 		{"via: auto in a Vertex run", sw(config.RouteAuto), "vertex", true, false, RoutingInertAutoVertex},
 		{"via: direct", sw(config.RouteDirect), "api-key", true, false, RoutingInertViaDirect},
-		{"no gateway (the budget is off), whatever the via", sw(config.RouteAuto), "api-key", false, false, RoutingInertNoGateway},
-		{"no gateway (the credential is not a model API's)", sw(config.RouteOpenRouter), "oauth", false, false, RoutingInertNoGateway},
+		{"no gateway (the credential is not one the gateway carries)", sw(config.RouteOpenRouter), "oauth", false, false, RoutingInertNoGateway},
 		{"no switch at all", nil, "api-key", true, false, RoutingInertNoSwitch},
 		// The cascade acts only on the workflow that asked for it (C1.19, O2):
 		// every other credential of the same project keeps what it had.
@@ -279,18 +287,27 @@ func TestRoutingInertReasonIsTheLadderTheRunWalks(t *testing.T) {
 		})
 	}
 	// GatewayOn is the other half of the same reading, and the run asks it
-	// through one function: the budget mode and the credential, nothing else.
+	// through one function: the credential, and nothing else. The mode is
+	// swept here rather than fixed because it is the argument that stopped
+	// being a fact (AB1b, D3009): every credential the gateway carries answers
+	// true whatever the job wrote, including the two strings that used to mean
+	// "no gateway".
 	for _, tc := range []struct {
 		auth, mode string
 		want       bool
 	}{
 		{"api-key", policy.ModeEnforce, true},
 		{"api-key", policy.ModeObserve, true},
+		{"api-key", policy.ModeOff, true},
+		{"api-key", "", true},
 		{"vertex", policy.ModeObserve, true},
 		{"vertex", policy.ModeEnforce, true},
-		{"vertex", policy.ModeOff, false},
-		{"api-key", "", false},
+		{"vertex", policy.ModeOff, true},
+		{"vertex", "", true},
+		{config.AuthCascade, policy.ModeOff, true},
+		{config.AuthCascade, "", true},
 		{"oauth", policy.ModeEnforce, false},
+		{"oauth", "", false},
 		{"", policy.ModeObserve, false},
 	} {
 		if got := GatewayOn(tc.auth, tc.mode); got != tc.want {
@@ -305,22 +322,24 @@ func TestRoutingInertReasonIsTheLadderTheRunWalks(t *testing.T) {
 // same RoutingClaudeFor the run uses — and it is asked on every run, the
 // gateway's or not (checkBudget asks it before gatewayOn is consulted).
 // applyRouting, the switch's *application*, skips the states where the run has
-// nothing to route: the gateway off, via auto under a Vertex run, via auto with
-// an ANTHROPIC_API_KEY in the job. In those states a pin spelled as a route's
-// own ID is admitted by the allow-list and keeps the spelling the configuration
-// gave it — what admits it there is the operator's own claim on the route (the
-// entry's allow_data_to, D1b's safeguard) plus the canonical model on the list,
-// not the switch, which is what the comment on `allowed` now says instead of
-// "the run was going to route it anyway".
+// nothing to route: no gateway (the credential the gateway does not carry, AB1b
+// — the budget mode was the other spelling of that state until it stopped being
+// one), via auto under a Vertex run, via auto with an ANTHROPIC_API_KEY in the
+// job. In those states a pin spelled as a route's own ID is admitted by the
+// allow-list and keeps the spelling the configuration gave it — what admits it
+// there is the operator's own claim on the route (the entry's allow_data_to,
+// D1b's safeguard) plus the canonical model on the list, not the switch, which
+// is what the comment on `allowed` now says instead of "the run was going to
+// route it anyway".
 //
 // One fixture, four states, so the difference between them is the switch's
 // application and nothing else: the reviewer's pin moves exactly where the
 // switch is applied.
 //
 // Hand mutation this fails on: dropping a skip from applyRouting (the
-// gateway-off one, then the auto/key one) — the reviewer's pin moves in a state
-// that routes nothing, and the test fails naming it, which is the whole reason
-// the check cannot promise that the run takes the route.
+// gateway-less one, then the auto/key one) — the reviewer's pin moves in a
+// state that routes nothing, and the test fails naming it, which is the whole
+// reason the check cannot promise that the run takes the route.
 func TestAllowedAdmitsARouteIDTheSwitchDoesNotApply(t *testing.T) {
 	const canonical, routed = "claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"
 	list := policy.Merge(policy.Layer{AllowedModels: []string{canonical}})
@@ -330,7 +349,7 @@ func TestAllowedAdmitsARouteIDTheSwitchDoesNotApply(t *testing.T) {
 		wantPin   string
 	}{
 		{"the switch applies (via openrouter, the gateway on)", config.RouteOpenRouter, nil, routed},
-		{"the gateway is off (the budget is off)", config.RouteOpenRouter, func(r *run) { r.spend = Spend{Mode: "off"} }, canonical},
+		{"no gateway (oauth, the credential the gateway does not carry)", config.RouteOpenRouter, func(r *run) { r.cfg.Agent.Auth = "oauth" }, canonical},
 		{"via auto in a Vertex run", config.RouteAuto, func(r *run) { r.cfg.Agent.Auth = "vertex" }, canonical},
 		{"via auto with an Anthropic key in the job", config.RouteAuto, func(r *run) {
 			r.d.Env = append(r.d.Env, "ANTHROPIC_API_KEY=not-a-real-key")
@@ -472,36 +491,27 @@ func overridesFor(id string) pricing.Overrides {
 	return pricing.Overrides{id: {InputPerM: 1, OutputPerM: 2, CacheRead: 0.1, CacheWrite5m: 1.25, CacheWrite1h: 2}}
 }
 
-// TestGatewayOnForCascade (C1.19): a cascade run's calls go through the
-// gateway, which is what carries them to the credentials service — so the
-// budget's mode decides it exactly as it does for the other two credentials.
+// TestGatewayOnForCascade (C1.19, AB1b): a cascade run's calls go through the
+// gateway, which is what carries them to the credentials service. The mode
+// stopped being part of that answer (D3009): a cascade run has no credential of
+// its own at all, so what its gateway stands on is the service, and the job's
+// mode moves nothing.
+//
 // The mutation: leaving cascade out of GatewayOn's list, which would leave a
 // cascade run with no gateway to attach a credential and no way to spend.
 func TestGatewayOnForCascade(t *testing.T) {
-	for _, tc := range []struct {
-		mode string
-		want bool
-	}{
-		{policy.ModeObserve, true},
-		{policy.ModeEnforce, true},
-		{"", false},
-		{"off", false},
-	} {
-		if got := GatewayOn(config.AuthCascade, tc.mode); got != tc.want {
-			t.Errorf("GatewayOn(cascade, %q) = %v, want %v", tc.mode, got, tc.want)
+	for _, mode := range []string{policy.ModeObserve, policy.ModeEnforce, string(policy.ModeOff), ""} {
+		if !GatewayOn(config.AuthCascade, mode) {
+			t.Errorf("GatewayOn(cascade, %q) = false, want true: the mode is not a fact of the gateway", mode)
 		}
 	}
 	// run.gatewayOn is the same answer for a run that holds the mode.
 	r := cascadeRun(t, nil)
-	for _, mode := range []string{policy.ModeObserve, policy.ModeEnforce} {
+	for _, mode := range []string{policy.ModeObserve, policy.ModeEnforce, string(policy.ModeOff), ""} {
 		r.spend.Mode = mode
 		if !r.gatewayOn() {
-			t.Errorf("a cascade run with the budget %s does not route through the gateway", mode)
+			t.Errorf("a cascade run with the budget mode %q does not route through the gateway", mode)
 		}
-	}
-	r.spend.Mode = "off"
-	if r.gatewayOn() {
-		t.Error("a cascade run with the budget off routes through the gateway")
 	}
 }
 
@@ -1479,55 +1489,6 @@ func TestDiagnosisTakesTheReviewModelPath(t *testing.T) {
 	}
 	if got := plain.modelAuth(); got != "oauth" {
 		t.Errorf("a run the class check refuses: modelAuth() = %q, want its own configuration's auth", got)
-	}
-}
-
-// TestReviewRunWithTheBudgetOffNeverReachesACredentialOfItsOwn (CSR13, Open
-// item 6's answer of 2026-11-05/06): a cloud review does not run with the
-// installation's budget off. The class's calls are the credentials service's,
-// the service is reached through the gateway, and a mode of off (or none) is
-// what leaves the run nowhere to send them — so the class refuses in bootstrap,
-// naming budget.mode published as observe or enforce as the fix, rather than
-// falling through to agent.BuildEnv's cascade arm, whose sentence is written
-// for a coding run and names a fix a review job cannot apply.
-//
-// The class does not force the gateway on: GatewayOn(cascade, "") is false, and
-// the reading Open item 6 refused is one where a mode the installation set to
-// off would be overridden by the class.
-//
-// Mutation (run, restored): force the gateway on in the class's own path — the
-// run's gateway would be "on" in a mode the gateway is not built for, and the
-// refusal below is never reached. Drop the arm and the run stops at
-// agent.BuildEnv's cascade sentence instead, which names the wrong fix.
-func TestReviewRunWithTheBudgetOffNeverReachesACredentialOfItsOwn(t *testing.T) {
-	for _, mode := range []string{"", policy.ModeOff} {
-		t.Run("mode "+mode, func(t *testing.T) {
-			r := reviewClassRun(t, "oauth", mode)
-			if r.gatewayOn() {
-				t.Fatal("a review class run with the budget off routes through the gateway")
-			}
-			err := r.applyRouting(r.projPolicy.policy, true)
-			if err == nil {
-				t.Fatal("a review class run with the installation's budget off was admitted: its calls have nowhere to go")
-			}
-			for _, want := range []string{"budget.mode", policy.ModeObserve, policy.ModeEnforce, "project policy publish"} {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("the refusal does not name %q: %v", want, err)
-				}
-			}
-			// It is the class's own sentence and not agent.BuildEnv's: that one
-			// is about a coding run's cascade and names a fix a review job's own
-			// file cannot apply.
-			if strings.Contains(err.Error(), "this agent has none") {
-				t.Errorf("the refusal is agent.BuildEnv's cascade sentence: %v", err)
-			}
-			// And the class offers one credential and no fallback: built with no
-			// gateway, the agent's environment is refused rather than given one
-			// of the job's.
-			if _, _, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{Auth: r.modelAuth()}); err == nil {
-				t.Error("a review class run with no gateway built an agent environment: it would carry a credential nobody chose")
-			}
-		})
 	}
 }
 

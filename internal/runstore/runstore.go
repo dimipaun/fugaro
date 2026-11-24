@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/runmsg"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -1563,6 +1564,32 @@ type StageTiming struct {
 	// run's -- and in records written before the field existed, so an absent
 	// value is not the statement that a stage had no credential.
 	ServedBy string `json:"served_by,omitempty"`
+	// Source is the credential source that served this stage, as the
+	// credentials service's own answer named it (C1, CS8): the kind of source
+	// and the name of the one that kind names -- a pool's or a provider's
+	// name, empty for the two kinds that are a single credential of the
+	// project. It is a name and never a value: no key, no token and no
+	// account is in it, and a reader must not read it as one.
+	//
+	// It is the source of the last call of the stage the service answered,
+	// and nil for every stage no such call was made from -- every stage of
+	// every run whose calls do not go through the service, which is what an
+	// absent member means here and not "a source nobody named". Fallback
+	// beside it is the stage's other half: this member says which source
+	// served, and that one says whether the stage ever fell off the chain's
+	// first source.
+	Source *routing.SourceName `json:"source,omitempty"`
+	// Fallback is true when any call of this stage was served by a source
+	// that is not the chain's first (C1, CS8): the stage fell back at least
+	// once, whatever source served last. It is the flag folded over the
+	// stage's calls, so a stage that fell back and then came back to the
+	// chain's first source is still a fallback stage, and Cost.FallbackUSD
+	// is the money those calls spent.
+	//
+	// Absent means false: the stage made no fallback call, and so does a
+	// stage the service never answered a call of, and every record written
+	// before the member existed.
+	Fallback bool `json:"fallback,omitempty"`
 }
 
 // CredentialOAuth is the word for a Claude OAuth credential in this record:
@@ -2272,11 +2299,13 @@ var ErrExists = errors.New("already exists")
 // ErrTooLarge means an object is larger than its read cap.
 var ErrTooLarge = errors.New("object is larger than its read cap")
 
-// ErrCorrupt means one of the run's own JSON objects is there and does not
-// decode. The object is the run's own and the run's own agent writes it, so a
-// reader that meets one is reading a run's problem rather than its own, which
-// is the distinction a caller draws between an unusable object and a read that
-// failed. It wraps the decoder's own error, which is the one that says why.
+// ErrCorrupt means one of the run's own JSON objects is there and is not one a
+// reader can use: it does not decode, or -- task.json -- it does not validate.
+// The object is the run's own and the run's own agent writes it, so a reader
+// that meets one is reading a run's problem rather than its own, which is the
+// distinction a caller draws between an unusable object and a read that failed.
+// It wraps the decoder's or the parser's own error, which is the one that says
+// why.
 var ErrCorrupt = errors.New("the run's own object does not decode")
 
 // Read caps. The job's service account, and so a run's agent, can
@@ -2518,7 +2547,16 @@ func (s *Store) ReadTask(ctx context.Context) (*task.Spec, error) {
 	if err != nil {
 		return nil, err
 	}
-	return task.Parse(data)
+	spec, err := task.Parse(data)
+	if err != nil {
+		// A task.json the parser will not take is the run's own object, the
+		// same classification launch.json and result.json carry: a reader
+		// that could not use it draws that reader's own conclusion from
+		// it rather than failing. task.Parse's error is kept in the chain,
+		// so a caller matching the decoder's own types goes on working.
+		return nil, fmt.Errorf("reading task.json: %w: %w", ErrCorrupt, err)
+	}
+	return spec, nil
 }
 
 // WriteRecord stores result.json.

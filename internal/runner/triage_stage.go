@@ -108,8 +108,8 @@ func (r *run) triageOn() bool {
 //     (config.AccountStageHeldBack), or the project's default_claude_account
 //     (resolveMixedStages).
 //   - The run's model path is the gateway's own api-key credential
-//     (servedAuth, gatewayOn): a switched or cascade run's upstream is the
-//     credentials service, which holds a key this run does not.
+//     (servedAuth): a switched or cascade run's upstream is the credentials
+//     service, which holds a key this run does not.
 //   - The stage's model is a Claude one (config.IsClaudeModel) that no
 //     provider route claims (config.ProviderFor over the same providers
 //     gatewayRoutes builds the gateway's routes from). Such a call is the one
@@ -131,17 +131,17 @@ func (r *run) triageOn() bool {
 // before, whatever answers. The rounds whose cause is a service's `Invalid API
 // key` reached a service, so they are failures and not skips.
 //
-// The two cases deliberately outside the clause are outside for their own
-// reasons: with the gateway off every call goes straight to Anthropic on the
-// run's own key, which agent.BuildEnv refuses the run over when it is missing
-// rather than handing the agent a call it cannot make; and a stage the run's
-// own account serves goes to Anthropic on that account's token, where the run's
-// key is nothing.
+// The case deliberately outside the clause is outside for its own reason: a
+// stage the run's own account serves goes to Anthropic on that account's token,
+// where the run's key is nothing. The other one — a run with no gateway, whose
+// calls went straight to Anthropic on the run's own key — is gone with the mode
+// (AB1b, F15): an api-key run has a gateway in every mode, and agent.BuildEnv
+// refuses a run whose credential the gateway carries and which has none.
 func (r *run) triageUnserved() bool {
 	if r.stageAccount(stageTriage) != "" {
 		return false
 	}
-	if !r.gatewayOn() || r.servedAuth() != "api-key" {
+	if r.servedAuth() != "api-key" {
 		return false
 	}
 	model := r.stageModel(stageTriage)

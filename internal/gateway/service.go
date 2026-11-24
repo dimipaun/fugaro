@@ -453,7 +453,22 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 	// decides which of the repository's keys the service serves a routed
 	// call with (R2, KS5), so it is set here from the route the gateway
 	// routed to and never taken from a header the agent wrote.
-	for _, k := range []string{HeaderTier, HeaderCredential, HeaderCredentialOwner, HeaderSwitch, HeaderProbe, HeaderSlip, HeaderSlipClaim, HeaderAuthMode, HeaderAuthAccount, HeaderProvider} {
+	//
+	// The chain wire's four names go the same way (chainwire.go). The stage
+	// header is dropped whatever this gateway's ChainServed says and is then
+	// set from the run's own stage: it is the whole of R24's guard against
+	// answering in full a caller that is not a gateway of this contract, and
+	// the service cannot tell the gateway's own from one the agent wrote, so
+	// the drop is what makes it the gateway's (contract-table.md, "What the
+	// guard is not": a gateway built before this rule has no drop, and no
+	// later task may assume the window is closed for one). The three answer
+	// members are dropped for the reason every answer header above is, and
+	// the served model (HeaderModel) with them: they are the service's own
+	// answer and mean nothing in a request, so a client that sent them must
+	// not have them arrive as if the service had answered with them. No
+	// header naming a model is ever SET here: the service reads the model a
+	// call is for from the request's body (chainwire.go).
+	for _, k := range []string{HeaderTier, HeaderCredential, HeaderCredentialOwner, HeaderSwitch, HeaderProbe, HeaderSlip, HeaderSlipClaim, HeaderAuthMode, HeaderAuthAccount, HeaderProvider, HeaderStage, HeaderSource, HeaderFallback, HeaderModel} {
 		h.Del(k)
 	}
 	h.Set("Authorization", "Bearer "+id)
@@ -468,6 +483,21 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 	if slipID != "" {
 		h.Set(HeaderSlip, slipID)
 		h.Set(HeaderSlipClaim, slipClaim)
+	}
+	if s.o.ChainServed {
+		// The run's current stage, from the run's own stage and never from a
+		// header (the drop above): a caller that sends it is answered with the
+		// chain's own accounting, which is what lets a step's record name the
+		// source that served it (ChainAnswerFunc, CS8). A call with no stage
+		// running carries the header not at all — the service then reads the
+		// caller as one of this contract answering for no step, which is the
+		// pre-contract answer — and a Messages call of a run is never one:
+		// handleMessages refuses a call with no stage before it is forwarded.
+		// A token count needs no stage (forwardFree), so one made with none
+		// running meets that same pre-contract answer and records nothing.
+		if stage := s.stageName(); stage != "" {
+			h.Set(HeaderStage, stage)
+		}
 	}
 	return h, nil
 }
@@ -1056,6 +1086,28 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		// believes, and a call the service did not pay for carries no
 		// number and changes nothing.
 		s.noteWorkspaceHeadroom(resp.Header)
+		if s.o.ChainServed {
+			// The answer's chain members (chainwire.go), read here where the
+			// service's other answer headers are and before any of it reaches
+			// the agent: which source served this call, whether it was the
+			// chain's first, and which model served. They are read for every
+			// served call of this gateway — a token count, a provider route's
+			// relayed answer and a Messages call alike — because the step's
+			// record folds the fallback flag over the whole stage (CS8), and
+			// an answer that names one and not the others is a halt rather
+			// than a value the run records a guess from.
+			a, present, err := chainAnswerHeaders(resp.Header)
+			if err != nil {
+				return s.haltService(w, stateDetailUnreadable), true, "", nil
+			}
+			if present {
+				// An answer of a service built before this contract carries
+				// none of the three and is not an error: this gateway sent the
+				// stage header, and a service that does not read it answers in
+				// the shape it always did.
+				s.answerChain(a)
+			}
+		}
 		if !needTier {
 			return resp.StatusCode, false, "", nil
 		}
@@ -1548,5 +1600,16 @@ var serviceUnreachableBound = 5 * time.Minute
 func (s *Server) answer(a ServiceAnswer) {
 	if s.o.OnServiceAnswer != nil {
 		s.o.OnServiceAnswer(a)
+	}
+}
+
+// answerChain hands one served call's chain answer to the step's record hook,
+// if the run has one (chain_names.go): the source that served the call, the
+// fallback flag and the model that served. Like answer it is called with no
+// lock of this package's held, and a nil hook is not an error — a run whose
+// repository has not migrated has no record member to fill.
+func (s *Server) answerChain(a ChainAnswer) {
+	if s.o.OnChainAnswer != nil {
+		s.o.OnChainAnswer(a)
 	}
 }

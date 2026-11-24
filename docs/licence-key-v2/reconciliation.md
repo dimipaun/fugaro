@@ -44,7 +44,7 @@ decision (what a key is a key to) and not a defect P3.5 could repair.
 
 | Spec concept | What exists on `main` |
 | --- | --- |
-| Signed offline key, Ed25519 (§1, §3.1) | `ee/licence/key.go`: `<key id>.<payload>.<signature>`, signature over the raw payload bytes, keyring by key id, refused before decode when the id is unknown. **`productionKeyring` is empty** (`ee/licence/key.go`): no production key has been signed or shipped, so no key exists in the field |
+| Signed offline key, Ed25519 (§1, §3.1) | `ee/licence/key.go`: `<key id>.<payload>.<signature>`, signature over the raw payload bytes, keyring by key id, refused before decode when the id is unknown. **`productionKeyring` holds the one published production key** (`ee/licence/key.go`, built from `ee/licence/keys/production.pub`, S2.9); no key is known to have been issued in the field |
 | Claim set, policy (§3.2) | `licence.Claims`: `tier`, `features`, `seats`, `organisation`, `issued`, `expires`. No `v`, no `kind`, no grace, renewal, check or warning fields; decoded **strictly** (unknown field → `ErrClaims`) |
 | Key store (§11.2) | `ee/licence/store.go`: one file `licence.key` in the CLI's config directory, at most two keys, plus the one `FUGARO_LICENCE_KEY` variable the console hands a child (read once and `Unsetenv`'d). **No project-level store; no `fugaro licence` command** |
 | Verifiers elsewhere | console: `console/src/main/licence.ts`, `licence-store.ts`, `licence-state.ts`, `spawn.ts` (`LICENCE_KEY_VAR`). App: none |
@@ -75,8 +75,8 @@ separate command), and the Terms' refund text (counsel, K0.1).
 `check_interval`, `warnings`, `kind`, `note`; built `<id>.<payload>.<sig>` with `features` and
 `organisation` that the spec lacks. The spec drops `features` (tier decides) and its v2 note says
 entitlements come later; the built tests pin `features`. Resolved by D2130 (one format, v1 of the
-spec) and the claims table in the plan's K1.1. Because the production keyring is empty (F1) nothing
-issued is orphaned.
+spec) and the claims table in the plan's K1.1. Because the production keyring was empty while this format
+was built (F1) nothing issued is orphaned.
 
 **F4 (Rule): the spec's "unknown optional fields are ignored" contradicts the strict-decode rule**
 (CLAUDE.md "Config and wire formats decode strictly"; built `decodeClaims`). Resolved by D2146 as a
@@ -267,8 +267,9 @@ a viewer **can** copy the key; with the required `workspace_id` (D2134 as amende
 
 ## UNVERIFIED
 
-- Whether any key was ever hand-minted with the S2.10 tool against a real KMS key (the keyring is empty in
-  code; the owner's private records are not read here). D2130 assumes none.
+- Whether any key was ever hand-minted with the S2.10 tool against a real KMS key (the code holds the
+  published public half and no record of an issuance either way; the owner's private records are not read
+  here). D2130 assumes none.
 - That the key-gated coordinator image can run an `ee` command other than the coordinator's (K4.2 checks).
 - Whether the website's CSP `form-action` allowance (the owner's 2026-11-07 ruling) covers the new
   authorize and device pages (K5.1 checks).

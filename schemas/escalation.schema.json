@@ -109,8 +109,8 @@
         "kind": { "const": "ls" },
         "project": {
           "type": "string",
-          "description": "The orchestrator id, which is the selected project's name: this family takes no id of its own (D1358 puts one orchestrator per project).",
-          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+          "description": "The orchestrator id: the selected project's name for its default orchestrator, `<project>~<name>` for a named one (D3207). This family takes no id of its own, so it is the id the selected project's commands act on.",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?(?:~[a-z0-9][a-z0-9-]{0,39})?$"
         },
         "now": {
           "allOf": [{ "$ref": "#/$defs/stamp" }],
@@ -132,8 +132,8 @@
         "kind": { "const": "show" },
         "project": {
           "type": "string",
-          "description": "The orchestrator id, which is the selected project's name: this family takes no id of its own (D1358 puts one orchestrator per project).",
-          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+          "description": "The orchestrator id: the selected project's name for its default orchestrator, `<project>~<name>` for a named one (D3207). This family takes no id of its own, so it is the id the selected project's commands act on.",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?(?:~[a-z0-9][a-z0-9-]{0,39})?$"
         },
         "now": {
           "allOf": [{ "$ref": "#/$defs/stamp" }],

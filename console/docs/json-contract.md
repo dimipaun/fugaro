@@ -1713,9 +1713,18 @@ keeps the view the CLI resolved out of a screen's hands: an admin of the
 installation sees every user's rows, a plain operator sees their own row
 alone, and an identity the installation's own lists do not place stays
 private. It is read-only —
-the figures come from the run records (`launch.json`'s `launched_by`, and
-`result.json`'s outcome and settled cost), never from the budget database, so
-there is no write path behind it and no counter a screen has to reconcile.
+the figures come from the run index, one page of entries for the window and no
+run object read at all (IR6, F32) — or, while the index has never finished a
+walk, from the run records themselves (`launch.json`'s `launched_by`, and
+`result.json`'s outcome and settled cost), which is the read this command made
+before the index existed; `index_complete` says which of the two it was. The two
+reads answer the same question and do not always answer it alike — the index
+windows a run by its entry's own last change where the records window it by the
+day its run id places its start, and a run the index has not folded yet reaches
+it with no launcher, so it is a row under `unknown` there and under the launcher
+its own launch recorded here — so a screen renders both the same way but must not
+treat them as one read. Never from the budget database, so there is no write path
+behind it and no counter a screen has to reconcile.
 
 | Field | Type | omitempty | Availability state |
 |---|---|---|---|
@@ -1729,9 +1738,10 @@ there is no write path behind it and no counter a screen has to reconcile.
 | `until` | string | no | the window's last UTC day. Both are UTC days, like `runs ls`'s window |
 | `max_runs` | int | no | the bound the read ran under (`--max-runs`, default 5000) |
 | `truncated` | bool | no | **the window held more runs than `max_runs`**: every figure is over its newest `max_runs` alone. The bound is on the read and not on a person: it is applied before the view is, so a private view can be over fewer of the caller's own runs than `max_runs` suggests. A console must show this the way it shows a gap, never as the window's own total |
+| `index_complete` | bool | no | whether the figures are the **run index**'s own page: `true` when they are, read as one page of entries for the window with no run object read at all (F32), and `false` while the index has never finished a walk, when the run records are read instead — one object read per run. It is the one field this document gained for the index (IR6), and it is the whole of the difference a consumer sees: **the two reads answer the same question and are not the same read**, so a screen renders them the same way and reads this only to know which it is looking at. They agree on every run **both windows hold** and part in two places. The window: the index windows a run by its entry's own last change (a settled run's finish), where the records window it by the day its run id places its start, so a run that started and settled on opposite sides of an edge is in one read and not the other. The run the index has not folded yet — an overlay row, in flight or inside the fold gap — reaches it with its run id, its slug and its status alone, no launcher and no record, so the index read puts it under `unknown` with no record where the record read names the launcher its own `launch.json` recorded. A folded run both windows hold reads the same either way |
 | `rows` | `[]userstats.Row` | no | `[]` when none. One row per (user, currency) — dollars are never added across currencies |
 | `totals` | `[]userstats.Row` | no | one per currency, in currency order, with `user` `""` |
-| `unlaunched` | int | no | runs in the window with neither a launch nor a record (never launched, cancelled before launch, or a stale claim). They never started: they are in no row and no total. It is the window's count, over everyone's runs, so it is **not** the caller's own in the `"own"` view any more than `truncated` is |
+| `unlaunched` | int | no | runs in the window that **never started**: neither a launch nor a record, and no status settled for them (never launched, cancelled before launch, or a stale claim). A run the overlay lists with a status and no records yet — in flight, or finished inside the fold gap — started, so it is not one of these: it is a row with no record, under the unknown launcher. They are in no row and no total. It is the window's count, over everyone's runs, so it is **not** the caller's own in the `"own"` view any more than `truncated` is |
 | `notes` | `[]string` | no | the lines the human table prints before and after its own: whose numbers these are, what the money counts, and what the read left out. The document and the table say the same things |
 
 **The `"own"` view filters a read that is not its own.** It holds the runs
@@ -1849,11 +1859,12 @@ it on the surface (`plan.status` in `console/src/main/ipc.ts`), as the data
 behind the graph screen's per-task state (console v2 plan GV1.6). The section
 stays here for §6.11's reason — the screen reads a shape off the code rather
 than assuming one from a design. Its argv is design §5.1 rule 6's
-`plan status --json` row: at most `--all` (GD6's "everything" toggle), plus
-`--project <name>` and `--config <path>` like every other cloud row, and **no
-path** — the checkout reaches the CLI as the spawn's own working directory, from
-the installation's record and never from the renderer. The console asks for it
-at most once a minute per installation and arguments.
+`plan status --json` row: at most `--all` (GD6's "everything" toggle) and
+`--no-merges` (D3217 as amended, below), plus `--project <name>` and
+`--config <path>` like every other cloud row, and **no path** — the checkout
+reaches the CLI as the spawn's own working directory, from the installation's
+record and never from the renderer. The console asks for it at most once a
+minute per installation and arguments.
 
 **It is a cloud read, unlike `plan graph`.** A task's state is a *run's* state,
 and a run lives in the runs bucket of the selected project — so this command
@@ -1865,19 +1876,26 @@ naming the same task is not theirs to claim. It writes nothing — the remembere
 checkouts included: `plan status` is one of the console's reads
 (`consoleReadPaths`), so resolving the checkout records nothing.
 
-**What it reads is bounded, and the lookups are bounded more tightly, because
-they are what a console pays for.** The runs it lists are every run the bucket
-still holds — the ninety-day window `fugaro run --pr` reads with, which is the
-bucket's own lifecycle, since a run older than that has been deleted with its
-run and can join nothing. Every run in that window is read. What is scoped is
-the merge lookup below: it spawns the operator's `gh`, one spawn per distinct
-pull request, and it is asked only about the pull requests of the runs that
-**join at least one plan here**, at most **32** per read, the newest runs'
-first; a pull request past the cap has no answer (`merge unknown`, and a
-warning says how many). The answers are not kept between invocations (that
-cache lives in `internal/watch`'s process, and this command is one process). A
-repository whose history is full of runs naming no task of any plan in this
-checkout spends no lookup on them.
+**What it reads is bounded by the checkout's plans, not by the repository's
+history.** The runs come from the run index (C-INDEX: the collection the
+history job's fold writes, one document per run), and the read asks it one
+question per plan task of the checkout's plans, plus one per pull request the
+runs those questions answered carry — the second pass is how a follow-up, which
+records no `plan_task` of its own, is joined (rule iii below). **No listing of
+the runs bucket is made at all**, so a plan of four tasks asks four questions
+however much history the repository has, and a run older than the bucket's own
+life cycle still joins as long as the index holds it. The estimate's history is
+the summary document's own table, so it is one read rather than a scan (F15).
+What is scoped is the merge lookup below: it spawns the operator's `gh`, one
+spawn per distinct pull request, and it is asked only about the pull requests
+of the runs that **join at least one plan here**, at most **32** per
+read, the newest runs' first; a pull request past the cap has no answer
+(`merge unknown`, and a warning says how many). The answers are not kept
+between invocations (that cache lives in `internal/watch`'s process, and this
+command is one process). A repository whose history is full of runs naming no
+task of any plan in this checkout spends no lookup on them. `--no-merges` is
+the new console's first paint: it asks `gh` nothing at all, and says so in the
+document (below).
 
 The document:
 
@@ -1888,6 +1906,9 @@ The document:
 | `totals` | object | never | never | every plan's figures added up, below. A header line a screen draws before the plans |
 | `streams` | array | never | never | the release streams catalogue, in the file's own order, below; `[]` when the catalogue could not be read (`warnings` says why, and a release's name and version are then simply absent) |
 | `warnings` | array | never | never | the lines a human read prints before its table, below; `[]` when there is nothing to say |
+| `index_complete` | bool | never | never | whether the run index has ever finished a walk (C-INDEX, D3215). While it is **`false`** the text listing prints one line saying the index is still building, and the runs joined here are the ones folded so far: a reader never prints a silently short list as the whole truth |
+| `folded_through` | string (RFC 3339) | **yes** | never | how fresh the indexed runs are: the moment the index is folded through, and the point after which a run's own change comes from the overlay rather than a document. Absent before the first fold — never a zero timestamp |
+| `merges_read` | bool | **yes** | never | **present, and `false`, only under `--no-merges`** (D3217 as amended): the read spawned no `gh`, so every task whose run recorded a ready pull request reads `done` with the `merge unknown` mark and nothing is counted `closed`. Its presence is what lets a screen tell "no merges were read" from "there was no merge to read"; the default read does not carry it at all |
 
 one entry of `plans`:
 
@@ -1918,7 +1939,7 @@ one entry of `nodes`:
 | `run` | string | **yes** | never | the **suffix** of the run this task is joined to — the four characters after the last dash of a run id, which is the part a person reads out loud, and the short form `fugaro watch` shows a run by (`internal/task`'s `ShortRun`; where two shown rows collide it is longer, and `DisplayRuns` extends it); `runs ls` prints the whole id |
 | `stage` | string | **yes** | never | the stage that run is in. **Job-written display text**: it arrives sanitised (`safetext.Field`) and is rendered as text |
 | `pr_number` | number | **yes** | never | the pull request number this task shows, **whenever the run has recorded one** — running or finished. It is the run's `record_pr` (F9) when it has one, the run's own number otherwise, and it is absent rather than `0` when there is none: a repository that numbers its pull requests from 1 makes `0` no number at all. It is never a link (§5.1 rule 2) |
-| `mark` | string | **yes** | never | `"merge unknown"`, and nothing else today: the task's run recorded a ready pull request and no lookup could say whether it merged (below). A screen shows it beside the state, never instead of it |
+| `mark` | string | **yes** | never | `"merge unknown"`, and nothing else today: the task's run recorded a ready pull request and no lookup could say whether it merged — because none answered, or because `--no-merges` made none (below). A screen shows it beside the state, never instead of it |
 
 one entry of `releases`:
 
@@ -1955,7 +1976,8 @@ the CLI's, not a screen's rule:
   or `launching`), and `stage` comes from it. The task is being worked on now.
 - `done` — a joined run's pull request is **merged**, according to the
   operator's own `gh` (GitHub only, fail-open); or a finished run recorded a
-  ready or reviewed pull request and **no lookup could answer at all**, and then
+  ready or reviewed pull request and **no lookup could answer at all** (the
+  default read's cap reached, or `--no-merges`, which asks nothing), and then
   `mark` is `merge unknown`. Either way the work is in.
 - `cancelled` — the latest run was cancelled **and it is the task's only run**.
   The work was dropped.
@@ -1974,7 +1996,8 @@ subprocess. A URL that matches but names **another repository** than the
 checkout's is not asked about either, and answers *not merged*: a run's
 `pr_url` is job-written, and a job must not mark its own task done by pointing
 at somebody else's merged pull request. Where there is no answer (no `gh`, a
-Bitbucket repository, a failed or timed-out lookup, one past the cap), a task
+Bitbucket repository, a failed or timed-out lookup, one past the cap, or
+`--no-merges`, which asks nothing at all), a task
 whose run's record says its pull request is ready shows `done` with the mark,
 rather than staying open forever: a screen that waited for an answer nobody can
 give would be a screen that never settles. A `done` **with** the mark is **not** counted closed — only a confirmed merge is
@@ -4144,9 +4167,12 @@ shared-image lock. The catalog's document:
 | `entries[].description` | string | yes | |
 | `entries[].digest` | string | yes | the digest the last build of it recorded, absent when none has |
 
-**It is offline and read-only**, which is why it is the whole of the group's
-reach in the console: `image add`, `image rm`, `image promote`, `image build` and
-`image refresh` are the never table's (§5.1 rule 6). A **catalog the CLI cannot
+**It is offline and read-only**, and the group's writers — `image add`,
+`image rm`, `image promote`, `image build` and `image refresh` — are the never
+table's (§5.1 rule 6) **save one exception by name**: the add §6.34 documents,
+whose two operations the same rule grants the console (`image.add.plan` and
+`image.add`), which is what makes this read no longer the whole of the group's
+reach. A **catalog the CLI cannot
 read from the cloud is not a refusal for this read**: the command answers with the
 catalog this machine's configuration holds, and a console draws it. The console's
 row is `image ls --json` (design §5.1 rule 6), with no argument and no flag but
@@ -4259,6 +4285,107 @@ entry, the validation, the dry run and the confirmation are that modal's
 named here because it is the second of the pair, not because it reads anything.
 
 
+### 6.33 `fugaro models add <id> --dry-run --json` — the models write's dry run (the console improvements plan's MW1; the console's `models.add.plan` and `models.add`)
+
+**Command:** `internal/cli/models_add.go` `newModelsAddCmd` / `runModelsAdd`.
+**Document:** `modelsAddPlanDoc`, indented, one object
+(`schemas/models-add-plan.schema.json`, and the golden file
+`internal/cli/testdata/models_add_plan.golden.json`):
+
+| Key | Type | Note |
+|---|---|---|
+| `version` | int | `modelsAddPlanVersion`, `1` today (D848: a member is added within a version, and removing or retyping one bumps it) |
+| `layer` | string | the layer the change would land in — `local` and never another, because the command edits the selected installation's own file (D780). One word of the same vocabulary the settings write's `layer` uses |
+| `path` | string | the file the change would be written to, as the caller's read or `--config` resolved it |
+| `model` | string | the id the command was given, exactly as it would be written. Never a pattern: a claim is the one model the owner named (D785) |
+| `route` | string | the provider entry the model would be claimed on |
+| `changed` | bool | whether the file would change at all. **False is a classification and not an error** — an add the file already holds exits 0 with this document and an empty `steps` |
+| `claim` | object | `key` (`providers.<route>.models`), `entry` (the id appended there) and `claimed_by` (the existing entry or pattern that already covers the model). **The last two are never both set, and one of them always is** |
+| `allowed_models` | object | `key` (`budget.allowed_models`), `entry` and `present`: an absent list stays absent rather than becoming a list of one (D786), so a consumer reads `present` before it reads `entry` |
+| `prices` | object | `key` (`model_prices.<id>`), `input_per_m`, `output_per_m` and `source` (`given`, `catalog` or `local`). The entry is written only for `given` — a model the catalog or the file already prices needs none |
+| `steps` | array | the follow-up the change owes, in the order it would run: `name` (the apply chain's own step name, `policy` today) and `state` (`run`, or `saved` under `--no-apply`). Empty exactly when `changed` is false |
+| `refusal` | string | **empty in every document this CLI prints**: a refused add is the CLI's own sentence with a non-zero exit and no document at all, which is what a consumer branches on |
+
+**It is the change as data**, and the write it stands in for is the same
+command less `--dry-run --json`: `models.add` is the console's **fifth write**
+(design §5.1 rule 6), and the only argv of the surface that reaches an add of a
+model.
+
+**The console's two rows carry four arguments.** Three are `=`-form words the
+renderer sends — `--route=<r>`, `--price-in=<usd>`, `--price-out=<usd>` — so no
+value of either row can be read as a flag, and every one of them is held to a
+grammar in main before the argv exists (`console/src/main/ipc.ts`'s `modelId`,
+`modelRoute` and `modelPrice`). The fourth is the model id, passed as the
+positional **behind `--`** (`terminatedValue` in
+`console/src/main/spawn.ts`), which is the word `models add <id>` reads. **The
+write's row declares the plan's own four and no others**, so the argv the
+operator confirmed is the argv that runs.
+
+**`--no-apply` is on both rows, and it is a word of the command path and never
+a payload's.** It is what keeps the write's follow-up step — the published
+policy node's migration in place — saved for the operator's own `fugaro apply`
+(D1565), so `steps[].state` is `saved` in every document either row prints. A
+CLI whose `models add` has neither `--no-apply` nor `--dry-run` is a CLI this
+console refuses to drive at all: below that floor the Manage kind offers the
+Copy-command instead (`MODELS_ADD_CLI_FLOOR`,
+`console/src/shared/version.ts`, asked on main's side too by
+`console/src/main/modelsadd.ts`).
+
+**The window is drawn from this document and from nothing a renderer sends.**
+Main reads the members strictly (`console/src/main/modelsview.ts`), holds the
+document's own SHA-256 and the exact argv the yes spawns, and re-runs *that*
+argv — the digest re-checked first — which is why the plan window shows the
+command line rather than a description of it (design §5.1 rule 11). The
+document is a **widening**: it changes what every run of the project may name and
+spend on, so the window's confirming button is gated by the tick the console
+draws (`MODELS_ADD_TICK_LABEL`) and a yes without it is refused. `fugaro models
+add` is otherwise the never table's, as a command and as a word of `models`.
+
+### 6.34 `fugaro image add <name> --dry-run --json` — the image write's dry run (the console improvements plan's MW2; the console's `image.add.plan` and `image.add`)
+
+**Command:** `internal/cli/image_catalog.go` `newImageAddCmd` / `runImageAdd`.
+**Document:** `imageAddPlanDoc`, indented, one object
+(`schemas/image-add-plan.schema.json`, and the golden file
+`internal/cli/testdata/image_add_plan.golden.json`):
+
+| Key | Type | Note |
+|---|---|---|
+| `version` | int | `imageAddPlanVersion`, `1` today |
+| `command` | string | the door the document is for — `image add`, and a plan for another command is refused by main's reader |
+| `project` | string | the installation the entry would land in. **Main compares it against the installation the console is acting on** and refuses a plan for another, because the confirmed write would otherwise land somewhere the screen never named |
+| `entry` | object | `name`, `tags` (`[]` when the entry provides none), `description` (`""` when the caller gave none), `default` (false for every write this console can make: `--default` is a definition flag no row of the spawn table emits) and `source` (the one-line definition `image ls` prints, `dockerfile owner/name:path`, with `@branch` where the entry names one) |
+| `steps` | array | the follow-up the add owes, in the order it would run: `name` (`catalog-build`, `repository`, `policy`) and `saved` (true under `--no-apply`, which is every document either console row prints). **The build is the one step here that bills** |
+| `refusal` | — | no member: the shape carries none, and a refused add is the CLI's own sentence with a non-zero exit and no document at all |
+
+**It is the change as data too**, and `image add` is the console's **sixth
+write** (design §5.1 rule 6). `--dry-run` builds the entry from its flags, asks
+every refusal the real add would ask — the definition's own rules, a name the
+catalog already has, a definition no build could fetch, D1573's agent refusal and
+the installation's skew gate — prints this document and writes nothing: no
+catalog entry, no build, no saved step, and nothing priced.
+
+**The console's two rows carry four arguments**, on the same rule as §6.33's:
+`--dockerfile=<owner/name:path>`, `--tags=<a,b>` and `--description=<text>` are
+`=`-form words held to main's grammars (`console/src/main/ipc.ts`'s
+`imageName`, `imageDockerfile`, `imageTags` and `imageDescription`), and the
+entry's name is the positional behind `--`. **`--inline`, `--image`, `--default`
+and `--branch` are words of neither row**: they are the other definitions of one
+entry, they write executable content from a renderer's text or name an image that
+already exists, and `assertArgvFlags` refuses each of them for every operation
+but the rows that declare it. **`--no-apply` keeps the add's three steps off the
+operator's machine** until they run them (D1565), the build included — which on
+this surface matters more than anywhere else, because that step bills by itself.
+
+**The write is a project admin's, and the window says so before the click**: the
+Manage control is enabled only for a project admin (RB4's gating), because
+`image add` refuses anyone else (`accessGateProject`, and the CLI's own skew
+gate), and a role that changed between the window and the write is refused by the
+CLI's own sentence, which the screen draws like any other refusal. Unlike §6.33's
+the document is a **narrowing** — it raises no limit — so the window's yes is one
+deliberate click and no tick. `fugaro image add` is otherwise the never table's,
+as a command and as a word of `image`.
+
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
@@ -4325,7 +4452,7 @@ and **not** off this document or the design:
 | `coordinator intents` | yes (`newCoordinatorIntentsCmd`, §6.16) — the declarations read (coordinator v2 C4, D827): it has **no argument of its own** (`--all` and `--json` are the console row's fixed words), and it carries `--project` and `--config` like the rest because it resolves the local config the way the project view does. **The one row here whose child asks nothing of the host at all**: the declarations are the caller's own database node, read through the same credentials §6.13's stored read uses, so there is no App key, no installation token and no provider anywhere in it |
 | `settings set\|unset` | yes (`newSettingsCmd`, §6.20) — **the second row here that writes** (the settings-edit plan's C3, design §5.1 rule 12): the dry run and the confirmed write are the same command with the same aiming pair, and the layer written is §6.19's `target_layer` rather than a flag a renderer chose. The write carries `--no-apply` (the composite-commands plan's AP8, D1572), so the change is saved and its follow-up steps are owed rather than run — and it carries it only at or above the floor that registers the word (`NO_APPLY_CLI_FLOOR`, 0.26.0, where that plan's AP5 and AP6 ship it, §6.20), so a CLI older than that gets no word |
 | `user ls` | yes (`newUserLsCmd`, §6.29) — the Members view's roster read (the roles-and-scopes plan's RS7, roles.md D691(b)), and with `--me` the caller's own role, which reads no roster at all. Both forms carry the aiming pair, and the five words of the group that change a roster are the never table's |
-| `image ls` | yes (`newImageLsCmd`, §6.30) — the project's image catalog, and with `--shared` the installation's shared-image lock. **It is offline** and writes nothing, and the group's writers — `image add`, `image rm`, `image promote`, `image build`, `image refresh` — are the never table's as commands and as words of `image`, which is why this one row is the group's whole reach |
+| `image ls` | yes (`newImageLsCmd`, §6.30) — the project's image catalog, and with `--shared` the installation's shared-image lock. **It is offline** and writes nothing, and the group's writers — `image add`, `image rm`, `image promote`, `image build`, `image refresh` — are the never table's as commands and as words of `image`, **save the add §6.34 documents, whose two operations that same rule grants the console by name** — so this read is not quite the group's whole reach any more, and the write's own two rows are the other half of it |
 | `recipes ls` | yes (`newRecipesLsCmd`, §6.31) — the recipes in force, one winner per name. **It is offline** and writes nothing, and `recipes publish` and `recipes validate` are the never table's as words of `recipes` (`publish` as a command too) |
 | `apply --status` | yes (`newApplyCmd`, §6.28) — **the third row here that writes**, and the only one with a read arm: `fugaro apply` runs the follow-up steps a management command saved for later (the composite-commands plan's D1560). The console is admitted to `apply --status --json` and nothing else (D1569, design §5.1 rule 6): the bare `apply` is a row of that table the console does not spawn yet, and the read costs no cloud, so the pair here is what aims it at an installation |
 | `setup` | yes (`newSetupCmd`, §6.32) — **the first row here whose argv arrives partly on stdin as a document rather than as a word**: `--answers-file -` is the wizard's five answers, which the console passes as `-` and never a path. With `--plan-only` the row reads and creates nothing (the console's `setup.plan`), and without it the row is `setup.apply`, **the fourth row here that writes** (design §5.1 rule 5) and the console's fourth write overall. **The console gives both of the command's rows no project selection at all** — no `--project`, no `--config` and no `FUGARO_PROJECT` — because the answers name the project the run creates (§6.32) |
@@ -4342,8 +4469,8 @@ table against the live constructors.
 
 ## 9. What the console may do with all this
 
-1. **Every document in the console's set is read-only** — with **three
-   exceptions, and all three are writes the console's own confirmation
+1. **Every document in the console's set is read-only** — with **six
+   exceptions, and all six are writes the console's own confirmation
    answers**: the launch (§6.14, design §5.1 rule 11), which was the console's
    **first write**; the settings edit (§6.20, design §5.1 rule 12, the
    settings-edit plan's C3), which is its **second write**; the record's
@@ -4351,24 +4478,33 @@ table against the live constructors.
    is its **third write** — the first two behind a window the main process opens
    (rules 11 and 12), and the move behind a sheet of the Graph screen's own
    whose every word is still the main process's, so a confirmation authorises
-   nothing the preview did not draw; and the first run's apply (§6.32, design
+   nothing the preview did not draw; the first run's apply (§6.32, design
    §5.1 rule 5, the console improvements plan's SW3a), which is its **fourth
    write** — behind the same window rule 11 opens, on the plan that window drew
    and the answers main held, so no renderer word reaches the child and a
    different project, region or rigor cannot be slipped in between the plan and
-   the write (design §3.4 rule 3's amendment, D2904). **A fifth write
-   reads no document of this file at all**, so it neither widens nor narrows
-   this sentence: `licence.save` (design §5.1 rule 5, the subscriptions plan's
+   the write (design §3.4 rule 3's amendment, D2904); and the two Manage writes,
+   the models add (§6.33, design §5.1 rule 6, the plan's MW1) and the image add
+   (§6.34, the plan's MW2), which are its **fifth** and **sixth** — both behind
+   rule 11's window, drawn from the CLI's own `--dry-run` document, whose SHA-256
+   and exact argv main holds and re-runs, so the command line the operator
+   confirmed is the one that runs and no renderer value reaches the child
+   (D2903). **A seventh write reads no document of this file at all**, so it
+   neither widens nor narrows this sentence: `licence.save` (design §5.1 rule 5,
+   the subscriptions plan's
    S2.7) keeps the licence key the operator pasted in the console's own store
    (design §5.1 rule 10), spawns nothing, consumes none of the documents below,
    and needs no confirmation window because there is no child and no cloud
    object to confirm — what it writes is a file of the console's own, and what
    it refuses is a key that does not verify. The allow-list is by
-   exact argv (design §5.1 rule 6), and all four are on it: `run.launch`,
-   `settings.edit`, `roadmap.move` and `setup.apply` are the four **spawning**
-   operations of
-   the surface that write
-   — `licence.save` is the fifth that writes and spawns nothing, which is why
+   exact argv (design §5.1 rule 6), and all six are on it: `run.launch`,
+   `settings.edit`, `roadmap.move`, `setup.apply`, `models.add` and `image.add`
+   are the six **spawning** operations of
+   the surface that write — four of them showing the operator a document first,
+   from a dry run of the same command they then run (`settings.edit`'s
+   `--dry-run --json` phase, `setup.plan`, `models.add.plan` and
+   `image.add.plan`) — and `licence.save` is the seventh that writes and spawns
+   nothing, which is why
    there is no row of §8 for it (V2.5.1a,
    2026-10-28/29, took the surface to twenty-four; K2a's
    `link.openPullRequest` took it to twenty-five and writes nothing, and C4c's

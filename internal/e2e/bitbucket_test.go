@@ -165,7 +165,7 @@ func TestBitbucketRunOverHTTP(t *testing.T) {
 func bitbucketRun(t *testing.T, early bool) {
 	testutil.IsolateGit(t)
 	const token = "bb-e2e-token-5678"
-	files := testutil.FixtureFiles(t)
+	files := pricedFixtureFiles(t)
 	// Labels exist only to check that the Bitbucket adapter's "labels
 	// aren't supported" warning reaches the runner's log, once.
 	pr := "{ labels: [fugaro], early_draft: false }"

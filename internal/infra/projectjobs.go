@@ -461,6 +461,7 @@ func projectJobs(lc *localcfg.Config, bucket string, vertex bool, carried []stri
 			// the runner is handed, and the jobs beside this one must not carry
 			// this job's list.
 			jobEnv := maps.Clone(env)
+			sharedJobServedEnv(jobEnv, served)
 			jobEnv[runner.SecretEnvsVar] = redactionEnvs(jobSecrets)
 			saID := gcp.ProjectServiceAccountID(name, pr.Provider, account)
 			if err := addProjectJob(out, ProjectJob{
@@ -1257,6 +1258,7 @@ func refreshProjectJobMounts(job ProjectJob, pr config.JobProfile, lc *localcfg.
 		return job
 	}
 	env[runner.SecretEnvsVar] = redactionEnvs(mounts)
+	sharedJobServedEnv(env, served)
 	job.SecretEnv = mounts
 	job.Env = env
 	return job
@@ -1457,6 +1459,35 @@ func projectJobMounts(lc *localcfg.Config, profile string, pr config.JobProfile,
 		return nil, err
 	}
 	return mounts, nil
+}
+
+// sharedJobServedEnv records C1's fact "this job's credentials are served" on a
+// shared job's own environment (config.CredentialsServedEnv, C1 (h)), or clears
+// it, from the profile's switch — and it is the same pair of clauses the mounts
+// move by, which is the point of it being one function.
+//
+// The runner's door on the credential a shared job holds reads this fact and
+// nothing else about that credential (internal/runner's projectJobServed): a
+// run of a served job chooses no model credential from agent.auth or from the
+// account its name carries, because the container holds none — which credential
+// serves a call is the credentials service's answer, walked from the project's
+// routing table (R2). So a job whose fact is set while it still mounts the
+// account's token is a run whose account nobody checks, and a job whose mounts
+// are gone without the fact is a run reading its own auth for a credential the
+// container does not hold: the two move together (G17, D143), and this is where
+// they are held to it.
+//
+// served is the profile's own switch, and the second clause is the fail-closed
+// one rather than a restatement of the first: the mounts move per variable by
+// the class list (IsSharedJobServedModelEnv). With that list empty — the inert
+// state D147's "with it off nothing changes" is — a switched profile keeps
+// every mount, and the fact must not be set.
+func sharedJobServedEnv(env map[string]string, served bool) {
+	if served && config.SharedJobServesClass(config.SharedJobClassModel) {
+		env[config.CredentialsServedEnv] = config.ServedValue
+		return
+	}
+	delete(env, config.CredentialsServedEnv)
 }
 
 // projectAccountMount adds the one secret_env entry that delivers an account

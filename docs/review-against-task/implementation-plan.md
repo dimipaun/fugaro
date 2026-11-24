@@ -289,7 +289,13 @@ This line is informational and reserves no budget: it is what the tasks' tiers p
 
 ## Checks
 
-- **Check 750 (owner-run, after the release that carries RA10, not a gate).** After `fugaro update`, on a pull request a Fugaro run opened: `fugaro review --pr <N>`, then `fugaro review show <run>`; it passes when the `against:` line names the opening run, and when a second review of a pull request deliberately missing one item of its brief lists an `unmet` issue with `fix first`. Then `fugaro review --pr <N> --code-only` shows `against: none (--code-only)`.
+- **Check 750 (owner-run, after the release that carries RA10, not a gate; the script is how you run it).** After `fugaro update`, at your own terminal, on a scratch installation you name (**never `belong`**) and from a checkout of the repository the pull request is in:
+
+  ```sh
+  bash scripts/live-checks/check-750-review-against-task.sh --installation <name> --pr <N>
+  ```
+
+  On a pull request a Fugaro run opened — the check reads the run that opened it from `fugaro runs ls --pr N --json` and refuses a pull request no run opened — it passes when the `against:` line names the opening run, and when a second review of a pull request deliberately missing one item of its brief (`--unmet-pr <M>`, a second pull request you arrange) lists an `unmet` issue with `fix first`; without `--unmet-pr` that row reads UNVERIFIED and the check ends INCOMPLETE, never a pass. Then `fugaro review --pr <N> --code-only` shows `against: none (--code-only)`. It launches **two real review jobs** (**three** with `--unmet-pr`), prints the ceiling it read from `fugaro project show --json` before the first one and asks you to confirm nothing; its own test, `scripts/live-checks/check-750-review-against-task_test.sh`, drives every step against a fake `fugaro` and is run by `go test ./scripts`. **No agent runs any step of it.**
 
 Checks 751–759 stay reserved and unused.
 

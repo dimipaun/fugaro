@@ -430,9 +430,14 @@ func TestSlipHoldsNoValue(t *testing.T) {
 		got = append(got, k)
 	}
 	slices.Sort(got)
+	// sources, named_pool and launcher are C2's and CS14's members, and their
+	// names are on this list for the reason every other one is: each is a NAME
+	// or an id — a source's kind and pool, the pool a launch asked for, the
+	// verified principal's kind and id — and none could carry a credential's
+	// value (F19).
 	want := []string{
-		"allowed", "claim_hash", "claimed", "expected_account",
-		"max_runtime", "owner", "pool", "run", "slug",
+		"allowed", "claim_hash", "claimed", "expected_account", "launcher",
+		"max_runtime", "named_pool", "owner", "pool", "run", "slug", "sources",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("the slip node carries %v; want exactly %v — a slip names what a run may use and holds no value", got, want)

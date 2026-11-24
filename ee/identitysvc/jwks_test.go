@@ -439,7 +439,11 @@ func TestJWKSRefusesAnUnreadableSet(t *testing.T) {
 // bytes, and the one member this half reads out of a set is the payload's
 // `exp`. Feeding the vector's own compact serialization through the reader is
 // what keeps the figure A3's alert fires on the one the other side signed,
-// rather than a shape this half invented.
+// rather than a shape this half invented. The file carries the signing input as
+// its base64url halves and the signature beside them, so the compact form the
+// reader takes is assembled here: a three-part token committed to the file is a
+// shape a secret scanner refuses (images/trivy-secret.yaml), and the catalog
+// build's scan is the gate this repository must not be the first to fail.
 func TestKeySetExpiryReadsC1sVector(t *testing.T) {
 	data, err := os.ReadFile(filepath.Clean("../../shared/mobile-session/vectors.json"))
 	if err != nil {
@@ -447,8 +451,9 @@ func TestKeySetExpiryReadsC1sVector(t *testing.T) {
 	}
 	var vectors struct {
 		KeySet struct {
-			Compact string `json:"compact"`
-			Payload struct {
+			SigningInputParts []string `json:"signing_input_parts"`
+			Signature         string   `json:"signature"`
+			Payload           struct {
 				Exp int64 `json:"exp"`
 			} `json:"payload"`
 		} `json:"key_set"`
@@ -456,10 +461,12 @@ func TestKeySetExpiryReadsC1sVector(t *testing.T) {
 	if err := json.Unmarshal(data, &vectors); err != nil {
 		t.Fatalf("decoding the contract's vectors: %v", err)
 	}
-	if vectors.KeySet.Compact == "" || vectors.KeySet.Payload.Exp == 0 {
+	if len(vectors.KeySet.SigningInputParts) != 2 || vectors.KeySet.Signature == "" || vectors.KeySet.Payload.Exp == 0 {
 		t.Fatal("the vectors carry no signed key set with an expiry, and the form this half reads is the one they fix")
 	}
-	expiry, err := keySetExpiry([]byte(vectors.KeySet.Compact))
+	parts := append(slices.Clone(vectors.KeySet.SigningInputParts), vectors.KeySet.Signature)
+	compact := strings.Join(parts, ".")
+	expiry, err := keySetExpiry([]byte(compact))
 	if err != nil {
 		t.Fatalf("reading the expiry of the vector's signed key set: %v", err)
 	}

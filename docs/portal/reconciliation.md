@@ -153,9 +153,11 @@ beside them are tested on the same fixtures. No code generator.
 **F21 (Gap, round 1): one hosting config.** The root `firebase.json`'s shape (one hosting object, `public`
 `website/dist`) is pinned by the preview workflow's gate, by three website tests and by the deploy
 script's test. **Resolution:**
-the portal has its own `ee/portal/firebase.json`, deployed with `firebase deploy --config`; the root file
-changes only to drop `keys.fugaro.dev` from `form-action` when the forms retire. The portal's CSP admits
-Paddle's, Firebase Auth's, Sentry's and the analytics origins.
+the portal has its own configurations, one per project — `ee/portal/firebase.json` (`fugaro-portal`,
+`fugaro-prod`) and `ee/portal/firebase.staging.json` (`fugaro-portal-staging`, `fugaro-staging`), the two
+differing in the site name alone because a Hosting site id is globally unique — deployed with
+`firebase deploy --config`; the root file changes only to drop `keys.fugaro.dev` from `form-action` when
+the forms retire. The portal's CSP admits Paddle's, Firebase Auth's, Sentry's and the analytics origins.
 
 **F22 (Rule): no agent deploys or operates the service** (`.claude/rules/ee.md`). Every deploy, image
 build, project setup, provider account, signing key and the operations organisation's seed are OWNER-RUN.
@@ -353,8 +355,8 @@ Open items, all the owner's:
   the privacy notice (Firestore personal data, analytics, Sentry); D457 retention, including how long raw
   Paddle events are kept and whether their buyer fields are redacted on deletion (F17).
 - **Accounts (OWNER-RUN, P0):** Firebase providers (Apple Services ID, Microsoft app registration),
-  `app.fugaro.dev` DNS, Paddle live and sandbox, Resend and its DNS, Sentry, the analytics property, the
-  signing keys, the image builds and deploys.
+  `app.fugaro.dev` and `app.staging.fugaro.dev` DNS, Paddle live and sandbox, Resend and its DNS, Sentry,
+  the analytics property, the signing keys, the image builds and deploys.
 - **TOTP for email sign-in** is "later" in the spec and is not planned.
 
 ## UNVERIFIED

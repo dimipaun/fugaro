@@ -1492,16 +1492,18 @@ func TestDocsCheck81GrantListNamesTheTemplatesOwnPredicates(t *testing.T) {
 		pred string
 	}{
 		{16, `"TOKEN || USER"`}, {17, `"TOKEN || USER"`},
-		{34, `"TOKEN || USER"`}, {108, `"TOKEN || USER"`},
+		{40, `"TOKEN || USER"`}, {114, `"TOKEN || USER"`},
 		{18, `(TOKEN && auth.token.fs == $slug) || USER`},
-		{35, `(TOKEN && auth.token.fs == $slug) || USER`},
-		{137, `(TOKEN && auth.token.fs == $slug) || USER`},
-		{209, `"RUN || USER"`},
-		{64, `"RUN"`}, {239, `"RUN"`},
-		{346, `"MAILBOX"`}, {408, `"MAILBOX"`},
-		{56, `"PAIRING"`},
+		{41, `(TOKEN && auth.token.fs == $slug) || USER`},
+		{143, `(TOKEN && auth.token.fs == $slug) || USER`},
+		{215, `"RUN || USER"`},
+		{70, `"RUN"`}, {245, `"RUN"`},
+		{352, `"MAILBOX"`}, {416, `"MAILBOX"`},
+		{62, `"PAIRING"`},
 		{11, `".read": "USER"`},
-		{276, `".read": "USER"`},
+		{23, `".read": "USER"`},
+		{25, `".read": "USER && $uid == auth.uid"`},
+		{280, `".read": "USER"`},
 	} {
 		if want.n < 1 || want.n > len(lines) {
 			t.Fatalf("rules.json.tmpl has %d lines and the paragraph cites line %d", len(lines), want.n)

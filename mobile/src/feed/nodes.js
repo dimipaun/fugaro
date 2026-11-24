@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
-// The wire node shapes of the four granted families, read leniently
-// (mobile plan, Task P3.2; D112's answer, tension (b1)).
+// The wire node shapes the feed reads, read leniently (mobile plan, Task P3.2;
+// D112's answer, tension (b1); the paused node is VS4's, below).
 //
 // The phone reads database **nodes**, not the console's `watch --json`
 // document, so this module is the one place where the tree's own types decide
@@ -30,11 +30,20 @@
 //
 // **Lenient about what it does not read.** `/spend/<day>/repos/<slug>` carries
 // `byModel` (a map of per-model usage) and `calls`, `/config/caps/repos/<slug>`
-// carries `repo`, and a kill switch carries fields a later phase may add. This
-// module ignores what it does not use rather than refusing the node: a tree
-// that grows a field must not break the feed. `document.js` is strict about the
-// *document*, which is this app's own shape -- the two rules are different on
-// purpose.
+// carries `repo`, a kill switch carries fields a later phase may add, and a
+// paused node carries the launcher, the pool, the chain and the chain's paused
+// time. This module ignores what it does not use rather than refusing the node:
+// a tree that grows a field must not break the feed. `document.js` is strict
+// about the *document*, which is this app's own shape -- the two rules are
+// different on purpose.
+//
+// **The paused node is read from a recording, like every node here.** The
+// phone's grant names four families (`paths.js`) and `paused/**` is not one of
+// them yet, so `readPause` reads the shape C3 fixes from
+// `fixtures/paused.json` -- the same way `document.js`'s rules are proved from
+// recorded documents -- and nothing subscribes to the subtree. When the grant
+// names it, the reader's plan gains the path and this reader is what draws it;
+// no member of the node changes then.
 //
 // Every amount is integer micro-dollars on the wire (`pricing.Micros`) and
 // dollars here, divided once at this boundary by `usd()`.
@@ -174,7 +183,6 @@ export function readKill(value) {
     });
   }
   if (value.on !== true) return Object.freeze({ ok: true, kill: null });
-  const atMs = epochMs(value.at);
   return Object.freeze({
     ok: true,
     kill: Object.freeze({
@@ -185,7 +193,7 @@ export function readKill(value) {
       // one, never the epoch. `killReadable` has already refused a node whose
       // `at` is not renderable, so this call cannot throw -- which is the
       // point of the check being there rather than here.
-      at: atMs === null ? null : new Date(atMs).toISOString(),
+      at: instant(value.at),
       reason: typeof value.reason === 'string' && value.reason.length > 0 ? value.reason : null,
     }),
   });
@@ -226,6 +234,49 @@ export function epochMs(value) {
   if (typeof value !== 'number' || !Number.isInteger(value)) return null;
   if (value <= 0 || value > MAX_INSTANT_MS) return null;
   return value;
+}
+
+/** A wire instant as the document spells it: epoch milliseconds in, RFC 3339
+ * out, and `null` when the value is not an instant this app can render. Both
+ * the kill switch's `at` and a pause's `resume_at` are epoch milliseconds on
+ * the wire (`budget.Kill`, `runstore.PauseNode`) and RFC 3339 in the document,
+ * so the conversion happens in one place. */
+function instant(value) {
+  const atMs = epochMs(value);
+  return atMs === null ? null : new Date(atMs).toISOString();
+}
+
+/**
+ * A paused run: `/paused/<slug>/<run>`, the credentials service's record of a
+ * pause (`runstore.PauseNode`, C3 of docs/model-credentials-routing).
+ *
+ * The node is what every launcher reads to draw a suspended run, and the two
+ * members kept here are the two a screen draws: **when it comes back**
+ * (`resume_at`, epoch milliseconds on the wire and RFC 3339 in the row the feed
+ * carries) and **whether it ever will** (`cancelled`: the mark that stops the
+ * pause being resumed, and a mark rather than a deletion, so a cancelled pause
+ * is still the pause it was).
+ *
+ * **The pause is read even when its instant is not.** `launcher` and `pool` are
+ * the service's record of the run's grant (an identifier, never display text),
+ * `chain` is a run id and `paused_seconds` is the chain's paused time, which
+ * the limit is stated in: none of them is drawn, and a figure carried with
+ * nothing to check it is a meaning nobody agreed on. A `resume_at` this app
+ * cannot render is a pause with no instant, which is `unavailable` and never
+ * the epoch -- and never "no pause", because believing a suspended run is
+ * running again is the unsafe direction, the opposite of the kill switch's,
+ * where an unreadable node is believed ON.
+ */
+export function readPause(value) {
+  if (value === undefined || value === null) return Object.freeze({ ok: true, pause: null });
+  if (!isNode(value)) return refuse(NODE_CODES.NOT_AN_OBJECT, 'pause');
+  return Object.freeze({
+    ok: true,
+    pause: Object.freeze({
+      resumeAt: instant(value.resume_at),
+      cancelled: value.cancelled === true,
+    }),
+  });
 }
 
 /** Is this kill node one a reader can believe? A field of the wrong type is a

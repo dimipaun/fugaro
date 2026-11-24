@@ -543,7 +543,14 @@ func (r *run) modelTakesImages(model string) bool {
 // stage that reads a pull request's own head, and its posture (D894(a)) is
 // what that stage must be launched under whatever the budget says. Such a run
 // writes the posture alone: the deny list is left out because both of its
-// halves exist for refusals the gateway itself makes.
+// halves exist for refusals the gateway itself makes. That posture is also the
+// one write a local run does not tolerate a failure of: nothing in a stage's
+// environment carries it, so a stage whose file could not be written would
+// read the head with that head's own hooks and MCP servers enabled, and it
+// stops there instead. The plain write goes the same way where a managed
+// settings file is already at the path: that file outranks the environment the
+// stage is handed, so a stage left reading it would call wherever it says
+// rather than at the gateway this run's ledger is kept by.
 //
 // A stage the run's stage account serves writes none of the gateway's
 // variables and none of the pins, for the reason its own environment carries
@@ -576,7 +583,11 @@ func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 		}
 	}
 	write, deny := agent.WriteManagedSettings, agent.DenyRules(true, r.denyBinaryReads(stage))
-	if r.review || stage == stageTriage || r.replay != "" {
+	// The posture a stage that reads a head the run does not trust is launched
+	// under (D894(a)), read once here because the tolerated write below asks
+	// the same question.
+	posture := r.review || stage == stageTriage || r.replay != ""
+	if posture {
 		// A review-mode run's stage reads a pull request's own head, and a
 		// reviewer arm's one stage reads another run's patch applied to this
 		// checkout (abreplay.go, B1.2), so the settings both are launched
@@ -605,7 +616,49 @@ func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 			deny = nil
 		}
 	}
+	if r.d.Local && !posture {
+		// The managed settings directory is the image's, and a local
+		// invocation is not refused over one it has no image for (D149). What
+		// it does not do is take a file already at the path: that file is not
+		// this run's — an organisation's own policy, say — and the managed
+		// level outranks the stage's environment, so a stage left reading it
+		// would call wherever it says, with this run's ledger reading nothing,
+		// while replacing it would take the machine's own settings away (the
+		// run removes the file it wrote at its end). A file this run wrote
+		// itself, in an earlier stage, is written again as before.
+		r.mu.Lock()
+		wrote := r.wroteManaged
+		r.mu.Unlock()
+		if !wrote {
+			if _, lerr := os.Lstat(r.managedPath()); !os.IsNotExist(lerr) {
+				return fmt.Errorf("writing Claude Code's managed settings: %s is already there and this run did not write it; Claude Code reads it in place of the environment this run hands the stage, so the stage's calls would not reach the gateway", r.managedPath())
+			}
+		}
+	}
 	if err := write(r.managedPath(), vars, deny); err != nil {
+		if r.d.Local && !posture {
+			// The one failure tolerated is a write with nothing at the path to
+			// replace: no directory at all, or one the developer may not write.
+			// The file is still written wherever the developer's machine holds
+			// the directory, so the fence is kept where it exists. Said once
+			// per run: every stage writes the file.
+			//
+			// A file the write found there anyway — this run's own, from an
+			// earlier stage, or one that appeared since the check above — is
+			// what the stage would read instead, for the reasons above, so the
+			// run stops rather than warn about a route it does not hold.
+			if _, lerr := os.Lstat(r.managedPath()); !os.IsNotExist(lerr) {
+				return fmt.Errorf("writing Claude Code's managed settings: %w", err)
+			}
+			r.mu.Lock()
+			warned := r.warnedManagedWrite
+			r.warnedManagedWrite = true
+			r.mu.Unlock()
+			if !warned {
+				r.d.Log.Warn("Claude Code's managed settings could not be written for this local run; its stages still reach the gateway through their environment", "err", r.redact(err.Error()))
+			}
+			return nil
+		}
 		return fmt.Errorf("writing Claude Code's managed settings: %w", err)
 	}
 	r.mu.Lock()
