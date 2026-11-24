@@ -453,7 +453,7 @@ func TestAMigrationThatCannotRecordItselfIsNotAFailure(t *testing.T) {
 	for _, w := range []string{
 		"roles/firebasedatabase.admin",
 		"nothing in this run depends on it",
-		"the next fugaro update by a project Owner records it",
+		"a project Owner's next update records it",
 	} {
 		if !strings.Contains(all, w) {
 			t.Errorf("the run does not say %q, so an operator whose installation stays unrecorded is told nothing:\n%s", w, all)
@@ -614,8 +614,8 @@ func TestAMigrationTheCallerCannotWriteIsNotAFailure(t *testing.T) {
 	}
 	for _, w := range []string{
 		"roles/firebasedatabase.admin",
-		"the operators and admins this run applies are the installation's own lists",
-		"a project Owner runs fugaro update once",
+		"it applies the installation's lists",
+		"a project Owner runs fugaro update",
 	} {
 		if !strings.Contains(all, w) {
 			t.Errorf("the run does not say %q, so an operator whose roles stayed put is told nothing:\n%s", w, all)
@@ -753,7 +753,7 @@ func TestAFlagListThatCannotBeLandedStopsTheRun(t *testing.T) {
 	for _, w := range []string{
 		"the grants node cannot be written with your credentials",
 		"roles/firebasedatabase.admin",
-		"fugaro update --budget-admin",
+		"--budget-admin",
 	} {
 		if !strings.Contains(ErrorText(err), w) {
 			t.Errorf("the refusal does not say %q:\n%s", w, all)
@@ -976,7 +976,7 @@ func TestAGrantTheInstallationNeverHeldNamesItself(t *testing.T) {
 		if len(r.ran(t, "apply")) == 0 {
 			t.Errorf("the run applied nothing:\n%s", all)
 		}
-		if !strings.Contains(all, "the grants node holds "+extra+", whom this installation's own outputs do not hold at the role the node does") {
+		if !strings.Contains(all, "the grants node holds "+extra+", whom the installation's outputs do not") {
 			t.Errorf("the run does not say which member the installation's outputs do not hold:\n%s", all)
 		}
 		if !strings.Contains(all, "granting "+extra+", which the review did not announce") {

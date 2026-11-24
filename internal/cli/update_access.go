@@ -423,13 +423,13 @@ const accessNoBackend = "this installation has no Firebase budget backend, so it
 // migration's own computation, which is the installation's outputs, so the
 // apply carries the installation's roster either way — the node is the record
 // that is missing, and the next update by an owner writes it.
-const accessNeedsAdmin = "could not write the grants node (needs roles/firebasedatabase.admin): a project Owner runs `fugaro update` once to move the roles into it"
+const accessNeedsAdmin = "cannot write the grants node (needs roles/firebasedatabase.admin): it applies the installation's lists; a project Owner runs fugaro update"
 
 // accessFlagsNeedAdmin is the refusal a run's own --operator/--admin gets when
 // it cannot be landed: unlike the migration, this one is not a step the run may
 // carry on without. An operator who named a list asked for a change to a role,
 // and a change that cannot be written may not look applied.
-const accessFlagsNeedAdmin = "cannot write the grants node (needs roles/firebasedatabase.admin): a project Owner's `fugaro update` does it, or `--budget-admin`"
+const accessFlagsNeedAdmin = "the grants node cannot be written with your credentials (needs roles/firebasedatabase.admin): a project Owner's fugaro update --budget-admin"
 
 // accessNoOutputs is the warning a migration gets when the installation's own
 // outputs cannot be read: the migration has no roster to write the node from,
@@ -644,7 +644,7 @@ func (e *initEngine) landMark(ctx context.Context) error {
 // either. Nothing is lost by waiting — the installation's lists hold no member
 // the node could rank, so this run applies the roster it read whatever the
 // marker says — and the next update by an owner is what records it.
-const accessMarkNeedsAdmin = "could not record the member-lists migration (needs roles/firebasedatabase.admin): the next fugaro update by a project Owner records it"
+const accessMarkNeedsAdmin = "member lists: not recorded (needs roles/firebasedatabase.admin): nothing in this run depends on it; a project Owner's next update records it"
 
 // accessMigratedNoGrants is the line the migration leaves for the installation
 // whose lists name nobody the node can rank: the marker is all it writes, and
