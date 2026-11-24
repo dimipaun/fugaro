@@ -90,11 +90,20 @@ func geminiDoc(t *testing.T, raw []byte) any {
 // base64 padding the id form drops. The subtest after the pairs is the other
 // branch of that rule, a tool call whose id carries no signature at all.
 //
+// The `harness` pair is the one whose tool schemas are the HARNESS's own: a
+// `$schema`, an `additionalProperties: false`, numeric bounds, an enum, a nested
+// array of closed objects. Every one of those is a member a translation through
+// the declaration's OTHER parameters member would have had to drop or refuse —
+// and refusing them is refusing every tool-bearing call the harness makes, which
+// is the call this whole file exists to serve. That pair is here so the shape is
+// one a reviewer can read, and so a translation that starts filtering schemas
+// again is red rather than silently narrow.
+//
 // Mutation (run, restore): carry `model`, `stream` or `anthropic_version` into
 // the body, map a role or a block onto the wrong member, or drop the signature
 // round trip, and the pair it belongs to is red.
 func TestGeminiRequestTranslation(t *testing.T) {
-	for _, name := range []string{"text", "tools", "sampling", "forced_tool"} {
+	for _, name := range []string{"text", "tools", "harness", "sampling", "forced_tool"} {
 		t.Run(name, func(t *testing.T) {
 			sent, err := vertexGeminiBody(geminiPair(t, name, "anthropic"), false)
 			if err != nil {
@@ -281,12 +290,17 @@ type geminiRefused struct {
 // and the rest of what a Messages call can carry that generateContent has no
 // member for: a member of the envelope this build has never mapped, a tool
 // result whose call is not in the request — the name a functionResponse must be
-// sent under is then nowhere in the call — a schema attribute Vertex's function
-// declarations do not support (a constraint dropped there is an argument the
-// model may produce and the tool will refuse), a thinking block (Gemini 3 takes
-// a discrete level, not Anthropic's budget), more stop sequences than Vertex
-// takes, and a tool choice that forbids parallel calls, which this wire cannot
-// say.
+// sent under is then nowhere in the call — an `input_schema` that is not a JSON
+// Schema object at all (the one thing the parameters member's own rule states:
+// it must describe an object whose properties are the function's parameters),
+// a thinking block (Gemini 3 takes a discrete level, not Anthropic's budget),
+// more stop sequences than Vertex takes, and a tool choice that forbids parallel
+// calls, which this wire cannot say.
+//
+// A schema's ATTRIBUTES are not on this list and must never be: the schema is
+// carried whole as `parametersJsonSchema` (vertex_gemini.go), so `$schema`,
+// `additionalProperties` and the numeric bounds the harness writes are sent as
+// they are rather than refused — the `harness` pair is where that is pinned.
 //
 // Mutation (run, restore): drop the member instead of refusing it, and the audit
 // count, the status and the upstream count below are red.
@@ -315,10 +329,9 @@ func TestAnUntranslatableMemberIsRefused(t *testing.T) {
 			`{"type":"tool_result","tool_use_id":"` + geminiPlanted + `","content":"ok"}]}]}`,
 		member: "messages[0].content[0].tool_use_id",
 	}, {
-		name: "a schema attribute Vertex's declarations do not support",
-		body: head + `"tools":[{"name":"read_file","input_schema":{"type":"object",` +
-			`"properties":{"path":{"type":"string"}},"additionalProperties":{"description":"` + geminiPlanted + `"}}}],` + tail,
-		member: "tools[0].input_schema.additionalProperties",
+		name:   "a tool whose input_schema is not a schema at all",
+		body:   head + `"tools":[{"name":"read_file","input_schema":"` + geminiPlanted + `"}],` + tail,
+		member: "tools[0].input_schema",
 	}, {
 		name: "a tool call whose signature cannot be read",
 		body: `{"model":"google/gemini-3-pro","max_tokens":16,"messages":[{"role":"assistant",` +

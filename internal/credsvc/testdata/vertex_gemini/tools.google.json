@@ -30,7 +30,7 @@
         {
           "name": "read_file",
           "description": "read a file",
-          "parameters": {
+          "parametersJsonSchema": {
             "type": "object",
             "properties": {"path": {"type": "string", "description": "the path"}},
             "required": ["path"]
@@ -39,7 +39,7 @@
         {
           "name": "run_command",
           "description": "run a command",
-          "parameters": {
+          "parametersJsonSchema": {
             "type": "object",
             "properties": {"argv": {"type": "array", "items": {"type": "string"}, "enum": ["ls", "pwd"]}},
             "nullable": true,

@@ -34,10 +34,17 @@
 //     .stopSequences (at most five):
 //     https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference
 //   - function calling — functionDeclarations, the function-name rule, the
-//     calling modes AUTO/ANY/NONE with allowed_function_names, the attributes a
-//     function declaration's schema supports, and how a functionResponse is
-//     matched to its call (by name, in order, on the `v1` API):
+//     calling modes AUTO/ANY/NONE with allowed_function_names, and how a
+//     functionResponse is matched to its call (by name, in order, on the `v1`
+//     API):
 //     https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/function-calling
+//   - a function declaration's parameters members — `parameters` (an OpenAPI
+//     Schema Object, typed) and `parametersJsonSchema` (a whole JSON Schema, taken
+//     as it is, mutually exclusive with the first), which is why a tool's
+//     `input_schema` is sent as the second and nothing in it is dropped:
+//     https://aiplatform.googleapis.com/$discovery/rest?version=v1 — the API's own
+//     discovery document, whose GoogleCloudAiplatformV1FunctionDeclaration is the
+//     authority for a nested type the docs site does not give a page of its own
 //   - the FunctionResponse.response key convention (`output`, and `error` for a
 //     call that failed):
 //     https://ai.google.dev/api/caching
@@ -733,7 +740,8 @@ func vertexGeminiToolResultContent(raw json.RawMessage, where string) (string, e
 
 // vertexGeminiTools carries the agent's tools as Vertex's function
 // declarations: name and description as they were written, and the Anthropic
-// `input_schema` as the declaration's `parameters`.
+// `input_schema` as the declaration's `parametersJsonSchema`, verbatim (see
+// vertexGeminiSchema for why that member and not `parameters`).
 //
 // A tool that names a `type` is refused, and that is the acceptance's "unknown
 // tool form": Anthropic's server tools (its web search, its code execution, its
@@ -793,93 +801,54 @@ func vertexGeminiTools(raw json.RawMessage) ([]any, error) {
 		if schema == nil {
 			return nil, untranslatableMember(where+".input_schema", "Vertex's functionDeclaration takes a parameters schema and this tool carries none")
 		}
-		parameters, err := vertexGeminiSchema(schema, where+".input_schema")
-		if err != nil {
+		if err := vertexGeminiSchema(schema, where+".input_schema"); err != nil {
 			return nil, err
 		}
 		declared["name"] = name
-		declared["parameters"] = parameters
+		declared["parametersJsonSchema"] = schema
 		declarations = append(declarations, declared)
 	}
 	return declarations, nil
 }
 
-// vertexGeminiSchema carries a tool's `input_schema` as a function declaration's
-// `parameters`, and it is the strictest half of this translation on purpose.
+// vertexGeminiSchema holds a tool's `input_schema` to the one rule the wire
+// states about it, and carries it untouched otherwise — which is the whole point
+// of the member it is sent as.
 //
-// Vertex's function-calling page states the attributes a declaration's schema
-// supports — "We support the following attributes: type, nullable, required,
-// format, description, properties, items, enum, anyOf, $ref, and $defs.
-// Remaining attributes are not supported." — and the supported set this file
-// carries is that list MINUS `$ref` and `$defs`, whose support the same page
-// qualifies (the reference has to be rewritten, and a wrong rewrite is a schema
-// the model is given but the tool does not have). A schema attribute outside the
-// set is refused rather than dropped: a dropped `maximum`, `pattern` or
-// `additionalProperties` is a constraint the model is no longer held to, and the
-// argument it then produces is one the tool the agent offered will reject — a
-// failure the model cannot see and the agent cannot explain.
+// A function declaration takes its parameters as ONE OF TWO mutually exclusive
+// members (the API's own discovery document, GoogleCloudAiplatformV1FunctionDeclaration):
+// `parameters`, which reflects the OpenAPI 3.0 Schema Object and is typed, and
+// `parametersJsonSchema`, "Describes the parameters to the function in JSON
+// Schema format", which the API takes as it is (`type: any`). This translation
+// sends the SECOND, and the reason is the harness it serves: an Anthropic
+// `input_schema` IS a JSON Schema, and the tools Claude Code offers are written
+// as one — they carry a `$schema`, an `additionalProperties: false` and numeric
+// bounds — so a translation through `parameters` would have to drop or rewrite
+// members the model is then no longer held to, which is the one thing this file
+// does not do. The member's own documented example settles it: the API writes it
+// with `additionalProperties: false` in it.
 //
-// A `type` is carried exactly as it was written. Vertex's own examples write it
-// both ways ("type": "object" in the REST example, "OBJECT" in the SDK's), so
-// this translation does not restate what the caller already said correctly.
-func vertexGeminiSchema(raw json.RawMessage, where string) (json.RawMessage, error) {
-	members, err := readVertexObject(raw, where)
-	if err != nil {
-		return nil, err
+// So nothing here is filtered, renamed or reshaped, and an attribute this file
+// has never heard of ($ref, $defs, pattern, minimum, unevaluatedProperties)
+// rides through with the meaning JSON Schema already gives it, instead of being
+// refused as an attribute Vertex's declarations "do not support" — a refusal
+// that would have made every harness call carrying tools impossible to serve.
+// The wire's own words are cited where the member is chosen, in the file header:
+// https://aiplatform.googleapis.com/$discovery/rest?version=v1 publishes the
+// nested types (GoogleCloudAiplatformV1FunctionDeclaration), which is the
+// authority the prose page does not carry.
+//
+// What is still checked is the one thing the member itself states as a rule —
+// "The schema must describe an object where the properties are the parameters to
+// the function" — so a schema that is not a JSON object at all is refused with
+// the typed reason rather than sent as something Vertex answers with an error no
+// run can act on.
+func vertexGeminiSchema(raw json.RawMessage, where string) error {
+	if !vertexJSONIsObject(raw) {
+		return untranslatableMember(where,
+			"Vertex takes a tool's parameters as a JSON Schema object whose properties are the function's parameters, and this is not one")
 	}
-	out := map[string]json.RawMessage{}
-	for _, m := range members {
-		switch m.Key {
-		case "type", "format", "description", "nullable", "required", "enum":
-			out[m.Key] = m.Value
-		case "properties":
-			properties, err := readVertexObject(m.Value, where+".properties")
-			if err != nil {
-				return nil, err
-			}
-			carried := map[string]json.RawMessage{}
-			for _, p := range properties {
-				sub, err := vertexGeminiSchema(p.Value, where+".properties."+p.Key)
-				if err != nil {
-					return nil, err
-				}
-				carried[p.Key] = sub
-			}
-			encoded, err := json.Marshal(carried)
-			if err != nil {
-				return nil, err
-			}
-			out["properties"] = encoded
-		case "items":
-			sub, err := vertexGeminiSchema(m.Value, where+".items")
-			if err != nil {
-				return nil, err
-			}
-			out["items"] = sub
-		case "anyOf":
-			items, err := readVertexArray(m.Value, where+".anyOf")
-			if err != nil {
-				return nil, err
-			}
-			carried := make([]json.RawMessage, 0, len(items))
-			for i, item := range items {
-				sub, err := vertexGeminiSchema(item, fmt.Sprintf("%s.anyOf[%d]", where, i))
-				if err != nil {
-					return nil, err
-				}
-				carried = append(carried, sub)
-			}
-			encoded, err := json.Marshal(carried)
-			if err != nil {
-				return nil, err
-			}
-			out["anyOf"] = encoded
-		default:
-			return nil, untranslatableMember(vertexMemberPath(where, m.Key),
-				"Vertex's function declaration schema supports type, nullable, required, format, description, properties, items, enum and anyOf, and this attribute is not one of them: a constraint dropped here is a value the model may then produce that the tool the agent offered would refuse")
-		}
-	}
-	return json.Marshal(out)
+	return nil
 }
 
 // vertexGeminiToolChoice carries Anthropic's `tool_choice` as Vertex's
