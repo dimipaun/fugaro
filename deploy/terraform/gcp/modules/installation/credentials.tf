@@ -34,11 +34,12 @@
 
 locals {
   # The whole file is gated on the one variable: null creates nothing, and a
-  # single boolean keeps the nine resources of this file in step (the account,
+  # single boolean keeps the eleven resources of this file in step (the account,
   # the bundle container, the accessor grant on it, the dynamic class's
   # conditioned accessor and its lister binding — D1931 — the database role and
-  # its two bindings, this service's account's and the mobile service's own, and
-  # the service — TestCredentialsServiceResourcesAreCounted is what holds this
+  # its two bindings, this service's account's and the mobile service's own, the
+  # Vertex role and its binding under local.credentials_vertex_on, and the
+  # service — TestCredentialsServiceResourcesAreCounted is what holds this
   # number and the file's own resources together, in both directions). The
   # mobile service's account and the mobile service itself are NOT among them:
   # they are the file beside this one, gated on local.mobile_service_on — which
@@ -384,6 +385,71 @@ resource "google_project_iam_member" "credentials_lister" {
   member  = google_service_account.credentials[0].member
 
   depends_on = [google_project_iam_custom_role.secret_lister]
+}
+
+# The service's reach in Vertex AI, which is the third thing this file grants
+# and the first one a MODEL call needs (CS11, docs/model-credentials-routing):
+# where a project's routing table names Vertex anywhere, the service is what
+# calls it, on the installation's own identity rather than on a credential it
+# holds (D3174 — Vertex is the project's own GCP service, so no bundle entry
+# could carry it).
+#
+# It is a custom role and never roles/aiplatform.user, which is the rule
+# .claude/rules/credentials-service.md states for this file: the predefined
+# role carries every aiplatform permission of the project — models, jobs,
+# datasets, endpoints, tuning, everything a person building on Vertex needs —
+# and the service makes exactly one kind of call. A README's worth of
+# permission is what the narrowest custom role exists to avoid, and the
+# asymmetry the fee is on: a component holding every model credential should
+# be able to do as little as possible with them.
+#
+# aiplatform.endpoints.predict is the whole of what it needs. The Claude models
+# on Vertex are served through the endpoint's :rawPredict (internal/credsvc's
+# Vertex call), and a predict on an endpoint is exactly this permission, on the
+# project's own endpoints, in the region the installation is in. Nothing here
+# grants endpoints.get, models.* or anything of the platform: the model id and
+# the region are the request's own, and a call this permission does not cover
+# fails closed rather than reaching something wider.
+#
+# The role is declared in var.project (Vertex is the installation's own
+# project's API, enabled by var.enable_vertex in apis.tf) and spelled literally
+# in the binding for credentials_database's reason: a custom role's name is
+# computed, so reading it here would reach a plan as an unknown role and
+# internal/infra/tf's cover could not say which role the grant is. The gate is
+# the service's own boolean AND the Vertex fact (local.credentials_vertex_on):
+# a role and a binding in a project whose API is not enabled, and in a project
+# whose table names Vertex nowhere, are resources nothing asked for.
+locals {
+  # Strictly narrower than local.credentials_service_on, the way
+  # local.mobile_service_on is: var.enable_vertex is what the API's own
+  # enablement is gated on, so a Vertex grant planned without it would be a
+  # permission on a service the project does not have turned on.
+  credentials_vertex_on = local.credentials_service_on && var.enable_vertex
+}
+
+# TestTheServiceVertexRoleIsItsOwn is what holds this resource and its binding
+# together: the one permission and no second, either project, the account as
+# the only member, no condition, and TestCredentialsServiceResourcesAreCounted
+# counts the two rows into the file's own number.
+resource "google_project_iam_custom_role" "credentials_vertex" {
+  count = local.credentials_vertex_on ? 1 : 0
+
+  project = var.project
+  role_id = "fugaroCredentialsVertex"
+  title   = "Fugaro credentials service (Vertex predict only)"
+  permissions = [
+    "aiplatform.endpoints.predict", # the one call: a :rawPredict on a Claude endpoint of this project
+  ]
+}
+
+resource "google_project_iam_member" "credentials_vertex" {
+  count = local.credentials_vertex_on ? 1 : 0
+
+  project = var.project
+  role    = "projects/${var.project}/roles/fugaroCredentialsVertex"
+  member  = google_service_account.credentials[0].member
+
+  depends_on = [google_project_iam_custom_role.credentials_vertex]
 }
 
 # The service itself. It requires IAM: nothing here grants roles/run.invoker to

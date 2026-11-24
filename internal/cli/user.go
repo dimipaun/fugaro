@@ -17,7 +17,136 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
+
+// The linked-member refusals (WU10, D2813, R11, R12). This machine's own
+// installation-level doors -- `fugaro user add|rm|grant|revoke|offboard` and
+// the `--operator/--admin/--budget-admin` fold of `fugaro setup|update` -- are
+// the doors of a project that is nobody's member. On a LINKED member a person's
+// roles are the workspace's record, written through `fugaro workspace user …`,
+// and each of them refuses naming that command instead.
+//
+// What "linked" is read from, and what it is not. The contract C2 states it for
+// this task (contract-member.md §2, MemberOps.ReadMirror): the member's own
+// copy of the workspace's member list at config/admin/workspace-members, which
+// every membership write and converge mirrors into the member (D2813 as
+// amended). The membership half in this machine's own config (workspaceMember)
+// tells a project that was never a member from one the workspace has not
+// mirrored into yet.
+//
+// R11's other half, Authority.Holds, is NOT read here, and that deviation is
+// deliberate rather than an oversight. Which of the two mechanisms a workspace
+// uses is written in the WORKSPACE's own roster and in no member's config (R5,
+// D2803), and a member's machine holds neither that file nor a grant that could
+// read the node (F11) -- so a command running here cannot tell a workspace held
+// by the folder from one held by its IAM account. The service-account half
+// alone is readable from this side, but it answers FALSE for every member of a
+// folder-model workspace (nothing binds the account there), so a conjunction on
+// it would open all five doors on exactly the members the folder model holds --
+// the failure this task exists to prevent. What is left is the mirror, and
+// D2822's state is the gap it leaves: a member owner's unlink drops the
+// authority and leaves the mirror where it is until the workspace project's
+// owner detaches the project (workspace project rm). Such a member keeps
+// refusing for that while, which the refusal says out loud, naming the detach
+// as the way out, so nobody is left holding a refusal and a workspace door that
+// answers the same. Deferred in the pull request: a member-side hold read (the
+// folder model's `config/admin/workspace-link` record, WU2's, and the account
+// binding C2's Bindings names) to close it.
+
+// installationMemberOps builds C2's member writer for THIS machine's own
+// project: when this machine IS a member, this machine's config names it, so
+// the writer reaches this project's own database. It is a variable because
+// WU10's refusals are tested with an injected MemberOps -- the shape WU8's test
+// uses -- and no test reaches a cloud.
+var installationMemberOps = func(lc *localcfg.Config) workspace.MemberOps {
+	return newWorkspaceMemberOpsFor(lc)
+}
+
+// installationMemberTarget is THIS machine's own project as C2 names a member:
+// the config's GCP project, and its Firebase project when that is one of its
+// own (F2, R10). An empty Firebase is C2's own spelling for the two being one
+// project, which the writer would otherwise read as a second project's read.
+func installationMemberTarget(lc *localcfg.Config) workspace.MemberTarget {
+	m := workspace.MemberTarget{Project: lc.GCPProject}
+	if lc.Budget != nil {
+		m.Firebase = lc.Budget.FirebaseProject
+	}
+	if m.Firebase == m.Project {
+		m.Firebase = ""
+	}
+	return m
+}
+
+// installationMemberLinked reports whether THIS machine's project is a linked
+// member of a workspace: its config carries the membership `workspace project
+// link` wrote (workspaceMember), and its own database carries the workspace's
+// member list (C2's ReadMirror, R11).
+//
+// A mirror that cannot be read is an error and never "not linked": the read is
+// what decides whether a door is refused, so failing it open would leave open
+// the door a linked member's copy of the list exists to close. (D2813's mirror
+// is ADVISORY against a rewritten list -- a member's own admins hold their
+// database's write, and drift is the fence -- and advisory is not "skip the
+// read that tells whether a member list is there at all".)
+func installationMemberLinked(ctx context.Context, lc *localcfg.Config) (bool, error) {
+	if !workspaceMember(lc) {
+		return false, nil
+	}
+	mirror, err := installationMemberOps(lc).ReadMirror(ctx, installationMemberTarget(lc))
+	if err != nil {
+		return false, err
+	}
+	return mirror.Found, nil
+}
+
+// installationMemberRefusal refuses one of this machine's own doors on a linked
+// member, naming the workspace command that replaces it. past is the act the
+// sentence reports as not done ("written", "offboarded", "folded into this
+// installation's roster") and door is the workspace command, spelled with its
+// arguments, that the person runs instead.
+//
+// It is a no-op for every other project, which is the whole of "on an unlinked
+// member, and on any other project, nothing changes": a config that carries no
+// membership half is not a member, and a member whose copy of the workspace's
+// member list is absent is one that is not linked -- D2819's opt-in, whose
+// installation-level commands stay as they are.
+func installationMemberRefusal(ctx context.Context, lc *localcfg.Config, past, door string) error {
+	if lc == nil {
+		return nil
+	}
+	linked, err := installationMemberLinked(ctx, lc)
+	if err != nil {
+		return remote(fmt.Errorf("nothing was %s: %s is a workspace member, and whether the workspace holds it is read from its own copy of the workspace's member list at %s, which could not be read -- so the door is refused rather than left open on a member: %w",
+			past, safetext.Field(lc.Name), workspace.PathMemberMirror, err))
+	}
+	if !linked {
+		return nil
+	}
+	return userErr("nothing was %s: %s is a linked member of workspace %s -- its own config carries the membership and its database carries the workspace's member list -- so a member's people are the workspace's record, and this installation-level door is refused (D2813, R11, D2819). Run %s instead: the workspace's own door is what writes a member's record, and this member's own `%s update` is what applies it. A member that has been unlinked keeps this copy of the list, and this refusal with it, until the workspace's own owner detaches the project from the workspace with `%s workspace project rm PROJECT` (D2822) -- the detach that takes the workspace's records back out of this database, and the way out if the workspace's own door answers that it does not hold this member",
+		past, safetext.Field(lc.Name), safetext.Field(workspaceNameOf(lc)), door, selfCommand(), selfCommand())
+}
+
+// installationMemberDoor is the workspace command an installation-level door's
+// refusal names (D2813, R12): the same verb where the workspace has one, and the
+// workspace's own roster door where it does not -- a member's offboarding is
+// `workspace user rm` (D2802). add and rm name two commands because the
+// workspace splits what they do in one: admitting a person to the workspace
+// (`workspace user add|rm`) and writing their roles in a member
+// (`workspace user grant|revoke`) are separate acts there (workspace_user.go).
+func installationMemberDoor(verb string) string {
+	door := func(cmd string) string { return "`" + selfCommand() + " " + cmd + "`" }
+	switch verb {
+	case "add":
+		return door("workspace user add ADDRESS") + ", then " + door("workspace user grant ADDRESS PROJECT ROLE")
+	case "rm":
+		return door("workspace user revoke ADDRESS PROJECT ROLE") + ", then " + door("workspace user rm ADDRESS")
+	case "offboard":
+		return door("workspace user rm ADDRESS")
+	default: // grant and revoke, and the fold of --operator/--admin/--budget-admin
+		return door("workspace user " + verb + " ADDRESS PROJECT ROLE")
+	}
+}
 
 // fugaro user is a front for the installation's two IAM lists — F42's word
 // for it: the lists exist, and `fugaro setup --operator/--admin` already
@@ -321,6 +450,16 @@ func userEdit(cmd *cobra.Command, o cloudOptions, role, member string, add bool)
 		return err
 	}
 	if err := userLocalConfig(sel, lc); err != nil {
+		return err
+	}
+	// Before the file is read and before the installation's own outputs are:
+	// on a linked member this door does not exist, and nothing this command
+	// would read changes that (WU10, D2813, R11).
+	verb := "rm"
+	if add {
+		verb = "add"
+	}
+	if err := installationMemberRefusal(ctx, lc, "written", installationMemberDoor(verb)); err != nil {
 		return err
 	}
 	old, err := os.ReadFile(sel.Path)

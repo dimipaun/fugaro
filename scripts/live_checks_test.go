@@ -24,9 +24,11 @@ import (
 // Check 91, fake `gcloud` and `fugaro` for Checks 27, 111, 146 and 401, fake `gcloud`,
 // `git`, `curl` and `fugaro` for Check 190, fake `gcloud`, `fugaro` and a fake
 // Realtime Database behind a fake `curl` for Checks 191 and 193 (193's fake
-// `gcloud` holds a Cloud Run job of each of two repositories, one of them
-// mounting a model credential when the case says the flip has not reached it,
-// and answers the check's Cloud Logging reads with the credentials service's
+// `gcloud` holds a Cloud Run job of each of two repositories — each running as
+// its own account, one of them mounting a model credential when the case says
+// the flip has not reached it, and the policy its `run services get-iam-policy`
+// read is answered with, whose roles/run.invoker binding is the other half of
+// the per-repository switch — and answers the check's Cloud Logging reads with the credentials service's
 // own `credsvc: audit` lines for the throwaway runs the fake `fugaro` records,
 // so a case can say what served a run, what the run declared and what it was
 // served instead), fake `gcloud`, `fugaro`
@@ -674,6 +676,21 @@ import (
 // is made only after the decline that proved it refused, that the config comes
 // back byte-identical with its sidecar removed, and that no value of the
 // installation's ever reaches the block.
+// Checks 720 and 721 are the workspace-and-members owner-run checks, and 721
+// makes one IAM write of its own. 720's fakes are a fake `fugaro` that records
+// each command it is given together with the installation it was selected on,
+// and a fake `gcloud` whose `projects describe` answers each project's PARENT
+// from the marker the fake `fugaro` leaves, so a case says which command ran
+// against which workspace and what the folder move and its return left behind;
+// its fake `fugaro` answers a pty-holding `setup --create-project` the way a
+// real terminal does. 721's are a fake `gcloud` that holds the member's project,
+// makes the binding its own writes ask for and serves Google's Admin Activity
+// -- one entry per binding ADDED, the member's own update's, the check's own and
+// a third party's when the case asks for one -- and a fake `fugaro` whose
+// `update` records that it ran and whose `workspace show` and `workspace
+// project status` answer with a member table and a drift row built out of what
+// that gcloud did, so a case says which entry the row names and which it leaves
+// out.
 // Checks 890 to 892 are the repo-coupling audit's owner-run checks, and each
 // only reads. 890's fakes are a fake `gcloud` and `curl` answering out of the
 // case's own Realtime Database tree, bucket listing and Firestore ids, so a case
@@ -814,6 +831,8 @@ var liveCheckScripts = []struct {
 	{"check-840.sh", "check-840_test.sh"},
 	{"check-740-run-messages.sh", "check-740-run-messages_test.sh"},
 	{"check-750-review-against-task.sh", "check-750-review-against-task_test.sh"},
+	{"check-720.sh", "check-720_test.sh"},
+	{"check-721.sh", "check-721_test.sh"},
 	{"check670.sh", "check670_test.sh"},
 	{"check-881-chain-falls-through.sh", "check-881-chain-falls-through_test.sh"},
 	{"check-882-vertex-capped.sh", "check-882-vertex-capped_test.sh"},
