@@ -54,6 +54,31 @@ const serviceAccountSuffix = ".gserviceaccount.com"
 // only place this bound can be kept is the class list itself.
 const classAddressBytes = 512
 
+// memberAddress is the shape every entry of the class list is written with, and
+// it is var.launcher_accounts' own rule restated for the same reason the two
+// constants above are: one `@`, an empty-free local part carrying no colon, and
+// a domain carrying no `@`. The same shape the module's people validation holds
+// a hand edit to, because the class list and the grant that admits the same
+// person are the SAME value: the module spells each entry "user:${e}" into the
+// intake's invoker set (intake.tf), so an entry already carrying a colon is one
+// it would spell "user:a:b@example.com" — not the member IAM has for a person,
+// and not a claim any token carries.
+//
+// internal/access states the rule over the same kind of value and is where it
+// was decided (Admin.validate, and Admins above it): an entry is the bare
+// address a Google ID token's email claim carries, never the "user:" member
+// form a grant is stored in, so a derivation drops the person rather than write
+// an entry its own writer refuses (internal/policy's ValidVerifierAccounts
+// refuses one for the same reason). The other half of the argument is the list
+// this one merges with in local.intake_accounts: var.launcher_accounts has held
+// every entry to this shape since F31, so an installation whose launchers
+// spelled one this way would already fail the plan today.
+func memberAddress(addr string) bool {
+	local, domain, ok := strings.Cut(addr, "@")
+	return ok && local != "" && domain != "" &&
+		!strings.ContainsAny(local, ": ") && !strings.ContainsAny(domain, "@ ")
+}
+
 // IntakePeople is the intake's SECOND class list (WC3, R5): the people of a
 // workspace's roster, as the bare addresses a Google ID token's email claim
 // holds — sorted and each once, so two spellings of one roster give equal bytes.
@@ -70,12 +95,23 @@ const classAddressBytes = 512
 // the apply that would have written it — a roster person the workspace added as
 // a `human` on a service account's address (neither `workspace user add` nor
 // CanonicalAddress refuses one) would break that installation's every later
-// `fugaro update`. That shape and one past the fold's own byte bound (see
-// classAddressBytes, the other refusal NewLaunchers makes and for the same
-// reason) are therefore dropped here, by the fold's rules and for them, and the
-// module's validation refuses both in a hand edit; nothing else about an address
-// the roster can hold is, because a class list that dropped a value the module
-// takes — or took one it refuses — is the same broken update from the other side.
+// `fugaro update`.
+//
+// Three shapes are therefore dropped here, and each is one the class list
+// cannot carry rather than one the roster cannot hold: a service account's
+// address (whatever kind the roster spells beside it, folded first as the
+// process folds it), one past the fold's byte bound (classAddressBytes, the
+// other refusal NewLaunchers makes and for the same reason), and one that is
+// not the bare member address a token's email claim carries (memberAddress —
+// the local part's colon is the member spelling, which the module would spell
+// into the grant a second time and no claim holds). The module's validation
+// refuses all three in a hand edit, by the same rule, so the writer and the
+// module agree in both directions and no value the roster can hold is an update
+// that fails. A person the roster named on one of the three is a person the
+// class does not hold (internal/access's own reading of the same value, and
+// fail closed: an entry left off admits nobody, while an entry written in a
+// shape neither the claim nor IAM can carry looks right and admits nobody any
+// way).
 //
 // Why a function of the roster and not of the launcher list. The two lists are
 // separate on purpose (F10): the same `launchers` variable is the workspace
@@ -94,11 +130,9 @@ const classAddressBytes = 512
 // than a coincidence: the value this writes is planned by the installation root
 // a moment later, so a class list holding one address more or one fewer than
 // var.intake.people accepts is an update that fails — or a person the roster
-// named and the module's plan refuses. It is why the shapes dropped here are the
-// two the PROCESS refuses and nothing else: an address whose local part carries a
-// `:` or begins `user:` (both of which workspace.CanonicalAddress keeps and
-// `fugaro workspace user add` accepts) stays, and the module's validation holds
-// these addresses to the roster's own canonical class, which takes them.
+// named and the module's plan refuses. It is why the three shapes dropped here
+// are exactly the three the module's validation refuses, by the same rules and
+// in the same spellings (folded for the suffix, the raw value for the shape).
 func IntakePeople(roster *workspace.Roster) []string {
 	out := []string{}
 	if roster == nil {
@@ -106,7 +140,8 @@ func IntakePeople(roster *workspace.Roster) []string {
 	}
 	for _, p := range roster.People {
 		folded := strings.ToLower(p.Address)
-		if p.Kind != workspace.KindHuman || strings.HasSuffix(folded, serviceAccountSuffix) || len(folded) > classAddressBytes {
+		if p.Kind != workspace.KindHuman || strings.HasSuffix(folded, serviceAccountSuffix) ||
+			len(folded) > classAddressBytes || !memberAddress(p.Address) {
 			continue
 		}
 		out = append(out, p.Address)

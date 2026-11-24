@@ -8438,6 +8438,53 @@ func TestLauncherAccountsReachTheServices(t *testing.T) {
 	}
 }
 
+// TestTheIntakesPeopleAreHeldToTheLauncherAccountsShape (WC3, R5) pins the one
+// rule the two class lists share to the deployment, because the two are ONE
+// list by the time anything reads them: intake.tf composes var.intake.people
+// with var.launcher_accounts into local.intake_accounts (the class the process
+// reads) and into local.intake_invoker_members (the grant), each entry of the
+// people's half spelled "user:<entry>". An entry the people list took and the
+// launchers list refuses is a class list the module composes from two grammars,
+// and one carrying a colon is the member spelling rather than the bare address a
+// token's email claim holds — a member IAM has no principal for, which is what
+// internal/infra's memberAddress drops the person over (and internal/access's
+// admin list refuses an entry over, for the same reason).
+//
+// The refusal is a plan-time one in EVERY installation, and it is not an update
+// that fails: `fugaro update` renders this list with internal/infra's
+// IntakePeople, which drops the same three shapes the validation refuses
+// (memberAddress, the 512-byte bound and a service account's suffix), so no
+// value a workspace's roster can hold is written here.
+func TestTheIntakesPeopleAreHeldToTheLauncherAccountsShape(t *testing.T) {
+	b, err := os.ReadFile("gcp/modules/installation/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+	body := func(name string) string {
+		m := regexp.MustCompile(`(?m)^\s*variable\s+"` + regexp.QuoteMeta(name) + `"\s*\{`).FindStringIndex(code)
+		if m == nil {
+			t.Fatalf("the installation module declares no %s variable", name)
+		}
+		return code[m[1]:matchBrace(code, m[1]-1)]
+	}
+	shape := func(v string, which string) string {
+		m := regexp.MustCompile(`can\(regex\("([^"]*@[^"]*)"`).FindStringSubmatch(body(v))
+		if m == nil {
+			t.Fatalf("var.%s holds no address shape: the class list is a list of addresses and the module refuses what is not one", which)
+		}
+		return m[1]
+	}
+	launchers := shape("launcher_accounts", "launcher_accounts")
+	people := squash(body("intake"))
+	if !strings.Contains(people, squash(launchers)) {
+		t.Errorf("var.intake.people is not held to var.launcher_accounts' own shape %q: the two merge into ONE class list and ONE invoker set (intake.tf's locals) and each entry of the people's half is spelled \"user:<entry>\" into the grant, so a shape one takes and the other refuses is a class list composed from two grammars — and an entry carrying a colon is the member spelling IAM has no principal for (WC3, R5):\n%s", launchers, people)
+	}
+	if !strings.Contains(people, `endswith(lower(p), ".gserviceaccount.com")`) {
+		t.Errorf("var.intake.people does not refuse a service account's address, folded: that shape is a job's rather than a person's and internal/credsvc's foldLauncherAccounts refuses it outright — the intake's revision exits on start, which fails the apply and every later `fugaro update` of that workspace (WC3):\n%s", people)
+	}
+}
+
 // TestSecretContainersAreReplicatedInTheRegion (LP5a, D3082, F9, R5): the six
 // google_secret_manager_secret resources of the two modules declare ONE thing —
 // user-managed replication in the installation's region, with the field

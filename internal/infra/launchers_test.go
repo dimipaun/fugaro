@@ -89,6 +89,48 @@ func TestLaunchersVariableDerivedFromRoster(t *testing.T) {
 	}
 }
 
+// TestTheClassListIsSpelledIntoTheGrantsGrammar (WC3, R5, D3143) pins the shape
+// every entry of the intake's class list is written with, and it is the shape
+// WORKS in the direction the class is used: the module spells each entry
+// `user:<entry>` into the intake's invoker set (intake.tf's local.intake_invoker_members)
+// and merges the entry into the class list beside the launchers' own, whose
+// entries var.launcher_accounts has held to this same shape since F31. An
+// address carrying a `:` in the local part is the member spelling itself — an
+// entry `user:a:b@example.com` is not a principal IAM has and no ID token's
+// email claim carries one — so a list that held one would be a grant that
+// admits nobody spelled from a value that reads like a grant
+// (internal/access's admin list refuses one for exactly this reason, and its
+// derivation drops the person rather than write an entry its own writer
+// refuses).
+func TestTheClassListIsSpelledIntoTheGrantsGrammar(t *testing.T) {
+	for _, addr := range []string{
+		"a:b@example.com",
+		"user:ada@example.com",
+		"a b@example.com",
+		"a@b@example.com",
+		"@example.com",
+		"ada@",
+		"ada@exa mple.com",
+		"ada.example.com",
+		"",
+	} {
+		if memberAddress(addr) {
+			t.Errorf("memberAddress(%q) = true: an entry of the class list is the bare address a token's email claim holds, and the grant is that address spelled \"user:<entry>\" — this value is a member spelling, an empty side or a second @, so the module would write a member IAM has no principal for and the class would hold a value no claim carries", addr)
+		}
+	}
+	for _, addr := range []string{
+		"ada@example.com",
+		"ada.b@example.com",
+		"ada+b@example.com",
+		"ada_b@example.com",
+		"ada@sub.example.com",
+	} {
+		if !memberAddress(addr) {
+			t.Errorf("memberAddress(%q) = false: this is a person's bare address and the module's own launcher_accounts rule takes it (one @, no colon and no space in the local part, no @ in the domain)", addr)
+		}
+	}
+}
+
 // TestLauncherAccountsAreThePeopleOfTheList is the function's own contract,
 // apart from the tfvars it is written into: dedupe and sort are what make two
 // equal rosters give equal bytes (sortedJSON's promise), and a `user:` member
@@ -135,10 +177,16 @@ func TestLauncherAccountsAreThePeopleOfTheList(t *testing.T) {
 //     the intake's new revision exit on start, fail the apply that wrote it and
 //     fail every later `fugaro update` of that workspace. The OTHER refusal
 //     NewLaunchers makes — an address past the fold's 512 bytes — is dropped
-//     for the same reason, and the two together are the whole of what the
-//     filter drops: an address the roster can hold that reads like a member
-//     spelling (a `:` in the local part, a `user:` prefix) stays, because the
-//     module's validation is the roster's own class and takes it.
+//     for the same reason, and the third is the class list's own grammar: an
+//     address whose local part carries a `:` (which is what a `user:` prefix
+//     is) is the member spelling and not the bare address a token's email
+//     claim holds, so it is dropped rather than written into FUGARO_LAUNCHER_ACCOUNTS
+//     and spelled into the invoker grant a second time (memberAddress, and
+//     internal/access's rule for the same kind of value: the entry is the bare
+//     address, never the "user:" form, and a derivation leaves such a person
+//     off rather than write one its own writer refuses). The three are the
+//     three the module's validation refuses, by the same rules, so the writer
+//     and the plan agree and no value a roster can hold fails an update.
 //   - The class the installation's launchers make is untouched by the roster:
 //     it names the launchers' own people and nobody from the workspace.
 //   - The intake's block carries the roster's people as the list of its own,
@@ -160,19 +208,19 @@ func TestRosterPeopleAreNotLaunchersOfTheWorkspaceProject(t *testing.T) {
 			// folds too and a spelling Google would never mint still cannot
 			// reach the class list.
 			{Address: "ROBOT@example.IAM.GServiceAccount.com", Kind: workspace.KindHuman},
-			// A `:` in the local part is a roster address and not a member
-			// spelling (canonical addresses allow it, and the module's own
-			// validation accepts one): the filter keeps it, because the class
-			// list has to be exactly what the module takes — a value this
-			// dropped and the module refused, or the other way round, is an
-			// update that fails on the roster's own content.
+			// A `:` in the local part is the member spelling's grammar and not
+			// the bare address a token's email claim carries: the filter drops
+			// it, because this list is ALSO the grant's input (the module
+			// spells each entry "user:<entry>") and an entry that already
+			// carries a colon would name a principal IAM has none of. The
+			// module's validation refuses the same shape, so a roster can hold
+			// one and no update fails over it: the person is left off the
+			// class, which is what internal/access does with the same value.
 			{Address: "a:b@example.com", Kind: workspace.KindHuman},
 			// ... and one whose local part begins `user:`, which is the same
-			// kind of address and not the member spelling it reads like:
+			// shape and not the member spelling it reads like:
 			// `fugaro workspace user add user:ada@example.com --external`
-			// stores it, and the module's validation takes it (the roster's own
-			// canonical class, not launcher_accounts' member class). The cost
-			// is one entry no ID token can match, which is fail-closed.
+			// stores it, and CanonicalAddress keeps it.
 			{Address: "user:ada@example.com", Kind: workspace.KindHuman},
 			// An address past the fold's 512 bytes is the OTHER shape
 			// internal/credsvc's NewLaunchers refuses outright — a
@@ -182,9 +230,9 @@ func TestRosterPeopleAreNotLaunchersOfTheWorkspaceProject(t *testing.T) {
 			{Address: strings.Repeat("a", 501) + "@example.com", Kind: workspace.KindHuman},
 		},
 	}
-	want := []string{"a:b@example.com", "ada@example.com", "user:ada@example.com", "zoe@example.com"}
+	want := []string{"ada@example.com", "zoe@example.com"}
 	if got := IntakePeople(roster); !slices.Equal(got, want) {
-		t.Errorf("IntakePeople(roster) = %v, want %v: the intake's second class is the roster's HUMANS, sorted and each once — a machine's address is a service account's and no interactive ID token carries one, whatever kind the roster spells beside it, and credsvc's foldLauncherAccounts refuses that shape outright (the revision would exit on start)", got, want)
+		t.Errorf("IntakePeople(roster) = %v, want %v: the intake's second class is the roster's HUMANS, sorted and each once, minus the three shapes the class list cannot carry — a machine's address is a service account's and no interactive ID token carries one, whatever kind the roster spells beside it (credsvc's foldLauncherAccounts refuses that shape outright and the revision would exit on start), an address past the fold's 512 bytes is a configuration error there too, and an address whose local part carries a `:` is the member spelling rather than the bare address a claim holds", got, want)
 	}
 	if got := IntakePeople(nil); got == nil || len(got) != 0 {
 		t.Errorf("IntakePeople(nil) = %#v, want an empty list: a workspace with no roster names nobody, and null would make the two cases one", got)

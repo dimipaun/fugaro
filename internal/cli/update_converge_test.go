@@ -2178,7 +2178,12 @@ func TestUpdateConvergesAWorkspaceWhoseServiceHasNoAudienceAndPlansNothing(t *te
 // HUMANS are written — a machine's entry is a service account's address, the one
 // shape the launcher class refuses outright (internal/infra.IntakePeople), and
 // an entry in the class no token can match is one nobody could ever be admitted
-// by.
+// by — and neither is a human whose address carries a colon, which the class
+// list cannot hold either: the module spells every entry into the invoker grant
+// as "user:<entry>", so an address that IS that spelling would name a principal
+// IAM has none of (internal/access refuses an entry of that shape for the same
+// reason). The roster holds both, and the renderer leaving the person off is
+// what keeps the roster's own content from being an update that fails.
 //
 // The owner is in the list like anybody else, and that is the point of the
 // fence F10 draws: the list is the INTAKE's alone (var.intake.people —
@@ -2196,9 +2201,19 @@ func TestUpdateRendersTheRostersPeopleIntoTheWorkspaceProjectsIntake(t *testing.
 		Version:   workspace.RosterVersion,
 		Mechanism: workspace.MechanismSA,
 		People: []workspace.Person{
+			// A roster can hold an address whose local part carries a colon —
+			// `workspace user add` stores one and CanonicalAddress keeps it —
+			// and it is NOT the class list's: each entry there is spelled into
+			// the invoker grant as the member form, and this is the member form
+			// already (internal/access's own rule, and var.launcher_accounts'
+			// shape since F31). The renderer leaves the person off rather than
+			// write a value no plan takes, which is the same split
+			// internal/access's admin list makes.
+			{Address: "a:b@example.com", Kind: workspace.KindHuman, External: true},
 			{Address: "ada@example.com", Kind: workspace.KindHuman, External: true},
 			{Address: "bot@member-b-gcp.iam.gserviceaccount.com", Kind: workspace.KindSA},
 			{Address: "owner@example.com", Kind: workspace.KindHuman, External: true},
+			{Address: "user:ada@example.com", Kind: workspace.KindHuman, External: true},
 			{Address: "zoe@example.com", Kind: workspace.KindHuman, External: true},
 		},
 		Admins: []string{"owner@example.com"},
@@ -2230,7 +2245,7 @@ func TestUpdateRendersTheRostersPeopleIntoTheWorkspaceProjectsIntake(t *testing.
 	}
 	want := []string{"ada@example.com", "owner@example.com", "zoe@example.com"}
 	if !slices.Equal(got, want) {
-		t.Fatalf("the intake's people are %v, want %v: the roster's humans, sorted and each once, and no machine — a service account's address is the one shape the launcher class refuses", got, want)
+		t.Fatalf("the intake's people are %v, want %v: the roster's humans, sorted and each once, minus the shapes the class list cannot carry — no machine, whose address is a service account's, and no address whose local part carries a colon, which is the member spelling the grant is made of rather than the bare address a token's email claim holds (internal/access's rule for the same kind of value, and what makes the person's absence fail closed rather than a plan no entry can pass)", got, want)
 	}
 }
 

@@ -3613,16 +3613,20 @@ run "an_installation_without_a_workspace_admits_its_launchers_only" {
   }
 }
 
-# A person whose address READS like a member spelling is still a person's
-# address, and the plan takes it: `workspace.CanonicalAddress` keeps a local part
-# that begins `user:` or carries a `:`, nothing in `fugaro workspace user add`
-# refuses one, and `fugaro update` writes the roster's people into this variable
-# BEFORE the plan that reads it — so a rule that refused such an address would be
-# an update that fails and stays failed (WC3). What it costs is one entry the
-# class can never match, which is fail-closed and is the reading launcherAccounts
-# already takes for a group or a domain: the class is compared to a Google ID
-# token's email claim, and no token carries an address of this shape.
-run "a_roster_person_may_read_like_a_member_spelling" {
+# A person whose address reads like a MEMBER spelling is refused here, and the
+# reason is the same list's other half: each entry of this one is spelled
+# `user:<entry>` into the intake's invoker set (intake.tf, local.intake_invoker_members)
+# and into the class list beside the launchers, so an address that already
+# carries a colon is the member spelling and not a bare address — the grant
+# would name a principal IAM does not have and the class would hold a value no
+# token's email claim carries (internal/access's own rule for the same kind of
+# value: an entry is the bare address, never the "user:" form). var.launcher_accounts,
+# which merges into that same class list, has refused the shape since F31.
+# `fugaro update` does not reach this refusal: internal/infra's IntakePeople
+# leaves the person off the list it renders, exactly as internal/access's
+# derivation leaves one off its admin list, so the roster can hold such an
+# address and no update fails over it — the person is simply not in the class.
+run "a_roster_person_may_not_read_like_a_member_spelling" {
   command = plan
 
   module {
@@ -3638,10 +3642,7 @@ run "a_roster_person_may_read_like_a_member_spelling" {
     }
   }
 
-  assert {
-    condition     = one([for e in google_cloud_run_v2_service.intake[0].template[0].containers[0].env : e.value if e.name == "FUGARO_LAUNCHER_ACCOUNTS"]) == "[\"user:ada@example.com\"]"
-    error_message = "a roster address that reads like a member spelling is written into the class as the roster holds it: the class is what the roster's own renderer writes, and refusing it here is an update that fails and stays failed"
-  }
+  expect_failures = [var.intake]
 }
 
 # The other end of the same rule: an address PAST the fold's bound is refused.
@@ -3723,15 +3724,14 @@ run "a_roster_person_may_not_be_a_service_account_in_any_case" {
   expect_failures = [var.intake]
 }
 
-# An address with a `:` in its LOCAL part is accepted, because a roster can
-# hold one and `fugaro update` writes what the roster holds: internal/workspace's
-# CanonicalAddress keeps any printable ASCII address with one `@`, and
-# `fugaro workspace user add` puts it on the roster without looking at the local
-# part. A validation that refused it would fail the plan of a value the run has
-# already written into the tfvars — the update that fails, and stays failed.
-# The member spelling the run above refuses is caught by the prefix instead, so
-# nothing is lost by widening the character class.
-run "a_roster_person_may_be_an_address_with_a_colon" {
+# The same rule without the prefix: a `:` anywhere in the local part is the
+# member spelling's grammar, so the value is refused here whether or not it
+# begins `user:`. internal/workspace's CanonicalAddress keeps it and
+# `fugaro workspace user add` stores it — the refusal is the class list's, and
+# IntakePeople leaves that person off the list it renders rather than failing an
+# update over a value the roster can hold, which is the same split
+# internal/access makes for its own list.
+run "a_roster_person_may_not_be_an_address_with_a_colon" {
   command = plan
 
   module {
@@ -3746,4 +3746,6 @@ run "a_roster_person_may_be_an_address_with_a_colon" {
       people     = ["a:b@example.com"]
     }
   }
+
+  expect_failures = [var.intake]
 }
