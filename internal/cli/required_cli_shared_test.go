@@ -108,8 +108,8 @@ func TestFenceCoversTheSharedConfigFallback(t *testing.T) {
 // TestDoctorOnTheSharedConfigPassesBelowTheStamp: doctor is exempt because it
 // reports the stamp as a check of its own instead of refusing, and that
 // exemption has to hold on the shared-config path too — the one path where the
-// fence is not the hook's. It does not even read the node: an exemption is the
-// fence not asking.
+// fence is not the hook's. The fence does not read the node for it: an exemption
+// is the fence not asking, and the one read is doctor's own check's.
 func TestDoctorOnTheSharedConfigPassesBelowTheStamp(t *testing.T) {
 	rig, _ := fenceShared(t, fenceAbove)
 
@@ -118,8 +118,10 @@ func TestDoctorOnTheSharedConfigPassesBelowTheStamp(t *testing.T) {
 	if errors.As(err, &below) {
 		t.Fatalf("doctor was refused below the stamp on the shared config: %v", err)
 	}
-	if len(rig.queries) != 0 {
-		t.Errorf("doctor read the stamp %v, want the exemption to have reached the shared-config site", rig.queries)
+	// Doctor's own required-version check reads the published node once; a
+	// second read would be the fence asking as well.
+	if len(rig.queries) > 1 {
+		t.Errorf("doctor read the stamp %v, want its own one read and no fence read: the exemption has to reach the shared-config site", rig.queries)
 	}
 	if !strings.Contains(errOut, "shared config") {
 		t.Errorf("doctor's stderr does not name the shared config it read:\n%s", errOut)
