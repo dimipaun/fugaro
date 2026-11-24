@@ -70,7 +70,7 @@ func managedPlanConfigured(rc ResourceChange, expressions map[string]json.RawMes
 const managedAccount = ManagedPrefix + "run@proj-1.iam.gserviceaccount.com"
 
 // TestManagedAllowedTypesGolden pins both halves of the decision against
-// literals: the 14 types a managed plan may contain, and the 12 entries of
+// literals: the 14 types a managed plan may contain, and the twenty entries of
 // allowedTypes it may not. A widening — or a type dropped without a reason —
 // is a diff in this test.
 func TestManagedAllowedTypesGolden(t *testing.T) {
@@ -108,6 +108,15 @@ func TestManagedAllowedTypesGolden(t *testing.T) {
 		"google_compute_router_nat",
 		"google_firebase_database_instance",
 		"google_firebase_project",
+		// The consumer's signing key and its grant (mobile-identity-pairing
+		// plan task J6; O17): the key is the installation's own — created in
+		// its project by the installation root, published to a node of its
+		// database and pinned by every phone paired to it — so a repository's
+		// retirement may not reach it, and the deployer holds no
+		// run.services.*-shaped permission for a key ring either.
+		"google_kms_crypto_key",
+		"google_kms_crypto_key_iam_member",
+		"google_kms_key_ring",
 		"google_logging_log_view",
 		"google_logging_log_view_iam_member",
 		"google_logging_project_bucket_config",

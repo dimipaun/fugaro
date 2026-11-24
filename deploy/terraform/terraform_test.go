@@ -601,6 +601,13 @@ func TestPreventDestroy(t *testing.T) {
 		for _, typ := range []string{
 			"google_secret_manager_secret", "google_secret_manager_regional_secret",
 			"google_storage_bucket", "google_artifact_registry_repository",
+			// The consumer's signing key (mobile-identity-pairing plan task J6;
+			// O17) holds the one thing in this tree whose loss cannot be
+			// repaired: destroy it and every phone that pinned its public half
+			// verifies nothing the installation ever signs again, silently.
+			// internal/infra/tf classifies it data-bearing for the same reason
+			// (D1551), which is what refuses a plan that would replace it.
+			"google_kms_crypto_key",
 		} {
 			for _, blk := range resourceBlocks(t, path, b, typ) {
 				counts[typ]++
