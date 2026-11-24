@@ -1498,12 +1498,12 @@ func TestDocsCheck81GrantListNamesTheTemplatesOwnPredicates(t *testing.T) {
 		{143, `(TOKEN && auth.token.fs == $slug) || USER`},
 		{215, `"RUN || USER"`},
 		{70, `"RUN"`}, {245, `"RUN"`},
-		{352, `"MAILBOX"`}, {416, `"MAILBOX"`},
+		{354, `"MAILBOX"`}, {418, `"MAILBOX"`},
 		{62, `"PAIRING"`},
 		{11, `".read": "USER"`},
 		{23, `".read": "USER"`},
 		{25, `".read": "USER && $uid == auth.uid"`},
-		{280, `".read": "USER"`},
+		{282, `".read": "USER"`},
 	} {
 		if want.n < 1 || want.n > len(lines) {
 			t.Fatalf("rules.json.tmpl has %d lines and the paragraph cites line %d", len(lines), want.n)

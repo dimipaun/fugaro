@@ -53,7 +53,7 @@ surface can hide what its session cannot do, and carries nothing that could be r
 
 ## The policy values
 
-The three values are the only policy a surface may read, and their names are the project policy's
+The values are the only policy a surface may read, and their names are the project policy's
 `mobile.*` fields (P6) with the `mobile.` prefix stripped, so the session response and the policy
 file cannot drift into two spellings of one value:
 
@@ -63,6 +63,16 @@ file cannot drift into two spellings of one value:
 * `compaction_threshold` -- **a fraction of the session's context window**, or `null` when the
   project sets no threshold; Z2 renders it as a percentage. The unit is fixed here rather than left
   to whichever surface formats it first.
+* `crash_reports` -- whether the app may send crash reports to the project's Firebase project
+  (`mobile_crash_reports`, the published policy's top-level key beside the `mobile` block, on by
+  default and opt-out; D731, D738 -- the key is deliberately not a member of the strictly-decoded
+  block, so an older reader tolerates it into `UnknownKeys` rather than refusing the policy). It is
+  a **required boolean** and never an absent member: nothing is sent before the switch has been read
+  (D734), so a session that did not carry it would be one the app could not tell from `false` -- and
+  the reader answers an absent member off for exactly that reason
+  (`internal/projectpolicy.MobileCrashReportsOn`). The
+  switch decides the app's one collection call site and nothing else; Firebase Analytics is not in
+  the app at all (D731).
 
 ## `idToken()` and the refresh
 
