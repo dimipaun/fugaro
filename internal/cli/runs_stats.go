@@ -408,8 +408,9 @@ type userStatsRead struct {
 	runs []userStatsRecorded
 	// unlaunched counts the runs of the window that never started: neither
 	// launched nor recorded, and -- on a page from the index, where the
-	// overlay lists a live run with neither -- no status settled for them
-	// either (readUserStatsRuns).
+	// overlay lists a live run with neither and the fold writes a run with a
+	// launch nobody could read -- no status settled for them and no object
+	// there to be unreadable either (readUserStatsRuns).
 	unlaunched int
 	// truncated means the window held more runs than the read was allowed, so
 	// only its newest max were read.
@@ -617,13 +618,17 @@ func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since
 		// flight, or finished inside the fold gap -- with its run id, its slug
 		// and its status alone (contract-index.md, "The overlay"), so such a
 		// run arrives here with no launch and no record and still did start.
-		// What says a run never started is that nothing settled a status for
-		// it: the overlay always supplies one, and a run that never launched
-		// has no record to settle one. Counting the overlay's row as unlaunched
-		// would drop a live run from every figure and tell the reader it never
-		// started, which is the mistake the record read's own corrupt-launch
-		// guard makes impossible (TestRunsStatsUnreadableLaunchIsUnknownNotUnlaunched).
-		if e.Launch == nil && e.Record == nil && e.Status == "" {
+		// And the fold writes an entry with neither record for a run whose
+		// launch.json the bucket holds and the fold could not read: it carries
+		// LaunchUnreadable, and it too did start. What says a run never started
+		// is that nothing settled a status for it, no object was there to be
+		// unreadable, and there is no record: the overlay always supplies a
+		// status, and a run that never launched has no record to settle one.
+		// Counting either of the other two as unlaunched would drop a started
+		// run from every figure and tell the reader it never started, which is
+		// the mistake the record read's own corrupt-launch guard makes
+		// impossible (TestRunsStatsUnreadableLaunchIsUnknownNotUnlaunched).
+		if e.Launch == nil && e.Record == nil && !e.LaunchUnreadable && !e.RecordUnreadable && e.Status == "" {
 			read.unlaunched++
 			continue
 		}

@@ -78,6 +78,8 @@ read needs no slug beside it.
 | `follow_up_of` | map | the task's `follow_up_of` | `runs ls` |
 | `launch` | map | `launch.json`, whole (`runstore.Launch`) | every reader that prints a row |
 | `record` | map | `result.json`, whole (`runstore.Record`) | every reader that prints a row |
+| `launch_unreadable` | boolean, absent when false | the fold could not use a `launch.json` the bucket holds (a syntax error, a shape the decoder refuses, an object past the size cap) | `runs stats` (a run that started) |
+| `record_unreadable` | boolean, absent when false | the same for a `result.json` the bucket holds | `runs stats` (a run whose outcome nobody can read, beside `no_record`) |
 
 The fields above the two record blocks are the index's own: the keys it is
 queried, ordered and joined by, and the few facts of the run's task a listing
@@ -91,9 +93,22 @@ built from the bucket.
 
 A run whose `result.json` cannot be read carries no `record`: the entry is still
 written, because the run exists and its task and launch do. A reader that has to
-tell "corrupt" from "never finalized" reads the bucket, as the listing's own
-`record unreadable` row already does — it is not this reader's job to invent the
-distinction.
+tell "corrupt" from "never finalized" reads `record_unreadable`, the entry's own
+account of an object the bucket holds and the fold could not use: a reader of
+the index writes no object and reads none, so the bucket is not where it can
+look. `launch_unreadable` carries the same fact about `launch.json`, and it is
+the one that decides whether a run happened at all: an absent launch, no record
+and no status is a run that was claimed and never launched, but add
+`launch_unreadable` and it is a run that started with a launcher nobody can
+read — `runs stats` counts the first among the runs that never launched and the
+second among the runs, under `unknown`, exactly as its record read does.
+
+A `task.json` the fold cannot use — a syntax error, or a field a newer CLI wrote
+that the task parser refuses — costs that one entry its task-derived fields (no
+`title`, `requested_by`, `batch` or `workflow`) and nothing else: the entry is
+still written from the launch and the record beside it, and the sweep goes on.
+One run's unusable object is not the installation's index, and a fold that
+stopped on it would leave every other run of the window unfolded and unsaid.
 
 **Every entry carries a sort key**, and the last fallback is what a run that was
 claimed and never launched has: a `task.json` and nothing else, so neither a
