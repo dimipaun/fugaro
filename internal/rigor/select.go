@@ -133,6 +133,11 @@ func (a Area) namesRepo(repo string) bool {
 // still reads beside its members, which is a claim about the project and not
 // about one of its repositories. It is what Configured reads as the area half
 // of "the project layer opted this repository in".
+//
+// A match of nothing but space counts as no match, which is the reading
+// Area.ValidateProject already gives it: such a rule is in effect for no path
+// and opts nobody in, rather than opting every repository in and deciding
+// nothing.
 func projectWideAmong(areas []Area) bool {
 	for _, a := range areas {
 		if strings.TrimSpace(a.Match) != "" {
