@@ -54,10 +54,7 @@ var allowedTypes = map[string]bool{
 	// The run index's composite indexes (RI2, contract-index.md): the plan is
 	// the owner-run Firebase root's, because no job may change an index.
 	"google_firestore_index": true,
-	// The consumer's signing key's three types (plan task J6; O17).
-	"google_kms_crypto_key":                   true,
-	"google_kms_crypto_key_iam_member":        true,
-	"google_kms_key_ring":                     true,
+	"google_kms_crypto_key":  true, "google_kms_crypto_key_iam_member": true, "google_kms_key_ring": true, // the consumer's signing key's three types (plan task J6; O17), on one line: docs/coordinator/reconciliation.md cites grantRules at cover.go:154 and that dated document stays unedited
 	"google_logging_log_view":                 true,
 	"google_logging_log_view_iam_member":      true,
 	"google_logging_project_bucket_config":    true,
