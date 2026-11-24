@@ -354,6 +354,34 @@ func (f *Run) SetJobEnv(job string, env map[string]string) {
 	j.env, j.raw = maps.Clone(env), nil
 }
 
+// SetJobSecretRefs sets the secret-backed env of job's container, as jobs get
+// reports it: one env entry per variable, each a value_source.secret_key_ref
+// naming container and version latest, and no value at all — the shape a real
+// job's mounted secret has (deploy/terraform/gcp/modules/workflow/job.tf), and
+// the shape doctor's workflow-secret-mount report reads. Every other field of
+// the job (its labels, its image) is kept, and the body set here wins over
+// SetJobEnv's plain map the way SetJobJSON's does.
+func (f *Run) SetJobSecretRefs(job string, refs map[string]string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	j := f.jobs[job]
+	if j == nil {
+		f.t.Fatalf("gcpfake: SetJobSecretRefs(%q): no such job", job)
+	}
+	var env []any
+	for _, name := range slices.Sorted(maps.Keys(refs)) {
+		env = append(env, map[string]any{"name": name, "valueSource": map[string]any{
+			"secretKeyRef": map[string]any{"secret": refs[name], "version": "latest"}}})
+	}
+	container := map[string]any{"image": j.image}
+	if len(env) > 0 {
+		container["env"] = env
+	}
+	j.env = nil
+	j.raw = map[string]any{"template": map[string]any{"taskCount": 1, "template": map[string]any{
+		"containers": []any{container}, "maxRetries": 0}}}
+}
+
 // SetJobTimeout sets the task timeout the fake reports for job in jobs.list.
 func (f *Run) SetJobTimeout(job string, d time.Duration) {
 	f.mu.Lock()
