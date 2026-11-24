@@ -519,9 +519,17 @@ func CredentialNamed(creds []Credential, name string) (Credential, bool) {
 // token that no pool lists is left alone. `fugaro update` wraps each lone
 // account in a pool of one (MG1, MG2), and until it has, every installation
 // holds such a token — so a refusal here would refuse the config of every
-// project that has not migrated yet. The state is REPORTED rather than refused
-// in release 1 (routing.Problems, `fugaro validate`), and refused in release 2
-// by X2, once the migration has wrapped what it can.
+// project that has not migrated yet. The state is reported and not refused in
+// release 1, and refused in release 2 by X2, once the migration has wrapped
+// what it can.
+//
+// The report is not here and is not written yet. Release 1's reporter is
+// routing.Problems — RT3 of docs/model-credentials-routing/implementation-plan.md,
+// whose acceptance carries the sentence "a subscription token in no pool is
+// reported as a warning in release 1" — and RT7 is the task that has `fugaro
+// validate` print it. Neither has shipped, so nothing reports the state today:
+// this function's silence is the whole of the bridge until RT3 lands, and a
+// migration that lifts it before then has nothing to read.
 func ValidatePools(pools []Pool, creds []Credential) []Problem {
 	var ps []Problem
 	defined := definedCredentialNames(creds)

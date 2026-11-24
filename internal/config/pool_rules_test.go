@@ -130,9 +130,17 @@ func TestOwnerKeepsItsMeaning(t *testing.T) {
 // TestALoneSubscriptionIsNotRefusedOnRelease1 is D3176's release-1 bridge: a
 // subscription credential that no pool lists is accepted by ValidatePools,
 // because `fugaro update` has not wrapped it in a pool of one yet (MG1, MG2)
-// and every installation holds one until it has. It is reported rather than
-// refused in release 1 (routing.Problems, `fugaro validate`) and refused in
-// release 2, by X2, once the migration has wrapped what it can.
+// and every installation holds one until it has. It is reported and not refused
+// in release 1 and refused in release 2, by X2, once the migration has wrapped
+// what it can.
+//
+// Only the not-refused half is here. The report is routing.Problems, RT3 of
+// docs/model-credentials-routing/implementation-plan.md — this package cannot
+// hold it, because the report needs the table the routing block resolves and
+// internal/routing reads this package — and RT7 is what prints it in `fugaro
+// validate`. Neither has shipped, so this test pins the acceptance and nothing
+// yet reads the state it accepts (a deferral recorded in the PR body and in
+// ValidatePools' own comment).
 func TestALoneSubscriptionIsNotRefusedOnRelease1(t *testing.T) {
 	creds := []Credential{{Name: "claude-work", Type: CredentialTypeClaudeOAuth}}
 	if ps := ValidatePools(nil, creds); len(ps) != 0 {
@@ -140,33 +148,34 @@ func TestALoneSubscriptionIsNotRefusedOnRelease1(t *testing.T) {
 	}
 }
 
-// TestPoolThresholdIsRefusedOutsideItsBound pins the optional threshold
-// (D3178, PL8): it is a fraction of a member's limit, so the bound is greater
-// than 0 and at most 1, and both halves are the picker's bound as well as this
-// validation's (PoolThreshold.Valid). An absent threshold is accepted — every
-// installation that has not migrated holds one — and 0 and 1 are the two ends
-// the bound decides: 0 is refused because it would move off every member
-// always, 1 because it fires exactly at the limit.
+// TestPoolThresholdIsRefusedOutsideItsBound pins the threshold (D3178, PL8):
+// the member arrives with the rule that acts on it, and no rule set this release
+// ships acts on a threshold, so a threshold that is WRITTEN is refused whatever
+// its value — one that validated would sit in `fugaro.yaml` doing nothing, which
+// is the silent half-read the brief's "refuses it unless the rule set allows it"
+// rules out. An absent threshold is accepted, every installation that has not
+// migrated holding one; and PoolThreshold.Valid keeps the bound PL8 lifts the
+// refusal by, greater than 0 and at most 1, which this pins separately so the
+// picker's answer cannot drift from the one the refusal names.
 func TestPoolThresholdIsRefusedOutsideItsBound(t *testing.T) {
 	at := func(v float64) *PoolThreshold { x := PoolThreshold(v); return &x }
 
-	for _, v := range []float64{0.5, 0.8, 1} {
-		pools := []Pool{{Name: "team", Members: []string{CredentialVertex}, Threshold: at(v)}}
-		if ps := ValidatePools(pools, nil); len(ps) != 0 {
-			t.Errorf("threshold %v: ValidatePools = %v, want none", v, ps)
-		}
-	}
 	if ps := ValidatePools([]Pool{{Name: "team", Members: []string{CredentialVertex}}}, nil); len(ps) != 0 {
-		t.Errorf("no threshold: ValidatePools = %v, want none: the member is optional", ps)
+		t.Errorf("no threshold: ValidatePools = %v, want none: the member is optional and this is the state every installation holds", ps)
 	}
-	for _, v := range []float64{0, -0.1, 1.5} {
+	for _, v := range []float64{0.5, 0.8, 1, 0, -0.1, 1.5} {
 		pools := []Pool{{Name: "team", Members: []string{CredentialVertex}, Threshold: at(v)}}
 		ps := ValidatePools(pools, nil)
 		if len(ps) != 1 || ps[0].Path != "pools.team.threshold" {
-			t.Errorf("threshold %v: ValidatePools = %v, want one problem at pools.team.threshold", v, ps)
+			t.Errorf("threshold %v: ValidatePools = %v, want one problem at pools.team.threshold: no rule set this release ships reads one", v, ps)
 		}
-		if PoolThreshold(v).Valid() {
-			t.Errorf("PoolThreshold(%v).Valid = true, want false: the two read one bound", v)
+	}
+	for _, tc := range []struct {
+		v    float64
+		want bool
+	}{{0.5, true}, {0.8, true}, {1, true}, {0, false}, {-0.1, false}, {1.5, false}} {
+		if got := PoolThreshold(tc.v).Valid(); got != tc.want {
+			t.Errorf("PoolThreshold(%v).Valid = %v, want %v: the bound is the picker's answer (PL8), greater than 0 and at most 1", tc.v, got, tc.want)
 		}
 	}
 }

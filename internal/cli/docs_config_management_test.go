@@ -362,7 +362,8 @@ const (
 //
 // PL1 of docs/model-credentials-routing/ is the last mover after it, by four
 // rows and by none: a pool's `rule`, its `principal.kind` and `principal.id`
-// (R21, D3181) and its optional `threshold` (D3178) are rows of the local
+// (R21, D3181) and its `threshold` (D3178, refused wherever it is written until
+// the rule that reads it ships) are rows of the local
 // project config (`internal/localcfg/localcfg.go:298`) and of no other layer —
 // not the repository's `fugaro.yaml` and not the published policy node, the
 // same block RT2 above calls the local config's — and the allowlist's

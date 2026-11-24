@@ -93,11 +93,15 @@ func (p PoolPrincipal) Valid() bool {
 // is hit rather than after it.
 type PoolThreshold float64
 
-// Valid reports whether t is a threshold this release admits: greater than 0
-// and at most 1. That is the bound the picker (PL8) acts on as well, so a value
-// the config accepts is a value the picker was written for: 0 would move off
-// every member always, which serves nothing, and a value at 1 fires exactly at
-// the limit.
+// Valid is the bound a threshold must meet: greater than 0 and at most 1. That
+// is the bound the picker (PL8) reads too, so a value this admits is a value
+// the picker was written for — 0 would move off every member always, which
+// serves nothing, and a value at 1 fires exactly at the limit.
+//
+// Nothing admits a threshold yet: no rule set this release ships acts on one,
+// so poolRuleProblems refuses any that is written and this decides nothing
+// until PL8 lands. It is kept, and kept the picker's own answer, because that
+// is the one thing the refusal must be lifted by.
 func (t PoolThreshold) Valid() bool { return t > 0 && t <= 1 }
 
 // RuleOrDefault is the rule this pool is served by: its own `rule`, or, where
@@ -131,7 +135,11 @@ func (p Pool) RuleOrDefault() string {
 // is refused rather than read as one of them, because a rule no side serves is
 // a call nobody can place; a principal whose kind this release does not know,
 // or whose id is empty, is refused rather than read as "no principal"; and a
-// threshold outside PoolThreshold's bound is refused with the fix.
+// threshold is refused outright, whatever its value, because no rule set this
+// release ships acts on one — the member arrives with the rule that reads it
+// (PL8), and until then a threshold that validated would be carried into
+// `fugaro.yaml` and quietly do nothing. PoolThreshold.Valid is the bound that
+// refusal is lifted by.
 func poolRuleProblems(at string, p Pool) []Problem {
 	var ps []Problem
 	if p.Rule != "" && !slices.Contains(PoolRules, p.Rule) {
@@ -140,8 +148,8 @@ func poolRuleProblems(at string, p Pool) []Problem {
 	if p.Principal != nil && !p.Principal.Valid() {
 		ps = append(ps, Problem{Path: at + ".principal", Message: fmt.Sprintf("a principal names whose pool this is, written as a kind and an id: kind must be one of %s, and id is the person's Google subject, the service account's address or the project's name — a pool with an unknown kind or no id is a pool nothing can resolve (owner is a separate member and does not stand in for it)", strings.Join(PrincipalKinds, ", "))})
 	}
-	if p.Threshold != nil && !p.Threshold.Valid() {
-		ps = append(ps, Problem{Path: at + ".threshold", Message: "must be greater than 0 and at most 1: it is the fraction of a member's limit at which the pool moves off that member, and a threshold of 0 would move off every member always (serving nothing) while a value above 1 never fires"})
+	if p.Threshold != nil {
+		ps = append(ps, Problem{Path: at + ".threshold", Message: "is not allowed yet: no rule set this release ships acts on a threshold, so a value written here would be carried in the file and never read — remove it until the rule that reads it ships; the value it will admit is greater than 0 and at most 1, the fraction of a member's limit at which a pool moves off that member"})
 	}
 	return ps
 }
