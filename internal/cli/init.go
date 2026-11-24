@@ -1652,10 +1652,13 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// budget is an alert on a billing account (D2216), and a creating run that
 	// linked none has an amount and a currency but no account to put them on.
 	// The amount is recorded above either way, so the command is the whole of
-	// what is left for the owner — and it is the door's line rather than the
-	// wizard's because the runs that reach here asked nothing (a project that
-	// is already there keeps the budget its own, askBudget) or stopped before
-	// the question's own settle (a run that paused at billing, settleBudget).
+	// what is left for the owner — and it is said here as well as at the
+	// wizard's own line, because the runs that reach here asked nothing (a
+	// project that is already there keeps the budget its own, askBudget) or
+	// nobody could answer them. A run that paused at billing and answered the
+	// question at its resume prints both (settleBudget): the same amount, once
+	// as what the installation's variables do not carry and once as what adds
+	// the alert.
 	// r.budgetAccount is the account this run's variables carry the alert on,
 	// so its absence is exactly the alert's absence: the review reads the same
 	// field to admit the plan's budget resource.
