@@ -127,6 +127,12 @@ type initEngine struct {
 	// gates would then never run on it. Cleared by the landing, as accessSeed is.
 	accessMark bool
 
+	// reposState is the run's per-repository state: the enrolled list every
+	// stage reads (memoized here, so one command reads the repositories once)
+	// and the lines each stage and step reported about them
+	// (update_repos.go).
+	reposState reposState
+
 	// flagFactVersion is the version the self-flag step's own read of the
 	// creation fact answered with, and 0 where that step read nothing
 	// (update_selfflag.go). The marker step asks it beside the gate's version
