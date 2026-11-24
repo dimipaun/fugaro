@@ -44,6 +44,15 @@ func liveCheckSurface() []string {
 	var lines []string
 	var walk func(c *cobra.Command, path []string)
 	walk = func(c *cobra.Command, path []string) {
+		// The retired tombstone (internal/cli/retired.go) is the one command
+		// this table leaves out: it refuses every command line it is given and
+		// applies nothing, so a check that called it would be reading a door
+		// that no longer exists, and the fake must refuse it the way the CLI
+		// does. It is a hidden command that parses no flags of its own, which
+		// is what a tombstone is; nothing else in the tree has both.
+		if len(path) > 0 && c.Hidden && c.DisableFlagParsing {
+			return
+		}
 		p := append(append([]string{}, path...), c.Name())
 		// Paths are relative to the root, so `fugaro accounts pool add` is
 		// `accounts pool add` here: it is what a fake's argv carries. The root's

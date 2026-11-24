@@ -93,7 +93,6 @@ cmd	image rm
 cmd	image selftest
 cmd	image status
 cmd	image survey
-cmd	init
 cmd	intake
 cmd	intake serve
 cmd	issue
@@ -739,7 +738,6 @@ flag	image survey	--help	bool	-h
 flag	image survey	--json	bool	
 flag	image survey	--project	value	
 flag	image survey	--region	value	
-flag	init	--help	bool	-h
 flag	intake	--help	bool	-h
 flag	intake serve	--help	bool	-h
 flag	issue	--help	bool	-h
