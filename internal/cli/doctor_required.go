@@ -20,13 +20,9 @@ import (
 // reported where the person already looks.
 const cliBelowRequiredID = "cli-below-required"
 
-// cliBelowRequiredFix is the one line the default view prints for this check,
-// and the same words the check carries itself: the newer release is not
-// installed yet, so the upgrade comes first, and the update behind it is what
-// brings the installation and the checkout to the version (CLAUDE.md's hard
-// rule: those two commands are the whole upgrade). It is cli-version's own
-// line, because the same two commands are its remedy for the same reason.
-const cliBelowRequiredFix = "run `brew upgrade fugaro`, then `fugaro update`"
+// cliBelowRequiredFix, the one line the default view prints for this check, is
+// cli-version's own and lives with their shared table (doctor_render.go): the
+// same two commands are the remedy for the same reason.
 
 // doctorOfflineAsk is what every skipped check of a `doctor --offline` run
 // hands the reader: the flag that answers the skipped ones, and the check's own

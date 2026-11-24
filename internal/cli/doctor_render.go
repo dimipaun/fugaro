@@ -741,6 +741,20 @@ func doctorSeverityWord(c doctorCheck) string {
 	return "error"
 }
 
+// cliBelowRequiredFix is the one line the default view prints for cli-version
+// and for cli-below-required, and the same words the latter carries itself: the
+// newer release is not installed yet, so the upgrade comes first, and the update
+// behind it is what brings the installation and the checkout to the version
+// (CLAUDE.md's hard rule: those two commands are the whole upgrade). The two
+// checks differ in what they ask — is a newer release available, is this binary
+// below the one this project requires — and not in what repairs them.
+//
+// It is one string for both, and it is defined here rather than in
+// doctor_required.go because a sentence that sends a reader to a command is
+// pinned to its file by a checker over the whole tree
+// (testdata/next_step_allow.golden, apply_enforce_test.go).
+const cliBelowRequiredFix = "run `brew upgrade fugaro`, then `fugaro update`"
+
 // doctorUpdateFixes is the one fix of an update-class item, per ID where the
 // command needs a flag or comes after another one, and `fugaro update` plain
 // otherwise. A check whose remedy is not what update does is not in the class
