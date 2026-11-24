@@ -151,14 +151,16 @@ func TestDocsCheck392SaysWhyItCannotRunOnAManagedProject(t *testing.T) {
 // TestDocsCompositeReleaseNotesCarryTheReleaseActions: the notes of the release
 // this work ships in state what a management command now does — one command runs
 // the steps its change owes, `--no-apply` stops it, and a step that cannot run
-// costs the run and not the work — and, where they carry an operator section at
-// all, it is the whole upgrade and nothing more: `fugaro update`, and no second
-// operator command (the rule docs/releases/README.md states).
+// costs the run and not the work — and they carry the operator section this
+// work's plan writes, which is the whole upgrade and nothing more: `fugaro
+// update`, and no second operator command.
 //
-// The section and the end-user summary line of a release the CLI stream has not
-// reached are written by the pull request that cuts it, so this test asserts
-// neither about the release these bullets are waiting in — an operator step this
-// work does not add is a step nobody owes yet.
+// The section is due in the same pull request as the bullets, not in the one
+// that cuts the release: docs/composite-commands/implementation-plan.md names it
+// for AP10 and answers it with "run `fugaro update`" and nothing else, and
+// docs/releases/vX.Y.Z.md of the last twelve releases each carry it. The
+// end-user summary line is the one that waits for the cut
+// (docs/releases/README.md), so this test asserts nothing about it.
 func TestDocsCompositeReleaseNotesCarryTheReleaseActions(t *testing.T) {
 	notes := readDoc(t, compositeChecksRel)
 	flat := strings.ToLower(flattenDoc(notes))
@@ -177,9 +179,14 @@ func TestDocsCompositeReleaseNotesCarryTheReleaseActions(t *testing.T) {
 		}
 	}
 
-	if i := strings.Index(flat, "### for operators"); i >= 0 {
-		if !strings.Contains(flat[i:], "fugaro update") {
-			t.Errorf("%s carries a `### For operators` section that does not name `fugaro update`: the section of a release is the whole upgrade and nothing more", compositeChecksRel)
-		}
+	// The section, and not a section that happens to be there: what an operator
+	// owes after this release is one step, and it is the one the plan answers
+	// this work with. A file whose section is missing is a release that ships
+	// the step to nobody.
+	i := strings.Index(flat, "### for operators")
+	if i < 0 {
+		t.Errorf("%s carries no `### For operators` section: AP10 writes the release actions, and the one an operator owes after this release is `fugaro update` under a `### For operators` heading in the same pull request", compositeChecksRel)
+	} else if !strings.Contains(flat[i:], "fugaro update") {
+		t.Errorf("%s carries a `### For operators` section that does not name `fugaro update`: the section of a release is the whole upgrade and nothing more (docs/releases/README.md, docs/composite-commands/implementation-plan.md)", compositeChecksRel)
 	}
 }
