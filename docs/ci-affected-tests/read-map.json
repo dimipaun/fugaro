@@ -191,6 +191,7 @@
         "deploy/terraform/gcp/modules/installation/iam.tf",
         "deploy/terraform/gcp/modules/installation/intake.tf",
         "deploy/terraform/gcp/modules/installation/logging.tf",
+        "deploy/terraform/gcp/modules/installation/mailbox_key.tf",
         "deploy/terraform/gcp/modules/installation/mcpauth_store.tf",
         "deploy/terraform/gcp/modules/installation/mobile_service.tf",
         "deploy/terraform/gcp/modules/installation/orchestrator.tf",
