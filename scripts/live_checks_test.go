@@ -702,6 +702,17 @@ import (
 // blocker. 892's are a fake `gcloud` holding the projects' and the build and
 // job accounts' IAM policies and a fake `curl` serving the grants node, so a
 // case says which principal is an admin in all but name.
+// Check 920 is the image-secrets work's owner-run check. Its fakes are a fake
+// `gcloud` (the jobs of two repositories, a run's own executions, the service's
+// `credsvc: audit` lines and the run's record out of the runs bucket, the
+// build identity's account and the project's IAM policy, the containers'
+// accessors and the catalog build's steps), a fake `curl` answering the
+// projectsecrets record only through the 0600 config file the check hands over,
+// and a fake `fugaro` whose `version`, `doctor`, `runs ls`, `run` and `review`
+// the case bends -- so a case says which container a job and a run's own pods
+// mount, what the service served a run and its review, what an unlisted
+// repository was refused with, and that a catalog build resolves no accessor
+// for the build identity.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -832,6 +843,7 @@ var liveCheckScripts = []struct {
 	{"check-890-data-layout.sh", "check-890-data-layout_test.sh"},
 	{"check-891-update-trace.sh", "check-891-update-trace_test.sh"},
 	{"check-892-iam.sh", "check-892-iam_test.sh"},
+	{"check920.sh", "check920_test.sh"},
 	{"check-390.sh", "check-390_test.sh"},
 	{"check-391.sh", "check-391_test.sh"},
 	{"check-392.sh", "check-392_test.sh"},
