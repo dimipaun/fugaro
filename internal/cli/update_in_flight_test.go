@@ -65,9 +65,10 @@ const (
 // The fixture carries a paused run beside the running one (PR6): a chain that
 // suspended itself before the update, whose record, node, saved session and
 // chain ledger the update rewrites nothing of, and which the run that resumes it
-// picks up afterwards. The count's line names it — a paused chain is in flight
-// the way a running one is (PR12, D3195) — and the update waits for it exactly
-// as it waits for the run that is going.
+// picks up afterwards. The count is the running run and the paused one — a
+// paused chain is in flight the way a running one is (PR12, D3195) — the update
+// waits for it exactly as it waits for the run that is going, and the paused run
+// is a fact of its own under the count's line.
 func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	r := newConvergeRig(t, v3Node(nil))
 	// The deployed rules are the release behind's document and not a stand-in:
@@ -83,13 +84,17 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	// One note, one fact per line: the runs are in flight and the update leaves
 	// them running. No refusal, and never a request to wait — the owner's ruling
 	// of 2026-11-09, and the reason the policy stage's refusal is not a thing
-	// this door does any more. The count is the running run and the paused one,
-	// and the parenthetical says how many of them are paused: a suspended run's
-	// execution has ended and released its lease (R12), so the count has to read
-	// the service's node to name it at all (PR6).
+	// this door does any more. The count is the running run and the paused one (a
+	// suspended run's execution has ended and released its lease, R12, so the
+	// count reads the service's node and the run's own record to name it at all,
+	// PR6), and the count's own sentence is untouched by that: the paused figure
+	// is one of the lines under it.
 	line := inFlightLine(t, out)
-	if !strings.Contains(line, "2 runs (1 paused) in flight") {
-		t.Errorf("the update's note does not count the running run and the paused one: %q", line)
+	if !strings.Contains(line, "2 runs in flight: update waits for none and changes nothing they hold") {
+		t.Errorf("the update's note does not count the running run and the paused one in its own sentence: %q", line)
+	}
+	if !strings.Contains(line, "\n  paused: 1 run among them, brought back by the orchestrator") {
+		t.Errorf("the update's note does not say that one of the two is a paused run the orchestrator brings back: %q", line)
 	}
 	for _, banned := range []string{"wait for them", "refus", "finish first, then"} {
 		if strings.Contains(line, banned) {
@@ -165,19 +170,21 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 }
 
 // TestUpdateCountsPausedRuns is PR6's own acceptance read against the note: the
-// update's one in-flight line says how many of the runs in flight are paused. A
-// run that suspended itself has ended its execution and released its lease
-// (R12), so the registry the count otherwise reads holds no entry of it, and the
-// one place its chain's in-flightness is written is the credentials service's
-// node under paused/ (C3, R26, D3185). The line therefore reads the nodes there
-// and carries the count of the pauses that stand.
+// update's in-flight line says how many of the runs in flight are paused. A run
+// that suspended itself has ended its execution and released its lease (R12), so
+// the registry the count otherwise reads holds no entry of it, and a pause is
+// written in two places nothing else reads: the credentials service's node under
+// paused/ (C3, R26, D3185) and the run's own record, which is what says the run
+// really ended `paused` — the reading a resume itself makes (PR4) and the reason
+// a node on its own is not a paused run.
 //
-// The three cases are the two sides of the node's own rule and the empty one:
-// a standing pause is counted; a pause its launcher cancelled is not, because
-// the chain is over and no guard reads it as in flight any more (D3197,
-// pauseStands); and a machine with no pause says nothing about one. Each is read
-// off the line the door really printed, over a run really in flight beside the
-// paused one.
+// The four cases are the two sides of each of those: a standing pause is counted;
+// a pause its launcher cancelled is not, because the chain is over and no guard
+// reads it as in flight any more (D3197, pauseStands); a node whose run did not
+// end paused is not, because no resume acts on it and the count is not a count of
+// the database's leftovers; and a machine with no pause says nothing about one.
+// Each is read off the note the door really printed, over a run really in flight
+// beside the paused one.
 func TestUpdateCountsPausedRuns(t *testing.T) {
 	line := func(t *testing.T, paused bool, cancelled bool) string {
 		t.Helper()
@@ -190,11 +197,11 @@ func TestUpdateCountsPausedRuns(t *testing.T) {
 	}
 	t.Run("a standing pause is counted", func(t *testing.T) {
 		got := line(t, true, false)
-		if !strings.Contains(got, "2 runs (1 paused) in flight") {
-			t.Errorf("the note does not count the paused chain beside the running run, whose execution has ended and left the registry: %q", got)
+		if !strings.Contains(got, "2 runs in flight: update waits for none and changes nothing they hold") {
+			t.Errorf("the note does not count the paused chain beside the running run, whose execution has ended and left the registry, in its own sentence: %q", got)
 		}
-		if !strings.Contains(got, "waits for none") || !strings.Contains(got, "changes nothing they hold") {
-			t.Errorf("the note does not make its claim over the paused run too: %q", got)
+		if !strings.Contains(got, "\n  paused: 1 run among them, brought back by the orchestrator") {
+			t.Errorf("the note does not say that one of the two is a paused run the orchestrator brings back: %q", got)
 		}
 	})
 	t.Run("a cancelled pause is not", func(t *testing.T) {
@@ -206,7 +213,18 @@ func TestUpdateCountsPausedRuns(t *testing.T) {
 			t.Errorf("the note counts a cancelled pause as a run in flight, and the launcher took that chain out of flight (D3197): %q", got)
 		}
 	})
-	t.Run("no pause, no parenthetical", func(t *testing.T) {
+	t.Run("a run that did not end paused is not", func(t *testing.T) {
+		r := newConvergeRig(t, v7Node())
+		startRunInFlight(t, r)
+		// The node is there and nothing cancelled it: what is missing is the run
+		// that ended `paused`, which is the half a resume reads.
+		startPausedRunWith(t, r, false, runstore.StatusSucceeded)
+		got := inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
+		if !strings.Contains(got, "1 run in flight") || strings.Contains(got, "paused") {
+			t.Errorf("the note counts a node whose run did not end paused as a paused run in flight, and nothing will resume it: %q", got)
+		}
+	})
+	t.Run("no pause, no line", func(t *testing.T) {
 		got := line(t, false, false)
 		if !strings.Contains(got, "1 run in flight") || strings.Contains(got, "paused") {
 			t.Errorf("the note says something about a pause over a machine holding none: %q", got)
@@ -911,6 +929,33 @@ type pausedRunOnHold struct {
 // chain is rooted at (D1045).
 func startPausedRunInFlight(t *testing.T, r *convergeRig, cancelled bool) *pausedRunOnHold {
 	t.Helper()
+	return startPausedRunWith(t, r, cancelled, runstore.StatusPaused)
+}
+
+// publishRecord places a run's record where every later reader of the fake runs
+// bucket finds it: the rig's opener serves the bucket from `records`, so a record
+// the fixture wrote through its own store — a bucket of its own, closed with the
+// store — is put beside them under the key the store reads it by. It is what a
+// real runs bucket holds, and the door's count reads the run's own record (its
+// status) as the fact that a pause still holds it.
+func publishRecord(t *testing.T, store *runstore.Store) {
+	t.Helper()
+	data, err := store.ReadFile(context.Background(), "result.json")
+	if err != nil {
+		t.Fatalf("reading back the run's record to publish it: %v", err)
+	}
+	if records == nil {
+		records = map[string]string{}
+	}
+	records[store.Prefix()+"result.json"] = string(data)
+}
+
+// startPausedRunWith is startPausedRunInFlight over the status the run's own
+// record carries. `paused` is the run a pause still holds (D3195's reading, and
+// the one a resume makes); any other status is the node the service wrote for a
+// run that ended that way, which is a pause nothing resumes.
+func startPausedRunWith(t *testing.T, r *convergeRig, cancelled bool, status runstore.Status) *pausedRunOnHold {
+	t.Helper()
 	ctx := context.Background()
 	slug, err := task.Slug("github", "acme/app")
 	if err != nil {
@@ -933,10 +978,11 @@ func startPausedRunInFlight(t *testing.T, r *convergeRig, cancelled bool) *pause
 	}
 	if err := store.WriteRecord(ctx, &runstore.Record{
 		Version: 1, RunID: pausedRunID, Repo: "acme/app", Workflow: "app",
-		Status: runstore.StatusPaused, Stage: "implement", Outcome: runstore.OutcomeNone,
+		Status: status, Stage: "implement", Outcome: runstore.OutcomeNone,
 	}); err != nil {
 		t.Fatalf("writing the paused run's record: %v", err)
 	}
+	publishRecord(t, store)
 	node := runstore.PauseNode{
 		Launcher: inFlightOwner, ResumeAt: time.Now().Add(-time.Minute).UnixMilli(),
 		Chain: pausedRunID, PausedSeconds: 600, Cancelled: cancelled,

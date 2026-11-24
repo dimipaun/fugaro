@@ -222,12 +222,17 @@ the record `pause.json` in the run's own bucket prefix, which the run that resum
 the credentials service's node `paused/<slug>/<run>` in the Realtime Database, which says who
 launched the run, on what pool and until when (R6, R8, R26 — the node is display data to a
 launcher and an input only to the service and the orchestrator). A paused chain is in flight the
-way a running one is (PR12, D3195), so the update counts it too: it reads the nodes under
-`paused/` and the count's line says how many of the runs in flight are paused
-(`pausedRuns`, `inflightPhrase`, `internal/cli/update_in_flight.go`). A node a launcher has
-cancelled is not counted — the chain is over and no guard reads it as in flight (D3197,
-`pauseStands`, `internal/cli/runs_prstate.go`) — and one this release cannot place is no pause the
-orchestrator would resume (`ErrInvalidPauseNode`). The update rewrites nothing a paused run holds:
+way a running one is (PR12, D3195), so the update counts it too, and says under the count how many
+of the runs in flight are paused (`pausedRuns`, `internal/cli/update_in_flight.go`). A node is not
+on its own a paused run: it is the service's record that a pause was asked for, and what makes the
+run count is the run's own record still ending `paused` — the reading every guard makes of a pause
+(`pauseInFlight`, `pauseStands`, `internal/cli/runs_prstate.go`) and the one a resume reads it by
+(PR4: a node whose run did not end paused is resumed no more than a cancelled one). A node a
+launcher has cancelled is not counted either — the chain is over and no guard reads it as in flight
+(D3197) — and one this release cannot place is no pause the orchestrator would resume
+(`ErrInvalidPauseNode`), nor is a node whose record the bucket no longer has: a run's objects live
+in the bucket for a window and age out together, which is what bounds this figure over an
+installation's history. The update rewrites nothing a paused run holds:
 its record, its node, its saved session and its chain's ledger are exactly as the suspend left
 them (F36), and the run the orchestrator resumes it with reads `pause.json`, checks out the
 checkpoint and enters the stage the paused run was in (PR5) — so the pause spans the update the
@@ -246,14 +251,17 @@ other, so the wait it can cost is named while it happens — `Checking for runs 
 flight`, the CLI's own spinner and its one line per step — because the owner met
 it with fourteen runs going and no output at all (the feedback of 2026-11-15).
 What it prints after that is the count's own line: how many runs are in flight,
-how many of them are paused (a parenthetical, `inflightPhrase`, because a
-suspended run's execution has ended and left the registry the count otherwise
-reads — R12, PR6), that the update waits for none of them and changes nothing
-they hold. Then one
+that the update waits for none of them and changes nothing they hold. Then one
 short line per step that can still reach one, indented under it, or a single line
-saying no step does (`inFlightSteps`). The note is exactly as long as that count
-and no longer — plus the two lines that are not steps and carry the two facts the
-count's line cannot. R5's is printed where this machine's config still says the
+saying no step does (`inFlightSteps`). Nothing is inserted into the count's own
+sentence: it is the one the live checks read as a whole, count and all
+([gcp-live-checklist.md](../gcp-live-checklist.md), Check 632). The note is
+exactly as long as that count
+and no longer — plus the lines that are not steps and carry the facts the
+count's own sentence cannot: how many of the runs in flight are paused (PR6,
+because a suspended run's execution has ended and left the registry the count
+otherwise reads — R12), that the orchestrator is what brings those back, R5's,
+and MG3's. R5's is printed where this machine's config still says the
 word (`budgetOffRunFinishes`): a run that started with the budget off has no
 session for the mode to bound and holds its key already, so what the note owes
 the person is that such a run finishes. MG3's says that this release keeps

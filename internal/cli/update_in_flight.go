@@ -72,24 +72,25 @@ import (
 // The count's own read is a step of the run, so the wait it can be is named
 // while it happens.
 //
-// Two of the lines under the count are not steps, and they are the two facts the
+// Three of the lines under the count are not steps, and they are the facts the
 // count's line cannot carry: R5's, that a run which started with the budget off
-// holds its key already and finishes; and MG3's, that this release keeps writing
-// the old access record, and that so many of the runs in flight are the runs it
-// is written for. Neither is a reach and neither is gated on a step's own
-// question, which is why they are printed beside the steps rather than among
-// them: a note saying no step reaches a run in flight is about the steps alone,
-// and these two facts stand outside that list.
+// holds its key already and finishes; MG3's, that this release keeps writing the
+// old access record, and that so many of the runs in flight are the runs it is
+// written for; and PR6's, how many of the count are paused runs. None is a reach
+// and none is gated on a step's own question, which is why they are printed
+// beside the steps rather than among them: a note saying no step reaches a run in
+// flight is about the steps alone, and these facts stand outside that list.
 //
-// The count's line carries one more fact, and it is the paused runs (PR6): a run
-// that suspended itself has ended its execution and released its lease (R12), so
-// the registry the count otherwise reads holds no entry of it, and the one place
-// a pause is written is the credentials service's node under paused/ (C3, R26).
-// A paused chain is in flight the way a running one is (PR12, D3195), so the
-// count includes it and the line says how many of the count are paused — the
-// update rewrites nothing such a run holds either (its record, its node, its
-// saved session, its chain's ledger), and the parenthetical is where a person
-// reading the note sees the chains that will come back on their own.
+// The paused runs are the count's own fact and not a step's, and they are a line
+// of their own rather than a parenthesis inside the count (PR6): a run that
+// suspended itself has ended its execution and released its lease (R12), so the
+// registry the count otherwise reads holds no entry of it, and the pause's node
+// under paused/ plus the run's own record are what say it is in flight (C3, R26;
+// D3195). The count's sentence is the one the live checks and the owner's note
+// read, and nothing is inserted into it (`docs/gcp-live-checklist.md`, Check
+// 632) — so the paused figure is said under it, where the update also says that
+// it rewrites nothing such a run holds (its record, its node, its saved session,
+// its chain's ledger).
 
 // announceRunsInFlight prints the update door's note about the runs in flight —
 // the count's line and the steps under it. It prints nothing at all when no run
@@ -157,7 +158,7 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) error {
 	if err != nil || n == 0 {
 		return nil
 	}
-	note := fmt.Sprintf("%s%s in flight: update waits for none and changes nothing they hold", o.programPrefix(), inflightPhrase(n, paused))
+	note := fmt.Sprintf("%s%s in flight: update waits for none and changes nothing they hold", o.programPrefix(), runsPhrase(n))
 	// The screen and the log read the same note, because it is one note: the
 	// count's line, then one short line per step (loggedOut, D1352 — and not the
 	// reporter's stream, which is the terminal under --verbose as well as the
@@ -171,10 +172,20 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) error {
 	} else {
 		fmt.Fprintf(w, "%s, and no step reaches them\n", note)
 	}
-	// R5's own line, which is not a step and is the one fact the count's line
-	// cannot carry: a run that started with the budget off has no session and
-	// holds its key already, so nothing this update does reaches it and it
-	// finishes. It is printed while this machine's own config still says the
+	// PR6's own line, and the first of the facts that are not steps: the paused
+	// runs of the count. A paused chain is in flight the way a running one is
+	// (PR12, D3195), so it is in the count above, and what a person cannot read
+	// off the count is that some of these runs are waiting rather than working —
+	// and that the orchestrator, not this door, is what brings them back.
+	// Nothing is inserted into the count's own sentence for it: that sentence is
+	// pinned whole (`docs/gcp-live-checklist.md`, Check 632).
+	if paused > 0 {
+		fmt.Fprintf(w, "  paused: %s among them, brought back by the orchestrator\n", runsPhrase(paused))
+	}
+	// R5's own line, which is another fact that is not a step: a run that started
+	// with the budget off has no session and holds its key already, so nothing
+	// this update does reaches it and it finishes. It is printed while this
+	// machine's own config still says the
 	// word — the state in which such a run can exist, and the state this very
 	// update is about to end — and it is this release that owes it, because
 	// this is the release that removes the word.
@@ -272,52 +283,62 @@ func runsPhrase(n int) string {
 	return fmt.Sprintf("%d runs", n)
 }
 
-// inflightPhrase is the count's own phrase: how many runs are in flight, and —
-// when any are — how many of them are paused. The parenthetical is part of the
-// count's line rather than a line of its own because a paused run is in flight
-// the same way a running one is (PR12, D3195): the count is the runs the update
-// waits for none of and changes nothing of, and paused is the one thing about a
-// member of that count the line could not otherwise say.
+// pausedRuns counts the runs of this project a pause still holds: the runs that
+// ended `paused` and whose node under runstore.PauseNodeRoot the service has not
+// cancelled (C3, R26; D3195, D3197). It is the count of the note's paused line.
 //
-// It is spelled inside the count and never around it: the sentence
-// "in flight: update waits for none and changes nothing they hold" is the one
-// the live checks and the owner's own note read (`docs/gcp-live-checklist.md`,
-// Check 632), so nothing may be inserted between the count and the colon.
-func inflightPhrase(n, paused int) string {
-	if paused == 0 {
-		return runsPhrase(n)
-	}
-	return fmt.Sprintf("%s (%d paused)", runsPhrase(n), paused)
-}
-
-// pausedRuns counts the runs of this project a pause still holds: the nodes
-// under runstore.PauseNodeRoot whose pause stands (C3, R26) — the credentials
-// service wrote each and no launcher has cancelled it (D3185, D3197).
+// A node on its own is not a paused run: the node is the service's record that a
+// pause was asked for, and the run's own record is what says the run ended
+// `paused` and is therefore a chain that comes back. That is the reading every
+// guard makes of a pause (pauseInFlight, runs_prstate.go) and the one a resume
+// itself reads it by (PR4: a node whose run has not ended paused is resumed no
+// more than a cancelled one), so the count cannot name a run as paused that
+// nothing will resume. A node whose run ended any other way — the `/pause` of a
+// run that then failed, one whose run ended before the service recorded the
+// pause — is a pause that holds nothing, and so is one whose record the bucket
+// no longer has: a run's objects live in the bucket for a window and age out
+// together, which is what bounds this figure over an installation's history.
 //
-// A paused run is in flight, and the registry the count otherwise reads holds
-// no entry of it: a suspend ends the run's execution and releases its lease
-// (R12), and the node under paused/ is the one place the pause is written. Its
-// record, its saved session and its chain's ledger are the rest of what it
-// holds, and none of them is a node this door reads: the node is the service's
-// own account of the pause, and it is what a launcher's view — and this note —
-// reads.
-//
-// A cancelled node is not counted: the launcher took the chain out of flight
-// (D3197), and it is the reading every guard makes (pauseStands, runs_prstate.go).
-// A node this release cannot place answers nothing: half a node is not a pause
-// (ErrInvalidPauseNode), and the orchestrator resumes none it could not read —
-// yet the file's own rule, that a read which failed is silence, is why this is a
-// count and not an error the door returns.
+// A suspended run's execution has ended and released its lease (R12), so the
+// registry the count otherwise reads holds no entry of it, and a node a launcher
+// cancelled is not in flight at all (D3197). A node this release cannot place
+// answers nothing: half a node is not a pause (ErrInvalidPauseNode). Every
+// failure here is silence — a read that could not be made says nothing rather
+// than naming a number nobody read, the rule this door's count is under.
 func (e *initEngine) pausedRuns(ctx context.Context, db *rtdb.Client) int {
 	var nodes map[string]map[string]json.RawMessage
 	if _, err := db.Get(ctx, runstore.PauseNodeRoot, &nodes); err != nil {
 		return 0
 	}
+	if len(nodes) == 0 {
+		return 0
+	}
+	url := recordReadURL(e.lc)
+	if url == "" {
+		return 0
+	}
+	b, err := openRecordBucket(ctx, url)
+	if err != nil {
+		return 0
+	}
+	defer b.Close()
 	n := 0
-	for _, runs := range nodes {
-		for _, raw := range runs {
+	for slugKey, runs := range nodes {
+		slug, err := budget.Unkey(slugKey)
+		if err != nil {
+			continue
+		}
+		for runKey, raw := range runs {
 			node, err := runstore.ParsePauseNode(raw)
-			if err == nil && !node.Cancelled {
+			if err != nil || node.Cancelled {
+				continue
+			}
+			runID, err := budget.Unkey(runKey)
+			if err != nil {
+				continue
+			}
+			rec, err := runstore.Open(b.Bucket, slug, runID).ReadRecord(ctx)
+			if err == nil && rec != nil && rec.Status == runstore.StatusPaused {
 				n++
 			}
 		}
