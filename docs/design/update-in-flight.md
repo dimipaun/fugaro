@@ -232,7 +232,16 @@ launcher has cancelled is not counted either — the chain is over and no guard 
 (D3197) — and one this release cannot place is no pause the orchestrator would resume
 (`ErrInvalidPauseNode`), nor is a node whose record the bucket no longer has: a run's objects live
 in the bucket for a window and age out together, which is what bounds this figure over an
-installation's history. The update rewrites nothing a paused run holds:
+installation's history.
+
+What that figure is, exactly, is the count of the pauses the door can see standing, and not a
+promise that the orchestrator still has each resume to do. The contract puts no resumed mark on the
+node (C3), and the run a pause was resumed with is found in the chain instead — the run whose task
+names `resumes` with the paused run's id (PR5) — which this count does not walk. A pause that has
+already been resumed is therefore counted while its record ends `paused`, and the line under the
+count says what was read (`held by a pause that still stands`) rather than that one is still due.
+
+The update rewrites nothing a paused run holds:
 its record, its node, its saved session and its chain's ledger are exactly as the suspend left
 them (F36), and the run the orchestrator resumes it with reads `pause.json`, checks out the
 checkpoint and enters the stage the paused run was in (PR5) — so the pause spans the update the
@@ -258,10 +267,9 @@ sentence: it is the one the live checks read as a whole, count and all
 ([gcp-live-checklist.md](../gcp-live-checklist.md), Check 632). The note is
 exactly as long as that count
 and no longer — plus the lines that are not steps and carry the facts the
-count's own sentence cannot: how many of the runs in flight are paused (PR6,
-because a suspended run's execution has ended and left the registry the count
-otherwise reads — R12), that the orchestrator is what brings those back, R5's,
-and MG3's. R5's is printed where this machine's config still says the
+count's own sentence cannot: how many of the runs in flight are held by a pause
+that still stands (PR6, because a suspended run's execution has ended and left
+the registry the count otherwise reads — R12), R5's, and MG3's. R5's is printed where this machine's config still says the
 word (`budgetOffRunFinishes`): a run that started with the budget off has no
 session for the mode to bound and holds its key already, so what the note owes
 the person is that such a run finishes. MG3's says that this release keeps

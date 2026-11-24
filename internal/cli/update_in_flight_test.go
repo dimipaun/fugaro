@@ -93,8 +93,8 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	if !strings.Contains(line, "2 runs in flight: update waits for none and changes nothing they hold") {
 		t.Errorf("the update's note does not count the running run and the paused one in its own sentence: %q", line)
 	}
-	if !strings.Contains(line, "\n  paused: 1 run among them, brought back by the orchestrator") {
-		t.Errorf("the update's note does not say that one of the two is a paused run the orchestrator brings back: %q", line)
+	if !strings.Contains(line, "\n  paused: 1 run among them, held by a pause that still stands") {
+		t.Errorf("the update's note does not say that one of the two is a run a pause still stands over: %q", line)
 	}
 	for _, banned := range []string{"wait for them", "refus", "finish first, then"} {
 		if strings.Contains(line, banned) {
@@ -200,8 +200,8 @@ func TestUpdateCountsPausedRuns(t *testing.T) {
 		if !strings.Contains(got, "2 runs in flight: update waits for none and changes nothing they hold") {
 			t.Errorf("the note does not count the paused chain beside the running run, whose execution has ended and left the registry, in its own sentence: %q", got)
 		}
-		if !strings.Contains(got, "\n  paused: 1 run among them, brought back by the orchestrator") {
-			t.Errorf("the note does not say that one of the two is a paused run the orchestrator brings back: %q", got)
+		if !strings.Contains(got, "\n  paused: 1 run among them, held by a pause that still stands") {
+			t.Errorf("the note does not say that one of the two is a run a pause still stands over: %q", got)
 		}
 	})
 	t.Run("a cancelled pause is not", func(t *testing.T) {

@@ -175,12 +175,15 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) error {
 	// PR6's own line, and the first of the facts that are not steps: the paused
 	// runs of the count. A paused chain is in flight the way a running one is
 	// (PR12, D3195), so it is in the count above, and what a person cannot read
-	// off the count is that some of these runs are waiting rather than working —
-	// and that the orchestrator, not this door, is what brings them back.
+	// off the count is that some of these runs are held by a pause rather than
+	// working. The line says what the count read and no more: a pause that
+	// stands, which is what the node and the run's own record say — the contract
+	// marks no node resumed (C3), so a chain the orchestrator has already brought
+	// back is counted here too, and the line cannot say otherwise (pausedRuns).
 	// Nothing is inserted into the count's own sentence for it: that sentence is
 	// pinned whole (`docs/gcp-live-checklist.md`, Check 632).
 	if paused > 0 {
-		fmt.Fprintf(w, "  paused: %s among them, brought back by the orchestrator\n", runsPhrase(paused))
+		fmt.Fprintf(w, "  paused: %s among them, held by a pause that still stands\n", runsPhrase(paused))
 	}
 	// R5's own line, which is another fact that is not a step: a run that started
 	// with the budget off has no session and holds its key already, so nothing
@@ -289,15 +292,22 @@ func runsPhrase(n int) string {
 //
 // A node on its own is not a paused run: the node is the service's record that a
 // pause was asked for, and the run's own record is what says the run ended
-// `paused` and is therefore a chain that comes back. That is the reading every
-// guard makes of a pause (pauseInFlight, runs_prstate.go) and the one a resume
-// itself reads it by (PR4: a node whose run has not ended paused is resumed no
-// more than a cancelled one), so the count cannot name a run as paused that
-// nothing will resume. A node whose run ended any other way — the `/pause` of a
-// run that then failed, one whose run ended before the service recorded the
-// pause — is a pause that holds nothing, and so is one whose record the bucket
-// no longer has: a run's objects live in the bucket for a window and age out
-// together, which is what bounds this figure over an installation's history.
+// `paused`. That is the reading every guard makes of a pause (pauseInFlight,
+// runs_prstate.go) and the one a resume itself reads it by (PR4: a node whose run
+// has not ended paused is resumed no more than a cancelled one), so a node whose
+// run ended any other way — the `/pause` of a run that then failed, one whose run
+// ended before the service recorded the pause — is a pause that holds nothing,
+// and so is one whose record the bucket no longer has: a run's objects live in
+// the bucket for a window and age out together, which is what bounds this figure
+// over an installation's history.
+//
+// It is what the door can read, and not a promise that the orchestrator still has
+// this resume to do. The contract puts no resumed mark on the node (C3), and the
+// run a pause was resumed with is found in the chain instead — the run whose task
+// names `resumes` with the paused run's id (PR5) — which this count does not
+// walk. A pause that has already been resumed is therefore still counted while
+// its record ends `paused`, and the line under the count says what was read — a
+// pause that stands — rather than that one is still due.
 //
 // A suspended run's execution has ended and released its lease (R12), so the
 // registry the count otherwise reads holds no entry of it, and a node a launcher
