@@ -639,7 +639,7 @@ func TestCurrentReleaseImageWithNoEditionDoesNotWarn(t *testing.T) {
 func TestValidateWarnsGovernanceOnACoreImage(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
-	configSkewCheckout(t, f, configSkewHead+"governance: { review_ratio: 3 }\n"+configSkewWorkflow)
+	configSkewCheckout(t, f, configSkewPins(configSkewHead)+"governance: { review_ratio: 3 }\n"+configSkewWorkflow)
 	writeEditionBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseTier, EditionCore)
 	_, errOut, err := execute(t, "validate")
 	if err != nil {
@@ -897,7 +897,7 @@ func TestValidateWarnsWhenTheProjectLayerSetsGovernance(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, layerWithGovernance("governance: { review_ratio: 20 }\n"))
-	layerCheckout(t, f, minimalAnchored)
+	layerCheckout(t, f, pinnedMinimal)
 	_, errOut, err := execute(t, "validate")
 	if err != nil {
 		t.Fatalf("a file that resolves over the layer is valid: %v", err)

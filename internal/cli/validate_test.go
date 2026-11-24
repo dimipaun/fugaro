@@ -317,20 +317,6 @@ func TestValidateAppliesPinsWhenBudgetOn(t *testing.T) {
 	}
 }
 
-func TestValidateSkipsPinsWhenBudgetOff(t *testing.T) {
-	for _, budget := range []string{"", "budget: { mode: off }\n"} {
-		path := budgetProject(t, budget, "  auth: api-key\n  model: sonnet")
-		if out, err := validateProblems(t, path); err != nil {
-			t.Fatalf("budget %q: %v %s", budget, err, out)
-		}
-	}
-	// No project config at all: nothing to say the budget is on.
-	isolateProjects(t, t.TempDir())
-	if out, err := validateProblems(t, writeConfig(t, cliMinimalYAML)); err != nil {
-		t.Fatalf("%v %s", err, out)
-	}
-}
-
 func TestValidateRefusesVertexEnforce(t *testing.T) {
 	pinned := "  auth: vertex\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }"
 	path := budgetProject(t, "budget: { mode: enforce, per_run_usd: 5 }\n", pinned)
@@ -655,7 +641,12 @@ func TestValidateEnforceWithoutCapWarnsNoCap(t *testing.T) {
 func TestValidateNotOnDefaultBranchSaysSo(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	writeProject(t, "aurora", "proj-1234")
-	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), cliMinimalYAML)
+	// The file names its three role models: with the project's config in reach
+	// the price rules hold in every mode (AB3, D3020), so a file that names no
+	// model at all is refused before the note this test is about.
+	pinned := strings.Replace(cliMinimalYAML, "workflows:",
+		"agent:\n"+pinnedAgent+"\n  levels: { l2: { model: claude-opus-5-5 } }\nworkflows:", 1)
+	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), pinned)
 	testutil.Git(t, root, "add", ".")
 	testutil.Git(t, root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
 	testutil.Git(t, root, "branch", "-M", "main")
@@ -674,7 +665,7 @@ func TestValidateNotOnDefaultBranchSaysSo(t *testing.T) {
 		len(noPolicy.Warnings) != 1 || noPolicy.Warnings[0].Path != "workflows.app" {
 		t.Fatalf("no policy keys: %v out %q stderr %q", err, out, errOut)
 	}
-	withBudget := strings.Replace(cliMinimalYAML, "workflows:", "budget: { per_run_usd: 1 }\nworkflows:", 1)
+	withBudget := strings.Replace(pinned, "workflows:", "budget: { per_run_usd: 1 }\nworkflows:", 1)
 	if err := os.WriteFile(file, []byte(withBudget), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -3196,10 +3187,15 @@ func reviewInstallation(t *testing.T, naming bool, local, agent, fileBlock strin
 		local += "claude_accounts:\n  team-a:\n    allow_data_to:\n      - acme/sandbox\n"
 	}
 	projectRouting(t, local)
-	body := cliMinimalYAML
+	// The three role pins are always written, whatever the caller's own agent
+	// lines are: a file that names none is refused once the price rules hold in
+	// every mode (AB3, D3020), and the notes below are about a file a run would
+	// start.
+	lines := pinnedAgent + "\n"
 	if agent != "" {
-		body = strings.Replace(cliMinimalYAML, "workflows:", "agent:\n"+agent+"\nworkflows:", 1)
+		lines = agent + "\n" + lines
 	}
+	body := strings.Replace(cliMinimalYAML, "workflows:", "agent:\n"+lines+"workflows:", 1)
 	return writeConfig(t, body+fileBlock)
 }
 

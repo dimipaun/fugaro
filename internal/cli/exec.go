@@ -423,4 +423,3 @@ func execPrices(platform backend.Platform, getenv func(string) string, warn func
 	}
 	return &p
 }
-
