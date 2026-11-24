@@ -176,3 +176,50 @@ func TestPublishedCraftPoolsRefuseTheMarkerWhereNoCascadeServes(t *testing.T) {
 		}
 	}
 }
+
+// newMemberPoolYAML is craftMembersYAML's pool with the members PL1 adds (R5,
+// R21): the rule it is served by and the principal it belongs to. A threshold is
+// not here because no file can carry one yet — validation refuses a threshold
+// wherever it is written, since no rule set this release ships acts on one
+// (poolRuleProblems, PL8) — so the strip below is exercised by the two members a
+// pool can really hold, and the third assertion it makes is that the node
+// carries no such key at all.
+const newMemberPoolYAML = "credentials:\n" +
+	"  - { name: acme-main, type: openrouter }\n" +
+	"pools:\n" +
+	"  - { name: acme-pool, strategy: failover, members: [acme-main, vertex], owner: owner@example.com, rule: ordered, principal: { kind: person, id: '1053' } }\n"
+
+// TestPublishedCraftPoolsDropTheNewMembers: a pool's rule and its principal are
+// the two members PL1 adds that a file can carry, and the node's craft_pools may
+// not carry either — that block is decoded strictly by every job image of the
+// installation, so a release behind this one refuses the whole node for a key
+// it does not know. The pools in their new shape travel under the policy's
+// `model_routing` key instead (RT4), and what craft_pools holds is the pool as
+// its readers have always read it. The pool is still published, with the
+// members and the owner the file states: dropping the pool would take a
+// project's runs off their credentials to protect a reader from a key.
+func TestPublishedCraftPoolsDropTheNewMembers(t *testing.T) {
+	f := newProjectFixture(t, newMemberPoolYAML)
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("the publish of a config holding a pool with a rule and a principal was refused: %v\n%s", err, out)
+	}
+	pool, ok := publishedCraftPool(t, publishedPolicy(t, f), "acme-pool")
+	if !ok {
+		t.Fatalf("the node holds no pool named acme-pool, and the two members are not a reason to leave the pool out:\n%s", out)
+	}
+	if pool.Rule != "" || pool.Principal != nil || pool.Threshold != nil {
+		t.Errorf("craft_pools acme-pool = %+v, want none of rule, principal or threshold: a release behind this one decodes this block strictly and refuses a node carrying them", pool)
+	}
+	if pool.Owner != "owner@example.com" || strings.Join(pool.Members, ",") != "acme-main,vertex" {
+		t.Errorf("craft_pools acme-pool = %+v, want the file's members and its owner", pool)
+	}
+	// The node's own bytes must not carry the three keys anywhere, the diff and
+	// the published document alike: a `rule` written into craft_pools is exactly
+	// the shape a reader behind this release refuses the whole node for.
+	for _, key := range []string{"\"rule\"", "\"principal\"", "\"threshold\""} {
+		if strings.Contains(out, key) {
+			t.Errorf("the publish wrote %s into the node's craft_pools:\n%s", key, out)
+		}
+	}
+}

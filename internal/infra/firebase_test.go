@@ -45,16 +45,75 @@ func checkGolden(t *testing.T, name string, got []byte) {
 	}
 }
 
-// The tfvars fugaro update --firebase-project writes, byte for byte: a change
-// here is a change to what Terraform is given.
-func TestFirebaseTfvarsGolden(t *testing.T) {
-	inst := installationSpec(t)
+// TestEUTfvarsGolden is the same pair of fixtures for an installation whose
+// region is europe-west1 (plan location-preference LP14, D3086): the two
+// documents a NEW EU installation hands Terraform, generated from the same two
+// configs as the US pair with the region — and the registry and base images
+// that follow from it — in europe-west1 and nothing else changed. They are what
+// scripts/gen-golden-plans.sh plans for
+// internal/infra/tf/testdata/golden/installation-eu.plan.json and
+// firebase-eu.plan.json, so the claim "a new EU installation plans every
+// located resource in the EU" is read off a real plan of the document the CLI
+// really composes.
+func TestEUTfvarsGolden(t *testing.T) {
+	inst, err := Installation(parseLC(t, euRegion(m4LocalConfig+m5Additions)), InstallOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	inst.Launchers = []string{"user:launcher@example.com"}
 	inst.Operators = []string{"user:operator@example.com", "user:launcher@example.com"}
 	fs, err := Firebase(inst, FirebaseInputs{FP: "aurora-fp",
 		Admins:         []string{"user:owner@example.com", "group:editors@example.com", "user:owner@example.com"},
 		BudgetAdmins:   []string{"user:extra@example.com"},
 		HistoryAccount: "fugaro-history@proj-1234.iam.gserviceaccount.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := FirebaseVars(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkGolden(t, "firebase-eu.tfvars.json", data)
+
+	spec, err := Installation(parseLC(t, euRegion(m4LocalConfig+projectJobRepoLC+m5Additions+projectProfilesLCBlock)), InstallOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := History(parseLC(t, euRegion(m4LocalConfig+m5Additions)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.DeployJob, h.FirebaseProject, h.RTDBURL = true, "aurora-fp", "https://aurora-fp-default-rtdb.firebaseio.com"
+	spec.EnableBudget, spec.History = true, &h
+	vars, err := InstallationVars(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkGolden(t, "installation-eu.tfvars.json", vars)
+}
+
+// euRegion is the same local config in the European Union: every us-east5 in it
+// is europe-west1, which is the installation's region, its registry host and
+// its base images together — the things a config names that follow from the
+// region (D3080). Nothing else differs, so the EU fixture is the US one with
+// its region moved, and no second decision is hidden in it.
+func euRegion(yaml string) string { return strings.ReplaceAll(yaml, "us-east5", "europe-west1") }
+
+// The tfvars fugaro update --firebase-project writes, byte for byte: a change
+// here is a change to what Terraform is given.
+func TestFirebaseTfvarsGolden(t *testing.T) {
+	inst := installationSpec(t)
+	inst.Launchers = []string{"user:launcher@example.com"}
+	inst.Operators = []string{"user:operator@example.com", "user:launcher@example.com"}
+	// FirestoreDatabaseExists is true in every fixture here: each stands for an
+	// installation that has completed a setup, so the database the run index's
+	// composite indexes are created under is there (RI2), and the golden plans
+	// these fixtures are made from carry those indexes.
+	fs, err := Firebase(inst, FirebaseInputs{FP: "aurora-fp",
+		Admins:                  []string{"user:owner@example.com", "group:editors@example.com", "user:owner@example.com"},
+		BudgetAdmins:            []string{"user:extra@example.com"},
+		HistoryAccount:          "fugaro-history@proj-1234.iam.gserviceaccount.com",
+		FirestoreDatabaseExists: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,10 +194,11 @@ func TestCoordinatorTfvarsGolden(t *testing.T) {
 	}
 	inst.Coordinator = &cs
 	fs, err := Firebase(inst, FirebaseInputs{FP: "aurora-fp",
-		Admins:             []string{"user:owner@example.com", "group:editors@example.com", "user:owner@example.com"},
-		BudgetAdmins:       []string{"user:extra@example.com"},
-		HistoryAccount:     "fugaro-history@proj-1234.iam.gserviceaccount.com",
-		CoordinatorAccount: "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"})
+		Admins:                  []string{"user:owner@example.com", "group:editors@example.com", "user:owner@example.com"},
+		BudgetAdmins:            []string{"user:extra@example.com"},
+		HistoryAccount:          "fugaro-history@proj-1234.iam.gserviceaccount.com",
+		CoordinatorAccount:      "fugaro-coordinator@proj-1234.iam.gserviceaccount.com",
+		FirestoreDatabaseExists: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,9 +240,10 @@ func TestViewerTfvarsGolden(t *testing.T) {
 	inst.Operators = []string{"user:operator@example.com", "user:launcher@example.com"}
 	inst.Viewers = []string{"user:viewer@example.com", "group:auditors@example.com"}
 	fs, err := Firebase(inst, FirebaseInputs{FP: "aurora-fp",
-		Admins:         []string{"user:owner@example.com", "group:editors@example.com", "user:owner@example.com"},
-		BudgetAdmins:   []string{"user:extra@example.com"},
-		HistoryAccount: "fugaro-history@proj-1234.iam.gserviceaccount.com"})
+		Admins:                  []string{"user:owner@example.com", "group:editors@example.com", "user:owner@example.com"},
+		BudgetAdmins:            []string{"user:extra@example.com"},
+		HistoryAccount:          "fugaro-history@proj-1234.iam.gserviceaccount.com",
+		FirestoreDatabaseExists: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -412,7 +473,7 @@ func TestFirebaseSpecRefusals(t *testing.T) {
 // two-project layout's tfvars carry no such field.
 func TestFirebaseSameProject(t *testing.T) {
 	inst := installationSpec(t)
-	in := FirebaseInputs{FP: inst.Project, Admins: []string{"user:owner@example.com"}, HistoryAccount: "fugaro-history@proj-1234.iam.gserviceaccount.com"}
+	in := FirebaseInputs{FP: inst.Project, Admins: []string{"user:owner@example.com"}, HistoryAccount: "fugaro-history@proj-1234.iam.gserviceaccount.com", FirestoreDatabaseExists: true}
 	spec, err := Firebase(inst, in)
 	if err != nil {
 		t.Fatalf("the installation's own project refused: %v", err)

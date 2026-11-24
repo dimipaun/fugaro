@@ -89,14 +89,50 @@ type Config struct {
 	RepoBlock bool
 }
 
-// Configured reports whether a repository opted in to rigor levels: its
-// fugaro.yaml has a rigor: block, or the project layer sets a rigor default,
-// area or per-repository level. An unconfigured repository still resolves
-// Default (D19), which the budget fraction reads, but it files no backlog item
-// (the owner's ruling of 2026-10-24): filing is opt-in, so a repository that
-// never named a level gains no docs/backlog/ it did not ask for.
-func (c Config) Configured() bool {
-	return c.RepoBlock || c.Repo != "" || len(c.RepoAreas) > 0 || c.Project != "" || len(c.ProjectAreas) > 0 || len(c.ProjectRepos) > 0
+// Configured reports whether repo opted in to rigor levels (the "Opt-in gap"
+// of docs/repo-override-rulings/spec.md §5.4). An unconfigured repository
+// still resolves Default (D19), which the budget fraction reads, but it files
+// no backlog item (the owner's ruling of 2026-10-24): filing is opt-in, so a
+// repository that never named a level gains no docs/backlog/ it did not ask
+// for. It is also the gate on the mode's findings table (internal/runner's
+// findingsPolicyOf, D9), which is the same claim read the other way: a
+// repository that named no level is not judged by the level's table.
+//
+// The question is about one repository and not about the project, because a
+// layer may say something about one repository of it: the project layer's own
+// default, and a project-wide area — a rule carrying a Match, which D20c puts
+// in effect for every repository of the project — opt every repository in, and
+// they answer for a run that names no repository as well. This repository is
+// opted in by its own defaults.rigor.repos entry or by a member area naming
+// it, and by nothing the layer writes for another repository: a per-repository
+// map or a member list is an answer about the repositories it names, so a
+// project that names one repository must not turn filing on for the rest of
+// them.
+//
+// The entry is read as Resolve reads it (ok and Known), so an entry the
+// vocabulary does not know — which only a hand-built Config reaches, the layer
+// refusing it at load — is no answer about the repository and cannot make the
+// opt-in and the resolved level disagree.
+//
+// The last tier is the repository's own file, which release A drops (S1): its
+// rigor.default and its own path areas, and the empty rigor: block, which sets
+// no level and is still the repository's own opt-in until release B retires it
+// (XB3).
+func (c Config) Configured(repo string) bool {
+	if c.Project != "" || projectWideAmong(c.ProjectAreas) {
+		return true
+	}
+	if repo != "" {
+		if lvl, ok := c.ProjectRepos[repo]; ok && Known(lvl) {
+			return true
+		}
+		for _, a := range c.ProjectAreas {
+			if a.namesRepo(repo) {
+				return true
+			}
+		}
+	}
+	return c.RepoBlock || c.Repo != "" || len(c.RepoAreas) > 0
 }
 
 // Areas is every rule in effect, the project layer's first. It is the list a
@@ -231,8 +267,9 @@ type Resolved struct {
 //
 //	Fugaro's own default (D19: Pro)
 //	the project layer's default
-//	a project area rule the run's repository and paths match
+//	a project-wide area of the project layer (a rule carrying a match)
 //	the project layer's own entry for the run's repository
+//	a project area naming the run's repository in one of its members
 //	the repository's own default (its fugaro.yaml)
 //	a rule of the repository's own areas
 //	the run's own request
@@ -243,8 +280,22 @@ type Resolved struct {
 // Within one rank the strictest rule that matched decides (D23), and the two
 // area lists are read at their own ranks rather than as one set — which is
 // what lets a repository's own rule lower a project area's level for its own
-// paths (D20 as amended), and what keeps a project area from outranking the
-// project's answer for a whole repository (LD4, LF4).
+// paths (D20 as amended), and what keeps a project-wide area from outranking
+// the project's answer for a whole repository (LD4, LF4).
+//
+// The project layer's areas are the one rank that is read in two places, and
+// D3294 is why: a rule that names the run's repository in a member answers for
+// a named part of it, so it ranks above the project's entry for the whole of
+// it (LF4 put both kinds below it); a rule in effect through its Match alone
+// answers for every repository of the project, which is the project's own
+// claim about all of them, and keeps the rank LD4 gave it. The rank follows
+// the rule's own shape — a rule that names this repository is about this
+// repository, whatever path of it the run declared — so a rule carrying both a
+// match and a member naming this repository is read at the member's rank,
+// which is the more specific of the two claims. It is an amendment for
+// projects that use both (D3294's own words), and the migration of a
+// repository's own rigor.default and rigor.areas names every repository and
+// path whose level moves either way before it writes (R5).
 //
 // Two things sit outside the order and are applied over it rather than by it:
 // the owner's floors, which no layer may lower — the run's own request
@@ -270,16 +321,32 @@ func Resolve(cfg Config, req Request) Resolved {
 	if Known(cfg.Project) {
 		level, from = cfg.Project, FromProject
 	}
-	if matched := Select(cfg.ProjectAreas, req.Repo, req.Paths); len(matched) > 0 {
-		level, from = Strictest(RigorsOf(matched)...), FromArea
+	// The project layer's areas are read at the two ranks D3294 gives them: a
+	// rule naming the run's repository in a member above the project's entry
+	// for that repository, a rule in effect through its match alone below it.
+	var projectWide, projectNaming []Area
+	for _, a := range Select(cfg.ProjectAreas, req.Repo, req.Paths) {
+		if a.namesRepo(req.Repo) {
+			projectNaming = append(projectNaming, a)
+			continue
+		}
+		projectWide = append(projectWide, a)
+	}
+	if len(projectWide) > 0 {
+		level, from = Strictest(RigorsOf(projectWide)...), FromArea
 	}
 	// The project layer's own answer for one repository of the project sits
-	// above its areas, which answer for parts of repositories, and below the
-	// repository's own file, which answers for itself (LD4, LF4).
+	// above a project-wide area, which answers for every repository, and below
+	// a rule that names this repository, which answers for a part of it, and
+	// below the repository's own file, which answers for itself (LD4, LF4,
+	// D3294).
 	if req.Repo != "" {
 		if lvl, ok := cfg.ProjectRepos[req.Repo]; ok && Known(lvl) {
 			level, from = lvl, FromProject
 		}
+	}
+	if len(projectNaming) > 0 {
+		level, from = Strictest(RigorsOf(projectNaming)...), FromArea
 	}
 	if Known(cfg.Repo) {
 		level, from = cfg.Repo, FromRepo

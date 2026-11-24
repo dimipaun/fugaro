@@ -426,10 +426,16 @@ func TestTelemetryPlanLinksResolve(t *testing.T) {
 // read by. The first half is the plan's "nothing here is built" claim from the
 // side a reader can check -- the names an implementer has to write down; the
 // second half moved when P7.1a wired the SDKs in, P7.2 landed the app's
-// statement and P7.3 the allow-list, so what it pins now is that the three
-// packages the plan names are the ones the app declares, and that the module
-// the flags are read in holds both halves: P7.2's `notice.js` and P7.3's
-// `events.js` with the seven events D256's answer fixes.
+// statement and P7.3 the allow-list, so what it pins now is that the two
+// packages the app still reads are the ones it declares -- `app` and
+// `crashlytics`, the Analytics package having left with the owner's ruling of
+// 2026-10-30 (D731, task T3.1 of the review-levels re-plan) -- and that the
+// module the flags are read in holds both halves: P7.2's `notice.js` and
+// P7.3's `events.js` with the seven events D256's answer fixes. **The plan
+// half is still read as it stands, D255's always-on list included**: T0.1 is
+// the task that amends that document for D731, and until it lands this test
+// pins the names it has rather than the ones the app now builds with -- the
+// negative below is what holds the package removal in the tree meanwhile.
 func TestTelemetryPlanNamesTheFlagsItDependsOn(t *testing.T) {
 	plan := readDoc(t, telemetryPlan)
 	for _, want := range []string{
@@ -453,12 +459,19 @@ func TestTelemetryPlanNamesTheFlagsItDependsOn(t *testing.T) {
 	pkg := readDoc(t, "mobile/package.json")
 	for _, want := range []string{
 		"@react-native-firebase/app",
-		"@react-native-firebase/analytics",
 		"@react-native-firebase/crashlytics",
 	} {
 		if !strings.Contains(pkg, want) {
-			t.Errorf("mobile/package.json does not name %s: P7.1a wired the three packages in, and the plan's Task P7.1 names them as the dependency the flags depend on", want)
+			t.Errorf("mobile/package.json does not name %s: P7.1a wired the packages in, and the plan's Task P7.1 names them as the dependency the flags depend on", want)
 		}
+	}
+	// ... and the package that left, held from the other side: P7.1's list
+	// above names Analytics because the plan is still written under D255, so
+	// the manifest is where D731's removal is a fact about the tree. A
+	// manifest that declares it again is a build that collects what the
+	// privacy statement no longer describes.
+	if strings.Contains(pkg, "@react-native-firebase/analytics") {
+		t.Errorf("mobile/package.json declares @react-native-firebase/analytics: the owner's ruling of 2026-10-30 (D731) drops Analytics from the app, and website/src/pages/privacy.astro stopped describing it in the same change (review-levels re-plan, task T3.1)")
 	}
 	// P7.2 built the module's first half: the statement the app shows and the
 	// privacy URL it refuses -- with `shared/url`'s validator, whose host list

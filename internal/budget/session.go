@@ -160,6 +160,7 @@ type Session struct {
 	entry    AgentEntry
 	noRecipe bool // the rules refused the recipe key at Start
 	noMode   bool // the rules refused the rigor mode's two children at Start
+	noSource bool // the rules refused the routing table's source and its flag
 
 	newKeysChecked bool // checkNewKeys has probed action/tokens once
 	newKeysRefused bool // the rules refused action/tokens; both are dropped

@@ -20,6 +20,14 @@ import (
 // the claim a launch in flight holds. Every other word (a state a run ended
 // in, and the three states of a pull request, which are a fact about every
 // run of it) needs the window read run by run.
+//
+// `paused` is one of those others, although the chain it names is in flight
+// (R15, F64). Its evidence is not live and cannot be: a pause ends the run's
+// execution by design (R12) and releases its lease, so the backend holds
+// nothing of it and no claim is open — what says the chain is suspended is the
+// run's own record, and what says it still stands is the service's node
+// (pauseStands). So --state paused is a scan, which is the read it has always
+// been, and neither word here changes meaning for it.
 func liveState(state string) bool {
 	return state == string(runstore.StatusRunning) || state == runview.StatusLaunching
 }

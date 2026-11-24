@@ -130,12 +130,12 @@ func TestRigorConfigSaysWhetherTheRepositoryOptedIn(t *testing.T) {
 			if len(ps) > 0 {
 				t.Fatal(ps)
 			}
-			if got := c.RigorConfig().Configured(); got != tc.want {
-				t.Errorf("Configured() = %v; want %v", got, tc.want)
+			if got := c.RigorConfig().Configured(""); got != tc.want {
+				t.Errorf(`Configured("") = %v; want %v`, got, tc.want)
 			}
 		})
 	}
-	if !(&Config{Layer: mustLayer(t, rigorLayer)}).RigorConfig().Configured() {
+	if !(&Config{Layer: mustLayer(t, rigorLayer)}).RigorConfig().Configured("") {
 		t.Error("a project layer that sets defaults.rigor did not opt its repositories in")
 	}
 }
