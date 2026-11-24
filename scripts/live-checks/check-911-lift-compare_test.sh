@@ -292,7 +292,7 @@ case_dir() { # case_dir <name>
     show_json "$answers/show-$phase-app-default.json"
     show_json "$answers/show-$phase-svc-default.json"
   done
-  printf 'fugaro update --plan-only: the project layer is published; no repository\x27s lifted value changes\n' \
+  printf 'the project layer is published; no repository\x27s lifted value changes\n' \
     >"$answers/plan.out"
   printf 'before' >"$answers/phase"
   snapfile=$root/snapshot
@@ -385,7 +385,7 @@ test_a_value_that_moved_with_the_update_naming_it_passes() {
   # project's own value and the repository's now differ, which is exactly the
   # change a line must name.
   settings_set "$answers/settings-after-acme-app.json" "rigor.default" "high"
-  printf 'fugaro update --plan-only: acme/app: rigor.default standard -> high (the project\x27s)\n' \
+  printf 'acme/app: rigor.default standard -> high (the project\x27s)\n' \
     >"$answers/plan.out"
   printf 'before' >"$answers/phase"
   run910_raw fugaro --plan "$snapfile"
@@ -417,7 +417,7 @@ test_a_value_moved_by_a_line_for_another_repository_fails() {
   settings_set "$answers/settings-after-acme-app.json" "agent.model" "claude-opus-5-5"
   # The update's line names acme/svc, not acme/app: a reader of the plan cannot
   # tell that acme/app's model was meant, so it is not named.
-  printf 'fugaro update --plan-only: acme/svc: model claude-sonnet-5 -> claude-opus-5-5 (the project\x27s)\n' \
+  printf 'acme/svc: model claude-sonnet-5 -> claude-opus-5-5 (the project\x27s)\n' \
     >"$answers/plan.out"
   printf 'before' >"$answers/phase"
   run910_raw fugaro --plan "$snapfile"
@@ -425,6 +425,29 @@ test_a_value_moved_by_a_line_for_another_repository_fails() {
   run911
   expect_status "$status" 1 "a line that names another repository"
   expect_row "$out" resolved FAIL "a line that names another repository"
+}
+
+test_a_line_for_a_repository_whose_name_starts_with_this_one_does_not_name_it() {
+  case_dir prefix_sharing_pair
+  before_snapshot
+  # Two ways a line can look like it names a change and does not, both of them
+  # the same trap: a repository whose name starts with this one's, and a word a
+  # short token sits inside. acme/app-console is not acme/app, and `its stable
+  # table` carries neither the key nor a value of the ab.rate change.
+  settings_set "$answers/settings-after-acme-app.json" "ab.rate" "0.25"
+  settings_set "$answers/settings-after-acme-app.json" "rigor.default" "high"
+  printf 'acme/app-console: ab.rate 0 -> 0.25 (the project\x27s)\nacme/app-console: rigor.default standard -> high (the project\x27s)\nacme/app: its stable table is unchanged\n' \
+    >"$answers/plan.out"
+  printf 'before' >"$answers/phase"
+  run910_raw fugaro --plan "$snapfile"
+  printf 'after' >"$answers/phase"
+  run911
+  expect_status "$status" 1 "a line for a repository whose name starts with this one"
+  expect_row "$out" resolved FAIL "a line for a repository whose name starts with this one"
+  expect_contains "$out" "acme/app ab.rate (0 -> 0.25)" "the row names the A/B rate that moved"
+  expect_contains "$out" "acme/app rigor.default (standard -> high)" "the row names the rigor level that moved"
+  expect_contains "$out" "NOTHING naming it" "the row says the lines did not name them"
+  expect_row "$out" raw PASS "a line for a repository whose name starts with this one: the raw file did not move"
 }
 
 test_a_raw_file_rewritten_at_the_ref_is_compared_too() {
@@ -457,7 +480,7 @@ test_a_recipe_the_update_renamed_is_named() {
   case_dir recipe_named
   before_snapshot
   show_json "$answers/show-after-app-default.json" "2222222222222222222222222222222222222222222222222222222222222222"
-  printf 'fugaro update --plan-only: acme/app: recipe default now resolves the project\x27s copy\n' \
+  printf 'acme/app: recipe default now resolves the project\x27s copy\n' \
     >"$answers/plan.out"
   printf 'before' >"$answers/phase"
   run910_raw fugaro --plan "$snapfile"
@@ -668,6 +691,7 @@ t test_the_snapshot_is_not_written_to
 t test_a_value_that_moved_with_the_update_naming_it_passes
 t test_a_value_that_moved_with_nothing_naming_it_fails
 t test_a_value_moved_by_a_line_for_another_repository_fails
+t test_a_line_for_a_repository_whose_name_starts_with_this_one_does_not_name_it
 t test_a_raw_file_rewritten_at_the_ref_is_compared_too
 t test_a_recipe_whose_text_changed_is_compared_too
 t test_a_recipe_the_update_renamed_is_named

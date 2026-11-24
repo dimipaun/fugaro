@@ -30,13 +30,18 @@
 #             what it was, and its own reads went to a scratch directory it
 #             removes.
 #
-# A value that moved is accepted only where the update named the change. A line
-# of `fugaro update --plan-only` names a change when it carries the repository
-# (its owner/name or its own name) and what changed: the key as
-# `fugaro settings` spells it or a suffix of it, the role, craft, level or grade
-# the key is about (`coder`, `reviewer`, `level 2`, `strong`), the words `rigor`,
-# `a/b`, `model grade` or `recipe`, or one of the two values verbatim. Anything
-# else is a value that moved with nothing naming it, and this check fails on it.
+# A value that moved is accepted only where the update named the change, and the
+# rule is the shape the update's own lines have: one line per repository, led by
+# the repository (`acme/app: coder claude-x -> claude-y (the project's)`), so
+# that line names a change when what follows the leading `owner/name:` carries
+# what changed — the key as `fugaro settings` spells it or a suffix of it with
+# two or more segments, the word the update uses for the role, craft, level or
+# grade the key is about (`coder`, `craft coder`, `level l2`, `strong`), `a/b`,
+# `model grade`, `recipe`, or one of the two values verbatim. The repository is
+# matched only where it leads the line and every token as a whole word, so
+# `dimipaun/fugaro` is not named by a line about `dimipaun/fugaro-console`, and
+# an `ab.rate` change is not named by the word `stable`. Anything else is a
+# value that moved with nothing naming it, and this check fails on it.
 #
 # Usage:      bash scripts/live-checks/check-911-lift-compare.sh <project> <snapshot> [--dry-run]
 #
@@ -386,19 +391,20 @@ def key_tokens(key):
     for i in range(1, len(parts)):
         if len(parts) - i >= 2:
             toks.add(".".join(parts[i:]))
-    if key.startswith("agent.models.") or key.startswith("agent.crafts.") or key.startswith("agent.levels."):
-        if len(parts) > 2:
-            toks.add(parts[2])
-            if key.startswith("agent.levels.") and parts[2][:1] == "l" and parts[2][1:].isdigit():
-                toks.add("level " + parts[2][1:])
-    elif key.startswith("model_grades."):
-        if len(parts) > 1:
-            toks.add(parts[1])
+    if key.startswith("agent.models.") and len(parts) > 2:
+        # The update's line calls a role by its own name ("coder").
+        toks.add(parts[2])
+    elif key.startswith("agent.crafts.") and len(parts) > 2:
+        # A craft is "craft coder" and never the bare name: "review" alone
+        # stands inside "senior-review" and would name the wrong craft.
+        toks.add("craft " + parts[2])
+    elif key.startswith("agent.levels.") and len(parts) > 2:
+        toks.add("level " + parts[2])
+    elif key.startswith("model_grades.") and len(parts) > 1:
+        toks.add(parts[1])
         toks.update(("model grade", "grades"))
     elif key == "ab.rate":
-        toks.update(("a/b", "ab"))
-    elif key.startswith("rigor."):
-        toks.add("rigor")
+        toks.add("a/b")
     return tuple(t.lower() for t in toks if t)
 
 def recipe_tokens(name, path):
@@ -411,15 +417,28 @@ def recipe_tokens(name, path):
 def value_tokens(*values):
     return tuple(v.strip().lower() for v in values if v and v.strip() and v.strip() != ABSENT and len(v.strip()) >= 4)
 
+def leads_with(line, canon):
+    """Whether this line is the repository's: every line the update prints for
+    one is led by it, `owner/name: what changed`."""
+    return re.match(r"^\s*" + re.escape(canon) + r"\s*:", line, re.IGNORECASE) is not None
+
+def word_in(low, token):
+    """Whether the token stands in the line as a word of its own.
+
+    A substring test is what lets a token excuse a change it says nothing
+    about: the name `fugaro` sits inside `fugaro-console`, and a two-letter
+    token inside `stable`, `table` or `enabled`.
+    """
+    return re.search(r"(?<![0-9a-z_])" + re.escape(token) + r"(?![0-9a-z_])", low) is not None
+
 def named_by(plan, canon, tokens):
     """The plan line that names this change, or ""."""
-    repos = tuple(t.lower() for t in (canon, canon.rsplit("/", 1)[-1]) if t)
-    toks = tuple(t for t in tokens if t)
+    toks = tuple(t.lower() for t in tokens if t)
     for line in plan:
-        low = line.lower()
-        if not any(r in low for r in repos):
+        if not leads_with(line, canon):
             continue
-        if any(t in low for t in toks):
+        low = line.lower()
+        if any(word_in(low, t) for t in toks):
             return flat(line)
     return ""
 
