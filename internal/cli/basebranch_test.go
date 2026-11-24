@@ -16,6 +16,12 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
+// releaseBaseBranch is the first release whose runner reads a task's
+// base_branch (baseBranchSince): a launch on an older image drops the field
+// instead of carrying one the runner would refuse the whole task over
+// (baseBranchSkew). Run past it in a test that reads the field back.
+const releaseBaseBranch = "ghcr.io/dimipaun/fugaro-base:" + baseBranchSince
+
 // baseBranchCheckout makes the working directory a checkout of repo with the
 // given fugaro.yaml, and gives origin the remote-tracking refs of main,
 // develop and master. A branch of "" leaves HEAD detached: that is the
@@ -429,6 +435,11 @@ func appendProjectConfig(t *testing.T, path, yaml string) {
 // the file this follow-up reads sets nothing.
 func TestBaseBranchOnAFollowUp(t *testing.T) {
 	f := newCloudFixture(t)
+	// The image has to be one whose runner reads both fields this follow-up
+	// carries: the brief titles it (titlesSince) and the base it continues is
+	// written into the task (baseBranchSince, on an older image baseBranchSkew
+	// drops the field rather than have the runner refuse the task over it).
+	writeBuildRecord(t, f, appSlug, "web", releaseBaseBranch)
 	root := firstRunSpec(rootID)
 	root.Ref, root.BaseBranch = "master", "master"
 	seedSpec(t, f, root, false)

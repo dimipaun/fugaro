@@ -155,6 +155,9 @@ func TestStoredFollowUpKeepsAHotfixRequest(t *testing.T) {
 	writeBuildRecord(t, f, appSlug, "web", release0111)
 	fu := followUpSpec(fuID, rootID, rootID, 7)
 	fu.Rigor = rigor.Hotfix
+	// Every stored task carries a title; a launch that reuses one without a
+	// brief has nothing else to take it from.
+	fu.Title = "Keep the stored hotfix request"
 	seedSpec(t, f, fu, false)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID); err != nil {
 		t.Fatalf("a stored follow-up asking for hotfix was refused: %v", err)
@@ -244,6 +247,9 @@ func TestStoredFollowUpKeepsARaise(t *testing.T) {
 	writeBuildRecord(t, f, appSlug, "web", release0160)
 	fu := followUpSpec(fuID, rootID, rootID, 7)
 	fu.Rigor = rigor.Critical
+	// As above: a stored task has a title even where the launch that reuses it
+	// passes no brief.
+	fu.Title = "Keep the stored raise"
 	seedSpec(t, f, fu, false)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID); err != nil {
 		t.Fatal(err)
