@@ -96,15 +96,36 @@ func l8RecipesFolderLaunch(t *testing.T, rel string) (*cloudFixture, error) {
 func l8ABReposLaunch(t *testing.T, rel string) (*cloudFixture, error) {
 	f := newCloudFixture(t)
 	isolateCache(t)
-	layer := strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
-		"  agent: { auth: api-key, models: { coder: claude-sonnet-5-5 } }\n", 1)
-	publishedLayer(t, f, layer+"ab:\n  repos: { acme/other: 0 }\n")
+	publishedLayer(t, f, l8ABReposLayer())
 	dir := layerCheckout(t, f, minimalAnchored)
 	registerOtherLocally(t, f)
 	commitRef(t, dir, "main")
 	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, l8Base(rel))
 	_, _, err := execute(t, "run", "--run-id", "20261124-100000-abcd", "A task")
 	return f, err
+}
+
+// l8ABReposNoCheckoutLaunch is the same project launched from outside a
+// checkout of the repository (a --repo launch): the configuration the checkout
+// resolves over is not there to read, so the layer the task itself carries is
+// the only place the launcher can see ab.repos — and it is the layer the run
+// reads, which is why the trigger cannot be read from the checkout alone.
+func l8ABReposNoCheckoutLaunch(t *testing.T, rel string) (*cloudFixture, error) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, l8ABReposLayer())
+	writeBuildRecord(t, f, appSlug, "web", l8Base(rel))
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261124-100000-abcd", "A task")
+	return f, err
+}
+
+// l8ABReposLayer is the project layer both ab.repos cases publish: AB1's key,
+// and the models the layer states itself, because a repository that named them
+// would trip the lifted-key trigger first.
+func l8ABReposLayer() string {
+	layer := strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
+		"  agent: { auth: api-key, models: { coder: claude-sonnet-5-5 } }\n", 1)
+	return layer + "ab:\n  repos: { acme/other: 0 }\n"
 }
 
 // l8CopyNameLaunch is D3302's task: one that embeds a project recipe's copy
@@ -190,6 +211,18 @@ func TestL8GateRefusesAnOlderImage(t *testing.T) {
 			launch: l8ABReposLaunch,
 			want: []string{
 				"the project layer's ab.repos (read for acme/other)",
+				"whose runner knows the project layer's ab.repos, its per-repository sampling rate",
+				"(fugaro " + abReposSince + " or later)",
+			},
+		},
+		{
+			// The same trigger with no checkout of the repository: the layer
+			// the task carries is the one the run reads, and the one this
+			// launch can be judged on.
+			name:   "ab-repos-outside-a-checkout",
+			launch: l8ABReposNoCheckoutLaunch,
+			want: []string{
+				"the project layer's ab.repos (read for acme/app)",
 				"whose runner knows the project layer's ab.repos, its per-repository sampling rate",
 				"(fugaro " + abReposSince + " or later)",
 			},

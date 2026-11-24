@@ -5915,7 +5915,7 @@ func l8LaunchSkew(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.W
 			Knows:   "a recipe the project store holds rather than .fugaro/recipes/",
 		}, true
 	}
-	if cfg := launchFileConfig(ctx, env, spec); cfg != nil && cfg.Layer.SetsABRepos() {
+	if launchSetsABRepos(ctx, env, spec) {
 		return l8Skew{
 			Since:   abReposSince,
 			Subject: "the project layer's ab.repos (read for " + repo + ")",
@@ -5923,6 +5923,27 @@ func l8LaunchSkew(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.W
 		}, true
 	}
 	return l8Skew{}, false
+}
+
+// launchSetsABRepos reports whether the layer this launch resolves over writes
+// ab.repos, from the two places the launcher can see it. The first is the layer
+// the task itself carries (spec.ProjectLayer, embedProjectLayer), which is the
+// layer the run reads and the one every launch has — a launch from outside a
+// checkout of the repository included, which is why the trigger cannot be read
+// from the configuration alone. The second is the configuration the checkout
+// resolves over (launchFileConfig), where a cascade project's own layer is read
+// from the ref the run checks out; a launch with neither is judged on the task
+// alone, like every other read here.
+//
+// The layer's own text is the question and not the block it decoded to
+// (SetsABRepos, AB1): ab.repos is what a runner older than release A refuses to
+// decode at all, so an empty map and an explicit null are the same line to it.
+func launchSetsABRepos(ctx context.Context, env *cloudEnv, spec *task.Spec) bool {
+	if cfg := launchLayerConfig(spec); cfg.Layer.SetsABRepos() {
+		return true
+	}
+	cfg := launchFileConfig(ctx, env, spec)
+	return cfg != nil && cfg.Layer.SetsABRepos()
 }
 
 // defaultBranchRecipes is what the checkout's default branch holds under
