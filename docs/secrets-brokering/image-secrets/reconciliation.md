@@ -119,6 +119,9 @@ decisions D3320–D3333 below.
 - **F14 (Rule).** "Fugaro asks for nothing" (CLAUDE.md, `docs/no-prompt-policy/`) and the owner-only
   fence on `fugaro secrets allow`/`deny` (D1552) hold for the new commands: storing and allow-listing
   a secret is the owner's own step, refused in an agent's session, with no prompt.
+- **F15 (Rule).** "`fugaro update` is the whole upgrade" and "safe while runs are in flight"
+  (CLAUDE.md; `docs/design/update-in-flight.md`): the migration of existing containers (D3325) runs
+  inside `update` with a convergence test, and changes nothing a running execution holds.
 - **F16 (Rule; found in review round 1).** D2313 (docs/shared-jobs-default) already disables
   repository-level secrets: `config.RepoSecretsOff = true` (`internal/config/secrets_disabled.go`),
   readiness mounts no repository-level name, `fugaro secrets set` answers
@@ -130,15 +133,26 @@ decisions D3320–D3333 below.
   `serviceSwitched` is true for `api-key`/`oauth` whenever the job carries the service's address, so
   handing the address to a repository held off by budget mode `off` or a not-ready root would move its
   model calls. *Consequence:* D3326 amended to vertex only.
-- **F18 (Gap; review round 1).** `fugaro_p_` holds admin-chosen credential names: the intake stores
-  any grammar-conforming name, and `config.ReservedSecrets` is a closed list of four. A closed-list
-  check cannot keep a workflow secret off a shared credential's container. *Consequence:* a workflow
-  secret's container carries a marker label written when it is stored; a store refuses a container
-  that exists without it, and the service serves only names the record holds as workflow secrets
-  whose container carries it (G2).
-- **F19 (Gap; review round 1).** The agent runs as the runner's own uid (no `SysProcAttr` in
-  `internal/agent` or `internal/runner`), so a `0400` file does not keep a review stage from reading
-  it. *Consequence:* a secret file exists only outside review stages and never in a review run (G3).
+- **F18 (Gap; review rounds 1 and 2).** `fugaro_p_` holds admin-chosen credential names: the intake
+  stores any grammar-conforming name, and `config.ReservedSecrets` is a closed list of four. A
+  closed-list check cannot keep a workflow secret off a shared credential's container.
+  *Consequence:* a workflow secret's container carries a marker label written when it is created
+  (neither the intake nor the service holds `secretmanager.secrets.update`, so it can only be set at
+  create); a workflow store refuses an existing container without it; `fugaro secrets shared set`
+  and the cascade's per-secret read (`internal/credsvc/dynamicsecrets.go`) refuse one with it. The
+  marker is **not a fence on its own**: `fugaroDeployer` holds `secretmanager.secrets.create`
+  unconditionally (`modules/installation/deployer.tf`), so a managed apply can pre-create a marked
+  container, the case `internal/intake/handlers.go` `checkShape` exists for. The fence is the
+  owner-only record; the marker plus a shape check (no TTL, expiry, topic, CMEK key or rotation, the
+  intake's own annotations only) keeps the two classes apart. The service reads the label through its
+  `fugaroSecretLister` role (`secrets.list`, filtered by name); no new grant (G2).
+- **F19 (Gap; review rounds 1 and 2).** The agent runs as the runner's own uid (no `SysProcAttr` in
+  `internal/agent` or `internal/runner`), so a `0400` file does not keep an in-job review stage from
+  reading it — no more than it keeps that stage from the environment variable a secret is exposed as
+  today (the stages share the run's environment). *Consequence:* a file is treated exactly as an
+  environment secret is: present for the coding run's stages, never written in an independent review
+  run (whose agent today gets no secret), removed at run end (G3). The round-1 "remove before every
+  review stage" step is dropped: it protected nothing the environment does not already expose.
 - **F20 (Gap; review round 1).** Shared project jobs, the default for most runs, carry no workflow
   secret: `infra.projectJobSecrets` admits only reserved names and provider keys. *Consequence:* D3335.
 - **F21 (Gap; review round 1).** S3's route binds a variable to one workflow, and its review-class
@@ -148,9 +162,13 @@ decisions D3320–D3333 below.
 - **F22 (Gap; review round 1).** A repository's `fugaro.yaml` is repository-controlled (an agent can
   edit it). A declaration must never become a grant: the allow-list is the owner's alone, seeded only
   from the operator's `workflow_secrets` `allow_data_to`.
-- **F15 (Rule).** "`fugaro update` is the whole upgrade" and "safe while runs are in flight"
-  (CLAUDE.md; `docs/design/update-in-flight.md`): the migration of existing containers (D3325) runs
-  inside `update` with a convergence test, and changes nothing a running execution holds.
+- **F23 (Gap; review round 2).** Each operator's `workflow_secrets` block is local and carries no
+  timestamp, so seeding from it on every update would undo another operator's `deny`. *Consequence:*
+  update seeds a name only when the record holds no entry for it; a `deny` leaves an explicit,
+  possibly empty, entry; update never widens an existing entry (G8).
+- **F24 (Gap; review round 2).** Version 2 assumes D2313: with `config.RepoSecretsOff` false, a
+  repository's own copy would be shadowed by the project value. *Consequence:* the service and the
+  runner refuse version 2 while the door is open, so reversing D2313 is a visible change.
 
 ## 4. Decisions
 
@@ -172,7 +190,8 @@ this document.
 | D3331 | What regression guard to add? | A mount rule in B0.2 (no `secret_key_ref`/`availableSecrets` in run-job modules and Go job builders) plus a doctor check listing any deployed job with a `value_source` | **As recommended** (2026-11-23) |
 | D3332 | Refetch during long runs? | No: fetch once at bootstrap | **As recommended** (2026-11-23) |
 | D3333 | How does the service learn what a run may fetch? | The run names the logical secret from its own `fugaro.yaml` (a new request field, format version bumped); the service checks the verified job's repository against the secret's allow-list | **As recommended** (2026-11-23). The unit of access becomes the repository, not the workflow |
-| D3334 | *(withdrawn after review, F16: under D2313 one name has one project copy, so no collision can occur)* Two repositories hold different values under one name when `update` copies them into `fugaro_p_<name>` (D3325): what does update do? | Stop that name only: converge every other name, leave the colliding name on its current path, print one line naming both repositories and the fix (rename one in `fugaro.yaml`, store it with `fugaro secrets shared set`); the next update finishes it | **As recommended** (2026-11-23). Asked during planning, after the reconciliation was written |
+| D3334 | *(withdrawn after review, F16: under D2313 one name has one project copy, so no collision can occur)* Two repositories hold different values under one name when `update` copies them into `fugaro_p_<name>` (D3325): what does update do? | Stop that name only: converge every other name, leave the colliding name on its current path, print one line naming both repositories and the fix (rename one in `fugaro.yaml`, store it with `fugaro secrets shared set`); the next update finishes it | **Withdrawn after review** (2026-11-23, F16). Had been answered as recommended during planning |
+| D3335 | Serve workflow secrets to shared-job runs (F20)? | No: out of scope, a gap with its own follow-up spec; version 2 refuses a shared-job caller, with a test | **As recommended** (2026-11-23, asked after review round 1) |
 
 ### Consequences of the answers, stated once
 
@@ -202,7 +221,6 @@ this document.
 - **Granularity (D3333).** Any workflow of an allowed repository may fetch the secret, where S3 bound
   a variable to one workflow (G19). Accepted with the answer.
 
-| D3335 | Serve workflow secrets to shared-job runs (F20)? | No: out of scope, a gap with its own follow-up spec; version 2 refuses a shared-job caller, with a test | **As recommended** (2026-11-23, asked after review round 1) |
 
 ### Resolutions (one defensible answer, stated rather than asked)
 
@@ -231,7 +249,9 @@ this document.
   the catalog build identity); every other class stays its existing `secret-readers.md` row with the
   plan that ends it. This amends T1's "exactly two": the two until-rows remain for the shared jobs'
   classes C2.3 and KS16 own, inside a rule that no longer claims the other classes.
-- **T2 (withdrawn after review, F16).** Recorded as first answered: D3334 leaves a colliding name "on its current path", and for a
+- **T2 (withdrawn after review, F16, with D3334).** Its premise, a colliding name, cannot occur under
+  D2313; the version-1 route's removal is now the follow-up in the plan's "After this plan" (once no
+  supported job image speaks version 1). Recorded as first answered: D3334 leaves a colliding name "on its current path", and for a
   held-off (vertex) repository that path is a mount, which T1's two-row guard does not admit.
   **Answer:** a colliding name stays on S3's per-container fetch (`/v1/workflow-secrets` version 1
   and the service's per-container grant), for held-off repositories too (they gain the address,
@@ -251,9 +271,9 @@ this document.
   only credential names. *Settles it:* reading `internal/intake` in the commands task; if it filters,
   that task widens the filter to workflow-secret names and pins G2.
 - **U3.** Whether `internal/infra/retire.go` can retire a workflow-secret container that has a live
-  version without an operator step. *Settles it:* the migration task's convergence test.
+  version without an operator step. *Settles it:* IS13's convergence test (the retirement task).
+- **U4.** That no deployed job of the owner's installations still carries a workflow-secret
+  `value_source` after the release. *Settles it:* Check 920, owner-run.
 - **U5.** Whether Terraform 1.9's `removed` block can forget one `for_each` instance of
   `google_secret_manager_secret.project`, or whether `internal/infra` must run `terraform state rm`
   per instance before the apply. *Settles it:* IS6's convergence test. *Who:* that task's run.
-- **U4.** That no deployed job of the owner's installations still carries a workflow-secret
-  `value_source` after the release. *Settles it:* Check 920, owner-run.

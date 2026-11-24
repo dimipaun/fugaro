@@ -92,6 +92,7 @@
         "paths": [
           "internal/cli/secrets.go",
           "internal/cli/secrets_test.go",
+          "internal/intake/server.go",
           "internal/intake/handlers.go",
           "internal/intake/gcp.go",
           "internal/intake/server_test.go"
@@ -145,8 +146,26 @@
           "internal/infra/spec.go",
           "internal/infra/spec_test.go",
           "internal/cli/run.go",
+          "internal/cli/launch_vertex_address_test.go",
           "deploy/terraform/gcp/modules/workflow/sa.tf",
           "deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl"
+        ]
+      }
+    },
+    {
+      "id": "IS13",
+      "title": "retiring a project copy (update)",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/retire.go",
+          "internal/infra/retire_test.go",
+          "internal/infra/state.go",
+          "internal/infra/state_test.go"
         ]
       }
     },
@@ -163,8 +182,8 @@
           "deploy/terraform/gcp/modules/installation/secrets.tf",
           "deploy/terraform/gcp/modules/workflow/sa.tf",
           "internal/infra/spec.go",
-          "internal/infra/retire.go",
           "internal/cli/recipes_skew.go",
+          "internal/cli/recipes_skew_test.go",
           "deploy/terraform/terraform_test.go"
         ]
       }
@@ -198,7 +217,8 @@
           "internal/backend/gcp/catalog_test.go",
           "deploy/terraform/gcp/modules/installation/build_identity.tf",
           "deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl",
-          "internal/cli/gitcred.go"
+          "internal/cli/gitcred.go",
+          "internal/cli/gitcred_test.go"
         ]
       }
     },
@@ -299,11 +319,6 @@
     },
     {
       "task": "IS6",
-      "needs": "IS5",
-      "reason": "data: the values must be in fugaro_p_ containers before the old ones go"
-    },
-    {
-      "task": "IS6",
       "needs": "IS9",
       "reason": "behaviour and files: vertex repositories fetch before their mounts go; both edit spec.go and sa.tf"
     },
@@ -336,6 +351,31 @@
       "task": "IS5",
       "needs": "IS3",
       "reason": "it writes the record through IS3's codec; a contract would be nearly the codec itself"
+    },
+    {
+      "task": "IS13",
+      "needs": "IS5",
+      "reason": "data: nothing is retired before its value is copied"
+    },
+    {
+      "task": "IS6",
+      "needs": "IS13",
+      "reason": "behaviour: the apply that drops the keys needs the instances out of state first (prevent_destroy)"
+    },
+    {
+      "task": "IS1",
+      "needs": "IS4",
+      "reason": "the marker's label key, one constant: a contract would be the constant itself"
+    },
+    {
+      "task": "IS5",
+      "needs": "IS4",
+      "reason": "it writes the marker the intake defines; a contract would be the constant itself"
+    },
+    {
+      "task": "R-request",
+      "needs": "IS1",
+      "reason": "it exists only once IS1 raises it, after C1 has merged; it writes C1's files"
     }
   ],
   "decoupling": [

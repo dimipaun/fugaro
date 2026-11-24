@@ -22,7 +22,7 @@ build stops mounting its git credential; and the parent plan's guard gains a mou
 | --- | --- |
 | [spec.md](spec.md) | The owner's spec, verbatim |
 | [reconciliation.md](reconciliation.md) | Assumptions A1–A5, what exists, findings F1–F22, decisions D3320–D3335 with the owner's answers, resolutions R1–R6, tensions T1–T3 (T2 withdrawn), open item O1, UNVERIFIED U1–U5. **Where it disagrees with `spec.md`, it wins** |
-| [implementation-plan.md](implementation-plan.md) | One contract (C1), one integration (I1) and twelve tasks (IS1–IS12) in five levels, the edges broken and kept, shared files, Checks 920–921. **Nothing in it is approved** |
+| [implementation-plan.md](implementation-plan.md) | One contract (C1), one integration (I1) and thirteen tasks (IS1–IS13) in five levels, the edges broken and kept, shared files, Checks 920–921. **Nothing in it is approved** |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan as the graph `fugaro plan graph` reads |
 
 ## Typos fixed in the spec
