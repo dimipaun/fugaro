@@ -1754,7 +1754,16 @@ describe('the launch the entry wires', () => {
     // `SETTINGS_EDIT_UNBUILT` rather than reaching a half-built flow -- and the
     // surface's `settings.editor.open` reads it at message time.
     expect(index).toContain('let settingsEditorRunner: SettingsEditorRunner = DECLINING_SETTINGS_EDITOR_FLOW')
-    expect(withoutComments(index)).toContain("'settings.editor.open': (args) => settingsEditorRunner.open(args)")
+    // **The row itself is I-OPS's** (`src/main/handlers.ts`), so the two halves
+    // are pinned in the two files: this entry hands the runner over as a reader
+    // (`settingsEditor: () => settingsEditorRunner`), and the handlers module is
+    // where the row that reads it at message time is built. A declaration of the
+    // row here would now be a second, unreachable one.
+    expect(withoutComments(index)).toContain('settingsEditor: () => settingsEditorRunner')
+    const handlers = withoutComments(
+      readFileSync(join(CONSOLE_ROOT, 'src', 'main', 'handlers.ts'), 'utf8'),
+    )
+    expect(handlers).toContain("'settings.editor.open': (args) => deps.settingsEditor().open(args)")
 
     // Both places the entry learns an installation moved cancel the launch its
     // project has in flight: the choose -- "re-chosen" is that installation
@@ -6329,8 +6338,8 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
 
   it('draws the operation’s own gap sentence for a bridge that cannot answer, and no claim about a write', async () => {
     // `newOpsFrom` turns a bridge with no member for the operation into the
-    // contract's own `not-available` gap (`new-ops.ts`): a console whose
-    // operation is unregistered -- AL's stub, until I-OPS swaps it -- draws a
+    // contract's own `not-available` gap (`new-ops.ts`): a console whose row is
+    // not there -- an older preload, a build with no such operation -- draws a
     // read this build cannot make, and the row never says a write happened.
     const { bridge, calls } = fakeBridge({
       replies: {
