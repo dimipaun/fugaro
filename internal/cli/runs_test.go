@@ -3379,7 +3379,7 @@ func TestSummaryGoneAtTheReReadIsTheRunsRecord(t *testing.T) {
 				execution:  exec,
 				summarized: true,
 			}
-			if err := followExecution(ctx, envOn(t, f, b), r, nil, func(string, ...any) {}); err != nil {
+			if err := followExecution(ctx, envOn(t, f, b), r, nil, false, func(string, ...any) {}); err != nil {
 				t.Fatalf("followExecution: %v", err)
 			}
 			if r.in.Record == nil || r.in.Record.Status != runstore.StatusRunning || r.in.Record.Stage != "implement" {
@@ -3443,7 +3443,7 @@ func TestAStaleSummaryAtTheReReadIsTheRunsRecord(t *testing.T) {
 		execution:  exec,
 		summarized: true,
 	}
-	if err := followExecution(ctx, envOn(t, f, b), r, nil, func(string, ...any) {}); err != nil {
+	if err := followExecution(ctx, envOn(t, f, b), r, nil, false, func(string, ...any) {}); err != nil {
 		t.Fatalf("followExecution: %v", err)
 	}
 	if r.in.Record == nil || r.in.Record.Status != runstore.StatusSucceeded || r.in.Record.Stage != "finalize" {
