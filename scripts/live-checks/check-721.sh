@@ -548,7 +548,12 @@ PY
 read_log() { # read_log <json-file> <window-start>: Google's own entries, or a refusal
   local filter
   filter="logName=\"projects/$MEMBER_PROJECT/logs/cloudaudit.googleapis.com%2Factivity\" AND protoPayload.methodName=\"SetIamPolicy\" AND timestamp>=\"$2\""
-  g_out "$1" "$SCRATCH/log.err" logging read "$filter" --project="$MEMBER_PROJECT" --format=json --limit=200 --order=asc
+  # --order=desc asks for the NEWEST entries of the window. Reading the window
+  # oldest-first truncated the newest 200 in a busy one — this check's own change
+  # among them, so the entry row failed on a log that had logged it — and the two
+  # things asserted here are both at the newest end: the change this check just
+  # made, and the entries the member's own update wrote immediately before it.
+  g_out "$1" "$SCRATCH/log.err" logging read "$filter" --project="$MEMBER_PROJECT" --format=json --limit=200 --order=desc
 }
 
 verdict() { # verdict <facts>
@@ -799,7 +804,7 @@ elif [ -n "$LOG_ERROR" ]; then
   fact log UNVERIFIED "Google answered, and this check could not read the answer: $LOG_ERROR. The entries are in $SCRATCH/log.json, which --dir keeps; the drift row's own read is in the row below"
 else
   changes=$(grep -c . "$SCRATCH/deltas.tsv" 2>/dev/null || true)
-  fact log PASS "your credentials read $MEMBER_PROJECT's Admin Activity from $WINDOW_START: ${changes:-0} SetIamPolicy binding(s) added, in Google's own record"
+  fact log PASS "your credentials read $MEMBER_PROJECT's Admin Activity from $WINDOW_START, its newest entries (at most 200): ${changes:-0} SetIamPolicy binding(s) added, in Google's own record"
 fi
 
 HAND_LINE=$(awk -F'\t' -v g="user:$GRANTEE" '$5 == g { print; exit }' "$SCRATCH/deltas.tsv" 2>/dev/null || true)
@@ -889,7 +894,7 @@ case "$DRIFT_AFTER" in
       other_clause="; it does name $other_named, a change somebody else made while this check ran, which is the cross-check working"
     fi
     if [ "$own" = 0 ]; then
-      fact silent UNVERIFIED "no SetIamPolicy change of the member's own update is in the window this check read (from $WINDOW_START), so there was nothing to show the row leaving out: run the member's own \`fugaro update\` inside the window — or a --since that reaches back to its last one — and run this check again"
+      fact silent UNVERIFIED "no SetIamPolicy change of the member's own update is in the part of the window this check read (from $WINDOW_START, the newest 200 entries), so there was nothing to show the row leaving out: run the member's own \`fugaro update\` inside the window — or a --since that reaches back to its last one — and run this check again"
     elif [ -n "$own_named" ]; then
       fact silent FAIL "the drift row names change(s) the member's own update made, which is what an update applying the record must never be: $own_named (entries $own_ids). The row reads: $(printf '%s' "$DRIFT_AFTER" | cut -c1-600)"
     else

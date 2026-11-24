@@ -10,7 +10,9 @@
 #       whether a project with NO organization can be moved by the CLI or only
 #       through Google's migration flow. Read three ways: the parent of the
 #       workspace's own project before and after `workspace init` (the CLI's own
-#       move, R8), the parent of the member's project before and after
+#       move, R8 — init creates that folder under the first organization its own
+#       search answers, D2803, so a credential that sees more than one stops the
+#       check rather than reading that move as a failure), the parent of the member's project before and after
 #       `workspace project link` (the member owner's own move, D2819/A6), and a
 #       `gcloud projects move` of a project created with no parent at all —
 #       Google's own answer about the CLI's ability to move such a project.
@@ -68,8 +70,12 @@
 # member has no runs, no token and no repository in this check.
 #
 # Usage:      bash scripts/live-checks/check-720.sh --org <org-id> --billing <account>
-#               --org       the organization the test folder and the workspace's
-#                           folder are created under (numeric id, as
+#               --org       the organization the test folder is created under,
+#                           and the one the check reads `workspace init`'s own
+#                           folder against — init picks its organization itself,
+#                           the first the API's search answers, so a credential
+#                           that sees several has to see one for this check to
+#                           read U1's move (numeric id, as
 #                           `gcloud organizations list` prints it)
 #               --billing   the billing account the two throwaway projects are
 #                           created on (as `gcloud billing accounts list`
@@ -152,8 +158,10 @@ Usage:
   bash scripts/live-checks/check-720.sh --org <org-id> --billing <account> [flags]
   bash scripts/live-checks/check-720.sh --help
 
-  --org <id>          the organization the test folder and the workspace's folder
-                      are created under (required)
+  --org <id>          the organization the test folder is created under, and the
+                      one the check reads `workspace init`'s own folder against
+                      (required; init picks its organization itself, so use a
+                      credential that sees only this one)
   --billing <account> the billing account the throwaway projects are created on
                       (required)
   --region <region>   where the throwaway installations live (default us-east5)
@@ -344,7 +352,8 @@ Check 720 plan (--dry-run: nothing below is called)
   workspace           $WS  (project $WS, an installation of its own)
   member              $MEMBER  (project $MEMBER, an installation of its own, created under the test folder)
   no-org project      $NOORG  (no parent: U1's no-org half and U8)
-  workspace's folder  created by \`fugaro workspace init $WS\` under organizations/$ORG
+  workspace's folder  created by \`fugaro workspace init $WS\` (under the first
+                      organization its own search answers)
   steps               workspace init, project add, workspace add, project link,
                       project add (again), project rm, project unlink
   U8                  an owner grant by API for ${GRANTEE:-<the account gcloud is authenticated as>} on $NOORG
@@ -587,7 +596,14 @@ if ! g_do billing accounts describe "$BILLING" >/dev/null 2>&1; then
   stop "billing account $BILLING is not readable"
 fi
 
-fact premise PASS "authenticated as $ACCOUNT, organization $ORG is visible (this credential sees $ORG_COUNT organization(s)), billing account $BILLING is readable, and the ids $WS, $MEMBER and $NOORG are free"
+ORG_NOTE=""
+# `init` picks its own organization — the first the API's search answers
+# (workspace_init.go, D2803) — so on a credential that sees several the
+# organization this check names with --org is not necessarily the one used, and
+# the init row below reads which one that was.
+[ "$ORG_COUNT" -gt 1 ] && ORG_NOTE=", and this credential sees more than one organization, so the init row below reads which one init itself used rather than assuming --org"
+
+fact premise PASS "authenticated as $ACCOUNT, organization $ORG is visible (this credential sees $ORG_COUNT organization(s)), billing account $BILLING is readable, and the ids $WS, $MEMBER and $NOORG are free$ORG_NOTE"
 
 # ------------------------------------------------------------- the test folder
 
@@ -667,8 +683,11 @@ fi
 # --------------------------------------------------------------- workspace init
 
 # The workspace's own project is named after the workspace (D1290), and `init`
-# creates the workspace's folder under the organization this credential sees and
-# moves that project into it (R8). The move is U1's first reading.
+# creates the workspace's folder under an organization it picks ITSELF — the
+# first one this credential's organization search answers (workspace_init.go,
+# D2803) — and moves that project into the folder (R8). The move is U1's first
+# reading, and the organization it chose is the search's answer, not this
+# check's --org.
 before=$(parent_of "$WS")
 status=$(cli "$WS" "$SCRATCH/init.log" workspace init "$WS")
 OUT=$(cat "$SCRATCH/init.log" 2>/dev/null || true)
@@ -693,11 +712,21 @@ if [ "$MECH" = no ]; then
   fact init FAIL "fugaro workspace init $WS did not report the folder mechanism: $(log_tail "$SCRATCH/init.log") — an SA-mechanism answer here means this credential's organization search answered no organization, and this check's whole subject is the folder"
   stop "workspace init did not take the folder mechanism"
 fi
-if [ -n "$WS_FOLDER" ] && [ "$WS_FOLDER_PARENT" = "organizations/$ORG" ]; then
-  fact init PASS "workspace init created the workspace's folder $WS_FOLDER under $WS_FOLDER_PARENT, bound $ACCOUNT to roles/owner on it, and placed the workspace's own project in it — the CLI's own move, from $before, with the caller's own credentials (R8, D2803) — and wrote the roster at workspaceRosters/$WS with the caller as its first admin"
-else
-  fact init FAIL "the workspace's own project $WS hangs under $after, not under a folder created under organizations/$ORG (it was $before, and its folder's parent read $WS_FOLDER_PARENT): the move init makes did not happen"
+if [ -z "$WS_FOLDER" ]; then
+  fact init FAIL "the workspace's own project $WS still hangs under $after (it was $before), not under any folder: the move init makes did not happen"
   stop "the workspace's own project did not move into the workspace's folder"
+fi
+if [ "$WS_FOLDER_PARENT" = "organizations/$ORG" ]; then
+  fact init PASS "workspace init created the workspace's folder $WS_FOLDER under $WS_FOLDER_PARENT, bound $ACCOUNT to roles/owner on it, and placed the workspace's own project in it — the CLI's own move, from $before, with the caller's own credentials (R8, D2803) — and wrote the roster at workspaceRosters/$WS with the caller as its first admin"
+elif [ "$WS_FOLDER_PARENT" = "unreadable" ]; then
+  fact init UNVERIFIED "workspace init placed the workspace's own project in the folder $WS_FOLDER (it was $before), and read the folder's parent failed ($(g_err)): whether that parent is organizations/$ORG is the whole of this row, and this credential sees $ORG_COUNT organization(s), so the organization init chose cannot be assumed — init takes the first the API's search answers (workspace_init.go, D2803). Read it with: gcloud resource-manager folders describe ${WS_FOLDER#folders/} --format=value\\(parent\\). The projects this run already made ($WS, $MEMBER, under the test folder $FOLDER) are still there and still cost money: delete them with \`gcloud projects delete $WS $MEMBER\`"
+  stop "the workspace's folder parent was not read"
+elif [ "$ORG_COUNT" -gt 1 ]; then
+  fact init UNVERIFIED "workspace init created the workspace's folder $WS_FOLDER under $WS_FOLDER_PARENT, which is not this check's --org organizations/$ORG: this credential sees $ORG_COUNT organization(s), and init creates its folder under the FIRST one the API's search answers (workspace_init.go, D2803), so which organization it chose is the search's answer and not this check's to name. U1's move is a project out of $FOLDER and back into it, both in organizations/$ORG, and Google refuses to move a project between organizations, so a run here would measure a different move than U1 states. Run this check with a credential that sees only organizations/$ORG; the projects this run already made ($WS, $MEMBER, under the test folder $FOLDER) are still there and still cost money, so delete them with \`gcloud projects delete $WS $MEMBER\` first"
+  stop "workspace init chose another organization"
+else
+  fact init FAIL "workspace init created the workspace's folder $WS_FOLDER under $WS_FOLDER_PARENT, and this credential sees only organizations/$ORG: the folder is not under the organization this check names"
+  stop "the workspace's folder is not under the organization this check names"
 fi
 
 # ------------------------------------------------------------------ project add

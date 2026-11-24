@@ -371,6 +371,10 @@ test_the_happy_path() {
   expect_count "$dir/GCALLS" "gcloud --quiet projects remove-iam-policy-binding chk721mem --member=user:chk721-" 1 "the happy path"
   expect_count "$dir/GCALLS" "gcloud --quiet logging read" 1 "the happy path"
   expect_contains "$(cat "$dir/GCALLS")" 'cloudaudit.googleapis.com%2Factivity' "the happy path"
+  # The window is read NEWEST-first: --limit=200 is 200 entries, and reading it
+  # oldest-first would truncate the newest in a busy window — this check's own
+  # change among them — and fail the entry row on a log that had logged it.
+  expect_contains "$(cat "$dir/GCALLS")" '--limit=200 --order=desc' "the happy path: the newest entries of the window are read"
   expect_contains "$out" "WHAT TO OPEN, BY YOU (U5)" "the happy path"
   expect_contains "$out" "https://console.cloud.google.com/iam-admin/iam?project=chk721mem" "the happy path"
 }
@@ -577,7 +581,7 @@ test_an_empty_window_is_unverified() {
   expect_row "$out" update PASS "an empty window"
   expect_row "$out" names PASS "an empty window"
   expect_row "$out" silent UNVERIFIED "an empty window"
-  expect_contains "$out" "no SetIamPolicy change of the member's own update is in the window" "an empty window"
+  expect_contains "$out" "no SetIamPolicy change of the member's own update is in the part of the window this check read" "an empty window"
 }
 
 test_a_binding_google_refuses_is_a_finding() {

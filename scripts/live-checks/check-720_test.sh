@@ -195,6 +195,16 @@ case "$verb $sub" in
     ;;
   describe)
     desc=${pos[3]:-}
+    # A case can refuse the describe of ONE folder: `workspace init`'s own
+    # folder is read for its parent on its own, and a test folder read that
+    # refused would stop the check before init ever ran.
+    if [ -f "$dir/folder-describe-status-$desc" ]; then
+      st=$(status_of "folder-describe-status-$desc")
+      if [ "$st" != 0 ]; then
+        if [ -f "$dir/folderdescribe.err" ]; then cat "$dir/folderdescribe.err" >&2; else printf 'fake gcloud: folderdescribe refused\n' >&2; fi
+        exit "$st"
+      fi
+    fi
     if [ -f "$dir/folder-parent-$desc" ]; then
       cat "$dir/folder-parent-$desc"
     else
@@ -290,10 +300,15 @@ workspace)
   init)
     name=${1:-}
     must init-status init
+    # `workspace init` picks its own organization: the first the search answers
+    # (workspace_init.go, D2803). A case that writes several into `$dir/orgs`
+    # gets the first one named here, as the real command names it.
+    chosen=$(cat "$dir/org" 2>/dev/null || printf '000000000001')
+    if [ -f "$dir/orgs" ]; then chosen=$(head -n1 "$dir/orgs"); fi
     if [ -f "$dir/init-sa" ]; then
       printf "initialized workspace %s: the SA mechanism — this credential's organization search answered no organization to create a folder in, so %s holds the workspace IAM account's token creator and roles/owner on the workspace's own project (D2803, R8)\n" "$name" "${FUGARO_PROJECT:-}"
     else
-      printf "initialized workspace %s: the folder mechanism — the folder folders/777001 created under organizations/%s with %s as its owner, and the workspace's own project placed in it (R8)\n" "$name" "$(cat "$dir/org")" "${FUGARO_PROJECT:-}"
+      printf "initialized workspace %s: the folder mechanism — the folder folders/777001 created under organizations/%s with %s as its owner, and the workspace's own project placed in it (R8)\n" "$name" "$chosen" "${FUGARO_PROJECT:-}"
       printf "the roster is at workspaceRosters/%s, with %s as the workspace's first admin: what it records is written once and never changed (D2803, R6)\n" "$name" "${FUGARO_PROJECT:-}"
       [ -f "$dir/init-creates-no-marker" ] || : >"$dir/state/init-done"
     fi
@@ -666,6 +681,54 @@ test_an_init_that_does_not_move_the_workspace_project_is_a_finding() {
   expect_contains "$out" "hangs under organizations/000000000001" "an init that does not move the workspace's project"
 }
 
+test_an_init_that_picks_its_own_organization_is_not_a_finding() {
+  case_dir init_other_org
+  # The credential sees two organizations, and `workspace init` creates the
+  # workspace's folder under the first its own search answers (workspace_init.go,
+  # D2803) — not this check's --org. That is not the move U1 states failing: U1's
+  # move is the member's project out of the test folder and back into it, both in
+  # --org, and Google refuses to move a project between organizations. This row
+  # used to read FAIL and abort, which is the false finding the row no longer
+  # makes.
+  printf '000000000002\n000000000001\n' >"$dir/orgs"
+  printf 'organizations/000000000002' >"$dir/folder-parent-777001"
+  run720
+  expect_status "$status" 2 "an init that picks its own organization"
+  expect_row "$out" init UNVERIFIED "an init that picks its own organization"
+  expect_contains "$out" "not this check's --org organizations/000000000001" "an init that picks its own organization"
+  expect_contains "$out" "Run this check with a credential that sees only organizations/000000000001" "an init that picks its own organization: the fix is named"
+  expect_not_contains "$out" "CHECK 720 RESULT: FAIL" "an init that picks its own organization is not a finding"
+  expect_count "$dir/CALLS" "fugaro workspace project add" 0 "an init that picks its own organization: nothing later runs"
+  expect_contains "$out" "sees more than one organization" "the premise row names the multi-organization credential"
+  # The abort happens after both billed setups, so the row says what it left and
+  # how to delete it.
+  expect_contains "$out" "are still there and still cost money" "an init that picks its own organization: the projects it left are named"
+}
+
+test_an_init_whose_folder_parent_was_not_read_leaves_the_row_unverified() {
+  case_dir init_parent_unreadable
+  printf 1 >"$dir/folder-describe-status-777001"
+  printf 'fake gcloud: the folder was not described\n' >"$dir/folderdescribe.err"
+  run720
+  expect_status "$status" 2 "an init whose folder parent was not read"
+  expect_row "$out" init UNVERIFIED "an init whose folder parent was not read"
+  expect_contains "$out" "read the folder's parent failed" "an init whose folder parent was not read"
+  expect_contains "$out" "are still there and still cost money" "an init whose folder parent was not read: the projects it left are named"
+  expect_count "$dir/CALLS" "fugaro workspace project add" 0 "an init whose folder parent was not read: nothing later runs"
+}
+
+test_a_workspace_folder_under_another_parent_is_a_finding() {
+  case_dir init_folder_elsewhere
+  # One organization is visible and the folder init created is not under it, so
+  # the organization the row reads is the only one there is: this is a finding,
+  # not the multi-organization skip above.
+  printf 'folders/999888' >"$dir/folder-parent-777001"
+  run720
+  expect_status "$status" 2 "a workspace folder under another parent"
+  expect_row "$out" init FAIL "a workspace folder under another parent"
+  expect_contains "$out" "under folders/999888, and this credential sees only organizations/000000000001" "a workspace folder under another parent"
+}
+
 test_a_move_into_the_folder_that_does_not_happen_is_a_finding() {
   case_dir link_without_a_move
   : >"$dir/link-moves-nothing"
@@ -868,6 +931,9 @@ t test_a_setup_that_writes_no_config_stops_the_check
 t test_a_setup_that_was_killed_at_its_deadline_names_its_transcript
 t test_an_init_that_takes_the_sa_mechanism_is_a_finding
 t test_an_init_that_does_not_move_the_workspace_project_is_a_finding
+t test_an_init_that_picks_its_own_organization_is_not_a_finding
+t test_an_init_whose_folder_parent_was_not_read_leaves_the_row_unverified
+t test_a_workspace_folder_under_another_parent_is_a_finding
 t test_a_move_into_the_folder_that_does_not_happen_is_a_finding
 t test_an_adoption_of_several_people_is_the_add_the_link_hands_back
 t test_a_link_that_fails_stops_the_check
