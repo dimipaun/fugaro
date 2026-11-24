@@ -23,6 +23,16 @@ package credsvc
 // sends the device back to the QR (D2784), because a second factor the person
 // holds physically is what that project asked for.
 //
+// One half of that policy this route applies for itself: the member record. C1's
+// recorded check admits an address the project holds no identity for, and it
+// must — for a pairing, the absence of a record is the invitation's own first
+// use, and that pairing is what writes one (D2785). A restore spends no invite
+// and has no QR, and a QR is the one way a first device comes in (F8), so a
+// restore of an address with no recorded identity is refused rather than
+// admitted as that first device: admitted, it would also leave the recorded sub
+// empty for the address, and every later restore of a reassigned address would
+// pass the check the record exists for (F34).
+//
 // The published policy is also where the values a session answer carries come
 // from (`SessionPolicy`: the costly modes and the biometric switch, P6), which
 // is why this route reads the node as well as asking the policy. It is read
@@ -52,6 +62,10 @@ package credsvc
 //     — or whose provider is not accepted, or whose sign-in is too old — is
 //     told that, and not "pair again with a QR" (which would send them to a
 //     pairing that refuses them for the same reason).
+//   - The member record after the policy and before the strict switch, for the
+//     reason the policy comes before the switch at all: what a caller is told
+//     first is the fact about THEM — this project has never recorded an
+//     identity for this address — and not a project's own setting.
 //   - The strict switch before the allow path, which is the red step this
 //     task's plan states: a strict project refuses with no device node written,
 //     no family issued and no token minted.
@@ -240,6 +254,12 @@ const (
 	mobileNotAMemberRefused = "this address is not a member of this project: ask an administrator for access"
 	// mobileDisabledRefused answers a project whose mobile surface is off.
 	mobileDisabledRefused = "this project has mobile pairing turned off"
+	// mobileUnrecordedIdentity answers an address this project holds no identity
+	// for: the assertion's sub is not — and cannot be — the one this project
+	// first recorded, because it never recorded one. The device has to pair
+	// with a QR, which is the one way a first device comes in (F8), and the
+	// sentence says so where the code alone cannot.
+	mobileUnrecordedIdentity = "this project has no identity recorded for this address: pair this device with fugaro pair before restoring a second one"
 	// mobileDeviceRevokedRefused answers a device or a family that was revoked.
 	mobileDeviceRevokedRefused = "this device's session was revoked: pair this device again"
 )
@@ -254,6 +274,7 @@ const (
 	mobileChallengeUnreadable = "the challenge could not be checked against the store, so this service cannot tell a fresh challenge from a spent one"
 	mobileChallengeUndrawn    = "this service could not draw a challenge, and a challenge that is not random is one an attacker can predict"
 	mobilePolicyUnreadable    = "the project's mobile policy could not be read, so this service cannot say whether this identity is admitted"
+	mobileMemberUnread        = "the project's member record could not be read, so this service cannot tell whether this address has ever paired"
 	mobilePolicyUnnamed       = "the project's mobile policy answered a refusal this route does not serve, so this service cannot answer it"
 	mobilePolicyNoRole        = "the project's mobile policy admitted this identity with no role, and a device node with no role is a device no consumer can resolve"
 	mobileProjectPolicyUnread = "the project's published policy could not be read, so this service cannot tell whether this project requires a QR for a new device"
@@ -305,6 +326,12 @@ type MobileRestore struct {
 	// Membership applies the project's mobile policy to a verified identity
 	// (C1's Policy, P4). It is the same implementation the pairing route asks.
 	Membership mobilesession.Policy
+	// Members is the record C1's policy reads and the PAIRING writes: the
+	// (email, provider, sub) this project accepted first (C1's MemberStore,
+	// P3). This route reads it to refuse an address this project holds no
+	// identity for, which the policy admits because for a pairing that absence
+	// is the invitation's own first use (F8, D2785).
+	Members mobilesession.MemberStore
 	// Claims is the compare-and-set store the challenge is spent in (C1's
 	// ClaimStore, F39).
 	Claims mobilesession.ClaimStore
@@ -351,6 +378,8 @@ func NewMobileRestore(cfg MobileRestore) (*MobileRestore, error) {
 		return nil, errors.New("credsvc: the mobile routes have no assertion verifier")
 	case cfg.Membership == nil:
 		return nil, errors.New("credsvc: the mobile routes have no membership policy")
+	case cfg.Members == nil:
+		return nil, errors.New("credsvc: the mobile routes cannot read a member record, so a restore could not tell an address that has paired from one that never has")
 	case cfg.Claims == nil:
 		return nil, errors.New("credsvc: the mobile routes cannot spend a challenge")
 	case cfg.Refresh == nil:
@@ -371,7 +400,8 @@ func NewMobileRestore(cfg MobileRestore) (*MobileRestore, error) {
 	return &MobileRestore{
 		Project: cfg.Project, ChallengeKey: cfg.ChallengeKey,
 		Policy: cfg.Policy, Verifier: cfg.Verifier,
-		Membership: cfg.Membership, Claims: cfg.Claims, Refresh: cfg.Refresh,
+		Membership: cfg.Membership, Members: cfg.Members,
+		Claims: cfg.Claims, Refresh: cfg.Refresh,
 		Minter: cfg.Minter, Devices: cfg.Devices, Audit: cfg.Audit,
 		Log: cfg.Log,
 	}, nil
@@ -497,6 +527,22 @@ func (m *MobileRestore) ServeRestore(w http.ResponseWriter, r *http.Request) {
 		// an action for, and the node's existence alone is what the database
 		// rules read.
 		m.unavailable(ctx, w, email, mobilePolicyNoRole)
+		return
+	}
+	// The record half of C1's policy, which this route applies for itself. The
+	// policy admits an address this project holds no identity for, and rightly:
+	// for a PAIRING that absence is the invitation's own first use, and the
+	// record is written with it (D2785). A restore spends no invite and has no
+	// QR, so admitting one here would be the first device of F8's paragraph —
+	// and the address's recorded sub would stay empty for every restore after
+	// it, which is the check that keeps a reassigned address out.
+	record, has, err := m.Members.Member(ctx, m.Project.ProjectID, email)
+	if err != nil {
+		m.unavailable(ctx, w, email, mobileMemberUnread)
+		return
+	}
+	if !has || (record.Provider == "" && record.Sub == "") {
+		m.refuse(ctx, w, email, mobilesession.Error{Code: mobilesession.CodeNotAMember, Message: mobileUnrecordedIdentity})
 		return
 	}
 	node, found, err := m.Policy.Shared(ctx)

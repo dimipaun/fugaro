@@ -164,6 +164,30 @@ func (f *fakeMinter) Mint(_ context.Context, req mobilesession.MintRequest) (mob
 	return f.token, nil
 }
 
+// fakeMemberStore is C1's MemberStore: the record the pairing writes and this
+// route only reads. It reports the record it was configured with and, when told
+// to, that there is none — an address that has never paired — and it can fail
+// the read, which is the service's own failure and not a refusal.
+type fakeMemberStore struct {
+	record mobilesession.Member
+	found  bool
+	err    error
+
+	emails []string
+}
+
+func (f *fakeMemberStore) Member(_ context.Context, _, email string) (mobilesession.Member, bool, error) {
+	f.emails = append(f.emails, email)
+	if f.err != nil {
+		return mobilesession.Member{}, false, f.err
+	}
+	return f.record, f.found, nil
+}
+
+func (f *fakeMemberStore) Record(context.Context, string, mobilesession.Member) error { return nil }
+
+func (f *fakeMemberStore) Remove(context.Context, string, string) error { return nil }
+
 // fakeDeviceStore is the pairing route's own device-node seam, which this route
 // writes through as well (MobileDeviceNodes, P3): it answers the consumer key it
 // was configured with and records every node it was asked to write and every uid
@@ -227,6 +251,7 @@ type restoreFixture struct {
 
 	verifier   *fakeVerifier
 	membership *fakeMembership
+	members    *fakeMemberStore
 	claims     *fakeClaimStore
 	refresh    *fakeRefreshStore
 	minter     *fakeMinter
@@ -263,6 +288,7 @@ func newRestoreFixture(t *testing.T) *restoreFixture {
 			JTI:           "assertion-1",
 		}},
 		membership: &fakeMembership{verdict: mobilesession.Verdict{Allowed: true, Role: access.RoleOperator}, crashReports: true},
+		members:    &fakeMemberStore{record: mobilesession.Member{Email: restoreEmail, Provider: projectpolicy.ProviderGoogle, Sub: "provider-sub-1"}, found: true},
 		claims:     &fakeClaimStore{},
 		refresh:    &fakeRefreshStore{},
 		minter:     &fakeMinter{},
@@ -284,6 +310,7 @@ func newRestoreFixture(t *testing.T) *restoreFixture {
 		Policy:       f.projects,
 		Verifier:     f.verifier,
 		Membership:   f.membership,
+		Members:      f.members,
 		Claims:       f.claims,
 		Refresh:      f.refresh,
 		Minter:       f.minter,
@@ -1006,6 +1033,76 @@ func TestMobileRestoreRefusesAPolicyVerdict(t *testing.T) {
 	}
 }
 
+// TestMobileRestoreRefusesAMemberWithNoRecordedIdentity is the record half of
+// C1's policy, which this route applies for itself: the policy admits an address
+// the project holds no identity for, because for a PAIRING that absence is the
+// invitation's own first use (D2785). A restore spends no invite and has no QR,
+// and a QR is the one way a first device comes in (F8) — so an address this
+// project has never recorded an identity for is refused, with no node, no family
+// and no token, and the refusal is recorded like any other.
+func TestMobileRestoreRefusesAMemberWithNoRecordedIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*restoreFixture)
+	}{
+		{"no record at all", func(f *restoreFixture) { f.members.found = false }},
+		{"a record that holds no identity", func(f *restoreFixture) { f.members.record = mobilesession.Member{Email: restoreEmail} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRestoreFixture(t)
+			tc.mutate(f)
+
+			rec := f.restore(t, restoreBody(f.challenge))
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("a member with no recorded identity is answered %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+			}
+			if code := refusalCode(t, rec); code != mobilesession.CodeNotAMember {
+				t.Errorf("the refusal is %q, want %q: the assertion's sub is not the one this project first recorded, because it recorded none", code, mobilesession.CodeNotAMember)
+			}
+			if len(f.devices.written) != 0 || len(f.refresh.issued) != 0 || len(f.minter.reqs) != 0 {
+				t.Errorf("the refused restore reached the allow path: %d nodes, %v families, %d mints", len(f.devices.written), f.refresh.issued, len(f.minter.reqs))
+			}
+			lines := auditLines(t, f.audit)
+			if len(lines) != 1 {
+				t.Fatalf("the refusal wrote %d audit lines, want exactly one: %v", len(lines), lines)
+			}
+			checkAuditShape(t, lines[0])
+			if got := auditField(lines[0], "caller"); got != restoreEmail {
+				t.Errorf("the line's caller is %q, want the verified address %q", got, restoreEmail)
+			}
+			if got := auditField(lines[0], "status"); got != ReasonNotAdmitted {
+				t.Errorf("the line's status is %q, want %q", got, ReasonNotAdmitted)
+			}
+		})
+	}
+}
+
+// TestMobileRestoreRefusesAMemberRecordItCannotRead is the other half of that
+// read: a record the service cannot read is not an address it may admit, and it
+// is the service's own failure rather than a refusal of the caller.
+func TestMobileRestoreRefusesAMemberRecordItCannotRead(t *testing.T) {
+	f := newRestoreFixture(t)
+	f.members.err = errors.New("the member store is down")
+
+	rec := f.restore(t, restoreBody(f.challenge))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("an unreadable member record is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	if e := restoreRefusal(t, rec); e.Message != mobileMemberUnread {
+		t.Errorf("the answer is %q, want the unreadable-record sentence", e.Message)
+	}
+	if len(f.devices.written) != 0 {
+		t.Errorf("the restore wrote %d device nodes, want none", len(f.devices.written))
+	}
+	lines := auditLines(t, f.audit)
+	if len(lines) != 1 {
+		t.Fatalf("the failure wrote %d audit lines, want exactly one: %v", len(lines), lines)
+	}
+	if got := auditField(lines[0], "status"); got != ErrorStateUnavailable {
+		t.Errorf("the line's status is %q, want %q", got, ErrorStateUnavailable)
+	}
+}
+
 // TestMobileRestoreRefusesAnAllowedVerdictWithNoRole closes the one hole a
 // policy's own document names: an allowed verdict with no role is a policy bug,
 // and the node it would write is one no consumer can resolve an action against.
@@ -1413,7 +1510,7 @@ func TestNewMobileRestoreRefusesAnIncompleteConfiguration(t *testing.T) {
 		return MobileRestore{
 			Project: f.h.Project, ChallengeKey: f.h.ChallengeKey,
 			Policy: f.h.Policy, Verifier: f.h.Verifier,
-			Membership: f.h.Membership, Claims: f.h.Claims, Refresh: f.h.Refresh,
+			Membership: f.h.Membership, Members: f.h.Members, Claims: f.h.Claims, Refresh: f.h.Refresh,
 			Minter: f.h.Minter, Devices: f.h.Devices, Audit: f.h.Audit,
 		}
 	}
@@ -1433,6 +1530,7 @@ func TestNewMobileRestoreRefusesAnIncompleteConfiguration(t *testing.T) {
 		{"no policy reader", func(c *MobileRestore) { c.Policy = nil }},
 		{"no verifier", func(c *MobileRestore) { c.Verifier = nil }},
 		{"no membership policy", func(c *MobileRestore) { c.Membership = nil }},
+		{"no member store", func(c *MobileRestore) { c.Members = nil }},
 		{"no claim store", func(c *MobileRestore) { c.Claims = nil }},
 		{"no refresh store", func(c *MobileRestore) { c.Refresh = nil }},
 		{"no minter", func(c *MobileRestore) { c.Minter = nil }},
