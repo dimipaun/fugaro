@@ -335,7 +335,7 @@ func TestPRStateFromTheListingsOwnRows(t *testing.T) {
 		// A run that opened no pull request.
 		prStateRow(slug, "20261112-090000-ffff", at(0), runstore.StatusFailed, runstore.OutcomeNone, 0),
 	}
-	markPRStates(rows, nil)
+	markPRStates(rows, nil, nil)
 	want := []string{prStateLive, prStateLive, prStateStalled, prStateStalled, prStateStalled,
 		prStateReady, prStateReady, prStateReady, prStateStalled, prStateStalled, ""}
 	for i, row := range rows {
@@ -368,7 +368,7 @@ func TestPRStateGroupsOneRepositoryAtATime(t *testing.T) {
 		{Run: "acme-other-8b1e5a9d3c7f2046/20261112-090000-bbbb", RunID: "20261112-090000-bbbb", Created: at,
 			Status: string(runstore.StatusFailed), Outcome: string(runstore.OutcomeDraft), PR: 1},
 	}
-	markPRStates(rows, nil)
+	markPRStates(rows, nil, nil)
 	if rows[0].PRState != prStateLive || rows[1].PRState != prStateStalled {
 		t.Fatalf("PR 1 of acme/app is %q and PR 1 of acme/other is %q, want live and stalled: a pull request number means one repository",
 			rows[0].PRState, rows[1].PRState)
@@ -485,7 +485,7 @@ func TestPRStateReadsAReviewRunsTask(t *testing.T) {
 		{Run: slug + "/20261112-090000-bb21", RunID: "20261112-090000-bb21", Created: at,
 			Status: string(runstore.StatusRunning)},
 	}
-	markPRStates(rows, map[string]int{"20261112-090000-bb21": 21})
+	markPRStates(rows, map[string]int{"20261112-090000-bb21": 21}, nil)
 	for i, want := range []string{prStateLive, prStateLive} {
 		if rows[i].PRState != want {
 			t.Errorf("row %s carries pr_state %q, want %q", rows[i].RunID, rows[i].PRState, want)
@@ -500,7 +500,7 @@ func TestPRStateReadsAReviewRunsTask(t *testing.T) {
 		{Run: slug + "/20261112-090000-dd21", RunID: "20261112-090000-dd21", Created: at,
 			Status: string(runstore.StatusRunning)},
 	}
-	markPRStates(rows, nil)
+	markPRStates(rows, nil, nil)
 	for i, want := range []string{prStateReady, ""} {
 		if rows[i].PRState != want {
 			t.Errorf("row %s carries pr_state %q, want %q", rows[i].RunID, rows[i].PRState, want)

@@ -114,5 +114,5 @@ func (e *initEngine) reindexRunIndex(ctx context.Context) {
 		r.warn(fmt.Sprintf("the run index was marked for a rebuild, but no reindex execution was started (%s). The walk is owed all the same: the next sweep of the history job carries it, and `fugaro runs reindex` asks for it by hand", safetext.FieldErr(err)))
 		return
 	}
-	fmt.Fprintf(r.w, "run index: marked incomplete and reindexing now as %s, so `fugaro runs ls` is short until the walk reaches the end of history. It resumes from its own cursor until then, and no run was waited for: an update reaches an installation whose runs are going exactly as it reaches an idle one.\n", oneLine(exec))
+	fmt.Fprintf(r.w, "run index: marked incomplete and reindexing now%s, so `fugaro runs ls` is short until the walk reaches the end of history. It resumes from its own cursor until then, and no run was waited for: an update reaches an installation whose runs are going exactly as it reaches an idle one.\n", reindexExecClause(exec))
 }
