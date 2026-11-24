@@ -910,6 +910,31 @@ func TestReviewScreenPrintsOnlySafeText(t *testing.T) {
 	}
 }
 
+// TestReviewScreenShowsTheCarriedBillingAccount: the review screen names the
+// account the plan's budget resource will name, and says where it came from.
+// The account a carried block is on came from no flag — it is the one the
+// installation's own state records — so a screen reading only --billing-account
+// would show no billing account at all while the cover admits the plan's budget
+// on that account (billingAccount, R7 of
+// docs/managed-flag-ergonomics/reconciliation.md).
+func TestReviewScreenShowsTheCarriedBillingAccount(t *testing.T) {
+	var b strings.Builder
+	r := &initRun{cmd: &cobra.Command{}, o: &initOptions{}, w: &b, projectName: initProjectName, gcpProject: initProject,
+		budgetAccount: billingAcc}
+	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5", RegistryHost: "us-east5-docker.pkg.dev/" + initProject}
+	e := &initEngine{r: r, lc: lc, adminsRead: true, images: &imagesStage{}, spec: infra.InstallationSpec{RunsBucket: initRunsBucket, StateBucket: initStateBucket}}
+	e.images.e = e
+	e.previewed = []initflow.StageResult{{Name: initflow.Images, State: initflow.Todo}}
+	e.reviewScreen(t.Context(), "test")
+	out := b.String()
+	if !strings.Contains(out, "billing account: "+billingAcc) {
+		t.Errorf("the screen does not name the account the carry took:\n%s", out)
+	}
+	if !strings.Contains(out, "from the installation's state") {
+		t.Errorf("the screen does not say the account came from the installation's state:\n%s", out)
+	}
+}
+
 // The first Cloud Build's confirmation is never on the ordinary covered path:
 // the function that offers it uses the step's own confirmation (askCovered:
 // D12's answer of 2026-10-20 covers a billable first image build in BOTH front

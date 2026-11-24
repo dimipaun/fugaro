@@ -471,53 +471,30 @@ def ls(path, want):
     field("orchestrators", str(len(entries)))
 
 
-ITEM_HEAD = re.compile(r"^  (\S+) \[([a-z]+)\] (.*)$")
-DETAIL = re.compile(r"^    (.*)$")
-
-
 def state(path):
-    """The daemon's own brief, read for the items it carries.
+    """The daemon's work items, read from the `items` array of the state document.
 
-    The brief is the only carrier of an item's spec and of the run id its
-    attempt recorded (fugaro orchestrator state --json prints it as `brief`;
-    internal/orchestrator/summary.go is its writer), so the check reads the
-    item lines out of it rather than assuming which plan or which run the daemon
-    is working on."""
+    `fugaro orchestrator state --json` carries every item there (id, phase,
+    run_id, attempts, repo, spec). The `brief` beside it is a capped summary and
+    is never parsed: an installation holding more items than it lists would
+    otherwise look as if it held none in flight."""
     doc = load(path)
-    brief = doc.get("brief") or ""
-    items = []
-    current = None
-    for line in brief.splitlines():
-        head = ITEM_HEAD.match(line)
-        if head:
-            item_id, phase, rest = head.groups()
-            repo = "-"
-            if " — " in rest:
-                tail = rest.rsplit(" — ", 1)[1]
-                repo = tail.split(",")[0].strip()
-            current = {"id": item_id, "phase": phase, "repo": repo, "run": "-", "spec": "-"}
-            items.append(current)
-            continue
-        if current is None:
-            continue
-        detail = DETAIL.match(line)
-        if not detail:
-            continue
-        text = detail.group(1).strip()
-        # The item's own brief text is indented the same way, so a line of it
-        # could read like one of these. The daemon prints `run` and `spec`
-        # BEFORE the brief text, so the first match is the item's own and every
-        # later one is left alone.
-        if text.startswith("run ") and current["run"] == "-":
-            current["run"] = text[4:].strip()
-        elif text.startswith("spec: ") and current["spec"] == "-":
-            current["spec"] = text[6:].strip()
-    field("items", str(len(items)))
-    field("brief", "yes" if brief else "no")
+    items = doc.get("items")
+    if not isinstance(items, list):
+        items = []
+    count = 0
     for it in items:
+        if not isinstance(it, dict):
+            continue
+        count += 1
+        run = it.get("run_id")
+        spec = it.get("spec")
         print("ITEM %s|%s|%s|%s|%s" % (
-            clean(WORD, it["id"]), clean(PHASE, it["phase"]),
-            clean(REPO, it["repo"]), clean(RUNID, it["run"]), clean(SPEC, it["spec"])))
+            clean(WORD, it.get("id")), clean(PHASE, it.get("phase")),
+            clean(REPO, it.get("repo")), clean(RUNID, run if run else "-"),
+            clean(SPEC, spec if spec else "-")))
+    field("items", str(count))
+    field("array", "yes" if isinstance(doc.get("items"), list) else "no")
 
 
 def runs(path, run_id):
@@ -852,6 +829,25 @@ step_item() {
   done < <(printf '%s\n' "$facts" | sed -n 's/^ITEM //p')
 
   if [ "$count" -eq 0 ]; then
+    local ended="" eline eid ephase erun
+    while IFS= read -r eline; do
+      [ -n "$eline" ] || continue
+      eid=${eline%%|*}
+      eline=${eline#*|}
+      ephase=${eline%%|*}
+      eline=${eline#*|}
+      eline=${eline#*|}
+      erun=${eline%%|*}
+      [ "$erun" != "-" ] && [ "$ephase" != running ] || continue
+      if [ -n "$RUN_ID_WANT" ]; then
+        [ "$erun" = "$RUN_ID_WANT" ] || continue
+      fi
+      ended="${ended}${eid} is phase ${ephase} (run ${erun}); "
+    done < <(printf '%s\n' "$facts" | sed -n 's/^ITEM //p')
+    if [ -n "$ended" ]; then
+      fact item FAIL "the item has already ended, so the running label can no longer be measured: ${ended}the daemon's state carries ${ITEMS:-unread} item(s). Only the settled rows are measurable for that run id: the settled label (fugaro:failed after a failed run, none after a succeeded one), the spec label and the colours, read from the pull request as it stands now. Run scripts/live-checks/check640-queue-probe.sh with --suffix <word> for a fresh item and run this check while that item is running"
+      stop "the task ended before the check read it, so the label written while it was running was not measured"
+    fi
     if [ -n "$RUN_ID_WANT" ]; then
       fact item FAIL "no work item of the daemon '${INSTALLATION}' is in phase running with the run id ${RUN_ID_WANT} (its state carries ${ITEMS:-unread} item(s)). Either that run has ended — in which case the labels to read are the settled ones and this check cannot measure the running label any more — or the id is not one of this daemon's own"
     else

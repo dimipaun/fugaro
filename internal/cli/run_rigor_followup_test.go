@@ -22,6 +22,7 @@ import (
 func seedRootRigor(t *testing.T, f *cloudFixture, id string, mode rigor.Rigor) {
 	t.Helper()
 	seedSpec(t, f, firstRunSpec(id), false)
+	seedTitleAwareImage(t, f)
 	rec := prRecord(id, "", 7, 1)
 	rec.StartedAt = time.Now().Add(-72 * time.Hour)
 	if mode != "" {

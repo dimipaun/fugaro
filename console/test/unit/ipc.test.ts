@@ -28,10 +28,13 @@
 //     refusal repeats nothing the sender wrote: removing the sender check, or
 //     any one of the three things it checks, fails the tests named for them;
 //   - a handler's own message that is a megabyte long, or that carries a
-//     control character or an absolute path, is bounded, flattened and redacted;
-//     removing any of the three fails the test named for it, and the test that
-//     an ordinary CLI sentence comes through verbatim is what keeps the three
-//     from eating the case design section 6.3 asks for;
+//     control character, is bounded and flattened; removing either fails the
+//     test named for it, and the test that an ordinary CLI sentence comes
+//     through verbatim is what keeps the two from eating the case design
+//     section 6.3 asks for. An absolute path is not one of them: the operator's
+//     own directories are the remedy a refusal names, so a path stays as written
+//     (D3213, ID6), and the renderer's `sanitizeRefusal` is what masks a secret
+//     wherever one stands;
 //   - removing `assertReachableSurface(CONSOLE_OPERATIONS)` from
 //     `registerConsoleHandlers`, or moving it after the channels are registered,
 //     fails "checks the surface before it registers anything"; dropping the
@@ -4083,11 +4086,12 @@ describe('the spend read’s arguments', () => {
  *     write: the dry run and the write behind the window are that row's children.
  *   - **Every one of them is inert until the CLI release that carries its
  *     flags**: each floor in `src/shared/version.ts` is `null` today, and the
- *     handler behind each answers 'not available in this build' until I-OPS
- *     registers the real one -- **except `settings.editor.open`, whose handler
- *     the console improvements plan's SU2b registered** (`settingsEditorRunner`
- *     in `src/main/index.ts`), because the pencil that presses it is on screen
- *     and a stub behind it would make the Project tab's only write dead. The
+ *     handler behind each refuses in its own flow's words, naming that floor
+ *     (`src/main/handlers.ts`, I-OPS) -- **except `settings.editor.open`, whose
+ *     handler the console improvements plan's SU2b registered**
+ *     (`settingsEditorRunner` in `src/main/index.ts`), because the pencil that
+ *     presses it is on screen and a stub behind it would make the Project tab's
+ *     only write dead. The
  *     rows are here rather than in a later task because the allow-list is the
  *     thing the whole console spawns through.
  */
@@ -4195,8 +4199,8 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   // nine with `refusedAfterLapse`) and the settings editor's window -- the one
   // operation of the nine whose `command` is `null`. Every one of them is inert
   // until the CLI release that carries its flags, which is why the floors in
-  // `src/shared/version.ts` are `null` and the handlers answer 'not available in
-  // this build' until I-OPS registers the real ones.
+  // `src/shared/version.ts` are `null` and the real handler behind each (I-OPS's
+  // `src/main/handlers.ts`) refuses in its own flow's words.
   ['runs.stream', 'streamRuns'],
   ['spend.stream', 'streamSpend'],
   ['budget.stream', 'streamBudget'],
@@ -4861,7 +4865,10 @@ describe('the registrar', () => {
     expect(reply.reason.endsWith('…')).toBe(true)
   })
 
-  it('takes an absolute path out of a handler’s message and leaves the rest', async () => {
+  it('keeps an absolute path in a handler’s message and leaves the rest as written', async () => {
+    // The operator's own directories are the remedy a refusal names (D3213, ID6):
+    // the CLI's sentence is shown verbatim, and a path in it is a path a screen
+    // would print. The renderer's `sanitizeRefusal` is where a secret is masked.
     const { ipcMain } = wiredConsole({
       'cli.version': () => {
         throw new Error('open /home/user/.fugaro/secrets.yaml: permission denied')
@@ -4871,17 +4878,30 @@ describe('the registrar', () => {
     const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
     expect(reply.ok).toBe(false)
     if (reply.ok) return
-    expect(reply.reason).not.toContain('/home/user')
-    expect(reply.reason).not.toContain('secrets.yaml')
-    expect(reply.reason).toContain('open')
-    expect(reply.reason).toContain('permission denied')
-    expect(reply.reason).toContain('<path>')
+    expect(reply.reason).toContain('/home/user/.fugaro/secrets.yaml')
+    expect(reply.reason).toEqual('open /home/user/.fugaro/secrets.yaml: permission denied')
+  })
+
+  it('keeps a refusal naming /Users/ana/repo as it is', async () => {
+    // ID6's own case: the path the operator recognises stays, so the refusal
+    // still names the repository it is about.
+    const { ipcMain } = wiredConsole({
+      'cli.version': () => {
+        throw new Error('refused: /Users/ana/repo is not a checkout of this project')
+      },
+    })
+    const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+    const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
+    expect(reply.ok).toBe(false)
+    if (reply.ok) return
+    expect(reply.reason).toContain('/Users/ana/repo')
+    expect(reply.reason).not.toContain('<path>')
   })
 
   // A path is not only ever preceded by a space or a quote. Go's own errors put
   // one straight after a colon (`open:/...` in a wrapped error), Markdown puts
   // one in backticks, a list puts one in brackets, and a URL can carry one as
-  // `file://`. Each of these spellings reached the renderer whole before.
+  // `file://`. Each of these spellings is drawn as written now (D3213, ID6).
   it.each([
     ['after a colon', 'open:/Users/dimi/.config/fugaro/projects/belong.yaml: permission denied'],
     ['in brackets', 'refused [/Users/dimi/.config/fugaro/a]'],
@@ -4890,7 +4910,7 @@ describe('the registrar', () => {
     ['as a Windows drive after a colon', 'dir:C:\\Users\\dimi'],
     ['in backticks', 'see `/Users/dimi/x` for details'],
     ['in angle brackets', 'wrote </Users/dimi/x>'],
-  ])('takes a path %s out of a handler’s message', async (_label, message) => {
+  ])('keeps a path %s in a handler’s message', async (_label, message) => {
     const { ipcMain } = wiredConsole({
       'cli.version': () => {
         throw new Error(message)
@@ -4900,8 +4920,7 @@ describe('the registrar', () => {
     const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
     expect(reply.ok).toBe(false)
     if (reply.ok) return
-    expect(reply.reason, message).not.toMatch(/dimi|passwd|Users/)
-    expect(reply.reason, message).toContain('<path>')
+    expect(reply.reason, message).toBe(message)
   })
 
   it('leaves a web URL in a message whole, rather than redacting from its //', async () => {

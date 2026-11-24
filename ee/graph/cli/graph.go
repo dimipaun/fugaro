@@ -35,6 +35,7 @@ import (
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/runindex"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -77,6 +78,29 @@ type graphOptions struct {
 	asJSON bool
 	watch  bool
 	cloud  fcli.CloudFlags
+}
+
+// graphIndex is the run index the coordinator scope's runs-half fallback reads
+// (IR3, F3): a repository the project's database holds no stored view for is
+// the repository's runs, and they come from the index rather than from a
+// listing of the runs bucket and a read per run — which is what F3 measured,
+// and the common case, because the coordinator's sweep is off on most
+// installations.
+//
+// It is a function the command calls, held in a package variable for the reason
+// the coordinator's own store opener is one (openCoordinatorStore): the one
+// thing that would reach a database is replaceable, so a test drives the
+// fallback without Firestore. What it answers with is the index's own reader,
+// and until I-INDEX wires the real one (RI3's `runindex.NewFirestore`) it is
+// C-INDEX's stub, which reads nothing and says the index is incomplete: a
+// repository with no stored view then draws no runs rather than a bucket
+// listing, and the scope's own state still tells a screen that the coordinator
+// has reconciled nothing. What that empty half may not do is stand unqualified:
+// the read's warnings carry the index's own completeness (coordcli.IndexRuns),
+// so a document that draws no runs because the index has folded none says so
+// rather than reporting a repository with no runs.
+var graphIndex = func(context.Context, *fcli.Cloud) (runindex.Reader, error) {
+	return runindex.NewStub(), nil
 }
 
 // NewGraphCmd is the `graph` command.
@@ -138,7 +162,7 @@ func NewGraphCmd() *cobra.Command {
 			"--watch needs --json, which is the only shape a reader of the stream can\n" +
 			"consume.\n\n" +
 			"Exit codes: 1 for a refused scope or a project with no database, 2 for a\n" +
-			"failure of the database or the runs bucket.",
+			"failure of the database or the run index.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runGraph(cmd, &o) },
 	}
@@ -188,8 +212,16 @@ func runGraph(cmd *cobra.Command, o *graphOptions) error {
 	if err != nil {
 		return err
 	}
+	// The index the coordinator scope reads a repository's runs from when the
+	// database stores no view for it (graphIndex). It is opened beside the
+	// connection and not per scope read, for the reason the store is: one
+	// reader, built once, serves every document of a stream (runGraphWatch).
+	index, err := graphIndex(ctx, env)
+	if err != nil {
+		return err
+	}
 	if o.watch {
-		return runGraphWatch(ctx, cmd.OutOrStdout(), env, db, scope)
+		return runGraphWatch(ctx, cmd.OutOrStdout(), env, db, index, scope)
 	}
 
 	// The read's warnings are buffered rather than written as they are made:
@@ -201,7 +233,7 @@ func runGraph(cmd *cobra.Command, o *graphOptions) error {
 	// A one-shot read has no time of its own to give for the stored view (the
 	// sweep's own design), so its `as_of` is null and the scope claims no age:
 	// the zero time is the caller saying it has none (contract §6.22).
-	doc, err := readGraph(ctx, env, coordinator.NewStore(db), db, scope, now, time.Time{}, &warned)
+	doc, err := readGraph(ctx, env, coordinator.NewStore(db), index, db, scope, now, time.Time{}, &warned)
 	if err != nil {
 		return err
 	}
@@ -253,7 +285,12 @@ func runGraph(cmd *cobra.Command, o *graphOptions) error {
 // every change, every keep-alive and every retry of a failed read. db is that
 // same client, which the orchestrator scopes are read through: one connection,
 // and the one credential minted for it, serve every scope of the document.
-func readGraph(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, db *rtdb.Client, scope graph.Scope, now, asOf time.Time, warned *bytes.Buffer) (graph.Document, error) {
+//
+// index is the run index, which the coordinator's runs-half fallback reads a
+// repository's runs from when the database stores no view for it (IR3, F3). It
+// is the caller's to open for the store's own reason: the real reader holds a
+// client too, and a stream must not build one per document.
+func readGraph(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, index runindex.Reader, db *rtdb.Client, scope graph.Scope, now, asOf time.Time, warned *bytes.Buffer) (graph.Document, error) {
 	sources := []graph.SourceState{}
 	nodes := []graph.Node{}
 	releases := []graph.Release{}
@@ -264,7 +301,7 @@ func readGraph(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, d
 		return graph.Document{}, err
 	}
 	if covers {
-		state, ns, rs, es, err := coordinatorScope(ctx, env, store, now, asOf, warned)
+		state, ns, rs, es, err := coordinatorScope(ctx, env, store, index, now, asOf, warned)
 		if err != nil {
 			return graph.Document{}, err
 		}
@@ -564,7 +601,11 @@ func cachedBriefs() (map[string]time.Time, error) {
 // store, the same credential and the same runs-half fallback for a repository
 // with nothing stored, which is what makes a project whose coordinator is off
 // draw its runs rather than nothing — and the record is read from the same store
-// with the same credential (D2117, `coordinator.Store.ReadRoadmap`).
+// with the same credential (D2117, `coordinator.Store.ReadRoadmap`). The one
+// difference from that command's read is where the runs half comes from: this
+// one reads it from the run index (`coordcli.IndexRuns`), because F3's own
+// measurement is of this command — a bucket listing and a read per run, for a
+// repository the sweep has never reconciled, which is the common case.
 //
 // An answer this build cannot read becomes the scope's state and never a
 // refusal: a stored node the decoding refuses, and a stored view whose identity
@@ -584,13 +625,13 @@ func cachedBriefs() (map[string]time.Time, error) {
 // the rest of the read's sentences take (`graphWarningLines`), and the reason
 // the count exists is exactly this: "the record holds nothing" and "the record
 // holds something this build cannot read" must not look alike (§6.22).
-func coordinatorScope(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, now, asOf time.Time, warned *bytes.Buffer) (graph.SourceState, []graph.Node, []graph.Release, []graph.Edge, error) {
+func coordinatorScope(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, index runindex.Reader, now, asOf time.Time, warned *bytes.Buffer) (graph.SourceState, []graph.Node, []graph.Release, []graph.Edge, error) {
 	source := graph.Scope{Kind: graph.ScopeCoordinator}.String()
 	window, err := fcli.ParseSince(fcli.LsDefaultSince())
 	if err != nil {
 		return graph.SourceState{}, nil, nil, nil, fcli.UserErr("%v", err)
 	}
-	project, err := coordcli.StoredProjectThrough(ctx, env, store, graphRepos(env), fcli.LsSince(window), warned)
+	project, err := coordcli.StoredProjectThrough(ctx, env, store, graphRepos(env), fcli.LsSince(window), coordcli.IndexRuns(index), warned)
 	switch {
 	case err == nil:
 		src := graph.CoordinatorSource{View: project, AsOf: asOf, Now: now}

@@ -101,11 +101,20 @@ func ValidKind(k Kind) bool {
 //
 // A member a kind cannot use — a provider on a pool source, an admit list on a
 // pool — is RT2's decoder to refuse rather than something stored and never read.
+//
+// The yaml tags name the same members as the json ones, and state the same
+// options. They are here because the project's own `model_routing:` block is
+// this Table and nothing else (RT2, contract-table.md): a second spelling of
+// the shape in the config's package would be free to drift from the wire's, and
+// omitempty is what keeps a source's unused members out of a document a person
+// reads. Reading is unaffected — yaml.v3 already read the lowercased field name
+// — so this is one spelling stated twice, held together by
+// TestModelRoutingYAMLEqualsTheContract (internal/localcfg).
 type Source struct {
-	Kind     Kind   `json:"kind"`
-	Pool     string `json:"pool,omitempty"`
-	Provider string `json:"provider,omitempty"`
-	Model    string `json:"model,omitempty"`
+	Kind     Kind   `json:"kind" yaml:"kind"`
+	Pool     string `json:"pool,omitempty" yaml:"pool,omitempty"`
+	Provider string `json:"provider,omitempty" yaml:"provider,omitempty"`
+	Model    string `json:"model,omitempty" yaml:"model,omitempty"`
 	// Admit is the list of repositories this source may serve (D3182), for the
 	// kinds that are a single credential of the project — anthropic, provider
 	// and vertex. It is per source and not per kind, because the same provider
@@ -122,7 +131,7 @@ type Source struct {
 	// is not admitted to is skipped (D3182, R20). RT2's decoder therefore
 	// refuses the member on launcher-pool and pool rather than storing
 	// something nothing reads.
-	Admit []string `json:"admit,omitempty"`
+	Admit []string `json:"admit,omitempty" yaml:"admit,omitempty"`
 }
 
 // Entry is one row of the table: the model or pattern it matches, and the chain
@@ -131,10 +140,10 @@ type Entry struct {
 	// Match is the model or pattern this entry answers (D3172). The most
 	// specific match wins, and config.PatternMatches is the one matcher, so
 	// this member is a string here and never a compiled expression.
-	Match string `json:"match"`
+	Match string `json:"match" yaml:"match"`
 	// Chain is the sources, first usable one wins (D3180: a source with no
 	// designated pool is skipped, not an error).
-	Chain []Source `json:"chain"`
+	Chain []Source `json:"chain" yaml:"chain"`
 }
 
 // Table is the ordered list of entries a project publishes. It is a slice and

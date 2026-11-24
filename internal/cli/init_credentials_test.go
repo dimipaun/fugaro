@@ -682,9 +682,11 @@ func TestUpdateKeepsTheVarsFileWhereTheAudiencePlanReadsIt(t *testing.T) {
 	// Three plans of the root: the installation step's two (the apply that
 	// creates the service, then the audience), and installation-2's, the stage
 	// that applies the root again for the scheduled jobs (R7) because this
-	// rig records no base image for the images stage to leave alone.
-	if len(dirs) != 3 {
-		t.Fatalf("the installation root planned %d times, want 3 (the apply that creates the service, the audience, then installation-2's): %v\n%s", len(dirs), dirs, s)
+	// rig records no base image for the images stage to leave alone, and the
+	// credentials-image stage's, the fourth, which writes the resident
+	// orchestrator's block into the installation that has none (it is default-on).
+	if len(dirs) != 4 {
+		t.Fatalf("the installation root planned %d times, want 4 (the apply that creates the service, the audience, installation-2's, then the orchestrator block's): %v\n%s", len(dirs), dirs, s)
 	}
 	// Both sides resolved, as computeCalls' comparison is: the fake records
 	// os.Getwd(), which answers a path with every symlink followed, while the
@@ -1118,8 +1120,10 @@ func TestUpdatePinsTheServiceImageByDigest(t *testing.T) {
 	// And installation-2's, the third: the stage that applies the root again
 	// once the images stage has pinned the base image the scheduled jobs run
 	// FROM (R7), which this rig has none of until that stage runs.
-	if apps := r.ran(t, "apply"); len(apps) != 3 {
-		t.Errorf("applies = %v, want the installation root three times (the installation stage's, the audience's, and installation-2's)", apps)
+	// And the fourth, the credentials-image stage's, which writes the resident
+	// orchestrator's block into an installation that has none (default-on).
+	if apps := r.ran(t, "apply"); len(apps) != 4 {
+		t.Errorf("applies = %v, want the installation root four times (the installation stage's, the audience's, installation-2's, and the orchestrator block's)", apps)
 	}
 
 	// A development build has no released image, so there is nothing to resolve

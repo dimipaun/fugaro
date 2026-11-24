@@ -566,3 +566,51 @@ func TestParityCorpusHoldsTheLedgersVocabulary(t *testing.T) {
 		t.Errorf("the corpus carries %d outcomes and the module's OUTCOME has 8: a new one is an outcome to bind, not to ignore", len(outcomes))
 	}
 }
+
+// TestParityCorpusHoldsThePairingExpiry is T8's extension of the corpus's use
+// (the pairing plan §15, T8): **the corpus is P4.1's and this task regenerates
+// nothing** — `shared/` is nobody's in that plan — but the pairing work's expiry
+// (`internal/mailbox/expiry.go`, P6.13's file, T7) draws the same boundary the
+// module's one `expired` case does, so the corpus is used here to hold the two
+// ends together. A change to `PromptTTLMs`, or a module whose prompt TTL moved
+// without the corpus being regenerated for it, is a failing test rather than a
+// drift no one reads.
+//
+// **The one-millisecond difference is stated rather than asserted away.** The
+// module refuses a *delivery* strictly past the TTL (`now - at > promptTtlMs`,
+// `index.js`'s `windowFor`), while this package's `PromptExpired` expires a
+// *held* prompt at the TTL itself (`now - at >= PromptTTLMs`), which is the
+// boundary `ConfirmMemory.ExpirePrompts` draws. So the corpus's case — a prompt
+// one millisecond past its TTL — is refused by both, and the two boundaries
+// part only at exactly the TTL, where the module would still accept a delivery
+// this package already considers expired. That is a property of two rules about
+// two different instants (a delivery arriving, a prompt being held), and it is
+// named here so a reviewer reads it rather than finding it.
+func TestParityCorpusHoldsThePairingExpiry(t *testing.T) {
+	corpus, _ := loadParityCorpus(t)
+	if corpus.Options.PromptTtlMs != PromptTTLMs {
+		t.Fatalf("the corpus judges prompts with a TTL of %d and this package expires them at %d: the two numbers have drifted",
+			corpus.Options.PromptTtlMs, PromptTTLMs)
+	}
+	found := 0
+	for _, scenario := range corpus.Scenarios {
+		for _, event := range scenario.Events {
+			if event.Code != string(CodeExpired) || event.Message == nil {
+				continue
+			}
+			found++
+			at, now := event.Message.At, event.Now
+			if now-at <= PromptTTLMs {
+				t.Errorf("%s: the module refuses the delivery %s at now-at = %d, which is not past this package's TTL of %d",
+					scenario.Name, CodeExpired, now-at, PromptTTLMs)
+			}
+			if !PromptExpired(at, now) {
+				t.Errorf("%s: the module refuses the prompt %s at now-at = %d and this package's PromptExpired calls it live",
+					scenario.Name, CodeExpired, now-at)
+			}
+		}
+	}
+	if found == 0 {
+		t.Fatalf("the corpus carries no %q case: the boundary this test holds has nothing on the module's end", CodeExpired)
+	}
+}

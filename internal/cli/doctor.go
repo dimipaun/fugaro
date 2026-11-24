@@ -577,6 +577,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// this backend, and Task 10 is what turns these into the enable's gate.
 	o.Checks = append(o.Checks, doctorBatchChecks(ctx, lc, crmSvc)...)
 	o.Checks = append(o.Checks, doctorPolicyChecks(ctx, lc, doctorRoutingLayerOf(ctx, rf))...)
+	o.Checks = append(o.Checks, doctorRepoAccountChecks(lc)...)
 	// The pools the published policy serves (DS3.1, MC1): a legacy-open one is
 	// served to whoever asks and D1942 asks doctor to name it. It reads the
 	// published node for itself — the policy checks above read it through
@@ -721,6 +722,21 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 
 	o.OK = !checksFail(o.Checks, strict)
 	return emitDoctor(cmd, o, asJSON, view)
+}
+
+// doctorRepoAccountChecks warns, before `fugaro update` is run, of every
+// repository entry that names a Claude account whose own allow_data_to does not
+// name the repository: the publish refuses that config (projectpolicy), and
+// every `fugaro update` after it would fail until it is closed.
+func doctorRepoAccountChecks(lc *localcfg.Config) []doctorCheck {
+	var out []doctorCheck
+	for _, g := range repoAccountGaps(lc) {
+		out = append(out, doctorCheck{ID: "repo-account-covered", Severity: "warning",
+			Problem: fmt.Sprintf("repos.%s.claude_accounts names the account %s, and claude_accounts.%s.allow_data_to does not name the repository, so the next `fugaro update` refuses to publish the policy",
+				pluginwire.Printable(g.repo), pluginwire.Printable(g.account), pluginwire.Printable(g.account)),
+			Fix: g.fix()})
+	}
+	return out
 }
 
 // doctorBaseImage warns when the installation has no Fugaro base recorded

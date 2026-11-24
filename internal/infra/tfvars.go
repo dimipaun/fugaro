@@ -1932,9 +1932,8 @@ const OrchestratorKey = "orchestrator"
 // fugaro-orch, the launcher's project role, the runs bucket's conditioned write
 // and its unconditioned read, the token-minter role on the budget signer ACCOUNT
 // and the job runner's role on each of the installation's jobs — and the
-// installation holds it as STATE. The ONE writer is `fugaro update
-// --firebase-project <id> --orchestrator` (internal/cli's
-// ensureOrchestratorBlock, through infra.Orchestrator and SetOrchestrator), and
+// installation holds it as STATE. The ONE writer is `fugaro update`
+// (internal/cli's ensureOrchestratorBlock, in the credentials-service stage; through infra.Orchestrator and SetOrchestrator), and
 // it writes the block only where the installation holds none: from the apply
 // that creates the account onwards every path that re-serializes the root's
 // tfvars rebuilds the document from a spec that does not carry the key, so
@@ -2001,7 +2000,7 @@ func CarriedOrchestrator(vars, prev []byte) ([]byte, error) {
 // renders and the invoker grant orchestrator.tf adds — exists on exactly the
 // installations this answers true for. The writer asks it before it writes, and
 // the credentials-service stage asks it before it re-pins an image: an
-// installation that has not opted in is one no run hands an orchestrator.
+// installation that holds no block is one no run recomposes one for.
 //
 // A key present as null is NOT recorded. VoiceServiceRecorded answers the other
 // way for the same shape, because the question there is whether a run may

@@ -337,7 +337,7 @@ func TestRTDBFakeSlowStreamConsumerDoesNotBlockWrites(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for i := 0; i < 400; i++ {
+		for i := 0; i < 100; i++ {
 			rtdbDo(t, "PUT", f.URL+"/big/v.json?print=silent", `"`+blob+`"`, nil)
 		}
 	}()

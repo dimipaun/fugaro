@@ -144,3 +144,13 @@ func TestAffectedOfAnUnmappedFileIsEmpty(t *testing.T) {
 		t.Errorf("Affected(nil) = %q, want no package", got)
 	}
 }
+
+func TestAffectedCountsATagGatedOnlyPackageFiles(t *testing.T) {
+	const listing = `{"ImportPath":"example.com/m/gated","Name":"gated","Dir":"/mod/gated",` +
+		`"Module":{"Path":"example.com/m","Main":true,"Dir":"/mod"},"IgnoredGoFiles":["gated_test.go"]}` + "\n"
+	g, err := ParseGraph(bytes.NewReader([]byte(listing)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkAffected(t, g, []string{"gated/gated_test.go"}, "example.com/m/gated")
+}

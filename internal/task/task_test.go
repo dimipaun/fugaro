@@ -319,6 +319,51 @@ func TestOwnerRuledValidation(t *testing.T) {
 	}
 }
 
+// TestResumesValidation covers resumes' own rules (task.Spec.Resumes,
+// docs/model-credentials-routing): the run it names is a run id, a resumed run
+// is a follow-up of the run it continues so the three follow-up members are
+// required beside it, and the two members must name the same run — a task that
+// continued one run's chain while reading another run's pause is one no launch
+// may write and no run may act on.
+//
+// Mutation (drop the `s.Resumes != s.PreviousRun` case): the second case below
+// validates, and a resumed run continues one chain while reading another run's
+// work. Mutation (drop the `!allFollowUp` case): the first case below
+// validates, and a resumed run is launched with a chain of its own, which is
+// the fresh copy of the budget the resume exists to avoid.
+func TestResumesValidation(t *testing.T) {
+	const run = "20260926-221530-a1b2"
+	base := func() *Spec {
+		return &Spec{Version: 1, RunID: "20260927-090000-c3d4", Repo: "acme/app", Ref: "main", Task: "carry it on",
+			Branch: "fugaro/" + run, PR: 7, PreviousRun: run, Resumes: run}
+	}
+	cases := []struct {
+		name string
+		edit func(*Spec)
+		want string
+	}{
+		{"no follow-up", func(s *Spec) { s.Branch, s.PR, s.PreviousRun = "", 0, "" },
+			"resumes needs branch, pr and previous_run"},
+		{"another run than the chain", func(s *Spec) { s.PreviousRun = "20260925-000000-0000" },
+			"a resumed run picks up the pause of the run it continues"},
+		{"not a run id", func(s *Spec) { s.Resumes = "the-last-one" }, "is not a run ID"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := base()
+			c.edit(s)
+			if err := s.Validate(); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("Validate() = %v, want it to mention %q", err, c.want)
+			}
+		})
+	}
+	// The honest pair: the four members together, and the task the
+	// orchestrator's launcher writes for a pause it read (PR4, D3185).
+	if err := base().Validate(); err != nil {
+		t.Fatalf("a resumed run's task: %v", err)
+	}
+}
+
 func TestApply(t *testing.T) {
 	rounds, budget := 4, 10.0
 	s := &Spec{Overrides: Overrides{ReviewRounds: &rounds, MaxBudgetUSD: &budget, Model: "m", TotalTimeout: "45m"}}

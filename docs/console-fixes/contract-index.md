@@ -62,7 +62,7 @@ read needs no slug beside it.
 | `run_id` | string | the run id, and the document's own id | every reader |
 | `slug` | string | the repository's storage key, `runs/<slug>/` | `runs ls`, `runs stats` (their scope) |
 | `repo` | string | the task's `owner/name`, with the slug as the fallback a reader shows where the task recorded none | the row's display name |
-| `updated_at` | timestamp | the record's `finished_at`, else its `started_at`, else the launch's `launched_at` | **the sort key**; the `--since` window |
+| `updated_at` | timestamp | the record's `finished_at`, else its `started_at`, else the launch's `launched_at`, else the run id's mint time (`runstore.RunTime`) | **the sort key**; the `--since` window |
 | `status` | string | `result.json`'s `status`, one of `runstore.Statuses`; absent when the record settled none | `--state`, the active set, `runs stats`, the estimate table |
 | `plan_task` | string | `launch.json`'s `plan_task` | `plan status`, `graph` (the join) |
 | `pr` | integer | the record's `pr.number`, else the task's pull request | `--pr` |
@@ -93,6 +93,16 @@ written, because the run exists and its task and launch do. A reader that has to
 tell "corrupt" from "never finalized" reads the bucket, as the listing's own
 `record unreadable` row already does — it is not this reader's job to invent the
 distinction.
+
+**Every entry carries a sort key**, and the last fallback is what a run that was
+claimed and never launched has: a `task.json` and nothing else, so neither a
+record nor a launch to take a moment from. It is the run id's own mint time
+(`runstore.RunTime`), which every run id names. Without it such an entry would
+have no `updated_at` and would fall outside **every** window, and `runs stats`'s
+`unlaunched` — the window's count of runs that never started — would be zero
+under the index while the record read counts them: that read's window is the run
+id's mint time too (`runstore.ListRunIDs`, which is also why the two counts are
+the same set and not merely two counts).
 
 ### The cost and compute figures the readers take
 

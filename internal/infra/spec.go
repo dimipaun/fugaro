@@ -1059,7 +1059,28 @@ func (c *repoCtx) resolveBitbucketProxied() error {
 // and handed in as Inputs.Policy, exactly as the proxy's half is
 // (resolveBitbucketProxied, same reason: internal/infra holds no client that
 // could read one and Repo is a pure function of its Inputs).
-func (c *repoCtx) sharedRepo() bool { return SharedRepo(c.in.Policy, c.provider, c.in.Repo) }
+//
+// A repository with a workflow whose tools live in its own derived image
+// (checkout other than clone) keeps its per-repository jobs until the shared
+// job carries that image (SharedJobBaked), because fugaro run launches that
+// workflow on the per-repository job: enrolling the repository as shared would
+// leave update creating no job for the launch to find.
+func (c *repoCtx) sharedRepo() bool {
+	if !SharedJobBaked && c.in.Cfg != nil {
+		for _, w := range c.in.Cfg.Workflows {
+			if w.Checkout != config.CheckoutClone {
+				return false
+			}
+		}
+	}
+	return SharedRepo(c.in.Policy, c.provider, c.in.Repo)
+}
+
+// SharedJobBaked is whether a shared project job carries a baked workflow's
+// tools; S10 flips it in the change that deploys the catalog default image.
+// It is a variable so S4's and S10's tests admit the workflow the way
+// production will.
+var SharedJobBaked = false
 
 // buildServes is whether the credentials service serves the secrets of class
 // to this repository's BUILDS (B4.9, the S4 flip; D2076, D2077): the class
