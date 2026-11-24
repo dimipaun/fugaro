@@ -1056,8 +1056,13 @@ func TestVerifyRefusesAKeySetEnvelope(t *testing.T) {
 	buildPins := pins(rootPub, 7, pinned("signing-build", buildPub))
 
 	cases := []struct {
-		name   string
-		field  string
+		name  string
+		field string
+		// reason is a sentence the refusal has to contain, for the cases where
+		// naming the field is not enough: a document past this reader's bound is
+		// refused as a "document" whether the bound refused it or the truncation
+		// did, so the field alone leaves the bound pinned by nothing.
+		reason string
 		body   string
 		status int
 		why    string
@@ -1068,9 +1073,20 @@ func TestVerifyRefusesAKeySetEnvelope(t *testing.T) {
 			why: "an endpoint that answers anything but a document is a read that failed, and a reader that parsed the body of a 404 would be reading whatever the endpoint chose to say while refusing",
 		},
 		{
-			name: "larger than this reader will hold", field: "document",
-			body: strings.Repeat("x", maxKeySetBytes+1),
-			why:  "the document is bounded before it is parsed, so an endpoint -- or whoever can answer for it -- cannot make this service hold a body of their choosing",
+			name: "larger than this reader will hold", field: "document", reason: "larger than",
+			// A set that is otherwise entirely valid -- the header carries the
+			// whitespace that makes it big, and a JSON decoder reads past it -- so
+			// that the only thing refusing this document is its size: a body that
+			// was refused for being unreadable instead would leave the bound itself
+			// pinned by nothing.
+			body: func() string {
+				head, _ := json.Marshal(mobilesession.KeySetHeader{Alg: mobilesession.KeySetAlg, Kid: testRootKID, Typ: mobilesession.KeySetTyp})
+				head = append(head, []byte(strings.Repeat(" ", maxKeySetBytes))...)
+				payload, _ := json.Marshal(mobilesession.KeySet{Format: mobilesession.KeySetFormat, Seq: 8, Iat: testNow.Unix(), Exp: validUntil().Unix(), JWKS: mobilesession.JWKS{Keys: keys}})
+				signing := b64(head) + "." + b64(payload)
+				return signing + "." + b64(ed25519.Sign(rootPriv, []byte(signing)))
+			}(),
+			why: "the document is bounded before it is parsed, so an endpoint -- or whoever can answer for it -- cannot make this service hold a body of their choosing",
 		},
 		{
 			name: "signed with an algorithm this contract does not name", field: "alg",
@@ -1202,6 +1218,8 @@ func TestVerifyRefusesAKeySetEnvelope(t *testing.T) {
 				t.Fatalf("an assertion was accepted from a key set %s: %s", tc.name, tc.why)
 			} else if field := refusalField(t, err); field != tc.field {
 				t.Errorf("the refusal names %q, want %q: %v", field, tc.field, err)
+			} else if tc.reason != "" && !strings.Contains(err.Error(), tc.reason) {
+				t.Errorf("the refusal is %q, which does not say %q: this case was refused by something other than the rule it is here to pin", err.Error(), tc.reason)
 			}
 		})
 	}
