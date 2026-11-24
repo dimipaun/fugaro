@@ -137,6 +137,7 @@ this document.
 | D3331 | What regression guard to add? | A mount rule in B0.2 (no `secret_key_ref`/`availableSecrets` in run-job modules and Go job builders) plus a doctor check listing any deployed job with a `value_source` | **As recommended** (2026-11-23) |
 | D3332 | Refetch during long runs? | No: fetch once at bootstrap | **As recommended** (2026-11-23) |
 | D3333 | How does the service learn what a run may fetch? | The run names the logical secret from its own `fugaro.yaml` (a new request field, format version bumped); the service checks the verified job's repository against the secret's allow-list | **As recommended** (2026-11-23). The unit of access becomes the repository, not the workflow |
+| D3334 | Two repositories hold different values under one name when `update` copies them into `fugaro_p_<name>` (D3325): what does update do? | Stop that name only: converge every other name, leave the colliding name on its current path, print one line naming both repositories and the fix (rename one in `fugaro.yaml`, store it with `fugaro secrets shared set`); the next update finishes it | **As recommended** (2026-11-23). Asked during planning, after the reconciliation was written |
 
 ### Consequences of the answers, stated once
 
@@ -182,6 +183,12 @@ this document.
   their plans. **Answer:** the guard allows exactly two named "until" rows, the shared jobs' App key
   (until C2.3) and provider keys (until KS16); the owning task's pull request deletes its row, and
   nothing else may be added.
+- **T2 (answered 2026-11-23).** D3334 leaves a colliding name "on its current path", and for a
+  held-off (vertex) repository that path is a mount, which T1's two-row guard does not admit.
+  **Answer:** a colliding name stays on S3's per-container fetch (`/v1/workflow-secrets` version 1
+  and the service's per-container grant), for held-off repositories too (they gain the address,
+  D3326), so no job mounts it and the guard stays at two rows. The version-1 route and its grant stay
+  until no installation reports a collision; a follow-up task removes them (plan, "After this plan").
 - **O1.** The owner confirms that the new allow-list being repository-wide (D3333) is meant to
   replace the per-workflow binding S3 enforced (G19). Recorded as accepted; listed so a reviewer sees it.
 
