@@ -252,12 +252,17 @@ where the plan requires the timeout to be named.
   `confirmed it`, `yes`, `sure`, `yes, merge it` (G10), "Fugaro, confirm it" and anything with
   an invisible format character are **not**. A caller that configures its own wake-word aliases
   in P6.1 must keep this module on the same set (today: the default).
-- **Not the gate.** D2786's read-back is the *phone's* here: this module decides that a costly
-  start must be read back, and nothing refuses a client that skipped it. The mailbox gate that
-  refuses a modified client is **J5a's** (the plan's O10), because a launch is not a mailbox
-  action yet — `internal/mailbox`'s `ConfirmValidateAction` refuses a launch record outright,
-  and J5a types the launch action. Until then the read-back is the phone's and the cost caps
-  bound a client that ignores it.
+- **Not the gate, and not the wiring.** D2786's read-back is decided *here*, but nothing carries
+  a costly start into this module yet: no producer hands a launch a `mode` (`shared/command`
+  gains the verb and its `mode` under **J4**), and the app builds its confirm state from D113's
+  `CONFIRM_FIELDS` (`timeoutMs`, `maxPending`, `maxLedger`), so neither the session policy nor a
+  start's mode reaches a phone. Wiring the producer and the policy's plumbing is **J4's**
+  (`shared/command/verbs.js`, `mobile/src/mailbox/client.js`); until it lands, a costly start
+  exists in this module and in the vectors and nowhere else. The mailbox gate that refuses a
+  client which skipped the read-back is **J5a's** (the plan's O10), because a launch is not a
+  mailbox action yet — `internal/mailbox`'s `ConfirmValidateAction` refuses a launch record
+  outright, and J5a types the launch action. Until then the cost caps bound a client that
+  ignores the read-back.
 - **Not the biometric.** It answers *whether* the session asks for it; asking (Face ID,
   fingerprint) is P5.1g's path in the app.
 - **Not the executor.** A `confirmed` answer carries P6.3's action record —
@@ -325,7 +330,10 @@ Error [ERR_MODULE_NOT_FOUND]: Cannot find module
 `vectors.json` carries the accept and refuse cases as **data** (`cases: [{ name, events,
 expect }]`) for P6.7's Go parity test, and the JS suite replays it verbatim
 (`the vectors file replays exactly: every accept and every refusal`), so the two readers cannot
-drift without a test failing.
+drift without a test failing. An `expect[i]` may also name `state` — the counts of the pending
+read-backs and of the ledger entries the step produced — which both readers assert beside the
+answer, so a step that answers correctly and leaves the wrong machine behind is a failing case
+rather than a divergence nothing looks at.
 
 ## Honest limits
 
