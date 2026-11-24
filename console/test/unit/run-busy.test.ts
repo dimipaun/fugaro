@@ -160,9 +160,17 @@ function classed(root: FakeNode, className: string): readonly FakeNode[] {
 }
 
 /** flush lets the entry's own microtasks run: every read is answered through a
- * promise, and a drawing lands a turn after the call that asked for it. */
+ * promise, and a drawing lands a turn after the call that asked for it.
+ *
+ * The Spend screen makes **two** reads on a visit -- the report and, by default,
+ * the by-person breakdown (D3214) -- and the report section is not filled until
+ * both have answered, so a flush that was deep enough for the report alone is a
+ * turn or two short of the drawing. The loop is a fixed count rather than a
+ * wait on a condition because every read here is a promise this fake resolves
+ * itself: nothing is on the wire, and the only thing that can still be out after
+ * these turns is a read the case is holding open on purpose. */
 async function flush(): Promise<void> {
-  for (let i = 0; i < 8; i += 1) await Promise.resolve()
+  for (let i = 0; i < 24; i += 1) await Promise.resolve()
 }
 
 /** holding is a bridge answer the case releases by hand. A promise that is

@@ -26,6 +26,56 @@ func (b *Backend) location() string {
 	return "projects/" + b.o.GCPProject + "/locations/" + b.o.Region
 }
 
+// ErrStartedUnnamed is StartJob's answer when the platform accepted the start
+// -- the execution is running -- but the operation reported no name the backend
+// can read. It is not a failed start: a caller that only prints the execution
+// has no name to print, and one that needs the name has none, but nothing may
+// read it as "nothing was started" and start a second one.
+var ErrStartedUnnamed = errors.New("the execution started but the platform reported no name for it")
+
+// StartJob starts one execution of one of the installation's own jobs with a
+// container-args override, and returns the execution's name -- or
+// ErrStartedUnnamed, when the platform started the execution but the operation
+// reported no name the backend can read, which is not the same as a start that
+// did not happen.
+//
+// It is not Launch: a launch is a run, built from a backend.LaunchSpec, with
+// FUGARO_RUN and the run's environment in the override and its own bookkeeping
+// around it. This is the installation's own job -- the history job's reindex
+// pass (RI5), started by `fugaro update` and `fugaro runs reindex` -- for which
+// there is no run, no spec and nothing to record: the arguments select the
+// job's own mode, and nothing waits on the execution.
+//
+// No timeout override is set, which is deliberate: the job's own timeout is
+// what the reindex's resume point is measured against (Fold.StartLimit, from
+// the execution's deadline), and a longer one here would let a pass outlive
+// the bound it leaves its cursor at.
+func (b *Backend) StartJob(ctx context.Context, job string, args []string) (string, error) {
+	req := &run.GoogleCloudRunV2RunJobRequest{}
+	if len(args) > 0 {
+		req.Overrides = &run.GoogleCloudRunV2Overrides{
+			ContainerOverrides: []*run.GoogleCloudRunV2ContainerOverride{{Args: args}},
+		}
+	}
+	op, err := b.run.Projects.Locations.Jobs.Run(b.location()+"/jobs/"+job, req).Context(ctx).Do()
+	if err != nil {
+		return "", fmt.Errorf("starting the %s job: %w", job, err)
+	}
+	var meta struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(op.Metadata, &meta); err != nil || meta.Name == "" {
+		// The execution is running; only its name could not be read.
+		return "", fmt.Errorf("%w (operation %s)", ErrStartedUnnamed, op.Name)
+	}
+	id, err := b.canonical(meta.Name)
+	if err != nil {
+		// The execution is running; only its name could not be read.
+		return "", fmt.Errorf("%w (operation %s): %w", ErrStartedUnnamed, op.Name, err)
+	}
+	return id.String(), nil
+}
+
 // JobPath is the full resource name of the Cloud Run job of (slug, workflow).
 func (b *Backend) JobPath(slug, workflow string) string {
 	return b.location() + "/jobs/" + JobName(slug, workflow)
@@ -239,7 +289,7 @@ func (b *Backend) Execution(ctx context.Context, name string) (backend.Execution
 	if err != nil {
 		return backend.Execution{}, err
 	}
-	e, err := b.run.Projects.Locations.Jobs.Executions.Get(id.String()).Context(ctx).Do()
+	e, err := retryRead(ctx, b.run.Projects.Locations.Jobs.Executions.Get(id.String()).Context(ctx))
 	if err != nil {
 		return backend.Execution{}, apiError("reading execution "+id.String(), err)
 	}
@@ -277,7 +327,7 @@ func (b *Backend) list(ctx context.Context, parent string, onlyFugaro bool, f ba
 	var out []backend.Execution
 	token := ""
 	for {
-		resp, err := b.run.Projects.Locations.Jobs.Executions.List(parent).PageSize(b.listPageSize).PageToken(token).Context(ctx).Do()
+		resp, err := retryRead(ctx, b.run.Projects.Locations.Jobs.Executions.List(parent).PageSize(b.listPageSize).PageToken(token).Context(ctx))
 		if err != nil {
 			return nil, apiError("listing executions of "+parent, err)
 		}
@@ -318,7 +368,7 @@ func (b *Backend) LongestTaskTimeout(ctx context.Context) (time.Duration, error)
 	var longest time.Duration
 	token := ""
 	for {
-		resp, err := b.run.Projects.Locations.Jobs.List(b.location()).PageSize(b.listPageSize).PageToken(token).Context(ctx).Do()
+		resp, err := retryRead(ctx, b.run.Projects.Locations.Jobs.List(b.location()).PageSize(b.listPageSize).PageToken(token).Context(ctx))
 		if err != nil {
 			return 0, apiError("listing jobs", err)
 		}
@@ -345,7 +395,7 @@ func (b *Backend) LongestTaskTimeout(ctx context.Context) (time.Duration, error)
 // TaskTimeout is the task timeout of the workflow's job, Cloud Run's default
 // (backend.DefaultTaskTimeout) when the job sets none.
 func (b *Backend) TaskTimeout(ctx context.Context, slug, workflow string) (time.Duration, error) {
-	j, err := b.run.Projects.Locations.Jobs.Get(b.JobPath(slug, workflow)).Context(ctx).Do()
+	j, err := retryRead(ctx, b.run.Projects.Locations.Jobs.Get(b.JobPath(slug, workflow)).Context(ctx))
 	if err != nil {
 		return 0, apiError("reading job "+JobName(slug, workflow), err)
 	}
@@ -386,7 +436,7 @@ func (b *Backend) JobFullEnv(ctx context.Context, job string) (map[string]string
 	if !nameRE.MatchString(job) {
 		return nil, false, fmt.Errorf("bad job name %q", job)
 	}
-	j, err := b.run.Projects.Locations.Jobs.Get(b.location() + "/jobs/" + job).Context(ctx).Do()
+	j, err := retryRead(ctx, b.run.Projects.Locations.Jobs.Get(b.location()+"/jobs/"+job).Context(ctx))
 	if err != nil {
 		err = apiError("reading job "+job, err)
 		if errors.Is(err, backend.ErrNotFound) {
@@ -424,7 +474,7 @@ func (b *Backend) JobSecretRefs(ctx context.Context, job string) (map[string]str
 	if !nameRE.MatchString(job) {
 		return nil, false, fmt.Errorf("bad job name %q", job)
 	}
-	j, err := b.run.Projects.Locations.Jobs.Get(b.location() + "/jobs/" + job).Context(ctx).Do()
+	j, err := retryRead(ctx, b.run.Projects.Locations.Jobs.Get(b.location()+"/jobs/"+job).Context(ctx))
 	if err != nil {
 		err = apiError("reading job "+job, err)
 		if errors.Is(err, backend.ErrNotFound) {

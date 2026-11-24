@@ -577,11 +577,11 @@ func (o *workspaceOwnerSide) clients(ctx context.Context) (*infra.Clients, error
 
 // workspaceSides is the single value every fixed-deps command of this family is
 // handed: it implements each interface those commands take -- C1's Store and
-// AuditSink, C2's Authority, MemberOps, StateWriter and CredentialProbe, and
-// WU18's folder read -- over one workspace's own side. One type rather than six
-// wrappers, because every one of them answers from the same three reads (the
-// config, its database, its roster) and six copies of that reading would be six
-// places to keep in step.
+// AuditSink, C2's Authority, MemberOps, StateWriter and CredentialProbe, WU18's
+// folder read, and WU7's own-intake sweeper (F21) -- over one workspace's own
+// side. One type rather than six wrappers, because every one of them answers
+// from the same three reads (the config, its database, its roster) and six
+// copies of that reading would be six places to keep in step.
 //
 // It holds a POINTER to the side, so a value handed to a command before the
 // command's flags were parsed is filled in place and the command's own copy of
@@ -598,6 +598,7 @@ var (
 	_ workspace.StateWriter     = workspaceSides{}
 	_ workspace.CredentialProbe = workspaceSides{}
 	_ workspaceLinkFolders      = workspaceSides{}
+	_ workspaceSweeper          = workspaceSides{}
 )
 
 // errWorkspaceSideUnwired is what a sides value no command was given answers. It is a
@@ -800,6 +801,22 @@ func (s workspaceSides) Offboard(ctx context.Context, m workspace.MemberTarget, 
 		return err
 	}
 	return ops.Offboard(ctx, m, address)
+}
+
+// Sweep is the WORKSPACE's own intake (F21): the containers a person stored at
+// the workspace's project, deleted by that project's intake's own account. It is
+// memberSweeper's pattern at the other installation an offboarding reaches, and
+// the address is the workspace's own config's -- the project the workspace is
+// named after (D2821) -- which is never a member's, exactly as the
+// single-installation offboard resolves it (offboardSweep).
+func (s workspaceSides) Sweep(ctx context.Context, address string) ([]string, error) {
+	if s.side == nil {
+		return nil, errWorkspaceSideUnwired
+	}
+	if err := s.side.ensure(ctx); err != nil {
+		return nil, err
+	}
+	return offboardSweep(ctx, s.side.lc, address)
 }
 
 func (s workspaceSides) Audit(ctx context.Context, m workspace.MemberTarget, id string, event []byte) error {
@@ -1461,6 +1478,7 @@ func workspaceRosterOpenFor() workspaceRosterOpen {
 			Audit:     sides,
 			Members:   sides,
 			Authority: sides,
+			Sweep:     sides,
 			Linked:    workspaceLinkedOnce(o),
 			getenv:    os.Getenv,
 			now:       time.Now,

@@ -359,8 +359,18 @@ const (
 // writer is the converge — `fugaro update`'s migration writes a project's first
 // table (MG2) and `fugaro routing set` edits one after that (RT5) — so neither a
 // name in the allowlist nor a prefix of it reaches a row of it.
+//
+// PL1 of docs/model-credentials-routing/ is the last mover after it, by four
+// rows and by none: a pool's `rule`, its `principal.kind` and `principal.id`
+// (R21, D3181) and its `threshold` (D3178, refused wherever it is written until
+// the rule that reads it ships) are rows of the local
+// project config (`internal/localcfg/localcfg.go:298`) and of no other layer —
+// not the repository's `fugaro.yaml` and not the published policy node, the
+// same block RT2 above calls the local config's — and the allowlist's
+// `pools.*.members` and `pools.*.strategy` names reach none of them, so the
+// four join the rows with no generic writer.
 const (
-	cfmRegistryRows   = 535
+	cfmRegistryRows   = 540
 	cfmAllowlistNamed = 121
 )
 
@@ -628,6 +638,11 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 // the local config's own `bitbucket_tokens.*` block is the machine's file, one
 // row per member of a typed Bitbucket token's record, and no name or prefix in
 // the allowlist reaches it.
+//
+// WS19 of docs/workspace-service/ is the last mover, by one row and by none:
+// the owner's shared list gains `workspace_shared.*.all_members`, written by
+// `fugaro workspace share --all-members` and by no name or prefix in the
+// allowlist (the whole block is the `workspace` family's, D853).
 //
 // It counts through the same predicate the write path uses, so the test and the
 // command cannot disagree about what "the allowlist carries" means: the three

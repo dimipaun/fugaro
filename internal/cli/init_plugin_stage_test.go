@@ -334,6 +334,11 @@ func TestInitPluginStageInstallsWhereThePinCannotBeTakenOut(t *testing.T) {
 // the loop's stop, and everything behind the plugin waited.
 func TestInitPluginStageLeavesAnUnremovablePinForTheUser(t *testing.T) {
 	releaseBuild(t, "0.2.0")
+	// An empty config directory, so the plugin record the stage's own read
+	// consults is this test's and not the host's: a machine whose plugin is
+	// newer than this release would read the install half as nothing to do and
+	// fail the test on that machine alone.
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
 	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)

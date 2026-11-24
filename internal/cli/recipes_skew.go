@@ -1101,12 +1101,9 @@ var sealRunnerIntroduced = time.Date(2026, 10, 17, 17, 45, 33, 0, time.UTC)
 // has the release checklist verify it. internal/cli/run.go gates a launch
 // that would set a title against an older build record, exactly as it does
 // for a named Claude account (namedTokensSince) and for mode: artifact
-// (artifactsSince); a launch that ends with no title at all — no --title,
-// no title inherited from the run it continues and no brief to take one
-// from — writes no such field and is never gated. A plain `--pr` follow-up
-// is not one of those any more: it takes the pull request's title when the
-// host can be read (followUpPRTitle), and the gate then judges that field
-// like any other title's.
+// (artifactsSince). A launch with no title at all is refused before it is
+// gated (createTask), and a plain `--pr` follow-up carries its chain's title,
+// so the gate judges a follow-up's inherited title like any other.
 const titlesSince = "0.8.5"
 
 // planTaskSince is the first fugaro release whose runner reads a task's
@@ -1882,10 +1879,14 @@ func checkImageSinceDev(ctx context.Context, env *cloudEnv, slug string, spec *t
 // per-workflow record is one `fugaro image build --workflow` and `image
 // refresh` refuse to write while repo-level images are disabled, so it stays
 // at whatever base it had when the catalog took over, and judging it would
-// refuse a launch on an image nothing runs. A failed resolution is not an
-// answer, so the repository's own record is judged as before.
+// refuse a launch on an image nothing runs. That is as true for a launch from
+// outside the repository's checkout as from inside it: the entry is the
+// deployed job's image and the project's map is what names it for this
+// repository, neither of which a checkout is needed for
+// (deployedCatalogEntry). A failed resolution is not an answer, so the
+// repository's own record is judged as before.
 func launchCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) (config.Entry, bool) {
-	entry, ok, err := deployedCatalogEntry(ctx, env, slug, spec)
+	entry, ok, _, err := deployedCatalogEntry(ctx, env, slug, spec)
 	if err != nil || !ok {
 		return config.Entry{}, false
 	}

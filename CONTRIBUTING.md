@@ -26,11 +26,13 @@ Terraform changes: `terraform fmt -check -recursive deploy/terraform`, and `terr
 
 ## What CI runs
 
-`.github/workflows/ci.yml` has three jobs. CI is not a pull-request gate (the owner's 2026-10-16 ruling: the in-run loop already runs the tests): it runs on every push to `main` and on demand with `gh workflow run ci --ref <branch>`, and `scripts/release-gate.sh` requires it green on the tag's commit. Run it against your branch before merging.
+`.github/workflows/ci.yml` runs on demand and on one nightly schedule, and never on a push or a pull request (the owner's rulings of 2026-10-16 and 2026-11-07: the in-run loop already runs the tests, and a run per push is what the dispatch-only ruling keeps out). **A dispatch is selected by default**: `scripts/ci-select` runs only the packages and tests your diff against the last full run on `main` can reach, and `-f full=true` runs everything. Run a selected run against your branch before merging (`gh workflow run ci --ref <branch>`), and note that a selected run is not a gate: `scripts/release-gate.sh` requires a **full** run green on the tag's commit and ignores a selected one, so the tag's own run is dispatched — by a release, or by hand with `gh workflow run ci --ref main -f full=true`.
 
 - `test`: gofmt, `go vet` with every tag above, then `go test -race ./...`
 - `terraform`: fmt, validate and `terraform test` of every root under `deploy/terraform/gcp/roots/` (the job's `for r in ...` loop — `compute` is added by the staged `docs/pending-workflows/ci.yml`, so until that file is copied in the new root is validated locally only), tflint, a Trivy scan, and the `terraform`-tagged tests
 - `rules`: the database rules against the emulator, which fails (not skips) if the emulator is missing
+
+The selector's reach beyond the import graph is the committed read-map, `docs/ci-affected-tests/read-map.json`: the repository files each test package reads by path, which the graph cannot see ([docs/ci-affected-tests/README.md](docs/ci-affected-tests/README.md) is the plan and its reconciliation). The nightly full run uploads what its tests opened as `reads-*` artifacts, and the map is refreshed from them **by a normal pull request, never by a push from CI**: download that run's artifacts (`gh run download <run-id>`), then `go run ./scripts/ci-readmap --from-artifact <dir>` from the repository root, and commit the file — the scan alone, with no trace, is `go run ./scripts/ci-readmap`. A map that has gone stale is caught by `internal/ciselect`'s own tests rather than by a clock.
 
 One package needs a bound of its own. `go test` kills any package still running after `-timeout`, and that timeout is 10 minutes per package unless you say otherwise; `internal/runner`'s own suite takes about 25 minutes, so a plain `go test -race ./...` reports it as a panic rather than as a failing test. Run it on its own with a longer bound:
 

@@ -1612,6 +1612,171 @@ func TestReviewRefusesATokenOnTheImplicitJob(t *testing.T) {
 		"fugaro run --pr N --recipe "+reviewOnlyRecipe)
 }
 
+// reviewImplicitPolicy is the published node of a project that declares no
+// profile for its provider — the shape option C's implicit review-only job
+// exists for (docs/review-job/spec.md): a review launched against it resolves no
+// shared coding job, so its variant cannot be derived and the launch lands on
+// the installation's implicit review-only job, which is the one place the
+// account axis of that job is judged (implicitReviewJobFor). naming, when not
+// "", is the project's default_claude_account (D873's rung 4).
+//
+// The accounts block is the project's own, one exact list per account, which is
+// what bounds each token's repositories (D3) and what the credentials service
+// pairs a review caller against when a job asks it for a credential.
+func reviewImplicitPolicy(t *testing.T, naming string) string {
+	t.Helper()
+	head := `{"version":9,`
+	if naming != "" {
+		head += `"default_claude_account":"` + naming + `",`
+	}
+	return head + `"allow_repos":["github/acme/*"],` +
+		`"accounts":{"acme-personal":{"allow_repos":["github/acme/app"]},"default":{"allow_repos":["github/acme/app"]}}}`
+}
+
+// repoYAMLWithAccount is the fixture's oauth checkout with the account its own
+// fugaro.yaml commits (agent.oauth_token, rung 3 of the accounts chain): the
+// shape a repository whose document picks its reviewer's account carries.
+func repoYAMLWithAccount(t *testing.T, account string) string {
+	t.Helper()
+	const auth = "  auth: oauth\n"
+	if !strings.Contains(projectJobOAuthRepoYAML, auth) {
+		t.Fatalf("the fixture's oauth checkout no longer holds %q:\n%s", auth, projectJobOAuthRepoYAML)
+	}
+	return strings.Replace(projectJobOAuthRepoYAML, auth, auth+"  oauth_token: "+account+"\n", 1)
+}
+
+// TestReviewLaunchesOnTheImplicitJobOfAProjectWithANamedDefaultAccount is the
+// case Check 750 hit on 2026-11-24: the project's default Claude account is a
+// named one (default_claude_account, D873's rung 4), so a review launched with
+// no --token resolves its account the way every other launch of that project
+// does — and the implicit review-only job serves exactly that account, its
+// segment being the deployment's own spelling of the project's default
+// (internal/infra's ImplicitReviewJobName, whose axis writes the default as the
+// empty string and the variant as config.DefaultClaudeAccount). The launcher
+// compared the resolved name with the segment's literal spelling and refused
+// the launch with "which serves one account: the default one", naming an
+// account nobody had asked for and telling the person to drop a --token they
+// never passed.
+//
+// The third case is the control: the same installation, with no
+// default_claude_account in its local config and none in its published node, is
+// unchanged — the launch is admitted onto the job and its task names no account
+// at all.
+//
+// Mutation (run, restored): compare reviewAccount(spec) with
+// config.DefaultClaudeAccount instead of the policy's default
+// (implicitReviewServedAccount), and the first two cases refuse.
+func TestReviewLaunchesOnTheImplicitJobOfAProjectWithANamedDefaultAccount(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		naming   string // the project's default_claude_account, "" for none
+		args     []string
+		account  string // the account the stored task must name
+		codeOnly bool
+	}{
+		{name: "review", naming: "acme-personal", args: []string{"--pr", "7"}, account: "acme-personal"},
+		{name: "code-only review", naming: "acme-personal", args: []string{"--pr", "7", "--code-only"}, account: "acme-personal", codeOnly: true},
+		{name: "no named default", args: []string{"--pr", "7"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newReviewFixture(t)
+			if tc.naming != "" {
+				f.appendConfig(t, "default_claude_account: "+tc.naming+"\n")
+			}
+			publishPolicy(t, f.launchBudgetFixture, reviewImplicitPolicy(t, tc.naming))
+			// The config declares a github profile, and the deployer composes
+			// no project job for one until exactly one App ID is recorded: this
+			// launch reads the job back out of that composition
+			// (implicitReviewJob), which fails without it.
+			recordGitHubAppID(t)
+			// The fixture's own base image is as old as the policy node it has
+			// to read, and a review launched onto it has its spec dropped
+			// (reviewSpecSkew, D2933): this test reads the block the --code-only
+			// flag writes, so the installation is put on a release that carries
+			// it.
+			setBaseImage(t, reviewSpecSince)
+			projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+
+			if _, errOut, err := reviewCLI(t, tc.args...); err != nil {
+				t.Fatalf("a review of PR #7 on a project whose default account is %q: %v (stderr %q)", tc.naming, err, errOut)
+			}
+			calls := f.run.RunRequests()
+			if len(calls) != 1 {
+				t.Fatalf("the launch asked Cloud Run for %d executions, want 1", len(calls))
+			}
+			if implicit := infra.ImplicitReviewJobName("github"); calls[0].Job != implicit {
+				t.Errorf("the review ran the job %q, want the installation's implicit review-only job %q", calls[0].Job, implicit)
+			}
+			if named := credsvc.ReviewJobName("standard", "github", "acme-personal"); calls[0].Job == named {
+				t.Errorf("the review ran the named account's own review variant %q: a launch that resolves no shared coding job runs the implicit one, whatever account the project's default is", named)
+			}
+			if perRepo := gcp.JobName(appSlug, "web"); calls[0].Job == perRepo {
+				t.Errorf("the review ran the repository's own job %q: that container mounts the repository's token, and a review takes its credential from the installation's credentials service", perRepo)
+			}
+			if got := calls[0].Env[runner.EnvReviewJob]; got != "1" {
+				t.Errorf("%s = %q on the review's execution, want \"1\": the marker is what tells the run it is the review job", runner.EnvReviewJob, got)
+			}
+			slug, id, err := parseRunRef(storedRunRef(t, f.cloudFixture))
+			if err != nil {
+				t.Fatal(err)
+			}
+			spec := reviewTaskSpec(t, f.cloudFixture, slug, id)
+			if spec.Mode != recipe.ModeReview {
+				t.Errorf("the stored task's mode is %q, want %q", spec.Mode, recipe.ModeReview)
+			}
+			if spec.OAuthToken != tc.account {
+				t.Errorf("the stored task names the account %q, want %q: the account the launch resolves is the one the implicit job serves", spec.OAuthToken, tc.account)
+			}
+			switch {
+			case tc.codeOnly && (spec.ReviewSpec == nil || spec.ReviewSpec.Source != task.ReviewSpecNone || spec.ReviewSpec.Reason != launchSpecCodeOnly):
+				t.Errorf("a --code-only review's spec block is %+v, want a none source with the %s reason", spec.ReviewSpec, launchSpecCodeOnly)
+			case !tc.codeOnly && spec.ReviewSpec != nil && spec.ReviewSpec.Reason == launchSpecCodeOnly:
+				t.Errorf("a plain review's spec block says %q: --code-only was not passed", spec.ReviewSpec.Reason)
+			}
+		})
+	}
+}
+
+// TestReviewRefusesAnAccountTheProjectDoesNotDefaultTo is the other half of the
+// account axis, on the installation above: a review whose account is NOT the
+// project's default is refused with the sentence that names the job's one
+// account, whether it came from --token or from the repository's own
+// agent.oauth_token (rung 3) — the second case being a launch the person passed
+// no flag on, which the sentence must not answer by telling them to drop one.
+//
+// Mutation (run, restored): drop the account refusal, and both launches are
+// admitted onto a job whose reviewer the credentials service pairs with the
+// project's default account, while their tasks name another.
+func TestReviewRefusesAnAccountTheProjectDoesNotDefaultTo(t *testing.T) {
+	const other = "acme-work"
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		committed bool // the repository's own fugaro.yaml names the account
+	}{
+		{name: "--token", args: []string{"--pr", "7", "--token", other}},
+		{name: "the repository's own agent.oauth_token", args: []string{"--pr", "7"}, committed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newReviewFixture(t)
+			f.appendConfig(t, "default_claude_account: acme-personal\n")
+			publishPolicy(t, f.launchBudgetFixture, reviewImplicitPolicy(t, "acme-personal"))
+			recordGitHubAppID(t)
+			yaml := projectJobOAuthRepoYAML
+			if tc.committed {
+				yaml = repoYAMLWithAccount(t, other)
+			}
+			projectJobCheckoutYAML(t, yaml)
+
+			err := wantReviewRefused(t, f.cloudFixture, tc.args, other, "serves one account", "acme-personal",
+				"fugaro run --pr N --recipe "+reviewOnlyRecipe)
+			if strings.Contains(err.Error(), "without --token") {
+				t.Errorf("the refusal tells the person to drop a --token, which this launch may never have passed: %q", err.Error())
+			}
+		})
+	}
+}
+
 // TestReviewRefusesABitbucketRepositoryTheNodeDoesNotBroker is the credential
 // axis of the same resolution, and the one state the implicit job cannot serve
 // at all: the job mounts no Bitbucket token (it is the property that makes it a

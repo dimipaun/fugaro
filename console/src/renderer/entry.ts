@@ -140,6 +140,8 @@ import type {
 } from './screens/spend'
 import { cacheInvalidator } from './cache-invalidate'
 import type { CacheScope } from './cache-invalidate'
+import { prewarm } from './prewarm'
+import type { PrewarmTab } from './prewarm'
 import {
   BUSY_SLOT_CLASS,
   CACHE_FRESH_MS,
@@ -266,6 +268,7 @@ import {
   launchSupported,
   modelsListSupported,
   orchestratorMapSupported,
+  planStatusNoMergesSupported,
   runsListPageSupported,
   runsSummarySupported,
   seatsSupported,
@@ -3330,6 +3333,21 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * for a section nobody is looking at the moment the run is left. */
   let leaveRun: () => void = () => undefined
 
+  /** startPrewarm is the queue that reads the other tabs into their caches once
+   * the tab on screen has been painted (PW1, D2906). It is a door of the same
+   * kind as the four above: the reads it starts belong to the sections below it
+   * -- they are `bridge` calls and the tabs' own caches -- and the navigation
+   * that owns the first paint is written above every screen. `drawLive` calls
+   * it, and it is a variable here for the reason the doors are. */
+  let startPrewarm: () => void = () => undefined
+
+  /** prewarmed is whether that queue has already run for this installation. It
+   * is started from the Live screen's first paint, and `drawLive` runs on every
+   * poll tick -- so the flag is what keeps the console's reads for the *other*
+   * tabs to once. `forgetLive` clears it with the rest of the installation's
+   * state, because the caches it filled are that installation's. */
+  let prewarmed = false
+
   /** show switches the panel to one view. The Live screen is not re-read here --
    * its model is the one the last poll drew, which is the point of a live
    * screen -- and the other three read on entry. The Live screen's **rigor join**
@@ -3577,43 +3595,59 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // would replace the screen they did open. The interval is stopped by
     // `syncPolling`; this is the read that was already on its way.
     if (currentView !== 'live') return
-    const answer = replyData(reply)
-    if (!answer.ok) {
-      rail.setState('silent')
-      refuse('live.watch', answer.sentence, () => void pollLive())
-      return
+    /** paintLive puts this answer on the panel: the frame, or the refusal for a
+     * read the console could not make. It is a closure of its own so that the
+     * prewarm below follows **every** first paint -- a console whose feed refused
+     * has painted its active tab just as one whose frame landed has, and the tabs
+     * it is not showing are read for it the same way. */
+    const paintLive = (): void => {
+      const answer = replyData(reply)
+      if (!answer.ok) {
+        rail.setState('silent')
+        refuse('live.watch', answer.sentence, () => void pollLive())
+        return
+      }
+      const envelope = answer.data as Record<string, unknown>
+      live.reply = reply
+      const decoded = decodeSnapshot(envelope['document'], 'live.watch')
+      if (!decoded.ok) {
+        rail.setState('silent')
+        refuse('live.watch', decoded.skew.because, () => void pollLive())
+        return
+      }
+      const feed = feedHealthOf(envelope['receivedAt'], nowStamp())
+      // The rail's state word is this read's own: the console is reading this
+      // installation now (`running`), unless the frame it holds has gone quiet --
+      // which is the second of the two conditions the design gives `silent`
+      // (section 4.1). A read that was refused sets it above.
+      rail.setState(feed.stale ? 'silent' : 'running')
+      const model = buildLiveModel(decoded.value, history, feed, live.rigor, hourHistory)
+      setGauge({ notionalUsd: model.total.notionalUsd, countedUsd: model.total.countedUsd, capUsd: model.total.dailyCapUsd })
+      // The kill banner is the `kill` view. It is asked for through the gate --
+      // the one door -- with an empty drawing, because what a reduced console
+      // withholds here is not a screen but one panel of the Live screen: the
+      // answer decides whether the model the screen is handed carries the kill
+      // state at all.
+      const mayDrawKill = gate.drawScreen('kill', () => undefined) === 'drawn'
+      // The caps are the second view this screen withholds (`caps` beside `kill`
+      // above), and the answer travels the same way the kill banner's does: as a
+      // model the screen is handed, so a figure the gate withheld is one the
+      // gauge cannot draw back later.
+      const drawn = renderLive(factory, mayDrawKill ? model : killWithheld(model), theme, hidesView(gate.compatibility, 'caps'))
+      live.drawn = drawn
+      replace(drawn)
+      wireRuns(drawn, model)
+      placeLaunch()
     }
-    const envelope = answer.data as Record<string, unknown>
-    live.reply = reply
-    const decoded = decodeSnapshot(envelope['document'], 'live.watch')
-    if (!decoded.ok) {
-      rail.setState('silent')
-      refuse('live.watch', decoded.skew.because, () => void pollLive())
-      return
-    }
-    const feed = feedHealthOf(envelope['receivedAt'], nowStamp())
-    // The rail's state word is this read's own: the console is reading this
-    // installation now (`running`), unless the frame it holds has gone quiet --
-    // which is the second of the two conditions the design gives `silent`
-    // (section 4.1). A read that was refused sets it above.
-    rail.setState(feed.stale ? 'silent' : 'running')
-    const model = buildLiveModel(decoded.value, history, feed, live.rigor, hourHistory)
-    setGauge({ notionalUsd: model.total.notionalUsd, countedUsd: model.total.countedUsd, capUsd: model.total.dailyCapUsd })
-    // The kill banner is the `kill` view. It is asked for through the gate --
-    // the one door -- with an empty drawing, because what a reduced console
-    // withholds here is not a screen but one panel of the Live screen: the
-    // answer decides whether the model the screen is handed carries the kill
-    // state at all.
-    const mayDrawKill = gate.drawScreen('kill', () => undefined) === 'drawn'
-    // The caps are the second view this screen withholds (`caps` beside `kill`
-    // above), and the answer travels the same way the kill banner's does: as a
-    // model the screen is handed, so a figure the gate withheld is one the
-    // gauge cannot draw back later.
-    const drawn = renderLive(factory, mayDrawKill ? model : killWithheld(model), theme, hidesView(gate.compatibility, 'caps'))
-    live.drawn = drawn
-    replace(drawn)
-    wireRuns(drawn, model)
-    placeLaunch()
+    paintLive()
+    // The tab on screen has been painted -- with the frame this read read, or
+    // with the refusal for the frame it could not -- and that is the moment the
+    // console reads for the tabs it is *not* showing (PW1, D2906). It is here
+    // rather than in `pollLive` because this is the paint: a poll that found
+    // another view on screen painted nothing, and starts nothing. The queue runs
+    // once per installation (`prewarmed`), which is what keeps the cadence's own
+    // repeats from re-reading the other tabs.
+    startPrewarm()
   }
 
   /**
@@ -3698,6 +3732,32 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * in-flight flag: the two are different reads of the same tab, and the
      * decoration must not hold up the plan's cadence. */
     decorating: boolean
+    /** merging is the merge section's own busy state (IR4): whether the plain
+     * `plan status --json --all` -- the same canvas, read with its merge state
+     * -- is outstanding. It is `decorating`'s rule for the third read of this
+     * tab: a flag of its own rather than the plan's, so the canvas is never held
+     * up by the merge lookups and a second merge read never starts over the
+     * first. **Nothing is marked on the panel for it**: the canvas is already
+     * painted and true, and its state changes colour when the answer lands. */
+    merging: boolean
+    /** mergeQueued is the generation a canvas read asked the merge section for
+     * while one was already outstanding, or `null`. It is `queued`'s rule
+     * one read over: a canvas painted while the previous merge read was still
+     * out is a canvas with no merge state coming, and the refresh that painted
+     * it is a gesture the operator made -- so the read is kept rather than
+     * dropped, and made the moment the one in flight settles. The generation is
+     * kept rather than a flag for `queued`'s own reason: a console that has
+     * moved on in the meantime has bumped it, and the kept read is then stale
+     * and draws nothing. */
+    mergeQueued: number | null
+    /** mergeNotice is the sentence the merge read was refused with, kept apart
+     * from `notice` because the two are different states of this tab: `notice`
+     * is a **scope**'s refusal, drawn with the figures of the scope that
+     * answered, and this one is about the merge state of the plan scope's own
+     * canvas. A successful canvas read clears it (the merge read follows and
+     * says its own sentence, or none), and a successful merge read clears it
+     * too -- while the scope's sentence is not this read's to take down. */
+    mergeNotice: string | null
     /** watching is whether the console has a graph feed it must stop: it is set
      * at the subscribe and cleared when the stop is sent, so a tab that is left
      * does not send one stop per tick -- and, more to the point, so a feed that
@@ -3744,6 +3804,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     queuedToken: null,
     runs: [],
     decorating: false,
+    merging: false,
+    mergeQueued: null,
+    mergeNotice: null,
     watching: false,
     feedInFlight: false,
     scope: GRAPH_SCOPE_PLAN,
@@ -3753,11 +3816,21 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   }
 
   /** GraphHeld is what the Graph's session cache keeps per installation: the
-   * plan document and the run list the last read answered. It is memory and
-   * nothing else, and `forgetLive` empties it. */
+   * plan document, the run list the last read answered, and whether that
+   * document carries its merge state. It is memory and nothing else, and
+   * `forgetLive` empties it.
+   *
+   * **`merged` is what makes a later read not a first paint** (IR4 of the
+   * console-fixes plan): a plan already read with its merges is a canvas whose
+   * merged nodes are drawn merged, and reading that canvas again without them
+   * would put every one of them back to `done` with the `merge unknown` mark --
+   * for the merge section to draw them merged again a moment later. The cache is
+   * the one place that knows which document a session has for an installation,
+   * so the fact is kept beside the document it is about. */
   interface GraphHeld {
     readonly document: PlanStatusView
     readonly runs: readonly string[]
+    readonly merged: boolean
   }
 
   const graphViews = resultCache<GraphHeld>(CACHE_LIMIT)
@@ -4003,6 +4076,61 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   }
 
   /**
+   * canvasRead is the argv one read of the canvas is made with, and whether the
+   * merge section follows it (IR4 of the console-fixes plan, D3217 as amended).
+   *
+   * **The canvas is read without its merge state only when this session has
+   * none**, which is the first paint and nothing else: `--all --no-merges` above
+   * `PLAN_STATUS_NO_MERGES_CLI_FLOOR` while `mergesInHand` is false, and the
+   * plain `--all` read otherwise.
+   *
+   * **A later read is not a first paint, and reading it as one is churn.** The
+   * picture on screen already carries merge state, so a cadence read of
+   * `--no-merges` would put every merged node back to `done` with the `merge
+   * unknown` mark -- a colour and a size change, a structure hash that has
+   * moved, a layout rebuilt for it -- and the merge section would then draw them
+   * merged again a moment later, twice a minute. The plain read keeps the
+   * drawing as it is and costs the forge lookups on a read the operator is not
+   * waiting inside: the previous canvas stays up until the answer lands.
+   *
+   * **`mergesFollow` is what makes the two reads one.** Below the floor there is
+   * no flag to pass and the single read is the merge read, so nothing follows
+   * it; and above the floor a read that already carries merge state needs no
+   * section to decorate it. The merge section exists for one read and one only:
+   * the canvas read that left the merge state out.
+   *
+   * **The floor is asked before the read goes out**, the way `modelsTooOld` and
+   * the Coordinator's map floor are: `plan status --no-merges` is newer than the
+   * oldest CLI this console supports, and an older binary answers the word with
+   * `unknown flag: --no-merges`, which fails the whole read -- a failure the
+   * operator can do nothing about. Below the floor the console makes the one
+   * read it has always made, and the canvas is the same graph: `--all` lists the
+   * same tasks either way, and what `--no-merges` changes is the merge state of
+   * a task whose run recorded a ready pull request.
+   */
+  const canvasRead = (): { readonly args: Readonly<Record<string, unknown>>; readonly mergesFollow: boolean } => {
+    const alone = mergesWanted() && !mergesInHand()
+    return { args: alone ? { all: true, noMerges: true } : { all: true }, mergesFollow: alone }
+  }
+
+  /** mergesWanted is whether this installation's CLI may be asked for the plan
+   * **without** merge state -- the one question the canvas's argv and the merge
+   * section's existence are both decided by, asked through one function so the
+   * two can never disagree. */
+  const mergesWanted = (): boolean =>
+    planStatusNoMergesSupported(gate.compatibility.cliVersion ?? '')
+
+  /** mergesInHand is whether the canvas this session holds for this installation
+   * already carries its merge state: the document the session cache has, and a
+   * drawing made from it. **Both halves are asked**, because the read they
+   * decide is about a picture: a document cached for an installation whose
+   * canvas a refusal has since taken down is a read that would spawn the
+   * lookups on a first paint, and a document is not in hand until the screen
+   * holds it. */
+  const mergesInHand = (): boolean =>
+    graphViews.get(graphKey())?.value.merged === true && graph.screen?.planInHand != null
+
+  /**
    * readGraph makes one `plan.status` read and draws it.
    *
    * **At most one call in flight**, the rule every other read here keeps: the
@@ -4035,8 +4163,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // asked for (the poll's own cadence): a mark for that would flicker over a
     // picture that is already true.
     if (token !== null) markGraph(token, GRAPH_BUSY)
+    // The argv and whether the merge section follows it are decided in one
+    // breath (`canvasRead`), and the decision is made **before** the await: a
+    // merge read that lands while this one is out puts merge state in hand, and
+    // what this read asked for is what it answers with.
+    const read = canvasRead()
     try {
-      const plan = documentOf(await bridge.planStatus({ all: true }))
+      const plan = documentOf(await bridge.planStatus(read.args))
       // The section's token is settled before the refusal is drawn, for the
       // reason every other screen gives: the mark must come down for the
       // operator's own read, and a read an earlier press started must not take
@@ -4086,6 +4219,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // is drawn into every reading of the scope it was refused for: it says
       // which read the console cannot make (`graph.read`), and the plan scope's
       // own figures are what it is drawn over.
+      //
+      // **A merge refusal goes with the canvas that replaces it**: the sentence
+      // was about the merge state of the document this read has just replaced,
+      // and the merge read below says its own.
+      graph.mergeNotice = null
       const drawn = await graphScreenNow().load(decoded.value, graph.runs, graph.notice)
       if (stale(mine) || drawn === null) return
       // A read names no gesture: the keyboard stays where it was, and a reader
@@ -4093,8 +4231,17 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       graph.scope = GRAPH_SCOPE_PLAN
       graph.fellBack = false
       redraw(drawn, stopNow())
-      graphViews.put(graphKey(), { document: decoded.value, runs: graph.runs }, Date.now())
+      graphViews.put(graphKey(), { document: decoded.value, runs: graph.runs, merged: !read.mergesFollow }, Date.now())
       void decorateRuns(mine, decoded.value)
+      // **And the merge state follows the canvas** (IR4, D3217 as amended) --
+      // for the one read that left it out. It is a separate read of the same
+      // command without `--no-merges`, started **after** the canvas has painted
+      // rather than in parallel with it: it decorates a canvas, so it has
+      // nothing to draw from until the canvas exists, and its whole point is
+      // that the canvas did not wait for it. Below the floor, and on a read that
+      // already carried merge state, there is nothing to follow: the document on
+      // screen is the merge read's own.
+      if (read.mergesFollow) void decorateMerges(mine)
     } catch {
       // `readBridgeFrom` answers `null` rather than rejecting, so reaching here
       // is a throw this file did not expect -- `graphScreenNow` building its
@@ -4323,17 +4470,123 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // replace a view the operator has moved to.
       if (stale(mine) || !listed.ok) return
       const runs = runIdsIn(listed.data)
-      const drawn = graphScreenNow().decorate(runs)
+      const screen = graphScreenNow()
+      const drawn = screen.decorate(runs)
       if (stale(mine) || drawn === null) return
       graph.runs = runs
       redraw(drawn, stopNow())
-      graphViews.put(graphKey(), { document, runs }, Date.now())
+      // The document cached is the one the drawing really holds, which is not
+      // necessarily the one this read was handed: the merge section may have
+      // replaced it while this read was out, and caching the canvas document
+      // back over the merge-inclusive one would make the next visit's first
+      // paint the older of the two. **The merge fact is carried forward with it**
+      // for the same reason: it is about the document in hand, and the entry is
+      // the only place that knows which read put that document there.
+      graphViews.put(
+        graphKey(),
+        { document: screen.planInHand ?? document, runs, merged: graphViews.get(graphKey())?.value.merged === true },
+        Date.now(),
+      )
     } catch {
       // As above: a bridge that threw where it should not have leaves the
       // doors as they were, which is the same drawing a refused read makes.
     } finally {
       graph.decorating = false
     }
+  }
+
+  /**
+   * decorateMerges reads the plan **again, with its merge state** -- the plain
+   * `plan status --json --all`, which is the same canvas and up to thirty-two
+   * forge lookups more -- and attaches what it says to the picture on screen
+   * (IR4 of the console-fixes plan, D3217 as amended).
+   *
+   * **It is the canvas's own section read the same way `decorateRuns` is the
+   * canvas's own runs read**: a read of its own, with its own busy state
+   * (`graph.merging`) and its own refusal, started after the canvas has painted
+   * and awaited by nothing. The canvas is drawn from the read that spawns no
+   * `gh` (`graphCanvasArgs`), so the first paint costs no forge lookup at all;
+   * this read is what turns a merged task's `done`/`merge unknown` into the
+   * merged state the plain read knows, and a node changes colour in the drawing
+   * the operator is already reading rather than arriving late as a second
+   * picture.
+   *
+   * **Its refusal is a sentence in the drawing and never a refusal screen.** The
+   * canvas on screen is true -- it is the plan, read without merge state -- and
+   * taking it down because the merge lookups failed would throw away a graph the
+   * operator can read for a fact about a colour. `noticed` keeps the figures and
+   * writes the sentence into them, which is the same door a refused scope uses,
+   * and `graph.mergeNotice` is what keeps the sentence across a redraw (a tab, a
+   * selection, a zoom) until a read answers. The document on screen is
+   * unchanged: the read that did not answer is not a read that said the canvas
+   * is wrong.
+   *
+   * The source holds its own cadence per argv (`PLAN_STATUS_MIN_INTERVAL_MS`),
+   * so a canvas read and this one within the same minute are two documents from
+   * two children and a repeat of either is served rather than respawned.
+   */
+  const decorateMerges = async (mine: number): Promise<void> => {
+    if (graph.merging) {
+      // A canvas painted under a merge read that is still out is a canvas whose
+      // merge state is unknown with nothing coming for it, and it is a state a
+      // gesture reaches: Refresh paints the canvas again while the lookups are
+      // still running. The claim is kept rather than the read, as
+      // `readGraph` keeps one -- see `mergeQueued`.
+      graph.mergeQueued = mine
+      return
+    }
+    graph.merging = true
+    try {
+      const plan = documentOf(await bridge.planStatus({ all: true }))
+      // The generation is checked after the read, on `decorateRuns`'s terms: a
+      // decoration nobody is waiting for must not replace a view the operator
+      // has moved to.
+      if (stale(mine)) return
+      if (!plan.ok) {
+        refuseMerges(plan.sentence)
+        return
+      }
+      const decoded = decodePlanStatus(plan.data, 'plan.status')
+      if (!decoded.ok) {
+        refuseMerges(decoded.skew.because)
+        return
+      }
+      // **The scope's own sentence goes back in with the document**: a canvas
+      // served from memory drew the sentence the last merge read was refused
+      // with, and this read is the one that answers it -- leaving it up over a
+      // document that carries the merge state would be a sentence about a read
+      // that has since been made.
+      const drawn = await graphScreenNow().decorateMerges(decoded.value, graph.notice)
+      if (stale(mine) || drawn === null) return
+      graph.mergeNotice = null
+      redraw(drawn, stopNow())
+      // The cache holds the **merge-inclusive** document from here on, which is
+      // a strict gain for the next visit's first paint: the same canvas with more
+      // of it known -- and `merged`, which is what tells that visit the merge
+      // state is already in hand and no first paint without it is due.
+      graphViews.put(graphKey(), { document: decoded.value, runs: graph.runs, merged: true }, Date.now())
+    } catch {
+      // As `decorateRuns`: a bridge that threw where it should not have leaves
+      // the canvas as it was.
+    } finally {
+      graph.merging = false
+      // The claim a canvas read made while this one was out: it is made now, in
+      // the drawing the operator's own gesture left, and a generation that has
+      // passed since is dropped by the read's own check as every other read's is.
+      const queued = graph.mergeQueued
+      graph.mergeQueued = null
+      if (queued !== null) void decorateMerges(queued)
+    }
+  }
+
+  /** refuseMerges is the merge section's refusal: the sentence, in the drawing,
+   * over the canvas that answered. It is drawn only where there is a drawing to
+   * put it in -- a console with none is showing a refusal or a card, and those
+   * already say what is wrong. */
+  const refuseMerges = (sentence: string): void => {
+    graph.mergeNotice = sentence
+    const drawn = graph.screen?.noticed(sentence) ?? null
+    if (drawn !== null) redraw(drawn, stopNow())
   }
 
   /** refuseGraph is the refusal screen and the forgetting together: a plan the
@@ -4510,12 +4763,20 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // without a message to the worker. It is stamped `as of HH:MM` with the
       // door to read it again, and a view older than `CACHE_FRESH_MS` is read
       // again at once **as well** -- never served silently.
-      const drawn = await graphScreenNow().load(held.value.document, held.value.runs)
+      const drawn = await graphScreenNow().load(held.value.document, held.value.runs, graph.mergeNotice ?? graph.notice)
       if (stale(mine) || drawn === null) return
       graph.runs = held.value.runs
       redraw(drawn, stopNow())
       stampGraph(held.at)
       if (Date.now() - held.at >= CACHE_FRESH_MS) void readGraph(mine, graphRead.start())
+      // **A canvas served from memory is still a canvas the merge section
+      // decorates.** The cached document is the one a read put there, and a
+      // merge read that was refused -- or one that had not landed when the
+      // operator left -- leaves it without merge state; a fresh view is not
+      // re-read, so without this the colour a merged node wears would be the
+      // last read's for as long as the cache is fresh. The source's own cadence
+      // makes a repeat within the minute a document rather than a second child.
+      else if (mergesWanted() && !held.value.merged) void decorateMerges(mine)
       return
     }
     const last = graph.screen?.redraw() ?? null
@@ -5268,6 +5529,24 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * so a view read for one installation is never drawn under another. */
   const spendViews = resultCache<SpendModel>(CACHE_LIMIT)
 
+  /** reportReader is the report's whole-document read -- the fallback RS5's
+   * stream hands over to when the feed cannot be asked (`readReportStream`'s
+   * `report`). It is at the entry's scope and not inside `showSpend` because the
+   * prewarm queue reads the same command, and one closure over `bridge` is the
+   * read both callers want: a refusal travels on a thrown value, which is how
+   * `refusalSentence` reads it (`cause.sentence`, the shape `CliSource` throws),
+   * so a read the console could not make at all is drawn with *that* sentence
+   * rather than as a CLI refusal that printed nothing.
+   *
+   * **The visit's tokens are not its business.** Which answer stays and which
+   * mark comes down belong to the section that asked (`spendReportRead`), so a
+   * reader shared by two callers holds no state at all. */
+  const reportReader: SpendReader = async (args) => {
+    const answer = documentOf(await bridge.runReport(args))
+    if (!answer.ok) throw { sentence: answer.sentence }
+    return answer.data
+  }
+
   /** spendCapsRead and spendReportRead are the two sections' read lifecycles:
    * each has its own busy mark, its own sequence token and its own refusal, so a
    * slow report cannot take the caps' mark down and a control change cannot make
@@ -5357,17 +5636,6 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * read that is really in flight. */
     let reportToken = 0
     let capsToken = 0
-
-    const reader: SpendReader = async (args) => {
-      const answer = documentOf(await bridge.runReport(args))
-      // The sentence travels on the thrown value, which is how `readSpend`
-      // reads a refusal (`refusalSentence` takes `cause.sentence`, the shape
-      // `CliSource` throws). A read the console could not make at all -- a
-      // rejection, an answer that is not a reply -- must be drawn with *that*
-      // sentence, not as a read the CLI refused and printed nothing for.
-      if (!answer.ok) throw { sentence: answer.sentence }
-      return answer.data
-    }
 
     // The by-person read is the same shape over `statsRuns`, and its refusal is
     // the panel's alone: `readSpend` turns a throw here into the panel's own
@@ -5537,7 +5805,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     const loadReport = async (readWith: SpendControls, token: number): Promise<void> => {
       const outcome = await readReportStream({
         stream: (args) => ops.streamSpend(args),
-        report: (args) => reader(args),
+        report: reportReader,
         controls: readWith,
         // The caps are handed over for the model's own `caps` field, which the
         // report section does not draw: the caps are their own section, and this
@@ -7786,6 +8054,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * the frame and the burn history of an installation that is gone. */
   const forgetLive = (): void => {
     live.drawn = null
+    // The prewarm queue belonged to the installation being left, and the caches
+    // it filled are dropped below with the rest of that installation's state:
+    // the next one is read afresh, which is a queue of its own.
+    prewarmed = false
     live.rigor = new Map()
     live.rigorAt = 0
     history = new BurnHistory()
@@ -7978,6 +8250,147 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       return
     }
     void choose(row.project)
+  }
+
+  // ---- The prewarm queue (PW1, D2906) -----------------------------------
+
+  /**
+   * prewarmGraph reads the Graph tab's primary section -- the plan the canvas is
+   * drawn from, and the run list a node's door comes from -- and caches the pair
+   * `readGraph` and `decorateRuns` cache, under the same key.
+   *
+   * **The plan scope is the one scope it reads, and H9's fallback is not made
+   * from here.** A console that opens on the coordinator scope because the plan
+   * of its installation cannot be read is answering a drawing the operator is
+   * looking at; a tab nobody is on has no drawing to save, so a refused plan
+   * leaves the Graph cold and its own visit makes the read and, if it is that
+   * refusal, the trip.
+   *
+   * **A read that fails caches nothing at all.** A view served from this cache
+   * is stamped and, while it is younger than `CACHE_FRESH_MS`, is not re-read
+   * (`showGraph`), so half a Graph -- a canvas with no doors, cached out of a run
+   * list that was refused -- would be a picture the operator's own visit draws
+   * and does not correct.
+   *
+   * **It reads the canvas's own argv** (`canvasRead`, IR4): what the queue warms
+   * must be what a visit draws, or the warm paint would be a document the visit's
+   * own read never makes -- a merges-inclusive plan cached out of a read the
+   * first paint exists to avoid, and a merge section with nothing to do. The
+   * queue runs while the operator is on another tab, with no drawing in hand, so
+   * its read is the first paint's own (`mergesFollow`) and carries it into the
+   * cache: the visit that draws it is then the one that starts the merge section.
+   */
+  const prewarmGraph = async (still: () => boolean): Promise<void> => {
+    const read = canvasRead()
+    const plan = documentOf(await bridge.planStatus(read.args))
+    if (!plan.ok) return
+    const decoded = decodePlanStatus(plan.data, 'plan.status')
+    if (!decoded.ok) return
+    const listed = documentOf(await bridge.listRuns({ since: RUNS_SINCE }))
+    if (!listed.ok) return
+    if (!still()) return
+    graphViews.put(
+      graphKey(),
+      { document: decoded.value, runs: runIdsIn(listed.data), merged: !read.mergesFollow },
+      Date.now(),
+    )
+    // **The cadence is stamped too**, and it is not the cache's own age: the age
+    // says what the *view* is worth, and `graph.readAt` is what
+    // `maybeRefreshGraph` measures the next read from. A cached Graph whose
+    // entry was not read in this tab would leave the tab reading the plan again
+    // on the first tick it is entered -- the warm view served and then
+    // immediately replaced, which is what the queue exists to avoid.
+    graph.readAt = Date.now()
+  }
+
+  /**
+   * prewarmSpend reads the Spend tab's primary section: the report, with the
+   * three controls a visit opens on (`SPEND_DEFAULT_CONTROLS` -- `showSpend`
+   * starts there on every visit, so this key is the one the operator's first
+   * visit looks up).
+   *
+   * **It is the tab's own streamed read** (`readReportStream`, RS5's path), so
+   * what the queue warms is what a visit warms: where the feed cannot be asked
+   * -- no handler, a CLI below the feed's floor, a refusal -- that same read is
+   * the whole `report --json` document, and the model is built from it either
+   * way. The caps are handed over exactly as the visit hands them over, for the
+   * model's own `caps` field; the caps themselves are their own section and
+   * their own read, and no cache holds them.
+   */
+  const prewarmSpend = async (still: () => boolean, project: string): Promise<void> => {
+    const outcome = await readReportStream({
+      stream: (args) => ops.streamSpend(args),
+      report: reportReader,
+      controls: SPEND_DEFAULT_CONTROLS,
+      caps: spendBudget,
+      project,
+      withheld: hidesView(gate.compatibility, 'spend'),
+    })
+    if (outcome.status !== 'complete') return
+    if (still()) spendViews.put(spendViewKey(project, SPEND_DEFAULT_CONTROLS), outcome.model, Date.now())
+  }
+
+  /**
+   * prewarmProjects reads the Projects tab's primary section: the whole
+   * `budget show --json` document, which is the one thing that tab's cache
+   * holds. **It is the whole document and not `budget show --stream`**, because
+   * a streamed view is deliberately never cached (RS5): a cache hit is drawn as
+   * a whole document, and the members the feed does not carry would come back as
+   * absences the console could not account for. So the read that fills this
+   * cache is the document's own, exactly as the visit's fallback makes it -- and
+   * where that read is refused this tab stays cold and its own visit draws the
+   * refusal.
+   */
+  const prewarmProjects = async (still: () => boolean, project: string): Promise<void> => {
+    const answer = documentOf(await bridge.showBudget({}))
+    if (!answer.ok) return
+    if (still()) projectsViews.put(cacheKey([project, 'projects']), answer.data, Date.now())
+  }
+
+  /**
+   * startPrewarm is the queue the Live screen's first paint leaves behind: after
+   * the tab on screen has been drawn, the console reads each **other** tab's
+   * primary section into its cache, one read at a time, in the order the
+   * navigation offers them (`prewarm`, `src/renderer/prewarm.ts`; PW1, D2906).
+   * The operator's first switch to one of those tabs then draws a view this
+   * session already read -- stamped `as of`, like any other cached view -- and
+   * re-reads it in the background on the cache's own rule.
+   *
+   * **The generation is read here and not claimed.** A door claims when the
+   * view changes; this one does not change it, and claiming would cancel the
+   * read the operator's own press started a moment before -- a switch landing
+   * between that press and this tick's paint would draw nothing at all. What the
+   * queue holds is the generation it saw, and `still` is how it asks whether
+   * that is still the view on screen: every tab switch and every installation
+   * switch claims, so one check answers for both.
+   *
+   * **Live is not in the list**, and there is nothing for it to be: the tab on
+   * screen is the one this queue follows, its model is the poll's own read, and
+   * the feed the other views read is not something a second reader warms. The
+   * Coordinator is not in it either -- it keeps no session cache at all, so
+   * there is no view to warm (`showCoordinator`).
+   *
+   * **Every first paint starts it, a refusal included**: a console whose own
+   * feed could not be read has still drawn its active tab, and the tabs it is
+   * not showing are sections of their own -- so `drawLive` starts the queue on
+   * that door too, and what a reduced console or one whose CLI version is
+   * refused does instead is read by `prewarm` itself, which asks the mode.
+   */
+  startPrewarm = (): void => {
+    if (prewarmed) return
+    prewarmed = true
+    const watching = generation
+    const still = (): boolean => generation === watching
+    // The project is the open row's, read once: an installation switch moves the
+    // generation, which is what stops the queue -- so this name is either the
+    // installation the queue was started for or a read that caches nothing.
+    const project = railNow.find((row) => row.open)?.project ?? ''
+    const tabs: readonly PrewarmTab[] = [
+      { id: 'graph', read: () => prewarmGraph(still) },
+      { id: 'spend', read: () => prewarmSpend(still, project) },
+      { id: 'projects', read: () => prewarmProjects(still, project) },
+    ]
+    void prewarm({ mode: gate.compatibility.mode, active: currentView, still, tabs })
   }
 
   // ---- The first read ---------------------------------------------------
