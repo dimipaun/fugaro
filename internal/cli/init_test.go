@@ -1578,8 +1578,40 @@ func TestInitRepoRefusesVertexEnforce(t *testing.T) {
 	// D3174), whatever its file still says — while the same file on a
 	// repository no chain admits keeps the refusal above, and so does a
 	// repository this command cannot name.
-	const table = "model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: vertex, admit: [acme/app] }\n"
-	served := withBudget(table + "budget: { mode: enforce, per_run_usd: 5 }\n")
+	//
+	// The table alone is not the fact: a job nothing hands an address to
+	// reaches no service, so the installation has the credentials service and
+	// this repository's record says ready — the same installed-and-ready pair
+	// the deploy plan reads (infra.CredentialsServiceServesChains).
+	const (
+		service  = "credentials_service: { url: " + credentialsServiceURL + " }\n"
+		record   = "repos:\n  acme/app: { provider: github, workflows: [app], credentials_service_ready: true }\n"
+		table    = "model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: vertex, admit: [acme/app] }\n"
+		enforce5 = "budget: { mode: enforce, per_run_usd: 5 }\n"
+	)
+	// withRecord is withBudget with this repository's own record written: the
+	// marshalled config carries an empty repos map, so the record replaces it.
+	withRecord := func(block string) *localcfg.Config {
+		t.Helper()
+		lc, err := localcfg.Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := lc.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := strings.Replace(string(data), "repos: {}", record, 1)
+		if out == string(data) {
+			t.Fatal("the fixture's repos block moved: withRecord writes the record nowhere")
+		}
+		lc, err = localcfg.Parse(append([]byte(out), block...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return lc
+	}
+	served := withRecord(table + service + enforce5)
 	if err := checkVertexBudget(served, vertex, "acme/app"); err != nil {
 		t.Errorf("a vertex repository the table serves was refused: %v", err)
 	}
@@ -1590,6 +1622,40 @@ func TestInitRepoRefusesVertexEnforce(t *testing.T) {
 	}
 	if err := checkVertexBudget(served, apiKey, "acme/app"); err != nil {
 		t.Errorf("an api-key repository the table serves was refused: %v", err)
+	}
+	// A pool source is the case the plan's own answer cannot settle: it serves
+	// every repository there, because which member serves one is walked at the
+	// call, so the gate answers with the members' own allow_data_to — admitted
+	// here, another repository and the empty name not — and a launcher-pool
+	// source admits nobody before a launcher designates one (D3176).
+	pool := "credentials:\n  - { name: acme-personal, type: claude-oauth }\n" +
+		"claude_accounts:\n  acme-personal: { allow_data_to: [acme/app] }\n" +
+		"pools:\n  - { name: shared, owner: owner@example.com, members: [acme-personal] }\n" +
+		"model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: pool, pool: shared }\n"
+	servedByPool := withRecord(pool + service + enforce5)
+	if err := checkVertexBudget(servedByPool, vertex, "acme/app"); err != nil {
+		t.Errorf("a vertex repository the table's pool admits was refused: %v", err)
+	}
+	for _, repo := range []string{"acme/other", ""} {
+		if err := checkVertexBudget(servedByPool, vertex, repo); ExitCode(err) != ExitUserError || err == nil {
+			t.Errorf("a vertex repository the table's pool does not admit (%q) was not refused: exit %d, err %v", repo, ExitCode(err), err)
+		}
+	}
+	launcher := withRecord("model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: launcher-pool }\n" + service + enforce5)
+	if err := checkVertexBudget(launcher, vertex, "acme/app"); ExitCode(err) != ExitUserError || err == nil {
+		t.Errorf("a vertex repository only a launcher-pool source names was not refused: exit %d, err %v", ExitCode(err), err)
+	}
+	// And the installed-and-ready pair itself: a table-served repository on an
+	// installation with no service, or one whose record is not ready, is
+	// refused — its job is told about no service, so the run's Vertex is the
+	// job's own.
+	for name, lc := range map[string]*localcfg.Config{
+		"no credentials service": withRecord(table + enforce5),
+		"a repository not ready": withBudget(table + service + enforce5),
+	} {
+		if err := checkVertexBudget(lc, vertex, "acme/app"); ExitCode(err) != ExitUserError || err == nil {
+			t.Errorf("%s: a vertex repository the table places was not refused: exit %d, err %v", name, ExitCode(err), err)
+		}
 	}
 	// A committed enforce is the effective mode under an off ceiling, and
 	// under an observe one (the stricter wins).

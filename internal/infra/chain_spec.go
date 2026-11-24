@@ -45,7 +45,9 @@ type ChainPlan struct {
 	// source of some entry admits it. False for a project with no table and for
 	// one whose every source is admitted to another repository — the second is
 	// the state MG1's migration leaves a repository it cannot place, which runs
-	// on the release-1 bridge until it is placed.
+	// on the release-1 bridge until it is placed. The two pool kinds answer it
+	// for every repository (ChainPlanFor), so where the answer has to be exact
+	// for one repository it is ChainAdmits'.
 	Serves bool
 	// Vertex is whether a chain that may serve this repository reaches Vertex.
 	// It is per repository and not per project: it is this repository's runs
@@ -86,6 +88,30 @@ func ChainPlanFor(lc *localcfg.Config, repo string) ChainPlan {
 		}
 	}
 	return plan
+}
+
+// ChainAdmits reports whether a source of the project's table admits this
+// repository by name: the question the CLI's pre-flight gates ask of a
+// repository's own file, before a run exists (D3174). ChainPlanFor's Serves is
+// the cloud side's plan-time answer and lets a pool answer for every
+// repository, which its own comment explains.
+//
+// The difference is read the fail-closed way: a source this reader cannot
+// follow admits nobody, so a repository only a launcher-pool source names is
+// not served here — which pool a launcher designates is decided per run, and
+// this reader has no run to read it from (D3176).
+func ChainAdmits(lc *localcfg.Config, repo string) bool {
+	if lc == nil {
+		return false
+	}
+	for _, entry := range lc.ModelRouting {
+		for _, s := range entry.Chain {
+			if chainSourceAdmits(lc, s, repo) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ChainsNameVertex reports whether any chain of any entry names Vertex,
@@ -182,6 +208,48 @@ func chainSourceServes(s routing.Source, repo string) bool {
 	default:
 		return slices.Contains(s.Admit, repo)
 	}
+}
+
+// chainSourceAdmits is one source's own admission of repo: the admit list the
+// single-credential kinds carry (D3182 — an empty one admits nobody, the same
+// fail-closed direction a Claude account's allow_data_to has), and for a named
+// pool the consent of its members, which is all a pool carries.
+//
+// A member that is no Claude account consents to nobody here — the built-in
+// Vertex and a provider key carry no allow_data_to of their own. A run may
+// still be served by such a member (internal/runner's poolMemberAdmits places
+// them at the call), and that is this reader's own direction rather than a
+// disagreement it has to fix: what it lifts is a refusal, and it lifts it only
+// over a repository a person's own allow_data_to names.
+func chainSourceAdmits(lc *localcfg.Config, s routing.Source, repo string) bool {
+	switch s.Kind {
+	case routing.KindLauncherPool:
+		return false
+	case routing.KindPool:
+		p, ok := chainPool(lc.Pools, s.Pool)
+		if !ok {
+			return false
+		}
+		for _, member := range p.Members {
+			if poolMemberAdmits(lc, member, repo) {
+				return true
+			}
+		}
+		return false
+	}
+	return slices.Contains(s.Admit, repo)
+}
+
+// poolMemberAdmits is whether one member of a pool admits repo: the Claude
+// account of that name and its own allow_data_to — D3182's consent, which no
+// pool carries for itself and which routing's migration walks the same way
+// (migrate.go's poolReaches). A member that names no account consents to
+// nobody here: the built-in Vertex and a provider key carry no allow_data_to
+// of their own, and a credential of an account's name that claude_accounts
+// does not define is the zero answer poolReaches gives it too.
+func poolMemberAdmits(lc *localcfg.Config, member, repo string) bool {
+	a, ok := lc.ClaudeAccounts[member]
+	return ok && a.AllowsData(repo)
 }
 
 // chainSourceReachesVertex reports whether a source of the chain is Vertex: the

@@ -6039,25 +6039,38 @@ func (r *initRun) gateWorkflowAB(o *initOptions, repo string, lc *localcfg.Confi
 	return refuseWorkflowABSkew(repo, cfg, lc.BaseImage(config.BaseKind), w)
 }
 
-// servedByTheTable reports whether the project's routing table may serve repo:
-// some source of some of its entries admits that repository
-// (infra.ChainPlanFor, the plan-time answer the cloud side of this repository
-// is planned from — CS11 — read here by the two commands that judge
-// agent.auth before a run exists).
+// servedByTheTable reports whether the project's routing table serves repo: a
+// source of it admits this repository by name (infra.ChainAdmits, the table's
+// own admission read for one repository, CS11's fact per repository), the
+// installation has the credentials service, and this repository's own bundle is
+// recorded on (the installed-and-ready pair infra.CredentialsServiceServesChains
+// reads).
 //
 // It is the CLI's half of D3174's one question, "is this run's Vertex the
 // credentials service's or the job's own": a repository the table serves
 // reaches Vertex through the service, on the service's own identity and capped
-// as a key's, whatever its file still says, while a repository no chain admits
+// as a key's, whatever its file still says, while a repository no source admits
 // keeps its file's answer. The runner asks the same question of the path it is
 // on, the model path its gateway builds the upstream from
 // (vertexServedByTheService) — which a table-served repository reaches with
 // CS6 and CS10; here there is no job and no path yet, and the document the
-// answer comes from is this local config. A repository this
-// command cannot name, and one on an installation with no table, is not
-// served — the fail-closed direction, which leaves both refusals as they were.
+// answer comes from is this local config.
+//
+// ChainAdmits and not the plan itself (infra.ChainPlanFor): a pool answers its
+// Serves for every repository, because which member serves one is walked at the
+// call, so a gate reading that would lift the refusal over a repository the
+// table does not place — the unmigrated one the acceptance keeps refused. The
+// three negative answers are the fail-closed direction and leave both refusals
+// as they were: a repository no source's own admission names, a repository this
+// command cannot name, and an installation whose service is off or whose record
+// for this repository is not ready — a job nothing hands an address to reaches
+// no service whatever the table says.
 func servedByTheTable(lc *localcfg.Config, repo string) bool {
-	return lc != nil && infra.ChainPlanFor(lc, repo).Serves
+	if lc == nil || lc.CredentialsService == nil || !infra.ChainAdmits(lc, repo) {
+		return false
+	}
+	r, ok := lc.RepoFor(repo)
+	return ok && r.CredentialsServiceOn()
 }
 
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates

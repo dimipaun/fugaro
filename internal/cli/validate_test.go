@@ -714,22 +714,78 @@ func TestValidateRefusesVertexEnforceFromFile(t *testing.T) {
 }
 
 // TestValidateAcceptsVertexEnforceWhereTheTableServes is CS5 and D3174: a
-// repository a chain of the project's routing table may serve reaches Vertex
-// through the credentials service, which calls it on its own identity and
-// whose calls the caps hold, so its file's `auth: vertex` under enforce is not
-// refused. The table is the project config's own and is read per repository:
-// one no chain admits keeps the refusal, in the runner's words.
+// repository a source of the project's routing table admits reaches Vertex
+// through the credentials service — which calls it on its own identity and
+// whose calls the caps hold — so its file's `auth: vertex` under enforce is not
+// refused. The table is the project config's own and is read per repository: a
+// repository no source admits keeps the refusal, in the runner's words.
+//
+// The table is not the whole fact: a job nothing hands an address to reaches no
+// service, so the installation carries the credentials service and this
+// repository's record says ready (the pair the deploy plan reads,
+// infra.CredentialsServiceServesChains). A pool source is the case the plan's
+// own answer cannot settle — it may serve any repository there, because which
+// member serves one is walked at the call — so the gate resolves the pool
+// through its members' allow_data_to, and a launcher-pool source admits nobody
+// before a launcher designates a pool (D3176).
 func TestValidateAcceptsVertexEnforceWhereTheTableServes(t *testing.T) {
-	const table = "model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: vertex, admit: [acme/app] }\n"
+	const (
+		service = "credentials_service: { url: " + credentialsServiceURL + " }\n"
+		record  = "repos:\n  acme/app: { provider: github, workflows: [app], credentials_service_ready: true }\n"
+		budget  = "budget: { mode: enforce, per_run_usd: 5 }\n"
+	)
 	pinned := "  auth: vertex\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }"
-	path := fileWithBudget(t, "budget: { mode: enforce, per_run_usd: 5 }\n"+table, "", pinned)
-	inCheckoutOf(t, "acme/app")
-	if out, errOut, err := execute(t, "validate", path); err != nil || strings.Contains(out, vertexBudgetRefusal) {
-		t.Fatalf("a vertex file the table serves was refused: %v\n%s%s", err, out, errOut)
+	for name, tc := range map[string]struct {
+		table  string
+		admits bool
+	}{
+		"a single-credential source": {
+			table:  "model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: vertex, admit: [acme/app] }\n",
+			admits: true,
+		},
+		"a pool through its members' allow_data_to": {
+			table: "credentials:\n  - { name: acme-personal, type: claude-oauth }\n" +
+				"claude_accounts:\n  acme-personal: { allow_data_to: [acme/app] }\n" +
+				"pools:\n  - { name: shared, owner: owner@example.com, members: [acme-personal] }\n" +
+				"model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: pool, pool: shared }\n",
+			admits: true,
+		},
+		"the launcher's own pool": {
+			table:  "model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: launcher-pool }\n",
+			admits: false,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := fileWithBudget(t, budget+tc.table+service+record, "", pinned)
+			inCheckoutOf(t, "acme/app")
+			out, errOut, err := execute(t, "validate", path)
+			if tc.admits {
+				if err != nil || strings.Contains(out, vertexBudgetRefusal) {
+					t.Fatalf("a vertex file the table serves was refused: %v\n%s%s", err, out, errOut)
+				}
+			} else if ExitCode(err) != ExitUserError || !strings.Contains(out, vertexBudgetRefusal) {
+				t.Fatalf("a vertex file no source admits was accepted: exit %d: %s", ExitCode(err), out)
+			}
+		})
 	}
-	inCheckoutOf(t, "acme/other")
-	if out, _, err := execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, vertexBudgetRefusal) {
-		t.Fatalf("a vertex file no chain admits was accepted: exit %d: %s", ExitCode(err), out)
+	// A repository no source admits, and one on an installation whose service
+	// is off or whose record for it is not ready, keep the refusal.
+	table := "model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: vertex, admit: [acme/app] }\n"
+	for name, tc := range map[string]struct {
+		project string
+		repo    string
+	}{
+		"a repository no source admits": {project: budget + table + service + record, repo: "acme/other"},
+		"no credentials service":        {project: budget + table + record, repo: "acme/app"},
+		"a repository not ready":        {project: budget + table + service, repo: "acme/app"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := fileWithBudget(t, tc.project, "", pinned)
+			inCheckoutOf(t, tc.repo)
+			if out, _, err := execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, vertexBudgetRefusal) {
+				t.Fatalf("a vertex file the table does not serve was accepted: exit %d: %s", ExitCode(err), out)
+			}
+		})
 	}
 }
 

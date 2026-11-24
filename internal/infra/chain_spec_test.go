@@ -403,3 +403,92 @@ func chainProjectLC(budget string) string {
 	}
 	return m4LocalConfig + repo + m5Additions + budget + credentialsServiceLCBlock + projectProfilesLCBlock
 }
+
+// TestChainAdmitsReadsTheAdmissionPerRepository is CS5's CLI-side fact
+// (D3174): ChainAdmits answers whether a source of the table admits ONE
+// repository, which is what the pre-flight gates read before a run exists.
+//
+// The cases are the shapes the migration writes and the one a plan cannot
+// follow: a single-credential source's own admit list (empty meaning nobody),
+// a named pool through its members' allow_data_to — with a member that is no
+// account consenting to nobody — and the launcher's own pool, which names no
+// pool here and so admits nobody before a launcher designates one (D3176).
+func TestChainAdmitsReadsTheAdmissionPerRepository(t *testing.T) {
+	pool := func(name string, members ...string) string {
+		return "pools:\n  - { name: " + name + ", owner: owner@example.com, members: [" + strings.Join(members, ", ") + "] }\n"
+	}
+	// A pool lists credential names (config.ValidatePools), and a Claude account
+	// the migration wraps has one of its own name (the craft migration's own
+	// conversion): `bmb` is repoRootLC's account, admitted to acme/webapp alone.
+	const bmbCredential = "credentials:\n  - { name: bmb, type: claude-oauth }\n"
+	source := func(kind string) string {
+		return "model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: " + kind + " }\n"
+	}
+	for _, tc := range []struct {
+		name   string
+		lc     string
+		admits map[string]bool
+	}{
+		{
+			name: "a single-credential source by its own admit list",
+			lc:   repoRootLC + chainVertexSource,
+			admits: map[string]bool{
+				"acme/webapp": true,
+				"acme/other":  false,
+				"":            false,
+			},
+		},
+		{
+			name: "an empty admit list admits nobody",
+			lc:   repoRootLC + source("anthropic"),
+			admits: map[string]bool{
+				"acme/webapp": false,
+				"acme/other":  false,
+			},
+		},
+		{
+			name: "a named pool through its members' allow_data_to",
+			lc:   repoRootLC + bmbCredential + pool("subscriptions", "bmb", "vertex") + "model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: pool, pool: subscriptions }\n",
+			admits: map[string]bool{
+				"acme/webapp": true,
+				"acme/other":  false,
+				"":            false,
+			},
+		},
+		{
+			name: "a member that is no account consents to nobody",
+			lc:   repoRootLC + pool("subscriptions", "vertex") + "model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: pool, pool: subscriptions }\n",
+			admits: map[string]bool{
+				"acme/webapp": false,
+				"acme/other":  false,
+			},
+		},
+		{
+			name: "the launcher's own pool admits nobody",
+			lc:   repoRootLC + chainLauncherPoolLC[len(repoRootLC):],
+			admits: map[string]bool{
+				"acme/webapp": false,
+				"acme/other":  false,
+			},
+		},
+		{
+			name: "a project with no table",
+			lc:   repoRootLC,
+			admits: map[string]bool{
+				"acme/webapp": false,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lc := parseLC(t, tc.lc)
+			for _, repo := range slices.Sorted(maps.Keys(tc.admits)) {
+				if got := ChainAdmits(lc, repo); got != tc.admits[repo] {
+					t.Errorf("ChainAdmits(%q) = %v, want %v", repo, got, tc.admits[repo])
+				}
+			}
+		})
+	}
+	if ChainAdmits(nil, "acme/webapp") {
+		t.Error("a project with no local config at all admits a repository")
+	}
+}
