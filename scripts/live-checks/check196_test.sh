@@ -848,15 +848,29 @@ test_a_refusal_line_is_reported_redacted() {
 # (D1900, internal/infra's IS2), so the installation emits none for a repository
 # that has none, and the row reads that shape as INFO rather than as a row that
 # could not be measured — the same absence the flip mode's noaccessor row reads.
+#
+# The served row is the other half of that shape, and it is the one row the
+# missing job costs: a catalog build carries no `_SLUG` substitution, the job's
+# `fugaro_repo` label is where this repository's slug would have been read from,
+# and with neither there is nothing to look the service's own lines up by. The
+# row reads as one that could not be measured — never as an absence the check
+# measured, and never with a slug the reader invented (a `None` taken for a value
+# would filter Cloud Logging on a repository that cannot exist, and hand the
+# owner a command that matches nothing). The repository that does have a job,
+# with a catalog build of its own, is read and reads INFO.
 test_a_missing_check_job_reads_info() {
   local dir=$work/nojob
   prepare "$dir"
   run196 "$dir" no-check-job
-  expect_status "$status" 0 "no check job: the verdict"
+  expect_status "$status" 2 "no check job: the served row could not be measured"
   expect_contains "$out" "FACT check-github: INFO" "no check job: the row"
   expect_contains "$out" "D1900" "no check job: the ruling the row reads"
   expect_absent "$out" "FACT check-github: FAIL" "no check job: not a failure"
   expect_contains "$out" "FACT check-bitbucket: PASS" "no check job: the other repository"
+  expect_contains "$out" "FACT served-github: FAIL" "no check job: the service's lines cannot be looked up"
+  expect_contains "$out" "the repository's slug could not be read" "no check job: the reason the row gives"
+  expect_absent "$out" "repository=None" "no check job: no lookup on a repository named None"
+  expect_contains "$out" "FACT served-bitbucket: INFO" "no check job: the repository that has one is still read"
 }
 
 # Before the flip the check job keeps its own mount and carries NO service
