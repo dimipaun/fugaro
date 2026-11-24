@@ -190,6 +190,35 @@ func TestDoctorOfflineSkipsWithNoCache(t *testing.T) {
 	}
 }
 
+// TestDoctorOfflineSkipsWithNoLocalInstallation: --offline with no local Fugaro
+// installation has no config to read the database from, so the question is not
+// asked — a skip with its reason, the state base-image skips in, and never the
+// silent pass a reader would take for "checked and fine" (D946).
+func TestDoctorOfflineSkipsWithNoLocalInstallation(t *testing.T) {
+	withVersion(t, "0.2.0")
+	isolateProjects(t, t.TempDir())
+	out, _, _ := execute(t, "doctor", "--offline", "--json", "--dir", t.TempDir())
+	c, ok := doctorRow(t, out, cliBelowRequiredID)
+	if !ok {
+		t.Fatalf("doctor --offline --json carries no %s row:\n%s", cliBelowRequiredID, out)
+	}
+	if !c.Skipped || c.OK {
+		t.Fatalf("cli-below-required = %+v with no local installation, want a skip: --offline read no database", c)
+	}
+	if c.Severity != "info" || c.Fix != doctorOfflineAsk {
+		t.Errorf("the skip = severity %q fix %q, want info and %q", c.Severity, c.Fix, doctorOfflineAsk)
+	}
+	if !strings.Contains(c.Problem, "--offline") {
+		t.Errorf("the skip does not say why it was not answered: %q", c.Problem)
+	}
+	// The ordinary run behind it is not doctor's to answer either: with no
+	// project selected there is no stamp, and doctor fails before the check.
+	view, _, _ := execute(t, "doctor", "--dir", t.TempDir())
+	if strings.Contains(view, cliBelowRequiredID) {
+		t.Errorf("a run with no project prints a cli-below-required item:\n%s", view)
+	}
+}
+
 // TestDoctorCLIBelowRequiredIsNotOwnFix: the below-stamp state's line is the
 // update class's own (the upgrade, then `fugaro update`), not the check's own
 // text — which is what ownFix would print — because those two commands are

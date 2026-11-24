@@ -55,10 +55,24 @@ func cliBelowRequiredCheck(ctx context.Context, lc *localcfg.Config, offline boo
 	if !updatecheck.Valid(version) {
 		return doctorCheck{ID: id, OK: true}
 	}
+	// No local installation: --offline has no config to read the database from,
+	// and the stamp is a fact of that database, so the question was not asked —
+	// the same state base-image skips in (doctorOfflineChecks), and the same
+	// reason. The ordinary run never gets here (selectProject fails first), so
+	// this is the flag's own state, and it is a skip rather than a pass because
+	// "not read" and "read and found fine" must not look alike (D946).
+	if lc == nil {
+		if offline {
+			return doctorCheck{ID: id, Skipped: true, Severity: "info",
+				Problem: "which release the project requires is a fact of its Realtime Database, and this machine has no local Fugaro installation to read the stamp cache from, so --offline cannot answer it",
+				Fix:     doctorOfflineAsk}
+		}
+		return doctorCheck{ID: id, OK: true}
+	}
 	// A project with no Realtime Database can carry no stamp — the node lives
 	// beside config/policy/shared — so there is nothing to be below. It is the
 	// same answer the fence gives a command with no RTDB URL (T3).
-	if lc == nil || lc.Budget == nil || lc.Budget.RTDBURL == "" {
+	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
 		return doctorCheck{ID: id, OK: true}
 	}
 	// The no-client half of the reader is what makes --offline honest: with no
