@@ -1,19 +1,21 @@
 # The new operations' contract (C-OPS)
 
-**Status: written with the plan's task C-OPS. The names, the payloads and the answer shapes below are frozen;
-everything else in the plan is still unapproved.**
+**Status: written with the plan's task C-OPS; its fixtures were reconciled with the CLI goldens and the stub bridge
+C-OPS held them in was deleted, by I-OPS. The names, the payloads and the answer shapes below are frozen; everything
+else in the plan is still unapproved.**
 
 This document is the contract [implementation-plan.md](implementation-plan.md) asks C-OPS for, and it is what the
 tasks that follow read instead of each other's code. The types live in
-[`console/src/shared/new-ops.ts`](../../console/src/shared/new-ops.ts), the runnable form of the same claim is
-[`console/src/renderer/stubs/bridge-stub.ts`](../../console/src/renderer/stubs/bridge-stub.ts), the renderer's typed
-read is [`console/src/renderer/new-bridge.ts`](../../console/src/renderer/new-bridge.ts), and
+[`console/src/shared/new-ops.ts`](../../console/src/shared/new-ops.ts), the fixtures the consumers build against are
+in [`console/test/support/newOpAnswers.ts`](../../console/test/support/newOpAnswers.ts), the renderer's typed read is
+[`console/src/renderer/new-bridge.ts`](../../console/src/renderer/new-bridge.ts), and
 [`console/test/unit/new-ops.test.ts`](../../console/test/unit/new-ops.test.ts) holds the three to each other.
 
 Three tasks are written against it: **AL** adds the operations beside it (it imports nothing from the types: what it
 must agree with is the CLI's argv and the frame shape, not a module), **SRC** writes the handlers, and the consumers --
-SU1, RB4, RS2, RS5, MO-C, SW3a, SW3b -- import the types and, until I-OPS lands, the stub. **I-OPS** then holds the
-stub's fixtures to the CLI goldens and deletes the stub.
+SU1, RB4, RS2, RS5, MO-C, SW3a, SW3b -- import the types and, in a test that draws from an answer, the fixtures.
+**I-OPS** held those fixtures to the CLI goldens and deleted the stub bridge that had answered from them, so every
+consumer reaches the real handlers.
 
 ## The nine operations
 
@@ -110,29 +112,32 @@ Every answer arrives inside the console's ordinary reply (`{ok: true, data}` or 
 - **`settings.editor.open`** answers the outcome object itself — `{ok, sentence}` — exactly as `settings.edit` does,
   because it spawns nothing and there is no document to have been read.
 
-## The stub, and what happens to it
+## The fixtures, and the stub that held them
 
-`stubBridge()` answers all nine operations from `STUB_FIXTURES`, an inline fixture per operation, each the `data` half
-described above. The stub validates no payload: payload validation is the allow-list's job in main, and a stub that
-checked one would be a second copy of a rule it does not own.
+C-OPS answered the nine operations from `STUB_FIXTURES` in `src/renderer/stubs/bridge-stub.ts`, an inline fixture per
+operation, each the `data` half described above, and **I-OPS deleted that file with the fixtures' own module**: the
+answers now live in [`console/test/support/newOpAnswers.ts`](../../console/test/support/newOpAnswers.ts), which no
+renderer module can reach, and `newOpAnswersBridge()` builds a bridge from them for a test that draws a screen, a
+section or a gate. The bridge validates no payload: payload validation is the allow-list's job in main, and a fixture
+bridge that checked one would be a second copy of a rule it does not own.
 
-The fixtures stand in for the goldens the CLI tasks record — `internal/cli/testdata/runs_stream.golden.ndjson`,
-`whoami.golden.json`, `setup_events.golden.ndjson`, `budget_stream.golden.ndjson` and
-`ee/report/cli/testdata/report_stream.golden.ndjson` — none of which exists yet. **What is pinned today is the shape
-and never a byte of CLI output that does not exist**: the values are plausible, they are marked as placeholders where
-the real thing is a digest or a hash, and **I-OPS is the task that reconciles them**: it compares each fixture with
-the golden it stands for, and it deletes `bridge-stub.ts` when the real handlers answer. The two places most likely to
-need reconciling are the setup feed's `step` members (ST2's schema is the authority, and this contract reads a
-missing one as the empty string) and `budget.stream`'s `end` line, which carries no version if the sibling stream task
-follows the caps document's own shape.
+**Six of the nine answers are the CLI's own goldens**, transcribed byte for byte from five recorded files
+(`internal/cli/testdata/runs_stream.golden.ndjson`, `whoami.golden.json`, `setup_events.golden.ndjson`,
+`budget_stream.golden.ndjson` and `ee/report/cli/testdata/report_stream.golden.ndjson`; the setup file's three runs
+give the plan, the apply and a refused `--check`), and `console/test/unit/ops-contract.test.ts` renders each one back
+into the CLI's framing (NDJSON lines, or the two-space document) and compares it with the file, so a fixture that
+drifts from the recording fails there. The other three — `image.catalog.ls`, `recipes.ls` and the settings editor's
+outcome, for which the CLI records no golden — stay C-OPS's plausible values: what is pinned for them is the shape,
+and never a byte of CLI output no task recorded. The two places the contract expected to need reconciling came out as
+it guessed: the setup feed's `step` members, and `budget.stream`'s `end` line, which carries no version.
 
-No consumer imports the stub. Each of SU1, RB4, RS2, RS5, MO-C, SW3a and SW3b builds its own fake bridge from the
-types, which is what lets I-OPS delete the file whole; the stub's only reader is `new-ops.test.ts`, which decodes
-every fixture against the type it stands for.
+No consumer imports a fixture bridge. Each of SU1, RB4, RS2, RS5, MO-C, SW3a and SW3b builds its own fake bridge from
+the types, and the two that read the shared answers import them from `test/support` rather than from the renderer.
 
 ## The one edit outside C-OPS's own files
 
 Two tests in `console/test/unit/screen-literals.test.ts` hold the lists of the modules they scan as exact sets, on
-purpose: "a module added to the renderer is a deliberate edit here". The three new modules (`shared/new-ops.ts`,
-`renderer/new-bridge.ts`, `renderer/stubs/bridge-stub.ts`) are therefore named in those two lists, and that is the
-whole of the change to that file. C-OPS adds no fixture directory, no build step and no dependency.
+purpose: "a module added to the renderer is a deliberate edit here". The two new modules that stayed
+(`shared/new-ops.ts`, `renderer/new-bridge.ts`) are named in those two lists — the stub's own entry went with the
+file, in I-OPS — and that is the whole of the change to that file. C-OPS adds no fixture directory, no build step and
+no dependency.

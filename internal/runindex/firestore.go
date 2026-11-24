@@ -22,11 +22,51 @@ const (
 	entryCollection   = "runIndex"
 	summaryCollection = "runIndexMeta"
 	summaryDocID      = "summary"
-	// sortField is the entry's sort key: the moment the run last changed. Every
-	// page of every reader is ordered by it, descending, and it is the field a
-	// cursor is a position in.
+	// sortField is the entry's sort key: the moment the run last changed. A page
+	// with no window is ordered by it, descending, and it is the field such a
+	// page's cursor is a position in.
 	sortField = "updated_at"
+	// nameField is Firestore's own document-name field, which is the run id.
+	// A page with a window is ordered by it instead: a window is the run's
+	// start (Filter.Since), the run id names that moment, and the bucket read
+	// the index replaces lists the same way (runstore.ListRunIDs), so the two
+	// reads of one window hold the same runs in the same order.
+	nameField = "__name__"
 )
+
+// windowed reports whether the filter asks for a window rather than the whole
+// of what it matches.
+func windowed(f Filter) bool { return !f.Since.IsZero() }
+
+// sinceRunID is the run id a window starts at: run ids begin with their UTC
+// mint time (task.NewRunID), so comparing ids compares start times, and these
+// are the same 15 characters runstore.ListRunIDs offsets its listing by.
+//
+// The floor is the first whole second at or after the window, because a run id
+// names whole seconds while a window does not: every real one is a moment
+// (`runs stats` builds it as now minus a duration), and the record read tests
+// the run's mint time itself (`!t.Before(since)`, runstore.ListRunIDs). Rounding
+// up is what makes the id comparison say the same thing: a run minted earlier in
+// the window's own second is below the floor, exactly as it is before the window.
+func sinceRunID(since time.Time) string {
+	at := since.UTC().Truncate(time.Second)
+	if at.Before(since) {
+		at = at.Add(time.Second)
+	}
+	return at.Format("20060102-150405")
+}
+
+// runIDTime is when a run id was minted, and false for an id this build cannot
+// read as one. A run whose id names no moment is not one the window can place,
+// so it is kept rather than dropped on a guess -- the same rule the record read
+// applies (readRunObjects).
+func runIDTime(runID string) (time.Time, bool) {
+	t, err := runstore.RunTime(runID)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
+}
 
 // pageSize is how many documents one page of a walk reads. It is the client's
 // own default (firestore.WithPageSize), spelled here because a walk that asked
@@ -248,18 +288,28 @@ func (r *firestoreReader) page(ctx context.Context, f Filter, sum Summary, overl
 		}
 		merged = append(merged, mergeEntry(e, o))
 	}
-	sort.Slice(merged, func(i, j int) bool { return newer(merged[i], merged[j]) })
+	w := windowed(f)
+	sort.Slice(merged, func(i, j int) bool {
+		if w {
+			return newerByRunID(merged[i], merged[j])
+		}
+		return newer(merged[i], merged[j])
+	})
 
 	page := Page{IndexComplete: sum.Complete, FoldedThrough: sum.FoldedThrough, Entries: []Entry{}}
 	for _, e := range merged {
-		if !afterCursor(e, after) {
+		if !afterCursor(e, after, w) {
 			continue
 		}
-		// The window is applied by the walk to the index's rows, where it is
-		// what stops the walk, and here to the overlay's, which are read whole
-		// and have no order to stop in.
-		if !f.Since.IsZero() && e.UpdatedAt.Before(f.Since) {
-			continue
+		// The window is the run's start, applied by the walk to the index's
+		// rows, where it is what stops the walk, and here to the overlay's,
+		// which are read whole and have no order to stop in. A run the window
+		// cannot place -- an id this build cannot read as a moment -- is kept,
+		// as the record read keeps it, rather than dropped on a guess.
+		if w {
+			if at, ok := runIDTime(e.RunID); ok && at.Before(f.Since) {
+				continue
+			}
 		}
 		// The state is applied here and not only in the query the page was read
 		// by: a page read per state is a page about the state the run is in, and
@@ -284,8 +334,14 @@ func (r *firestoreReader) page(ctx context.Context, f Filter, sum Summary, overl
 		// read as the whole of what matched. The cursor resumes either one.
 		if overflow || (more && len(page.Entries) > 0) {
 			last := page.Entries[len(page.Entries)-1]
-			at := last.UpdatedAt
-			page.Next = &Cursor{UpdatedAt: &at, RunID: last.RunID}
+			if w {
+				// A windowed page is ordered by the run id, so the cursor is
+				// one: the run the caller hands back as Filter.After.
+				page.Next = &Cursor{RunID: last.RunID}
+			} else {
+				at := last.UpdatedAt
+				page.Next = &Cursor{UpdatedAt: &at, RunID: last.RunID}
+			}
 		}
 	}
 	return page, nil
@@ -296,11 +352,20 @@ func (r *firestoreReader) page(ctx context.Context, f Filter, sum Summary, overl
 // end of what the query matches. rest says it stopped at top rather than at
 // the end, which is what tells a caller another page exists.
 //
-// The window is a bound on the order and not a filter the index serves: an
-// equality and a range are the two halves of a query a composite index
-// carries, and the rows arrive ordered by the sort key, so the walk stops at
-// the first row below the bound -- every row behind that one is older.
+// The window is a bound on the order and not a filter the index serves: the
+// rows arrive ordered by the order's key, so the walk stops at the first row
+// below the bound -- every row behind it is past it too. A window orders the
+// walk by the run id, which names the moment the run started at, so the first
+// run older than the window ends it -- the same place runstore.ListRunIDs stops
+// its listing of the same window.
 func (r *firestoreReader) walk(ctx context.Context, q firestore.Query, from *Cursor, top int, since time.Time) ([]Entry, bool, error) {
+	// A window orders the walk by the run id, which is what places a run's
+	// start, so the first id before the window's own is the first row outside
+	// it and the rest are older still.
+	floor := ""
+	if !since.IsZero() {
+		floor = sinceRunID(since)
+	}
 	var (
 		out  []Entry
 		last *firestore.Doc
@@ -326,7 +391,7 @@ func (r *firestoreReader) walk(ctx context.Context, q firestore.Query, from *Cur
 			if err != nil {
 				return nil, false, err
 			}
-			if !since.IsZero() && e.UpdatedAt.Before(since) {
+			if floor != "" && e.RunID < floor {
 				return out, false, nil
 			}
 			out = append(out, e)
@@ -350,6 +415,12 @@ func (r *firestoreReader) cursor(ctx context.Context, f Filter, overlay *overlay
 	doc, err := r.db.Get(ctx, entryCollection, f.After)
 	switch {
 	case err == nil:
+		// A windowed page is ordered by the run id, so its cursor is one run
+		// id; the document read is still what refuses a run id the index and
+		// the overlay both do not know (below), never a page from the start.
+		if windowed(f) {
+			return &Cursor{RunID: f.After}, nil
+		}
 		at, err := docTime(*doc)
 		if err != nil {
 			return nil, err
@@ -365,6 +436,9 @@ func (r *firestoreReader) cursor(ctx context.Context, f Filter, overlay *overlay
 	row, ok := rows[f.After]
 	if !ok {
 		return nil, fmt.Errorf("runindex: %s is neither an indexed run nor one the overlay knows, so there is no page after it", f.After)
+	}
+	if windowed(f) {
+		return &Cursor{RunID: row.RunID}, nil
 	}
 	at := row.At
 	return &Cursor{UpdatedAt: &at, RunID: row.RunID}, nil
@@ -389,11 +463,20 @@ func (r *firestoreReader) entry(ctx context.Context, run string) (Entry, bool, e
 }
 
 // afterCursor reports whether a row comes after the page's cursor in the
-// index's order. The query applies the same bound to the index's own rows;
-// this applies it to the overlay's, which are read whole on every page and
-// would otherwise be listed again on each one.
-func afterCursor(e Entry, c *Cursor) bool {
-	if c == nil || c.UpdatedAt == nil {
+// page's order -- the run id for a windowed page, the sort key then the run id
+// otherwise. The query applies the same bound to the index's own rows; this
+// applies it to the overlay's, which are read whole on every page and would
+// otherwise be listed again on each one.
+func afterCursor(e Entry, c *Cursor, w bool) bool {
+	if c == nil {
+		return true
+	}
+	// A windowed page is ordered by the run id alone, so its cursor is one run
+	// id and nothing else (Page.Next).
+	if w {
+		return e.RunID < c.RunID
+	}
+	if c.UpdatedAt == nil {
 		return true
 	}
 	switch {
@@ -404,6 +487,10 @@ func afterCursor(e Entry, c *Cursor) bool {
 	}
 	return e.RunID < c.RunID
 }
+
+// newerByRunID orders two rows as a windowed page's order does: the run id
+// descending, which is the run's start descending (runstore.ListRunIDs).
+func newerByRunID(a, b Entry) bool { return a.RunID > b.RunID }
 
 // newer orders two rows as the index's order does: the sort key descending,
 // then the run id descending.
@@ -565,10 +652,20 @@ func queriesOf(f Filter) []firestore.Query {
 			if state != "" {
 				where["status"] = string(state)
 			}
+			// A window is the run's start, so a windowed page is ordered by the
+			// run id -- which is the document's own name, and sorts by the
+			// moment it was minted. The walk then stops at the first run older
+			// than the window, exactly as runstore.ListRunIDs stops its own
+			// listing, so the index and the record read it replaces hold one
+			// window and not two.
+			order := firestore.Order{Field: sortField, Direction: "DESCENDING"}
+			if windowed(f) {
+				order = firestore.Order{Field: nameField, Direction: "DESCENDING"}
+			}
 			out = append(out, firestore.Query{
 				Collection: entryCollection,
 				Where:      where,
-				OrderBy:    []firestore.Order{{Field: sortField, Direction: "DESCENDING"}},
+				OrderBy:    []firestore.Order{order},
 			})
 		}
 	}
@@ -642,8 +739,14 @@ func (o *overlayRead) wait() (map[string]overlayRow, error) {
 }
 
 // cursorDoc is the document a query is told to start after: the run id is the
-// document's own id and the sort key is its value, which is all the client
-// reads off it (RI1).
+// document's own id, and the sort key is its value. Which fields the client
+// reads off it are the query's order's own (RI1) -- the document name for a
+// windowed page, the sort key otherwise -- so a cursor that carries no sort key
+// is a windowed page's position and nothing else.
 func cursorDoc(c *Cursor) *firestore.Doc {
-	return &firestore.Doc{Collection: entryCollection, ID: c.RunID, Fields: map[string]any{sortField: *c.UpdatedAt}}
+	doc := &firestore.Doc{Collection: entryCollection, ID: c.RunID}
+	if c.UpdatedAt != nil {
+		doc.Fields = map[string]any{sortField: *c.UpdatedAt}
+	}
+	return doc
 }

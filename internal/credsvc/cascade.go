@@ -61,7 +61,18 @@ import (
 // — a review caller's, a node that publishes no crafts — is answered with the
 // cascade's rule, which is what a list no strategy was written for has always
 // had.
-func (s *Server) candidates(ctx context.Context, id Identity, canonical string, shared *projectpolicy.Policy, b *Bundle) ([]creds.Credential, creds.Strategy, []Tried, error) {
+//
+// It answers the candidates, the within-tier rule they are served by, the NAME
+// of the call's own exclusive candidate when the call has one (personalCandidate)
+// and the candidates the narrowing dropped. The name is the one of those that is
+// not a property of the list, and it travels beside the list rather than as a
+// field of a Credential for two reasons: serving a candidate outright is a fact
+// about the CALL — the same token is one more member of the list in a call whose
+// slip does not name it — and creds.Credential is the workspace service's own
+// vocabulary of names, tiers and a provider, which its guard test holds to
+// exactly that. The side that makes the selection is the side that says so
+// (creds.Selector.Exclusive).
+func (s *Server) candidates(ctx context.Context, id Identity, canonical string, shared *projectpolicy.Policy, b *Bundle) ([]creds.Credential, creds.Strategy, string, []Tried, error) {
 	// The pool this call may be served from is the SCOPE's (C1, R1): which
 	// credentials a call may be served is a fact about the caller the scope
 	// verified — the member it resolved to — and the scope is what decides it,
@@ -76,7 +87,7 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 		// The scope could not read what it offers: the refusal's own sentence is
 		// the answer, and it travels as this error rather than as an empty list,
 		// which the selector would answer with a sentence about the bundle.
-		return nil, creds.StrategyFailover, nil, err
+		return nil, creds.StrategyFailover, "", nil, err
 	}
 	if id.JobClass == ClassReview {
 		// A review caller's list is its own and final (reviewCandidates): that
@@ -96,10 +107,10 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 			// carry is a deployment disagreeing with itself — and a service that
 			// panicked on a state it cannot name would be the worse answer to
 			// it.
-			return nil, creds.StrategyFailover, nil, fmt.Errorf("%w: the calling account is not one of this service's review job accounts", ErrUnavailable)
+			return nil, creds.StrategyFailover, "", nil, fmt.Errorf("%w: the calling account is not one of this service's review job accounts", ErrUnavailable)
 		}
 		out, skipped := reviewCandidates(reviewOfferings(b), ra.Account)
-		return out, creds.StrategyFailover, skipped, nil
+		return out, creds.StrategyFailover, "", skipped, nil
 	}
 	// The project's crafts narrow the pool one step further (poolOffering, MC6),
 	// which is where a pool's members enter this list and where a credential no
@@ -111,7 +122,7 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 		// The crafts leave this call nothing at all (poolRefusal): the refusal's
 		// own sentence is the answer, and it names the crafts and not the bundle
 		// an operator would otherwise go looking in.
-		return nil, creds.StrategyFailover, nil, err
+		return nil, creds.StrategyFailover, "", nil, err
 	}
 	cands := pool
 	var skipped []Tried
@@ -132,7 +143,7 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 			// answers an empty list with a sentence about the bundle — the one
 			// document that is not at fault, since what disagrees is the
 			// published node and the pool this call belongs to.
-			return nil, creds.StrategyFailover, nil, &poolRefusal{message: poolRefusalHead +
+			return nil, creds.StrategyFailover, "", nil, &poolRefusal{message: poolRefusalHead +
 				"the crafts go out on " + credentialNames(crafted) + ", and the pool this call belongs to holds " + credentialNames(pool)}
 		}
 	}
@@ -165,7 +176,7 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 		var err error
 		admitted, err = s.admittedAccounts(ctx, id, canonical)
 		if err != nil {
-			return nil, creds.StrategyFailover, nil, err
+			return nil, creds.StrategyFailover, "", nil, err
 		}
 	}
 	out := make([]creds.Credential, 0, len(cands))
@@ -193,7 +204,7 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 	// the workspace's pool.
 	rec, found, err := sc.RepoAuth().RepoAuth(ctx, id.Slug)
 	if err != nil {
-		return nil, creds.StrategyFailover, nil, err
+		return nil, creds.StrategyFailover, "", nil, err
 	}
 	var record *creds.RepoAuth
 	if found {
@@ -201,9 +212,95 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 	}
 	out, dropped, err := narrowToRepoAuth(out, record, id.Slug, id.AuthMode, id.AuthAccount)
 	if err != nil {
-		return nil, creds.StrategyFailover, nil, err
+		return nil, creds.StrategyFailover, "", nil, err
 	}
-	return out, strategy, append(skipped, dropped...), nil
+	// R7's candidate goes in FRONT, and it goes in here rather than through any
+	// narrowing above: what entitles a call to a person's own token is the slip
+	// its owner was granted, and neither the project's crafts, the tier's
+	// admission nor the repository's recorded auth has anything to say about it
+	// (personal_workspace.go says why). Being first is not what serves it,
+	// though: the list's order breaks an exact tie and says where a rotation
+	// starts (creds' leastRecentlyExhausted, rotate), so a token offered beside
+	// the shared entries as one more tier-A member would reach a call about
+	// once in N — the tie-break's turn, or a pool's rotation. The name
+	// therefore travels back with the list as the call's own exclusive
+	// candidate, which the selection serves while it can serve, whatever rule
+	// the list would otherwise be served by (creds.Selector.Exclusive, D3144).
+	// A refusal is the call's own and not a dropped candidate: a slip naming a
+	// personal token is served that token or refused, and the shared entries
+	// are never served in its place while it can serve (D2974).
+	exclusive := ""
+	if personal, ok, err := s.personalCandidate(ctx, sc); err != nil {
+		return nil, creds.StrategyFailover, "", nil, err
+	} else if ok {
+		out = append([]creds.Credential{personal}, out...)
+		exclusive = personal.Name
+	}
+	return out, strategy, exclusive, append(skipped, dropped...), nil
+}
+
+// personalCandidate is R7's candidate for one call: the person's own token,
+// when the call carries a slip naming one and the member's switch serves it.
+//
+// It is asked of the SCOPE and never of the bundle, and only where the scope is
+// a workspace's: an installation's scope hands out no person half, so an
+// installation answers no candidate here and its path is exactly what it was
+// (C2, WC5's A3). **This is the ONE place the candidate is assembled** — an
+// entry prepended anywhere else would be one more member of its tier, served by
+// the tie-break's turn or a pool's rotation instead of outright (D3144) — and
+// it is the list the class the reader answers travels out of. The slip handed
+// over is the call's VERIFIED binding — the one the fence above reads, and never
+// anything the call says — which is the whole of what C2's reader is given.
+//
+// A failure here is the reader's own refusal and it travels as this call's
+// (the switch off, a policy or a roster that could not be read, R11): it is
+// returned rather than swallowed, because a call under a slip that names a
+// personal token must be refused where the token cannot be served, and the
+// sentence the reader answered is the one the run is refused with — the
+// `poolRefusal` this call's carries reaches `candidates`' own branch and is
+// answered verbatim, never collapsed into a sentence of the call path's.
+func (s *Server) personalCandidate(ctx context.Context, sc Scope) (creds.Credential, bool, error) {
+	ps, ok := personHalfOf(sc)
+	if !ok {
+		return creds.Credential{}, false, nil
+	}
+	r := ps.Personal()
+	if r == nil {
+		// A workspace scope that holds no reader serves no personal candidate,
+		// which is the zero configuration C2 says must serve nothing rather
+		// than fail (PersonScopeConfig).
+		return creds.Credential{}, false, nil
+	}
+	b, ok := callSlipOf(ctx)
+	if !ok {
+		// No verified slip: a call of the personal half is under one, and a
+		// call without one has no personal candidate at all (R8).
+		return creds.Credential{}, false, nil
+	}
+	return r.Personal(ctx, creds.Slip{ID: b.id, Owner: b.owner, Allowed: b.allowed})
+}
+
+// personHalfOf answers the workspace's own half of one call's scope, and whether
+// this scope has one at all.
+//
+// It has TWO entries because the merged halves reach it two ways, and C2 admits
+// both. A DEPLOYMENT's scope hands its half out and declares none of the four
+// methods itself (WC4's Persons, which the slip routes dispatch on too, and
+// whose guard test pins the four to the half's own type: a second declarer would
+// be a second deployment that could serve a person's token) — so a scope is
+// asked through the hand-out first. A scope that declares C2's four methods
+// itself IS the half, which is the shape C2's own words describe ("a second
+// interface a scope may also implement") and the shape WC5's fixture has.
+//
+// A scope that answers neither — every installation's, and a workspace's before
+// its half is wired — hands out no half, and `personalCandidate` is what turns
+// that into "no candidate" (C2: absent serves nothing rather than failing).
+func personHalfOf(sc Scope) (PersonScope, bool) {
+	if ps, ok := personScopeOf(sc); ok {
+		return ps, true
+	}
+	direct, ok := sc.(PersonScope)
+	return direct, ok
 }
 
 // ownNamedEntries adds this repository's own named entries to the list the
@@ -844,6 +941,29 @@ func (s *Server) resolveEntry(ctx context.Context, b *Bundle, c creds.Credential
 	return e, ok, nil
 }
 
+// perSecretSentence is what a run is told when resolveEntry answered the
+// failure class, and it is the only place the two sentences of that class are
+// told apart: a read that FAILED (ErrPerSecretUnreadable and everything else)
+// is perSecretRefusal, and R7's absence of a person's own token is
+// ErrPersonalTokenAbsent's own (D2974).
+//
+// The second is a sentence of its own because the two are different acts for
+// the run: a rotation the service could not read is a retry, and a personal
+// token that is not there is a person who must run `fugaro secrets user set`
+// before their runs can be served at all. It is not a fall to the bundle's
+// entry — the name decided that in the read (dynamicsecrets.go) — and the run
+// is answered the command rather than the workspace's shared token.
+//
+// The class is matched by errors.Is rather than by the message: the read
+// returns the sentinel unwrapped, and a sentence compared as text would drift
+// from the constant the moment either is edited.
+func perSecretSentence(err error) string {
+	if errors.Is(err, ErrPersonalTokenAbsent) {
+		return ErrPersonalTokenAbsent.Error()
+	}
+	return perSecretRefusal
+}
+
 // unsent is the candidates this call has not already sent to. The mark a
 // usage limit writes does not always hold its credential — a reset already in
 // the past, on a tier whose D142 window is off, leaves a mark that has
@@ -1022,9 +1142,11 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			// here would serve, for every run at once, exactly what an operator
 			// rotated away — silently, and with no line that says so. The
 			// sentence is the class and nothing else: no container and no value
-			// is in it.
+			// is in it. A person's own token is the one candidate of the
+			// grammar whose absence is this class too (perSecretSentence), and
+			// its sentence is the command that sets one.
 			s.refuseCallCause(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
-				perSecretRefusal, labelRead(readSecret, err))
+				perSecretSentence(err), labelRead(readSecret, err))
 			return
 		}
 		if !ok {
