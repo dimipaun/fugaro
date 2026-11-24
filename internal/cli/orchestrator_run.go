@@ -27,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/versionstamp"
 )
 
 // fugaro orchestrator run: the foreground daemon (O8).
@@ -162,7 +163,13 @@ func runOrchestratorRun(cmd *cobra.Command, o *orchestratorRunOptions) error {
 		lc: lc, id: id, db: db, env: env, node: node, lease: lease, holder: holder,
 		interval: o.interval, beat: orchestrator.LeaseBeat,
 		binary: o.binary, running: Version, once: o.once, decide: o.decide,
-		out: cmd.OutOrStdout(), warn: cmd.ErrOrStderr(),
+		// The required-CLI stamp is read through the CLI's one seam, over the
+		// project's own database, exactly as the root fence and `update`'s door
+		// read it (T1, T6): the daemon is exempt from the root refusal and holds
+		// here instead, because a unit starts it again after any exit (R7).
+		stamp:    newStampSource(versionstamp.Options{Open: stampOpen, Getenv: os.Getenv}),
+		out:      cmd.OutOrStdout(),
+		warn:     cmd.ErrOrStderr(),
 		launched: &launchInFlight{},
 		// The endpoint's registry goes under the user's state directory, read
 		// from the process's own environment the way the cached brief is.
@@ -195,6 +202,13 @@ type orchestratorDaemon struct {
 	// below it is a claim that lapses between beats, and the person's own knob
 	// is the interval.
 	beat time.Duration
+	// stamp is the reader of the project's required CLI (T1), which the daemon
+	// reads at start and at every tick (R7): this command is exempt from the
+	// root fence, and holds below the stamp instead of refusing. A nil one is a
+	// daemon with no fence at all, which is what a test that is not about the
+	// stamp builds — the same nil-tolerance d.wake, d.endpoint and
+	// d.registryGetenv have.
+	stamp versionstamp.Source
 	// once is --once: one cycle, then the clean exit, and decide is --decide:
 	// whether the tick this daemon builds reaches the decision agent at all.
 	once     bool
@@ -295,6 +309,14 @@ func (d *orchestratorDaemon) start(ctx context.Context) error {
 	if due, err := d.updateDue(ctx); err != nil {
 		return err
 	} else if due {
+		return d.holdForUpdate(ctx)
+	}
+	// The stamp is asked before the lease is taken, for the reason updateDue is:
+	// a daemon that is going to claim nothing must not hold the id even for a
+	// moment (R7). Under a unit this is a hold and not an exit, because the unit
+	// starts the same old binary again after any exit; under --once or with no
+	// --binary, holdForUpdate returns nil and this daemon exits 0.
+	if d.belowRequiredCLI(ctx, false) {
 		return d.holdForUpdate(ctx)
 	}
 	state, err := d.lease.Acquire(ctx)
@@ -491,6 +513,63 @@ func (d *orchestratorDaemon) updateDue(ctx context.Context) (bool, error) {
 	fmt.Fprintf(d.out, "orchestrator %s: the state node is at schema_version %d and this binary reads %d, so an update is due: it was written by a newer release, and nothing is started until this machine runs `fugaro update`. %s\n",
 		safetext.Field(d.id), v, orchestrator.SchemaVersion, ending)
 	return true, nil
+}
+
+// belowRequiredCLI reports whether the project's required CLI is above this
+// binary, and says so when it is: the daemon is exempt from the root refusal
+// (R7), so this is where the one line the person reads comes from, and the
+// caller is what does the holding.
+//
+// The read goes through versionstamp.Source, so the cache rule is the CLI's one
+// rule — the stamp at start and at every tick, and at most one database read
+// per quarter hour (D3263) — and the fail-open rule is the CLI's too: a
+// database that cannot be read is one line and a daemon that drives on
+// (D3264), and only a stamp that is really above this binary stops it.
+//
+// A stamp that is present and malformed is the one case a read fails closed
+// (T1): the sentence names the node and the one thing that repairs it, and the
+// daemon stops on it exactly as it stops on a stamp above it, because a project
+// whose fence this binary cannot read is not one to drive.
+//
+// midRun says which stop this is, so the line the person reads matches it: at
+// start nothing is claimed yet, and mid-run the id is going back (the caller
+// releases it).
+func (d *orchestratorDaemon) belowRequiredCLI(ctx context.Context, midRun bool) bool {
+	if d.stamp == nil {
+		return false
+	}
+	res, err := d.stamp.Required(ctx, versionstamp.Query{URL: d.lc.Budget.RTDBURL, NoAuth: d.lc.Endpoints.NoAuth})
+	if err != nil {
+		d.reportRequiredCLI(safetext.OneLine(err.Error()), midRun)
+		return true
+	}
+	if res.Origin == versionstamp.OriginNone {
+		fmt.Fprintf(d.warn, "orchestrator %s: the project's required CLI could not be read, so this daemon drives on: %s\n",
+			safetext.Field(d.id), safetext.OneLine(res.Reason))
+		return false
+	}
+	if !res.Found || !versionstamp.Below(res.Stamp, d.running) {
+		return false
+	}
+	d.reportRequiredCLI((&versionstamp.BelowError{Stamp: res.Stamp, Version: d.running}).Error(), midRun)
+	return true
+}
+
+// reportRequiredCLI is that one line: the refusal sentence — which names the
+// required release, the date the installation set it and the brew command, and
+// comes from internal/versionstamp and nowhere else — and then what this daemon
+// does about it. The ending is updateDue's own choice of words: a unit starts
+// this binary again after any exit, so there the report is not the end of
+// anything and the daemon says so.
+func (d *orchestratorDaemon) reportRequiredCLI(sentence string, midRun bool) {
+	ending := "This daemon is stopping, and it claimed nothing."
+	switch {
+	case d.binary != "" && !d.once:
+		ending = "This daemon is holding instead of exiting, because the unit starts it again after any exit: it claims nothing and drives nothing, and it exits only once the binary the unit names has moved on."
+	case midRun:
+		ending = "This daemon is stopping; the lease is released."
+	}
+	fmt.Fprintf(d.out, "orchestrator %s: %s %s\n", safetext.Field(d.id), sentence, ending)
 }
 
 // holdForUpdate is what a daemon does with an update due while a unit runs it:
@@ -1070,6 +1149,16 @@ func (d *orchestratorDaemon) loop(ctx context.Context) error {
 			// gives up for good over one refused write.
 			d.release(ctx)
 			return dbErr(d.lc, err, false)
+		}
+		// The stamp is read again every cycle, through the cache (R7): an admin's
+		// `fugaro update` raises it under a running daemon, and this one stops
+		// claiming and driving rather than act on an installation that has moved
+		// past it. The id goes back the way abandon gives it back, and what this
+		// daemon does next is what it does below the stamp at start: it holds
+		// under a unit and exits 0 under --once or with no --binary.
+		if d.belowRequiredCLI(ctx, true) {
+			d.release(ctx)
+			return d.holdForUpdate(ctx)
 		}
 		d.refreshCaps(ctx)
 		// The plans are listed again every cycle: a plan imported while this
