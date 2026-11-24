@@ -368,6 +368,40 @@ func TestKeysetExpiresOneHundredAndEightyDaysOn(t *testing.T) {
 	}
 }
 
+// TestKeysetTheServiceReadsTheSetThisCommandWrites is the seam between the two
+// halves of the ceremony: the document A4's command writes is the document A2's
+// service reads, and nothing between them renames a field.
+//
+// The service reads the set for the kid of every key it publishes and for the
+// moment the set stops being valid, and it refuses a set it cannot read — so a
+// reader that looked for the keys anywhere but where this writer puts them would
+// refuse the owner's first published set and, with it, every assertion. The two
+// are held together here rather than in each package's own test, because what is
+// being checked is that they agree.
+func TestKeysetTheServiceReadsTheSetThisCommandWrites(t *testing.T) {
+	_, root := rootRingFixture(t)
+	now := time.Unix(1794960000, 0).UTC()
+	const signingKID = "signing-2026-11"
+	document, _, err := SignKeySet(context.Background(), root, KeySetRequest{
+		JWKS:    signingKeyJWKS(t, signingKID),
+		Seq:     1,
+		RootKID: testRootKID,
+	}, now)
+	if err != nil {
+		t.Fatalf("signing a key set: %v", err)
+	}
+	served, err := ParseServedSet(document)
+	if err != nil {
+		t.Fatalf("the identity service cannot read the set this command writes, so it refuses every assertion: %v", err)
+	}
+	if !slices.Equal(served.KIDs, []string{signingKID}) {
+		t.Errorf("the service reads the kids %v, and the set publishes %s", served.KIDs, signingKID)
+	}
+	if want := now.Add(KeySetLifetime); !served.ExpiresAt.Equal(want) {
+		t.Errorf("the service reads the set as valid until %s, and the signed set expires at %s", served.ExpiresAt, want)
+	}
+}
+
 // TestKeysetRefusesASeqNotAboveTheLastSignedOne is the plan's red step: a set
 // whose `seq` equals the last signed one is refused, and it is refused before
 // the root key is asked for a signature at all.
