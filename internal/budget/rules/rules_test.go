@@ -2214,7 +2214,7 @@ func TestAgentEntryFieldsAreTemplateChildren(t *testing.T) {
 		Coder: "m", Reviewer: "m", Recipe: "r", Auth: "cascade", PRURL: "https://example.invalid/1",
 		Action: "tool Bash", Tokens: 1, StartedAt: 1, StageStartedAt: 1, StageDeadline: 1, UpdatedAt: 1,
 		Spent: 1, Halted: "budget", Credential: "a1", WaitingUntil: 2, RequestedBy: "alice@example.invalid",
-		Mode: "critical", From: "area",
+		Mode: "critical", From: "area", Source: "pool:team", Fallback: true,
 	}
 	b, err := json.Marshal(entry)
 	if err != nil {
@@ -2231,9 +2231,12 @@ func TestAgentEntryFieldsAreTemplateChildren(t *testing.T) {
 			t.Errorf("budget.AgentEntry marshals %q and the template does not generate /%s: the entry's $other guard refuses the write", f, parent+"/"+f)
 		}
 	}
-	// The interesting two, named so that a rename has to be argued: the
-	// cascade's current credential and the instant it expects to resume at.
-	for _, f := range []string{"credential", "waiting_until"} {
+	// The interesting ones, named so that a rename has to be argued: the
+	// cascade's current credential and the instant it expects to resume at,
+	// and the routing table's source — whose name the contract fixes for
+	// `fugaro watch --json` (contract-table.md), so it is not this package's
+	// to rename in passing either.
+	for _, f := range []string{"credential", "waiting_until", "source"} {
 		if _, ok := fields[f]; !ok {
 			t.Errorf("budget.AgentEntry no longer marshals %q", f)
 		}
@@ -2982,10 +2985,14 @@ func isNewCredsPath(p string) bool {
 	// (rigor-modes plan T1.7, F40 of its reconciliation): the mode a live run
 	// resolved and the layer that decided it, which the runner writes into its
 	// own registry entry from its record so `fugaro watch` can show them. Both
-	// are equalities, for the reason above.
+	// are equalities, for the reason above. `source` and its `fallback` flag
+	// are the next pair of the same shape (model-credentials-routing CS9,
+	// D3070): what the run's running stage goes out on, as the live views print
+	// it.
 	entry := "agents/" + slugForPath + "/$run/"
 	return p == entry+"credential" || p == entry+"waiting_until" ||
-		p == entry+"mode" || p == entry+"from"
+		p == entry+"mode" || p == entry+"from" ||
+		p == entry+"source" || p == entry+"fallback"
 }
 
 // TestRulesVersionUnchanged: the generations an installation compares, asserted
