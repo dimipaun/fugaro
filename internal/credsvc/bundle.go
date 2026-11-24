@@ -666,6 +666,28 @@ func (b *Bundle) Lookup(name string) (Entry, bool) {
 	return b.entries[i], true
 }
 
+// LookupRepo answers the entry one repository's own credential is held under,
+// by the DOCUMENT KEY RepoCredentialKey builds from a slug and a credential
+// name — the same key ReadProviderKey resolves against (D3008, KS12).
+//
+// It is a lookup of its own and not more of Lookup because the family has its
+// own index: the credential's bare name is a name two repositories' entries
+// carry the same, so byName holds none of them (KindRepoCredential,
+// repoCredentials). A caller that HAS resolved the family reaches it through
+// C1's accessor (ReadProviderKey, which takes the run's verified slug); this one
+// answers a caller that already holds the document key — the walk, whose chain
+// was built from the very same key.
+func (b *Bundle) LookupRepo(key string) (Entry, bool) {
+	if b == nil {
+		return Entry{}, false
+	}
+	i, ok := b.repoCredentials[key]
+	if !ok {
+		return Entry{}, false
+	}
+	return b.entries[i], true
+}
+
 // AppKey answers the bundle's GitHub App private key (C2.1), which is the
 // entry whose document key is config.GitHubAppKeySecret. found=false is a
 // document that holds no App key, which the mint refuses on (ErrMintNoAppKey)

@@ -316,6 +316,73 @@ func (s *Selector) MayServe(ctx context.Context, run Run, c Credential) error {
 	return err
 }
 
+// Serve judges ONE credential the CALLER has already chosen, and records the
+// decision (take). It is MayServe with the placement, and it is what a chain
+// walked by the project's routing table serves a single-credential source with
+// (internal/credsvc's walk, CS1).
+//
+// # What it judges, and the one rule it does not
+//
+// The judgement is the same one every candidate meets (free): the credential's
+// own mark, and the room D142's cap leaves. It answers the same two refusals
+// for the same states — *ExhaustedUntil with the wait beside it, and
+// ErrNoCredential — so a caller renders one sentence for one state.
+//
+// What it does NOT apply is the POLICY's tier gate (reachable, Settings.tiers):
+// the chain REPLACES the fixed tier order (R4, D3170), so which tier a call may
+// go out on is the project's table's answer and no longer `settings.fallback`'s.
+// A chain that puts the project's paid key first serves the call there under
+// `oauth-only`, and a chain that puts a donated subscription first serves it
+// there — that is the whole of what the table is for. The class rule
+// (checkCandidates) is left out for the same reason: the table names a
+// credential FOR a model, which is the fact that rule infers, and RT3 refuses a
+// table whose sources disagree with it.
+//
+// Neither omission widens the cascade's own path: nothing but the walk calls
+// this, and the walk has a table's entry in hand.
+func (s *Selector) Serve(ctx context.Context, run Run, c Credential) (time.Duration, error) {
+	set := s.Settings.withDefaults()
+	now := s.now()
+	if err := run.valid(); err != nil {
+		return 0, err
+	}
+	if c.Name == "" {
+		return 0, fmt.Errorf("creds: a credential of tier %q has no name", c.Tier)
+	}
+	marks, err := s.Store.Marks(ctx)
+	if err != nil {
+		return 0, err
+	}
+	leases, err := s.Store.Leases(ctx, now)
+	if err != nil {
+		return 0, err
+	}
+	if !free(c, marks, leases, run, now, set) {
+		if at, probe, ok := earliest([]Credential{c}, marks, leases, run, now, set); ok {
+			wait := waitUntil(now, at)
+			return wait, &ExhaustedUntil{At: at, Wait: wait, Probe: probe}
+		}
+		return 0, ErrNoCredential
+	}
+	if err := s.take(ctx, run, c, now, set); err != nil {
+		return 0, err
+	}
+	return 0, nil
+}
+
+// Place records ONE credential the caller's own rule has already judged as the
+// run's current one, and writes nothing else: no mark, no judgement, and no
+// second reading of the state.
+//
+// It is for a credential a POOL's rule answered (PoolPicker.PickInPool), which
+// filters by free and picks in one answer, so the walk records the decision and
+// never judges the member twice: two readings of the state could disagree, and
+// the member the pool answered is the member the pool answered.
+func (s *Selector) Place(ctx context.Context, run Run, c Credential) error {
+	set := s.Settings.withDefaults()
+	return s.take(ctx, run, c, s.now(), set)
+}
+
 // selectCredential is the selection Select and MayServe share, and `place` is
 // the whole difference between them: Select records the decision (take), which
 // is D154's stickiness and D142's lease written as one placement, and MayServe

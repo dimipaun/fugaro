@@ -110,6 +110,21 @@ type call struct {
 	// carries either. They live for the length of one call and are written
 	// nowhere.
 	scrubs []string
+	// chain is the walk this call is served by, and nil for a call served the
+	// way every call was served before the routing table existed (CS1). It is
+	// this call's own — the chain is walked from its first source at every call
+	// (R16) — and it is what forward asks instead of the selector when it is
+	// set, and what the answer carries the source of (chainAnswer).
+	chain *chainWalk
+	// stage is whether the caller sent the stage header (SentStage), read from
+	// the request BEFORE header is stripped of every X-Fugaro- member — which
+	// is the whole of what readCall keeps of it, and the whole of what the
+	// answer needs to decide whether it may carry this contract's three
+	// members (chainAnswer, R24, F57). It is a bool and not the header itself
+	// because the header, and every X-Fugaro- member with it, is what C1.10
+	// refuses to send upstream: a call that carried the stage on would hand the
+	// agent's own stage name to the model's API.
+	stage bool
 	// probed is every tier this call made a probe on (C1.12), in the order
 	// the probes were made and once per tier: what the answer carries to the
 	// run (HeaderProbe), which settles each probe by it — notional on tier A,
@@ -160,6 +175,7 @@ func readCall(r *http.Request, scrubs []string) (*call, error) {
 		// would be guessing at the caller's encoding.
 		body = bytes.ReplaceAll(body, []byte(tok), []byte(redactedValue))
 	}
+	stage := SentStage(r.Header)
 	h := r.Header.Clone()
 	for k := range h {
 		if strings.HasPrefix(http.CanonicalHeaderKey(k), headerPrefixFugaro) {
@@ -171,6 +187,7 @@ func readCall(r *http.Request, scrubs []string) (*call, error) {
 		query:     r.URL.RawQuery,
 		body:      body,
 		header:    h,
+		stage:     stage,
 		requested: strings.Contains(r.Header.Get("Accept"), "text/event-stream"),
 		scrubs:    scrubs,
 	}, nil
