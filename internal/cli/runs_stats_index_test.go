@@ -273,9 +273,10 @@ func TestRunsStatsCountsAnOverlayRowAsARunNotAsUnlaunched(t *testing.T) {
 
 // TestRunsStatsDocumentSaysWhichReadItIs is the document half: index_complete is
 // true when the rows are the index's page, and false while the index has never
-// finished a walk -- when the run records are read instead, over the same window
-// and with the same figures, which is the read this command made before the
-// index existed.
+// finished a walk -- when the run records are read instead, which is the read
+// this command made before the index existed. The two reads are not the same
+// read (readUserStatsRuns): they window a run differently, and an unfolded run
+// reaches the index with no launcher.
 func TestRunsStatsDocumentSaysWhichReadItIs(t *testing.T) {
 	f := newCloudFixture(t)
 	userStatsPlace(t, f, "someone@example.com", nil, []string{"user:someone@example.com"})
