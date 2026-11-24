@@ -29,6 +29,10 @@ const (
 	// moment.
 	runOne = "20261120-093000-a1b2"
 	runTwo = "20261120-101500-c3d4"
+	// runThree is older than both, and runGhost sits between them: a run
+	// directory a walk reaches and reads nothing from (RI5's failure test).
+	runThree = "20261120-080000-eeee"
+	runGhost = "20261120-090000-ffff"
 )
 
 var foldNow = time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
@@ -49,10 +53,9 @@ func newFoldEnv(t *testing.T) *foldEnv {
 	return &foldEnv{t: t, db: gcpfake.NewRTDB(t), fs: gcpfake.NewFirestore(t), bucket: memblob.OpenBucket(nil), now: foldNow}
 }
 
-// writer is the fold the fixture runs: the lease's holder is the execution's
-// name and the wall clock is the fixture's. A test that needs the fold itself
-// rather than one whole sweep takes it from here.
-func (e *foldEnv) writer() *Fold {
+// index is the folder one pass runs as: the lease's holder is the execution's
+// name and the wall clock is the fixture's.
+func (e *foldEnv) index() *Fold {
 	e.t.Helper()
 	c, err := rtdb.New(e.db.URL, rtdb.Auth{IDToken: func() string { return "" }})
 	if err != nil {
@@ -69,7 +72,7 @@ func (e *foldEnv) writer() *Fold {
 // fold runs one fold, as the sweep does.
 func (e *foldEnv) fold() (FoldReport, error) {
 	e.t.Helper()
-	return e.writer().Fold(context.Background())
+	return e.index().Fold(context.Background())
 }
 
 // reader is the real Reader over the fixture's two fakes, for a test that reads
@@ -387,7 +390,7 @@ func TestFoldStampsAClaimedNeverLaunchedRunWithItsMintTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.objects(foldSlug, foldSpec(run), nil, nil)
-	f := e.writer()
+	f := e.index()
 	entry, err := f.read(context.Background(), runKey{slug: foldSlug, run: run})
 	if err != nil {
 		t.Fatal(err)
@@ -568,5 +571,38 @@ func TestFoldLeavesTheStampOnFailure(t *testing.T) {
 	}
 	if got := e.summary()["folded_through"]; got != stamp {
 		t.Fatalf("a failed fold moved the stamp: %v became %v", stamp, got)
+	}
+}
+
+// TestFoldProjectsTheTaskBranch is run 1a21's deferred review finding, on the
+// writing side. indexRun rebuilt the coordinator view from the entry's two
+// records alone, so a run whose record is absent or unreadable lost the branch
+// coordinatorRun falls back to the task for. The fold is where that fallback is
+// preserved: the entry projects the branch runview.Join joins (the record's,
+// else the task's), so a reader of the index draws the same branch the bucket
+// read draws. A record-less run is the case that makes the projection
+// load-bearing, and the one asserted here.
+func TestFoldProjectsTheTaskBranch(t *testing.T) {
+	e := newFoldEnv(t)
+	branch := "fugaro/" + runTwo
+	spec := &task.Spec{
+		Version: 1, RunID: runTwo, Repo: foldRepo, Ref: "main", Workflow: "go",
+		Task: "# Task: a run in flight\n\nthe body", Title: "a run in flight",
+		Branch: branch, PR: 41, PreviousRun: runOne,
+	}
+	// A task and a launch, no record at all: the state whose branch nothing
+	// else in the entry can answer for.
+	e.agent(foldSlug, runTwo, foldNow.Add(-2*time.Minute))
+	e.objects(foldSlug, spec, foldLaunch(runTwo, foldNow.Add(-3*time.Minute)), nil)
+
+	if _, err := e.fold(); err != nil {
+		t.Fatal(err)
+	}
+	two := e.doc(runTwo)
+	if got := two["branch"]; got != branch {
+		t.Fatalf("branch = %#v, want the task's %s", got, branch)
+	}
+	if _, ok := two["record"]; ok {
+		t.Fatalf("a run that never finalized carries a record: %v", two)
 	}
 }
