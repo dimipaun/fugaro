@@ -482,12 +482,15 @@ func TestVerifyRefusesEveryRowOfTheTable(t *testing.T) {
 			why:    "the issuer is pinned in the build (O7): a pin the caller can pass in the assertion is no pin at all",
 		},
 		{
+			// The life is inside the contract's, so the lifetime rule cannot be
+			// what refuses this one: exp is older than the skew, and nothing else
+			// here is.
 			name: "an expired assertion", field: "exp",
 			mutate: func(c map[string]any) {
-				c["iat"] = testNow.Add(-time.Hour).Unix()
-				c["exp"] = testNow.Add(-30 * time.Minute).Unix()
+				c["iat"] = testNow.Add(-2 * time.Minute).Unix()
+				c["exp"] = testNow.Add(-90 * time.Second).Unix()
 			},
-			why: "an assertion past its life is refused, and the skew does not reach half an hour back",
+			why: "an assertion whose expiry is older than the skew is refused: the expiry is the only lower bound on an assertion's age, and without it an assertion minted years ago would verify for ever once its jti had left the store",
 		},
 		{
 			name: "an assertion issued in the future", field: "iat",
@@ -668,6 +671,49 @@ func TestVerifyRefusesAnAssertionThatOutlivesTheContract(t *testing.T) {
 	}
 	if got := srv.reads(); got != 0 {
 		t.Errorf("the assertion was refused after %d read(s) of the key endpoint, want 0: the key is pinned and the claims are what failed", got)
+	}
+}
+
+// The expiry check's own boundary, which the table's row cannot state on its
+// own: the two clocks are two clocks, so an assertion a few seconds past its exp
+// is still honoured, and one older than the skew is refused. The expiry is the
+// only lower bound on an assertion's age -- the jti is remembered for its life
+// plus the skew and no longer -- so an assertion refused here must not spend its
+// id, and one that is years old must not verify at all.
+func TestVerifyBoundsHowOldAnAssertionMayBe(t *testing.T) {
+	rootPub, _ := testKey(t)
+	signPub, signPriv := testKey(t)
+	srv := &keySetServer{}
+	p := pins(rootPub, 7, pinned(testSignKID, signPub))
+
+	// Half a minute past its exp: inside the skew of a minute, so this is the
+	// assertion of a phone whose clock runs a little fast, and it verifies.
+	inside := goodClaims()
+	inside["jti"] = "test-jti-inside-the-skew"
+	inside["iat"] = testNow.Add(-90 * time.Second).Unix()
+	inside["exp"] = testNow.Add(-30 * time.Second).Unix()
+	if _, err := verify(t, newTestVerifier(t, p, srv, newMemoryClaims(), &memorySeq{}), signAssertion(t, signPriv, testSignKID, inside)); err != nil {
+		t.Fatalf("an assertion half a minute past its expiry was refused, and the skew exists so that two clocks a little apart are still one pairing: %v", err)
+	}
+
+	// A minute and a half past it: past anything a clock difference explains. The
+	// life is the contract's own and well inside it, so the expiry check is the
+	// only rule here that can refuse this -- which is what makes this the case
+	// that pins it.
+	old := goodClaims()
+	old["jti"] = "test-jti-long-expired"
+	old["iat"] = testNow.Add(-150 * time.Second).Unix()
+	old["exp"] = testNow.Add(-90 * time.Second).Unix()
+	store := newMemoryClaims()
+	_, err := verify(t, newTestVerifier(t, p, srv, store, &memorySeq{}), signAssertion(t, signPriv, testSignKID, old))
+	if err == nil {
+		t.Fatal("an assertion a minute and a half past its expiry was accepted: the expiry is the only lower bound on an assertion's age, and without it an assertion minted years ago verifies for ever once the store has forgotten its jti")
+	}
+	if field := refusalField(t, err); field != "exp" {
+		t.Errorf("the refusal names %q, want \"exp\"", field)
+	}
+	if store.ttl != 0 {
+		t.Errorf("the jti was claimed for %s, and an assertion refused for its age must not spend one", store.ttl)
 	}
 }
 
