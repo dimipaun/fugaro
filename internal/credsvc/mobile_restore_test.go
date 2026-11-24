@@ -424,8 +424,8 @@ func TestMobileRestoreStrictProjectRefusesWithQR(t *testing.T) {
 	if got := auditField(lines[0], "caller"); got != restoreEmail {
 		t.Errorf("the audit line's caller is %q, want the verified address %q", got, restoreEmail)
 	}
-	if got := auditField(lines[0], "status"); got != ErrorRequestRefused {
-		t.Errorf("the audit line's status is %q, want %q: the contract's refusal codes are not statuses of this service's audit", got, ErrorRequestRefused)
+	if got := auditField(lines[0], "status"); got != ReasonNotAdmitted {
+		t.Errorf("the audit line's status is %q, want %q: the contract's refusal codes are not statuses of this service's audit, and not_admitted is the word for a caller this service named and does not admit", got, ReasonNotAdmitted)
 	}
 }
 
@@ -441,26 +441,18 @@ func (f *restoreFixture) challengeCall(t *testing.T, body string) *httptest.Resp
 	return rec
 }
 
-// wireRefusal is the service's own refusal from a body, failing the test when
-// the body is not one: a failure of the service (or a body it would not read) is
-// this service's WireError and never a code of the contract's, which is what a
-// test tells the two apart by.
-func wireRefusal(t *testing.T, rec *httptest.ResponseRecorder) WireError {
+// restoreRefusal is the contract's refusal from a body, failing the test when the
+// body is not one: every answer of these routes is C1's Error — a body the route
+// could not read and a failure of the service's own included — so a body
+// carrying the runner's wire shape is a failure here, not a shape to read.
+func restoreRefusal(t *testing.T, rec *httptest.ResponseRecorder) mobilesession.Error {
 	t.Helper()
-	var e WireError
+	var e mobilesession.Error
 	if err := json.Unmarshal(rec.Body.Bytes(), &e); err != nil {
-		t.Fatalf("the refusal is not one this service's wire reads: %v (%s)", err, rec.Body.String())
+		t.Fatalf("the refusal is not one the contract reads: %v (%s)", err, rec.Body.String())
 	}
-	if e.Error == "" {
-		t.Fatalf("the refusal names no error type: %s", rec.Body.String())
-	}
-	// The set is the service's own: a mobile refusal is the contract's Error
-	// and never one of these, so a body that reads as one is a failure of the
-	// service or a call it could not read.
-	switch e.Error {
-	case ErrorRequestRefused, ErrorStateUnavailable:
-	default:
-		t.Fatalf("the refusal names %q, which is not one of this service's own error types: %s", e.Error, rec.Body.String())
+	if e.Code == "" {
+		t.Fatalf("the refusal names no code, and the contract's routes answer a code and never a sentence alone: %s", rec.Body.String())
 	}
 	return e
 }
@@ -585,8 +577,8 @@ func TestMobileRestoreChallengeRefusesABodyThatNamesAField(t *testing.T) {
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("a challenge body that is %s is answered %d, want %d: %s", tc.name, rec.Code, http.StatusBadRequest, rec.Body.String())
 			}
-			if e := wireRefusal(t, rec); e.Error != ErrorRequestRefused {
-				t.Errorf("the refusal is %q, want %q", e.Error, ErrorRequestRefused)
+			if e := restoreRefusal(t, rec); e.Code != mobilesession.CodeNotAMember {
+				t.Errorf("the refusal is %q, want the contract's %q: a body this route could not read is answered in the phone's own shape", e.Code, mobilesession.CodeNotAMember)
 			}
 			noAuditLine(t, f.audit)
 		})
@@ -605,8 +597,8 @@ func TestMobileRestoreChallengeRefusesAChallengeItCannotDraw(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("a challenge that could not be drawn is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
-	if e := wireRefusal(t, rec); e.Error != ErrorStateUnavailable {
-		t.Errorf("the refusal is %q, want %q", e.Error, ErrorStateUnavailable)
+	if e := restoreRefusal(t, rec); e.Code != mobilesession.CodeNotAMember {
+		t.Errorf("the refusal is %q, want the contract's %q: a failure of the service is answered in the phone's own shape", e.Code, mobilesession.CodeNotAMember)
 	}
 	noAuditLine(t, f.audit)
 }
@@ -891,8 +883,8 @@ func TestMobileRestoreRefusesASpentChallenge(t *testing.T) {
 	if got := auditField(lines[1], "caller"); got != restoreEmail {
 		t.Errorf("the refusal's caller is %q, want the verified address %q", got, restoreEmail)
 	}
-	if got := auditField(lines[1], "status"); got != ErrorRequestRefused {
-		t.Errorf("the refusal's status is %q, want %q", got, ErrorRequestRefused)
+	if got := auditField(lines[1], "status"); got != ReasonNotAdmitted {
+		t.Errorf("the refusal's status is %q, want %q", got, ReasonNotAdmitted)
 	}
 	if len(f.devices.written) != 1 {
 		t.Errorf("the two calls wrote %d device nodes, want only the first call's one", len(f.devices.written))
@@ -972,8 +964,8 @@ func TestMobileRestoreRefusesAPolicyVerdict(t *testing.T) {
 				if rec.Code != http.StatusServiceUnavailable {
 					t.Fatalf("a policy answer this route does not render is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 				}
-				if e := wireRefusal(t, rec); e.Error != ErrorStateUnavailable {
-					t.Errorf("the refusal is %q, want %q", e.Error, ErrorStateUnavailable)
+				if e := restoreRefusal(t, rec); e.Code != mobilesession.CodeNotAMember {
+					t.Errorf("the refusal is %q, want the contract's %q: a failure of the service is answered in the phone's own shape", e.Code, mobilesession.CodeNotAMember)
 				}
 			} else {
 				if rec.Code != http.StatusForbidden {
@@ -1003,7 +995,7 @@ func TestMobileRestoreRefusesAPolicyVerdict(t *testing.T) {
 			if got := auditField(lines[0], "caller"); got != restoreEmail {
 				t.Errorf("the line's caller is %q, want the verified address %q", got, restoreEmail)
 			}
-			wantStatus := ErrorRequestRefused
+			wantStatus := ReasonNotAdmitted
 			if tc.wantCode == "" {
 				wantStatus = ErrorStateUnavailable
 			}
@@ -1027,8 +1019,8 @@ func TestMobileRestoreRefusesAnAllowedVerdictWithNoRole(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("an allowed verdict with no role is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
-	if e := wireRefusal(t, rec); e.Error != ErrorStateUnavailable {
-		t.Errorf("the refusal is %q, want %q", e.Error, ErrorStateUnavailable)
+	if e := restoreRefusal(t, rec); e.Code != mobilesession.CodeNotAMember {
+		t.Errorf("the refusal is %q, want the contract's %q: a failure of the service is answered in the phone's own shape", e.Code, mobilesession.CodeNotAMember)
 	}
 	if len(f.devices.written) != 0 {
 		t.Errorf("the restore wrote %d device nodes, want none: a node with no role is one no consumer can resolve", len(f.devices.written))
@@ -1059,8 +1051,8 @@ func TestMobileRestoreRefusesAProjectPolicyItCannotRead(t *testing.T) {
 			if rec.Code != http.StatusServiceUnavailable {
 				t.Fatalf("an unreadable policy is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 			}
-			if e := wireRefusal(t, rec); e.Error != ErrorStateUnavailable {
-				t.Errorf("the refusal is %q, want %q", e.Error, ErrorStateUnavailable)
+			if e := restoreRefusal(t, rec); e.Code != mobilesession.CodeNotAMember {
+				t.Errorf("the refusal is %q, want the contract's %q: a failure of the service is answered in the phone's own shape", e.Code, mobilesession.CodeNotAMember)
 			}
 			if len(f.devices.written) != 0 {
 				t.Errorf("the restore wrote %d device nodes, want none", len(f.devices.written))
@@ -1109,8 +1101,8 @@ func TestMobileRestoreRefusesABadRequest(t *testing.T) {
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("a body that is %s is answered %d, want %d: %s", tc.name, rec.Code, http.StatusBadRequest, rec.Body.String())
 			}
-			if e := wireRefusal(t, rec); e.Error != ErrorRequestRefused {
-				t.Errorf("the refusal is %q, want %q", e.Error, ErrorRequestRefused)
+			if e := restoreRefusal(t, rec); e.Code != mobilesession.CodeNotAMember {
+				t.Errorf("the refusal is %q, want the contract's %q: a body this route could not read is answered in the phone's own shape", e.Code, mobilesession.CodeNotAMember)
 			}
 			noAuditLine(t, f.audit)
 			if len(f.verifier.assertions) != 0 {
@@ -1183,8 +1175,8 @@ func TestMobileRestoreRefusesAChallengeItDidNotIssue(t *testing.T) {
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("a challenge this service never issued is answered %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
 			}
-			if e := wireRefusal(t, rec); e.Error != ErrorRequestRefused {
-				t.Errorf("the refusal is %q, want %q", e.Error, ErrorRequestRefused)
+			if e := restoreRefusal(t, rec); e.Code != mobilesession.CodeNotAMember {
+				t.Errorf("the refusal is %q, want the contract's %q: a body this route could not read is answered in the phone's own shape", e.Code, mobilesession.CodeNotAMember)
 			}
 			if len(f.claims.keys) != 0 {
 				t.Errorf("the challenge %q reached the claim store, want nothing written: the value is a key every instance of this service reads", tc.challenge)
@@ -1232,8 +1224,8 @@ func TestMobileRestoreLeavesNothingBehindWhenItCannotAnswer(t *testing.T) {
 			if rec.Code != http.StatusServiceUnavailable {
 				t.Fatalf("a restore the service cannot finish is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 			}
-			if e := wireRefusal(t, rec); e.Error != ErrorStateUnavailable {
-				t.Errorf("the refusal is %q, want %q", e.Error, ErrorStateUnavailable)
+			if e := restoreRefusal(t, rec); e.Code != mobilesession.CodeNotAMember {
+				t.Errorf("the refusal is %q, want the contract's %q: a failure of the service is answered in the phone's own shape", e.Code, mobilesession.CodeNotAMember)
 			}
 			if tc.wantNode {
 				uid := deviceUID(t, f)
@@ -1299,7 +1291,7 @@ func TestMobileRestoreTakesBackADeviceItCannotRecord(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("a restore that could not be recorded is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
-	if e := wireRefusal(t, rec); e.Message != mobileRestoreUnaudited {
+	if e := restoreRefusal(t, rec); e.Message != mobileRestoreUnaudited {
 		t.Errorf("the answer is %q, want the unaudited sentence: the act was not made", e.Message)
 	}
 	uid := deviceUID(t, f)
@@ -1332,7 +1324,7 @@ func TestMobileRestoreRefusesAProjectWithNoConsumerKey(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("a project with no consumer key is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
-	if e := wireRefusal(t, rec); e.Message != mobileConsumerKeyUnread {
+	if e := restoreRefusal(t, rec); e.Message != mobileConsumerKeyUnread {
 		t.Errorf("the answer is %q, want the unreadable-consumer-key sentence", e.Message)
 	}
 	if len(f.devices.written) != 0 || len(f.refresh.issued) != 0 {

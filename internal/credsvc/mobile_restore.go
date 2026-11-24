@@ -110,20 +110,26 @@ package credsvc
 //
 // The line's status is this service's and never the contract's: the mobile
 // codes are not statuses of the audit's closed set (audit.go's ValidStatus
-// names the wire's ten error types and no code of this contract), so a refusal
-// of the caller is recorded as the request refusal it is and a failure of the
-// service as its own unavailable state — which is what the line's reader needs
-// to tell one from the other.
+// names the wire's own vocabulary and no code of this contract), so a refusal
+// of a caller this service has named and does not admit is recorded as
+// not_admitted — the vocabulary's word for exactly that, and the word the
+// pairing route records for the same class — and a failure of the service as
+// its own unavailable state, which is what the line's reader needs to tell one
+// from the other. This route records request_refused nowhere: the one refusal
+// that would carry it, a body it could not read, writes no line at all.
 //
 // # What a refusal is, and the shapes it takes
 //
-// A refusal of a call this route read is C1's Error: one of the contract's
-// codes, which is what the app renders a screen from, and never a sentence
-// alone. Two answers carry no code, and each is this service's own WireError
-// instead: a body this route could not read, which is the 400 every route of
-// this service answers and which C1's closed code set has no member for, and a
-// failure of the service's own (a store that could not be read, a token that
-// could not be minted), which is no refusal of the caller at all.
+// Every answer of these routes is C1's Error: one of the contract's codes,
+// which is what the app renders a screen from, and never a sentence alone. That
+// holds for the two answers that are no refusal of the caller's as well — a
+// body this route could not read, and a failure of the service's own (a store
+// that could not be read, a token that could not be minted) — and each is
+// answered the way the pairing route answers it: the code the phone shows for a
+// refusal it cannot act on (not_a_member), because C1's closed set has no
+// member for either, with a sentence that says which of the two happened. The
+// runner's own wire shape is not written here at all: a phone reads this
+// contract and nothing else.
 //
 // An assertion this route will not act on is answered as `auth_too_old`: the
 // app's screen for that code is "sign out and back in", which is exactly what a
@@ -388,12 +394,12 @@ func NewMobileRestore(cfg MobileRestore) (*MobileRestore, error) {
 // next one reads as something else.
 func (m *MobileRestore) ServeChallenge(w http.ResponseWriter, r *http.Request) {
 	if err := readMobileChallengeRequest(r); err != nil {
-		WriteWireError(w, StatusRequestRefused, WireError{Error: ErrorRequestRefused, Message: err.Error()})
+		writeMobileError(w, StatusRequestRefused, mobileUnreadableBody(err))
 		return
 	}
 	nonce := make([]byte, mobileChallengeNonceBytes)
 	if _, err := io.ReadFull(mobileRandom, nonce); err != nil {
-		WriteWireError(w, StatusUnavailable, WireError{Error: ErrorStateUnavailable, Message: mobileChallengeUndrawn})
+		writeMobileError(w, StatusUnavailable, mobileServiceFailure(mobileChallengeUndrawn))
 		return
 	}
 	body, err := json.Marshal(mobilesession.RestoreChallengeResponse{
@@ -402,7 +408,7 @@ func (m *MobileRestore) ServeChallenge(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		// Unreachable: the shape is two strings' worth of value and a number.
-		WriteWireError(w, StatusUnavailable, WireError{Error: ErrorStateUnavailable, Message: mobileAnswerUnbuildable})
+		writeMobileError(w, StatusUnavailable, mobileServiceFailure(mobileAnswerUnbuildable))
 		return
 	}
 	writeReadAnswer(w, body)
@@ -422,7 +428,7 @@ func (m *MobileRestore) ServeRestore(w http.ResponseWriter, r *http.Request) {
 		// know that a MAC which does not hold is not one of ours, and a call
 		// whose challenge this project never handed out is not a call of this
 		// contract's at all.
-		WriteWireError(w, StatusRequestRefused, WireError{Error: ErrorRequestRefused, Message: err.Error()})
+		writeMobileError(w, StatusRequestRefused, mobileUnreadableBody(err))
 		return
 	}
 	audience, ok := mobilesession.AudienceOf(m.Project.Endpoint)
@@ -430,7 +436,7 @@ func (m *MobileRestore) ServeRestore(w http.ResponseWriter, r *http.Request) {
 		// The constructor refuses an endpoint this could happen to, so this is
 		// a handler built by hand. It is the service's own failure and no
 		// caller's, and no identity has been read.
-		WriteWireError(w, StatusUnavailable, WireError{Error: ErrorStateUnavailable, Message: mobileEndpointUnusable})
+		writeMobileError(w, StatusUnavailable, mobileServiceFailure(mobileEndpointUnusable))
 		return
 	}
 	claims, err := m.Verifier.Verify(ctx, req.Assertion, mobilesession.Binding{Audience: audience, Challenge: req.Challenge})
@@ -573,7 +579,7 @@ func (m *MobileRestore) ServeRestore(w http.ResponseWriter, r *http.Request) {
 		// happened.
 		m.Log.Error("credsvc: a mobile restore could not be audited, so it was not answered", "error", err)
 		m.undo(ctx, uid, grant.Family)
-		WriteWireError(w, StatusUnavailable, WireError{Error: ErrorStateUnavailable, Message: mobileRestoreUnaudited})
+		writeMobileError(w, StatusUnavailable, mobileServiceFailure(mobileRestoreUnaudited))
 		return
 	}
 	writeReadAnswer(w, body)
@@ -621,26 +627,31 @@ func (m *MobileRestore) refuseAssertion(w http.ResponseWriter) {
 }
 
 // refuse answers a refusal of the caller: the contract's Error, and one line
-// naming the member and the purpose (P0's one-line-per-refusal rule). The line
-// is written whether or not it lands, and a line that does not land is the
-// service's own problem to log — the caller is refused either way.
+// naming the member and the purpose (P0's one-line-per-refusal rule). The line's
+// status is not_admitted, which is the vocabulary's own word for a caller this
+// service has named and does not admit — the word the pairing route records for
+// the same class of refusal (mobile_pair.go) — and never one of this contract's
+// codes, which are not statuses the audit carries. The line is written whether
+// or not it lands, and a line that does not land is the service's own problem to
+// log — the caller is refused either way.
 func (m *MobileRestore) refuse(ctx context.Context, w http.ResponseWriter, caller string, e mobilesession.Error) {
-	if err := m.line(ctx, caller, ErrorRequestRefused); err != nil {
+	if err := m.line(ctx, caller, ReasonNotAdmitted); err != nil {
 		m.Log.Error("credsvc: a refused mobile restore could not be audited", "error", err)
 	}
 	writeMobileError(w, http.StatusForbidden, e)
 }
 
-// unavailable answers a failure of the service: the wire's unavailable state,
-// and one line where the member's address is known. It is not a refusal of the
-// caller and its sentence says so.
+// unavailable answers a failure of the service, and one line where the member's
+// address is known. It is not a refusal of the caller and its sentence says so;
+// the status recorded is the wire's own unavailable, which is what such a
+// failure is.
 func (m *MobileRestore) unavailable(ctx context.Context, w http.ResponseWriter, caller, message string) {
 	if caller != "" {
 		if err := m.line(ctx, caller, ErrorStateUnavailable); err != nil {
 			m.Log.Error("credsvc: a failed mobile restore could not be audited", "error", err)
 		}
 	}
-	WriteWireError(w, StatusUnavailable, WireError{Error: ErrorStateUnavailable, Message: message})
+	writeMobileError(w, StatusUnavailable, mobileServiceFailure(message))
 }
 
 // line writes one line of this route's: the member's address as the caller, the
@@ -865,6 +876,25 @@ func mobileChallengeMAC(key, signed []byte) []byte {
 // itself.
 var mobileRandom io.Reader = rand.Reader
 
+// mobileUnreadableBody is a body this route would not read, as the contract's
+// Error: a call this service could not parse is not a call of this contract's,
+// and C1's closed set has no member for it, so the code is the one the pairing
+// route answers an unreadable body with (not_a_member) and the sentence — this
+// file's own, and never a decoder's, which names the byte it choked on — says
+// which refusal it is.
+func mobileUnreadableBody(err error) mobilesession.Error {
+	return mobilesession.Error{Code: mobilesession.CodeNotAMember, Message: err.Error()}
+}
+
+// mobileServiceFailure is a failure of the service's own as the contract's
+// Error, for the same reason mobileUnreadableBody gives: the phone reads this
+// shape and no other. The code is not_a_member, the screen the phone shows for
+// a refusal it cannot act on (mobile_pair.go's mobileRefuseState), and the
+// sentence says the failure was this service's.
+func mobileServiceFailure(message string) mobilesession.Error {
+	return mobilesession.Error{Code: mobilesession.CodeNotAMember, Message: message}
+}
+
 // writeMobileError writes one refusal in the contract's shape: the code the app
 // renders a screen from, the accepted-provider list when the code carries one,
 // and a sentence. It is no-store like every answer of these routes, and the
@@ -874,9 +904,9 @@ func writeMobileError(w http.ResponseWriter, status int, e mobilesession.Error) 
 	body, err := json.Marshal(e)
 	if err != nil {
 		// Unreachable: the shape is a code, a short list of strings and a
-		// sentence.
-		WriteWireError(w, StatusUnavailable, WireError{Error: ErrorStateUnavailable, Message: mobileAnswerUnbuildable})
-		return
+		// sentence. The fallback is a body of the same contract and not the
+		// runner's wire shape, which a phone does not read.
+		status, body = StatusUnavailable, []byte(`{"message":"the answer could not be built"}`)
 	}
 	w.Header().Set("Content-Type", contentTypeJSON)
 	w.Header().Set("Cache-Control", "no-store")
