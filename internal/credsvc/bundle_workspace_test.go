@@ -2,8 +2,10 @@ package credsvc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -490,5 +492,151 @@ func TestAModelEntryIsUnchanged(t *testing.T) {
 	candidates := creds.SharedFor(wsMemberA, got, func(string) bool { return true })
 	if len(candidates) != 1 || candidates[0] != want.Credential {
 		t.Fatalf("the model candidates = %+v, want just %+v: a forge entry is not a model candidate, so the pool carrying one must not put it in the cascade's list", candidates, want.Credential)
+	}
+}
+
+// TestAllMembersOffersEveryMember is WS19's service half (D2977, R7): an entry
+// the owner declared with `all_members` is offered to EVERY member the node
+// declares, and the node's own member table is what "every" means — so a member
+// that joins the workspace later is offered it with no rewrite of the entry and
+// no new revision of the service.
+//
+// The pool's answer is what the service resolves an intersection against
+// (creds.SharedFor, behind AdmitShared), and it speaks a member's allow-list as
+// the list of projects the entry is offered to. An `all_members` entry carries
+// no projects in the node, so the list is read off the node's members here: a
+// reader that left it empty would offer the credential to NOBODY, which is the
+// opposite of what the owner declared — the mistake this test exists to hold
+// out.
+func TestAllMembersOffersEveryMember(t *testing.T) {
+	accountKey := config.ClaudeAccountSecret("team")
+	accountName, kind, tier, ok := CredentialKey(accountKey)
+	if !ok || kind != KindModel || tier != creds.TierA {
+		t.Fatalf("CredentialKey(%q) = (%q, %v, %v, %v), want a tier-A model credential", accountKey, accountName, kind, tier, ok)
+	}
+	b, err := ParseBundle([]byte(accountKey + ": " + fakeCred(t, "team") + "\n"))
+	if err != nil {
+		t.Fatalf("ParseBundle: %v", err)
+	}
+	member := func(project string) projectpolicy.WorkspaceCredentialMember {
+		return projectpolicy.WorkspaceCredentialMember{
+			Project: project, FP: project, FirebaseProject: project + "-fb",
+			JobAccounts: []string{project + "-job@" + project + ".iam.gserviceaccount.com"},
+			ExchangeURL: "https://exchange." + project + ".example.com",
+		}
+	}
+	node := &projectpolicy.WorkspaceCredentials{
+		Name: wsWorkspace,
+		// One member to start with: the entry is declared for every member, and
+		// the second member below joins after the entry exists.
+		Members: []projectpolicy.WorkspaceCredentialMember{member(wsMemberA)},
+		Shared: []projectpolicy.WorkspaceShared{
+			{Name: accountName, Kind: projectpolicy.SharedKindModel, AllMembers: true},
+		},
+	}
+	if err := node.Validate(); err != nil {
+		t.Fatalf("the test's own node is not one C3 accepts: %v", err)
+	}
+
+	admitted := func(string) bool { return true }
+	got := WorkspaceShared(b, node)
+	if len(got) != 1 || !slices.Equal(got[0].Projects, []string{wsMemberA}) {
+		t.Fatalf("WorkspaceShared = %+v, want the entry offered to the node's one member %s: an all_members entry names no project, so the member list is what the pool reads", got, wsMemberA)
+	}
+	if cands := creds.SharedFor(wsMemberA, got, admitted); len(cands) != 1 || cands[0].Name != accountName {
+		t.Fatalf("the candidates for %s = %+v, want the entry offered to every member", wsMemberA, cands)
+	}
+
+	// The member that joins later: the same entry, the node's table grown, and
+	// the new member is offered it — nothing about the entry changed.
+	node.Members = append(node.Members, member(wsMemberB))
+	got = WorkspaceShared(b, node)
+	if len(got) != 1 || !slices.Equal(got[0].Projects, []string{wsMemberA, wsMemberB}) {
+		t.Fatalf("WorkspaceShared = %+v, want the entry offered to both of the node's members, %s included on joining", got, wsMemberB)
+	}
+	for _, project := range []string{wsMemberA, wsMemberB} {
+		cands := creds.SharedFor(project, got, admitted)
+		if len(cands) != 1 || cands[0].Name != accountName {
+			t.Errorf("the candidates for %s = %+v, want the all_members entry: the entry is offered to every member of the node", project, cands)
+		}
+	}
+
+	// A member the node does NOT declare is offered nothing: the allow-list the
+	// pool answers is the node's membership and never "whoever asks".
+	if cands := creds.SharedFor("project-c", got, admitted); len(cands) != 0 {
+		t.Errorf("a project the node does not declare was offered %+v: `all_members` means every member of THIS workspace", cands)
+	}
+}
+
+// TestAllMembersStillAsksTheMembersPolicy is WS19's fence, and it is D1298's
+// rule read on the widest entry an owner can write: `all_members` answers the
+// WORKSPACE's leg of the intersection, and the member's own policy is the other
+// leg — asked on an entry offered to every member exactly as it is asked on one
+// offered to a project by name (R5). A workspace can only tighten a member, so
+// an entry that names every member is still refused for one whose policy
+// excludes it.
+func TestAllMembersStillAsksTheMembersPolicy(t *testing.T) {
+	accountKey := config.ClaudeAccountSecret("team")
+	accountName, _, tier, ok := CredentialKey(accountKey)
+	if !ok {
+		t.Fatalf("CredentialKey(%q) refused a name of its own", accountKey)
+	}
+	b, err := ParseBundle([]byte(accountKey + ": " + fakeCred(t, "team") + "\n"))
+	if err != nil {
+		t.Fatalf("ParseBundle: %v", err)
+	}
+	node := &projectpolicy.WorkspaceCredentials{
+		Name: wsWorkspace,
+		Members: []projectpolicy.WorkspaceCredentialMember{
+			{
+				Project: wsMemberA, FP: wsMemberA, FirebaseProject: wsMemberA + "-fb",
+				JobAccounts: []string{wsMemberA + "-job@" + wsMemberA + ".iam.gserviceaccount.com"},
+				ExchangeURL: "https://exchange." + wsMemberA + ".example.com",
+			},
+			{
+				Project: wsMemberB, FP: wsMemberB, FirebaseProject: wsMemberB + "-fb",
+				JobAccounts: []string{wsMemberB + "-job@" + wsMemberB + ".iam.gserviceaccount.com"},
+				ExchangeURL: "https://exchange." + wsMemberB + ".example.com",
+			},
+		},
+		Shared: []projectpolicy.WorkspaceShared{
+			{Name: accountName, Kind: projectpolicy.SharedKindModel, AllMembers: true},
+		},
+	}
+	if err := node.Validate(); err != nil {
+		t.Fatalf("the test's own node is not one C3 accepts: %v", err)
+	}
+	got := WorkspaceShared(b, node)
+	if len(got) != 1 || !slices.Equal(got[0].Projects, []string{wsMemberA, wsMemberB}) {
+		t.Fatalf("WorkspaceShared = %+v, want the entry offered to both members", got)
+	}
+
+	// The workspace's leg alone is answered for every member — which is what
+	// `all_members` changed — and it is the leg that was never the whole
+	// question.
+	for _, project := range []string{wsMemberA, wsMemberB} {
+		if !got[0].SharedWith(project) {
+			t.Fatalf("the workspace's allow-list does not name %s, and an all_members entry is offered to every member", project)
+		}
+	}
+	if err := creds.AdmitShared(wsMemberA, got[0], func(string) bool { return true }); err != nil {
+		t.Fatalf("a member whose policy admits the credential was refused it: %v", err)
+	}
+
+	// The member's own leg, which `all_members` does not answer and must not:
+	// a policy that admits nothing, and one that names another credential, each
+	// refuse the entry for that member.
+	refuse := func(name string) bool { return name == "some-other-credential" }
+	if err := creds.AdmitShared(wsMemberA, got[0], refuse); !errors.Is(err, creds.ErrMemberPolicy) {
+		t.Errorf("an all_members entry against a policy that excludes it = %v, want creds.ErrMemberPolicy: the member's own policy is still the other leg of the intersection", err)
+	}
+	if err := creds.AdmitShared(wsMemberA, got[0], nil); !errors.Is(err, creds.ErrMemberPolicy) {
+		t.Errorf("an all_members entry against no member policy = %v, want creds.ErrMemberPolicy", err)
+	}
+	if cands := creds.SharedFor(wsMemberA, got, refuse); len(cands) != 0 {
+		t.Errorf("the candidates for %s = %+v, want none: the workspace can only tighten a member", wsMemberA, cands)
+	}
+	if cands := creds.SharedFor(wsMemberA, got, func(string) bool { return true }); len(cands) != 1 || cands[0] != (creds.Credential{Name: accountName, Tier: tier}) {
+		t.Errorf("the candidates for %s = %+v, want the entry the policy admits", wsMemberA, cands)
 	}
 }

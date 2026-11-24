@@ -12297,13 +12297,18 @@ to state and none to get wrong. A provider key is offered as a model entry, whic
 is what a call spent through one is; a repository's own Anthropic key is refused,
 because the entry belongs to that one repository by construction.
 
---projects names the members this credential may be served to, as a comma
-separated list or repeated, and each must be a member the workspace's own table
-declares: a shared entry naming a project the table does not is an entry the
-workspace's own fugaro update refuses to publish. --covers names the
-repositories a forge credential reaches, as owner/name, and it is required for
-bitbucket and github and refused for a model credential, which a call names no
-repository for.
+Who it may be served to is one of two declarations and never both: --projects
+names the members, as a comma separated list or repeated, each a member the
+workspace's own table declares — a shared entry naming a project the table does
+not is an entry the workspace's own fugaro update refuses to publish; and
+--all-members offers it to every member of the workspace, the ones that join
+later included. An entry offered to every member is bounded by the workspace's
+own ceiling alone, so --all-members is refused while the workspace states no cap:
+set one with fugaro workspace cap set first.
+
+--covers names the repositories a forge credential reaches, as owner/name, and
+it is required for bitbucket and github and refused for a model credential,
+which a call names no repository for.
 
 An entry the list already holds is replaced whole, as a member entry is: the
 projects and the coverage it ends up with are the ones given, so re-sharing is
@@ -12314,12 +12319,13 @@ Only the keys it writes are rewritten: every comment and every other key of the
 file is kept. The write is local; the owner's fugaro update publishes the list
 in the record the workspace's service reads.
 
-Usage: `fugaro workspace share <credential> --workspace <name> --projects a,b`
+Usage: `fugaro workspace share <credential> --workspace <name> --projects a,b | --all-members`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--all-members` | bool | `false` | no | offer the credential to every member of the workspace, the ones that join later included (exclusive with --projects; needs the workspace's cap) |
 | `--covers` | stringArray | `[]` | no | a repository a forge credential reaches, as owner/name (repeatable; required for bitbucket and github) |
 | `-h`, `--help` | bool | `false` | no | help for share |
 | `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |

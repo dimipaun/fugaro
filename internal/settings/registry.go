@@ -1619,6 +1619,7 @@ var localRows = []Row{
 	locLocal("workspace_members.*.exchange_url", "none", "workspace", docWorkspace),
 	locLocal("workspace_cap.monthly", "the workspace states no cap", "workspace", docWorkspace),
 	locLocal("workspace_shared.*.kind", "the workspace offers no credential", "workspace", docWorkspace),
+	locLocal("workspace_shared.*.all_members", "false: the credential is offered to the members `projects` names, and only the written true offers it to every member of the workspace", "workspace", docWorkspace),
 	locLocal("workspace_shared.*.projects", "the credential is offered to no member", "workspace", docWorkspace),
 	locLocal("workspace_shared.*.covers", "the credential covers no repository", "workspace", docWorkspace),
 

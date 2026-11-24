@@ -111,6 +111,7 @@
         "name",
         "kind",
         "projects",
+        "all_members",
         "covers"
       ],
       "properties": {
@@ -130,12 +131,15 @@
         },
         "projects": {
           "type": "array",
-          "minItems": 1,
-          "description": "The member projects this credential may be served to, in name order. The effective set is this list intersected with the member's own policy (D1298), and it is never empty: an entry that named no project would either widen the pool to every member or hide a half-written declaration.",
+          "description": "The member projects this credential may be served to, in name order. The effective set is this list intersected with the member's own policy (D1298). It is empty for an entry offered to every member of the workspace, which names no project (all_members): a consumer reads all_members with this field, and an entry that named no project and did not offer it to every member is refused by the writer rather than read as one.",
           "items": {
             "type": "string",
             "minLength": 1
           }
+        },
+        "all_members": {
+          "type": "boolean",
+          "description": "This credential is offered to every member of the workspace, the ones that join later included, and projects is empty beside it (D2977, contract C3's rule 5 of docs/workspace-service/contract-node.md). It is the wider of the entry's two declarations — an entry offered to every member is bounded by the workspace's own ceiling alone — and the two are exclusive: false means the entry is offered to the members projects names."
         },
         "covers": {
           "type": "array",
