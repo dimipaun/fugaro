@@ -615,26 +615,35 @@ const StatusOK = "ok"
 // call itself was refused (exhausted_until, unverified_run_identity,
 // unverified_job_identity, state_unavailable, request_refused,
 // no_candidate_credentials, issue_gone, no_read_consumer,
-// provider_not_served, provider_not_allowed).
+// provider_not_served, provider_not_allowed, workflow_secret_not_allowed,
+// workflow_secret_unmarked, workflow_secrets_off).
 func ValidStatus(status string) bool {
 	return status == StatusOK || ValidReason(status) || validErrorType(status)
 }
 
 // validErrorType reports whether s is one of the refusal body's error types
 // (wire.go, provider_wire.go). It is the reader's half of a closed set the
-// writer already owns — all ten of them, the request-shape refusal included:
-// the answer path records that refusal like the rest (server.go), so this set is
-// the wire's own vocabulary and not a subset of what this service happens to
-// answer today.
+// writer already owns — all thirteen of them, the request-shape refusal
+// included: the answer path records that refusal like the rest (server.go), so
+// this set is the wire's own vocabulary and not a subset of what this service
+// happens to answer today.
 //
 // The provider route's two are here for that reason and not because a path
 // answers them today: a set that stopped at the eight would leave a refusal of
 // either — a routed call the published policy does not allow, and one no bundle
 // entry serves (KS4, R11) — with NO line at all, which is the one state the
 // audit contract does not have.
+//
+// C1's three are the same case one step further out: version 2's route does not
+// exist yet, but the codes it will refuse with and this vocabulary are one
+// contract, and a code a route answers while the line cannot record it would be
+// a verified refusal written down nowhere — the state the paragraph above is
+// about, arrived at silently.
 func validErrorType(s string) bool {
 	switch s {
 	case ErrorExhaustedUntil, ErrorUnverifiedRunIdentity, ErrorUnverifiedJobIdentity, ErrorStateUnavailable, ErrorRequestRefused, ErrorNoCandidateCredentials, ErrorIssueGone, ErrorNoReadConsumer, ErrorProviderNotServed, ErrorProviderNotAllowed:
+		return true
+	case ErrorWorkflowSecretNotAllowed, ErrorWorkflowSecretUnmarked, ErrorWorkflowSecretsOff:
 		return true
 	}
 	return false

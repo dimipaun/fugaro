@@ -68,7 +68,6 @@ import (
 	"net/http"
 	"regexp"
 
-	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 )
 
@@ -96,11 +95,13 @@ func readWorkflowSecretsRequest(r *http.Request) (WorkflowSecretsRequest, error)
 	if err := decodeStrict(body, &req); err != nil {
 		return WorkflowSecretsRequest{}, fmt.Errorf("%w: the body is not one JSON object of one field", ErrWorkflowSecretsBadRequest)
 	}
-	if !config.EnvNameRE.MatchString(req.Env) {
-		// The shape rule and not the record's: a name no workflow secret could
-		// be recorded under is refused before the record is read, and the
-		// refusal says which field was wrong and never what it held.
-		return WorkflowSecretsRequest{}, fmt.Errorf("%w: the call names no environment variable", ErrWorkflowSecretsBadRequest)
+	if err := req.Validate(); err != nil {
+		// The contract's own shape rule for whichever version the call declares
+		// (wire.go's Validate): a name no version could have carried, a field of
+		// the OTHER version, and a version this release does not know are each
+		// refused BEFORE the record is read. The sentence is Validate's own —
+		// it names the field that was wrong and never what it held.
+		return WorkflowSecretsRequest{}, fmt.Errorf("%w: %s", ErrWorkflowSecretsBadRequest, err)
 	}
 	return req, nil
 }
