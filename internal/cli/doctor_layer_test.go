@@ -874,17 +874,19 @@ func doctorPublishedCatalog(t *testing.T, f *cloudFixture) *gcpfake.RTDB {
 	t.Helper()
 	db := gcpfake.NewRTDB(t)
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-	// No budget block: off is not a mode this release has (D3009), and a
-	// published block has to name one. The node is published for its catalog.
+	// The node is published for its catalog, and a published budget block has
+	// to name a mode (projectpolicy.validBudget): observe is the mode that asks
+	// a run for nothing, and off is not a mode this release has (D3009).
 	db.Set(projectpolicy.PathShared(), &projectpolicy.Policy{
 		Version:    projectpolicy.Version,
+		Budget:     projectpolicy.Budget{Mode: "observe"},
 		AllowRepos: []string{"github/acme/other"},
 		ImageCatalog: &config.Catalog{Entries: []config.Entry{{
 			Name: "go", Tags: []string{"node"},
 			Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/app", Path: "docker/agent.Dockerfile"},
 		}}},
 	})
-	f.appendConfig(t, "budget: { mode: off, rtdb_url: "+db.URL+" }\n")
+	f.appendConfig(t, "budget: { mode: observe, rtdb_url: "+db.URL+" }\n")
 	return db
 }
 

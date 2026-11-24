@@ -284,12 +284,13 @@ func defaultBranchParse(ctx context.Context, root string) defaultBranchResult {
 			result.read, result.data = true, data
 			// The default branch's bytes as this run's own removal offer leaves
 			// them, the way loadCheckoutResolved reads the working tree
-			// (fugaroYAMLWithoutRemovedMode, AB8b, F22): the stage that resolves
+			// (fugaroYAMLWithoutRemovedMode, AB8b, F22): the door that resolves
 			// this checkout is the update's own, and the branch goes on saying
 			// the word until the person commits the removal this same run
-			// offers.
-			if stripped, off := fugaroYAMLWithoutRemovedMode(data); off {
-				data = stripped
+			// offers. Every other door reads the branch (and prints its
+			// problem) as it is.
+			if updateLeavesTheRemoval(ctx) {
+				data, _ = fugaroYAMLWithoutRemovedMode(data)
 			}
 			result.cfg, result.problems = parseCheckoutFugaroYAML(ctx, data, selectedProjectConfig(ctx))
 		}

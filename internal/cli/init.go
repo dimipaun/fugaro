@@ -1157,9 +1157,33 @@ func (r *initRun) lockWorkdirs(project string) (func(), error) {
 	return func() { _ = lock.Release() }, nil
 }
 
+// markTheUpdateReads makes this run's every read of a checkout's fugaro.yaml
+// the read of the file this run's own removal offer leaves behind: the word
+// that was a budget mode taken out of the bytes before anything judges them
+// (fugaroYAMLWithoutRemovedMode, AB8b, F22).
+//
+// It is marked once, at the door, and not at each read, because the readers of
+// a checkout's file along an update's way are many — the repository and
+// checkout stages, the image refresh, the image check, the image stage, the
+// job resolution — and a flag each of them has to remember is a flag one of
+// them is found without. Both entry points of the door mark it, because both
+// converge a checkout: runInit and runInitRepo (--repo). `fugaro setup` is not
+// marked, and neither is `fugaro update --check`: setting up creates an
+// installation rather than moving one, and a check writes nothing, which is
+// the difference rewriteLocalBudgetMode draws for the word's own door. Every
+// other door reads the bytes as they are and refuses a file that still says
+// the word (D3022).
+func (r *initRun) markTheUpdateReads() {
+	if r.o.doorName() == updateDoor.name {
+		r.cmd.SetContext(theUpdateLeavesTheRemoval(r.cmd.Context()))
+	}
+}
+
 func runInit(r *initRun) error {
 	cmd, o := r.cmd, r.o
 	defer func() { clear(r.appKeyMem) }()
+	r.markTheUpdateReads()
+
 	// The answers file, before anything is checked or asked: it fills the
 	// wizard's questions' flags, so a run that reads one is a run that was
 	// passed them (setup_answers.go).
@@ -4971,6 +4995,7 @@ func (o *initOptions) installationFlags() []string {
 func runInitRepo(r *initRun, args []string) error {
 	cmd, o := r.cmd, r.o
 	defer func() { clear(r.appKeyMem) }()
+	r.markTheUpdateReads()
 	// The answers file, as on the converge (setup_answers.go): a --repo run
 	// asks none of the wizard's questions, and the flags its answers fill are
 	// refused by name rather than dropped (installationFlags).
@@ -5036,11 +5061,10 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := o.requireCheckoutProject(ctx, dir); err != nil {
 		return err
 	}
-	// The checkout's file as this run's own removal offer leaves it: the update
-	// is the command that takes the word that was a budget mode out of it, so
-	// it is the one reader that must load a file that still says it (AB8b, F22,
-	// layerOptions.AsTheUpdateLeavesIt).
-	root, rf, err := loadCheckoutResolved(ctx, dir, nil, layerOptions{Lenient: true, AsTheUpdateLeavesIt: true})
+	// The checkout's file as this run's own removal offer leaves it: the door
+	// marked at runInit is what a reader reads it by (AB8b, F22,
+	// theUpdateLeavesTheRemoval), not anything this call site remembers.
+	root, rf, err := loadCheckoutResolved(ctx, dir, nil, layerOptions{Lenient: true})
 	if err != nil {
 		return err
 	}

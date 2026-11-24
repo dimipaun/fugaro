@@ -288,6 +288,29 @@ func fugaroYAMLWithoutRemovedMode(data []byte) ([]byte, bool) {
 	return out, true
 }
 
+// updateRemovalKey is the context key theUpdateLeavesTheRemoval installs.
+type updateRemovalKey struct{}
+
+// theUpdateLeavesTheRemoval marks every read of a checkout's fugaro.yaml in
+// this run as the update's own: the bytes as this run's removal offer leaves
+// them (fugaroYAMLWithoutRemovedMode). It is installed once, at the door
+// (runInit), because a run of the init door is the one whose own writes
+// include taking that line out — and because the readers of a checkout's file
+// along its way are many (the repository and checkout stages, the image
+// refresh, the image check, the image stage, the job resolution), so a flag
+// each of them has to remember is a flag one of them is found without. Every
+// other door reads the bytes as they are and refuses a file that still says
+// the word (D3022): `fugaro validate`, a launch, doctor.
+func theUpdateLeavesTheRemoval(ctx context.Context) context.Context {
+	return context.WithValue(ctx, updateRemovalKey{}, true)
+}
+
+// updateLeavesTheRemoval reports whether ctx carries theUpdateLeavesTheRemoval.
+func updateLeavesTheRemoval(ctx context.Context) bool {
+	on, _ := ctx.Value(updateRemovalKey{}).(bool)
+	return on
+}
+
 // prepareBudgetModeRemoval reads the fugaro.yaml of the checkout at root and
 // makes the edit that takes the word which is not a budget mode any more out of
 // it; nil when the file does not say it.
