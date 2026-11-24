@@ -178,7 +178,12 @@ func TestCompressionImageGateRefusesOldBuild(t *testing.T) {
 	t.Run("follow-up", func(t *testing.T) {
 		f := newCloudFixture(t)
 		compressionOnForTest(t)
-		writeBuildRecord(t, f, appSlug, "web", release060)
+		// release085 and not release060: this case drives a --pr follow-up,
+		// which inherits its chain's title and is gated on an image whose
+		// runner knows titles (titlesSince, 0.8.5) before the compression gate
+		// below is reached. 0.8.5 is still older than the compression gate's
+		// own release (0.12.0), which is the refusal this case is about.
+		writeBuildRecord(t, f, appSlug, "web", release085)
 		seedSpec(t, f, firstRunSpec(rootID), false)
 		rec := prRecord(rootID, "", 7, 1)
 		rec.StartedAt = time.Now().Add(-time.Hour)
@@ -223,7 +228,7 @@ func TestCompressionImageGateRefusesOldBuild(t *testing.T) {
 	// the field the follow-up inherits is the whole reason the launch is gated.
 	t.Run("a follow-up inheriting the field after the key was removed", func(t *testing.T) {
 		f := newCloudFixture(t)
-		writeBuildRecord(t, f, appSlug, "web", release060)
+		writeBuildRecord(t, f, appSlug, "web", release085)
 		root := firstRunSpec(rootID)
 		root.CompressionOff = true
 		seedSpec(t, f, root, false)
