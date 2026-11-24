@@ -255,6 +255,18 @@ type TicketRequest struct {
 	// (D3136). Every other class leaves it empty, and an orchestrator's ask
 	// that names none is refused.
 	Attempt AttemptID `json:"attempt,omitempty"`
+	// Resumes is the orchestrator's reference to the paused run it continues
+	// (D3189): the run that suspended itself, whose pause the credentials
+	// service recorded and which the run this ticket is for picks up. It is
+	// spelled as the task member a resumed run is launched with
+	// (runstore.PauseMemberResumes), because it is the same reference in the
+	// two places a resume is named.
+	//
+	// It is the orchestrator's own and no other class may name one, exactly as
+	// Attempt is — and an ask names one or the other and never both, because a
+	// run either re-issues an attempt of the orchestrator's own record or
+	// continues a pause the service wrote (D3136, D3189).
+	Resumes string `json:"resumes,omitempty"`
 	// Job is the full resource name of the Cloud Batch job this launch is about
 	// to create (R1, R19), and it is empty for a Cloud Run launch, which is the
 	// launch this plan leaves exactly as it was (R18).

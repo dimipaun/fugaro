@@ -293,10 +293,10 @@ func TestDocsRigorModesProductStatesTheOptInBound(t *testing.T) {
 			t.Errorf("%s lacks %q: the mode's table is read only for a repository that opted in, and a page that promises it to one that configured nothing promises what no run does", rigorModesProductDoc, want)
 		}
 	}
-	if (rigor.Config{}).Configured() {
-		t.Errorf("rigor.Config{}.Configured() is true, and %s reads a repository that configures nothing as getting no row: the sentence and the gate have to move together", rigorModesProductDoc)
+	if (rigor.Config{}).Configured("acme/app") {
+		t.Errorf("rigor.Config{}.Configured(%q) is true, and %s reads a repository that configures nothing as getting no row: the sentence and the gate have to move together", "acme/app", rigorModesProductDoc)
 	}
-	if !(rigor.Config{Repo: rigor.Pro}).Configured() {
+	if !(rigor.Config{Repo: rigor.Pro}).Configured("acme/app") {
 		t.Errorf("a repository whose own rigor block names pro is not Configured, and %s reads a rigor: block as the opt-in", rigorModesProductDoc)
 	}
 }

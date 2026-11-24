@@ -425,7 +425,7 @@ both `*float64`.
 
 `showRepo`: `slug`, `repo` (`omitempty`),
 `daily_cap_usd` `*float64`, `daily_cap_source` (string, no `omitempty` —
-**`repo`, `default` or `none`**), `per_run_cap_usd` `*float64`,
+**`repo`, `default`, `global` or `none`**; `dailyCapSource`), `per_run_cap_usd` `*float64`,
 **`per_run_cap_source`** (string, no `omitempty` — `repo`, `default`, `global`
 or `none`; `perRunCapSource`), `counted_usd`, `spent_usd`,
 `notional_usd`, `compute_usd` (below), `leased_usd` float64 (no `omitempty`, as
