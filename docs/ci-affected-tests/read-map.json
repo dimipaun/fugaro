@@ -7322,6 +7322,7 @@
         "docs/windows-cli/reconciliation.md",
         "docs/windows-cli/spec.md",
         "docs/windows-cli/wsl.md",
+        "docs/workspace-projects-users/README.md",
         "docs/workspace-projects-users/threat-model.md",
         "docs/workspaces/README.md",
         "docs/workspaces/implementation-plan.md",
