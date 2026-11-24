@@ -985,7 +985,18 @@ func TestUserCommandsRefuseOnALinkedMember(t *testing.T) {
 				t.Errorf("the refusal exits %d, want %d (a user error, not a remote failure)", code, ExitUserError)
 			}
 			text := ErrorText(err)
-			for _, w := range []string{tc.door, "linked member of workspace workspace-alpha", "D2813"} {
+			for _, w := range []string{
+				tc.door,
+				"linked member of workspace workspace-alpha",
+				"D2813",
+				// D2822's lockout, named: this member's own unlink drops the
+				// authority and leaves the mirror, so the door keeps refusing
+				// until the workspace detaches the project -- and a refusal that
+				// named only a workspace door that refuses in turn would leave
+				// the person with no door at all.
+				"fugaro workspace project rm",
+				"D2822",
+			} {
 				if !strings.Contains(text, w) {
 					t.Errorf("the refusal does not say %q:\n%s", w, text)
 				}

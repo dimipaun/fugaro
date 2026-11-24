@@ -31,16 +31,28 @@ import (
 // this task (contract-member.md §2, MemberOps.ReadMirror): the member's own
 // copy of the workspace's member list at config/admin/workspace-members, which
 // every membership write and converge mirrors into the member (D2813 as
-// amended). R11's other half, Authority.Holds, is a fact of the WORKSPACE's own
-// authority -- read from the workspace's own roster and its folder or IAM
-// account -- and a member's machine holds no grant on the workspace's project
-// at all (F11), so a command running here cannot make that read. The mirror is
-// therefore the half this side has, and D2822's state is the gap it leaves: a
-// member owner's unlink leaves the mirror where it is until the workspace
-// project's owner runs `workspace project rm`, so such a member keeps refusing
-// until the workspace removes its copy of the list. The membership half in this
-// machine's own config (workspaceMember) is what tells a project that was never
-// a member from one the workspace has not mirrored into yet.
+// amended). The membership half in this machine's own config (workspaceMember)
+// tells a project that was never a member from one the workspace has not
+// mirrored into yet.
+//
+// R11's other half, Authority.Holds, is NOT read here, and that deviation is
+// deliberate rather than an oversight. Which of the two mechanisms a workspace
+// uses is written in the WORKSPACE's own roster and in no member's config (R5,
+// D2803), and a member's machine holds neither that file nor a grant that could
+// read the node (F11) -- so a command running here cannot tell a workspace held
+// by the folder from one held by its IAM account. The service-account half
+// alone is readable from this side, but it answers FALSE for every member of a
+// folder-model workspace (nothing binds the account there), so a conjunction on
+// it would open all five doors on exactly the members the folder model holds --
+// the failure this task exists to prevent. What is left is the mirror, and
+// D2822's state is the gap it leaves: a member owner's unlink drops the
+// authority and leaves the mirror where it is until the workspace project's
+// owner detaches the project (workspace project rm). Such a member keeps
+// refusing for that while, which the refusal says out loud, naming the detach
+// as the way out, so nobody is left holding a refusal and a workspace door that
+// answers the same. Deferred in the pull request: a member-side hold read (the
+// folder model's `config/admin/workspace-link` record, WU2's, and the account
+// binding C2's Bindings names) to close it.
 
 // installationMemberOps builds C2's member writer for THIS machine's own
 // project: when this machine IS a member, this machine's config names it, so
@@ -111,8 +123,8 @@ func installationMemberRefusal(ctx context.Context, lc *localcfg.Config, past, d
 	if !linked {
 		return nil
 	}
-	return userErr("nothing was %s: %s is a linked member of workspace %s -- its own config carries the membership and its database carries the workspace's member list -- so a member's people are the workspace's record, and this installation-level door is refused (D2813, R11, D2819). Run %s instead: the workspace's own door is what writes a member's record, and this member's own `%s update` is what applies it",
-		past, safetext.Field(lc.Name), safetext.Field(workspaceNameOf(lc)), door, selfCommand())
+	return userErr("nothing was %s: %s is a linked member of workspace %s -- its own config carries the membership and its database carries the workspace's member list -- so a member's people are the workspace's record, and this installation-level door is refused (D2813, R11, D2819). Run %s instead: the workspace's own door is what writes a member's record, and this member's own `%s update` is what applies it. A member that has been unlinked keeps this copy of the list, and this refusal with it, until the workspace's own owner detaches the project from the workspace with `%s workspace project rm PROJECT` (D2822) -- the detach that takes the workspace's records back out of this database, and the way out if the workspace's own door answers that it does not hold this member",
+		past, safetext.Field(lc.Name), safetext.Field(workspaceNameOf(lc)), door, selfCommand(), selfCommand())
 }
 
 // installationMemberDoor is the workspace command an installation-level door's
