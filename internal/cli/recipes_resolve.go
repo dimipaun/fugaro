@@ -80,15 +80,12 @@ func refuseFollowUpReviewMode(rcp *recipe.Recipe, name string) error {
 // continue. The follow-up path exists to resolve a pull request's chain —
 // its branch, its previous run, its account, and the ref and workflow it
 // inherits — and an artifact run has none of that to resolve, so the
-// refusal is at the launch rather than a refusal to carry the mode. The
-// runner refuses the same mismatch again, at bootstrap, for a recipe this
-// never sees: it keys on the RESOLVED recipe (internal/runner/runner.go),
-// which is the backstop for a follow-up that inherits a repository recipe by
-// name — a task.Recipe with no text — since that file is read at the run's
-// own base, and for one that inherits no recipe at all, which resolves to
-// the repository's .fugaro/recipes/default.yaml (agent.recipe is a first-run
-// key only). refuseFollowUpRepoRecipe reads the ones this checkout has, so
-// most of those are refused here too.
+// refusal is at the launch rather than a refusal to carry the mode. Every
+// follow-up that inherits a name resolves it before this runs
+// (followUpRecipeOfName, followup.go), so the refusal judges the copy the
+// project holds; the runner refuses the same mismatch again, at bootstrap,
+// keyed on the RESOLVED recipe (internal/runner/runner.go), for a task a
+// launcher older than this one wrote.
 func refuseFollowUpArtifactMode(rcp *recipe.Recipe, name string) error {
 	if rcp.Mode == recipe.ModeArtifact {
 		return userErr("recipe %s is mode: artifact, which renders a deliverable into the run's bucket and opens no pull request; it takes no --pr, and there is no pull request for it to continue", name)
@@ -110,8 +107,8 @@ func refuseFollowUpArtifactMode(rcp *recipe.Recipe, name string) error {
 //
 // The runner refuses the same mismatch again, at bootstrap, keyed on the
 // recipe it resolved at the task's base (internal/runner/runner.go): this is
-// the refusal of a recipe the launcher resolved itself, from this checkout or
-// the project or the catalog.
+// the refusal of a recipe the launcher resolved itself, from the project or
+// the catalog.
 func refuseFollowUpReportMode(rcp *recipe.Recipe, name string) error {
 	if recipe.UsesDigest(rcp) {
 		return refuseReportFollowUp(name)
@@ -120,49 +117,11 @@ func refuseFollowUpReportMode(rcp *recipe.Recipe, name string) error {
 }
 
 // refuseReportFollowUp is refuseFollowUpReportMode's refusal for a caller
-// that knows the recipe's name but has no text to parse: a repository recipe
-// inherited by name, whose steps the launcher judges from this checkout's
-// copy of the file when it has one (refuseFollowUpRepoRecipe) and from the
-// previous run's manifest when it has not (prChain.PrevReport).
+// that knows the recipe's name but has no text of its own to parse: a follow-up
+// inheriting a name, judged from the copy the project holds when the store has
+// one and from the previous run's manifest when it has not (prChain.PrevReport).
 func refuseReportFollowUp(name string) error {
 	return userErr("recipe %s writes this repository's run reports, and a repository has one report run at a time; a follow-up carries no manifest of the records it may read and skips the in-flight check a fresh launch makes, so it cannot use it — schedule a report run of its own with fugaro run --recipe %s", name, name)
-}
-
-// refuseFollowUpRepoRecipe refuses the same mismatches for a follow-up
-// that INHERITS a repository recipe by name — the previous task's
-// task.Recipe{Name, Source: repo}, and the chosen recipe carryChosenRecipe
-// keeps the same way — which carries no text for the refusals above to
-// read. The file is read from the working directory's checkout when there is
-// one; a name that checkout does not have, or a file it cannot parse, is
-// left alone, because the runner reads the name at THIS task's base
-// (readRepoRecipe, internal/runner/recipe.go) and refuses a bad, artifact or
-// report one there itself. The report mismatch is refused here without the
-// file too: a launcher with no copy of it still knows whether the previous
-// run's task carried a manifest, and so whether the recipe this follow-up
-// inherits is a report recipe (newFollowUpSpec, prChain.PrevReport). Nothing
-// but the checkout is consulted: the previous run ran a repository recipe,
-// and a same-named project or catalog recipe is not the one it ran.
-func refuseFollowUpRepoRecipe(ctx context.Context, repo, name string) error {
-	root := checkoutRoot(ctx, repo)
-	if root == "" {
-		return nil
-	}
-	data, found, err := recipe.ReadRepoFile(root, name)
-	if err != nil || !found {
-		return nil
-	}
-	where := filepath.Join(root, filepath.FromSlash(recipe.RepoPath(name)))
-	rcp, err := parseRecipeAt(data, name, where)
-	if err != nil {
-		return nil
-	}
-	if err := refuseFollowUpReviewMode(rcp, name); err != nil {
-		return err
-	}
-	if err := refuseFollowUpArtifactMode(rcp, name); err != nil {
-		return err
-	}
-	return refuseFollowUpReportMode(rcp, name)
 }
 
 // projectRecipesNote is why lc's project recipes are not read, or "": as

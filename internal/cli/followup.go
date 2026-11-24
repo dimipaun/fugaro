@@ -68,10 +68,9 @@ type prChain struct {
 	// PrevReport is whether the previous run's task carried a manifest
 	// (task.Spec.DigestRuns), and so whether the recipe this follow-up
 	// inherits is a report recipe: a manifest is accepted under no other
-	// (task.Validate). It is the one fact about that recipe the launcher
-	// holds when it cannot read the recipe's own file — a repository recipe
-	// by name, read at the run's base, is not in a launcher with no
-	// checkout of that repository (refuseFollowUpRepoRecipe).
+	// (task.Validate). Only that task holds the fact: the copy a name
+	// resolves to now may have been published since, so it need not be the
+	// recipe the previous run ran.
 	PrevReport bool
 	// Title is the previous run's own job title (task.Spec.Title, "") when
 	// it has none: a follow-up keeps its run's title, so a chain of
@@ -964,26 +963,25 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 			return nil, err
 		}
 	} else if rcp != nil {
-		// An inherited repository recipe by name: task.Recipe carries no
-		// text for one (taskRecipe, recipes_resolve.go), so there is
-		// nothing to parse here. This checkout's copy is read when there
-		// is one; otherwise the runner refuses the file it reads at this
-		// task's base.
+		// An inherited repository recipe by name: task.Recipe carries no text
+		// for one (taskRecipe, recipes_resolve.go), so there is nothing to
+		// parse here — the name is resolved the launch's way instead and its
+		// copy embedded, so that the task this follow-up writes names no
+		// repository recipe either (R7).
 		//
-		// A launcher with no copy of that file can still tell that the
-		// previous run's recipe was a report recipe, from the previous run's
-		// own task: the recipe this follow-up inherits is the one that task
-		// ran, and only a report recipe's task carries a manifest
-		// (task.Validate). Refused from the manifest, here, because the file
-		// this checkout does not have is the one the agent would have run —
-		// the runner's own backstop refuses the same task after it is paid
-		// for, at its base.
+		// The previous run's own task still tells that its recipe was a report
+		// recipe, when it was: only a report recipe's task carries a manifest
+		// (task.Validate), and the copy the store holds now is not the recipe
+		// that task ran.
 		if c.PrevReport {
 			return nil, refuseReportFollowUp(rcp.Name)
 		}
-		if err := refuseFollowUpRepoRecipe(ctx, repo, rcp.Name); err != nil {
+		rr, err := followUpRecipeOfName(ctx, env, provider, repo, rcp.Name)
+		if err != nil {
 			return nil, err
 		}
+		printRecipeNote(warn, rr, true)
+		rcp = rr.taskRecipe()
 	}
 	// The follow-up's title: the flag's when it is given, else the previous
 	// run's own (c.Title), so a chain of follow-ups keeps naming itself by the
@@ -1141,6 +1139,30 @@ func recheckFollowUp(ctx context.Context, env *cloudEnv, slug string, spec *task
 	return nil
 }
 
+// followUpRecipeOfName resolves a name a follow-up inherits, the way every
+// launch resolves one — the repository's own copy of it in the project store
+// first, then the name, then the catalog — and runs the three refusals a
+// follow-up cannot carry on the text that resolution found. It is one call so
+// that the arms that inherit a repository recipe by name (a previous task's
+// task.Recipe{Source: repo}, and the recipe the runner chose for the previous
+// run) cannot drift: neither has text of its own to judge.
+func followUpRecipeOfName(ctx context.Context, env *cloudEnv, provider, repo, name string) (*resolvedRecipe, error) {
+	rr, err := resolveLaunchRecipe(ctx, env, provider, repo, name, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	if err := refuseFollowUpReviewMode(rr.Recipe, name); err != nil {
+		return nil, err
+	}
+	if err := refuseFollowUpArtifactMode(rr.Recipe, name); err != nil {
+		return nil, err
+	}
+	if err := refuseFollowUpReportMode(rr.Recipe, name); err != nil {
+		return nil, err
+	}
+	return rr, nil
+}
+
 // carryChosenRecipe is the recipe a follow-up keeps when the runner chose the
 // previous run's: resolved now, the way every launch resolves a name (the
 // repository's own copy of it in the project store first, then the name, then
@@ -1163,17 +1185,8 @@ func carryChosenRecipe(ctx context.Context, env *cloudEnv, provider, repo string
 		}
 		return msg(err)
 	}
-	rr, err := resolveLaunchRecipe(ctx, env, provider, repo, ch.Name, time.Now())
+	rr, err := followUpRecipeOfName(ctx, env, provider, repo, ch.Name)
 	if err != nil {
-		return nil, wrap(err)
-	}
-	if err := refuseFollowUpReviewMode(rr.Recipe, ch.Name); err != nil {
-		return nil, wrap(err)
-	}
-	if err := refuseFollowUpArtifactMode(rr.Recipe, ch.Name); err != nil {
-		return nil, wrap(err)
-	}
-	if err := refuseFollowUpReportMode(rr.Recipe, ch.Name); err != nil {
 		return nil, wrap(err)
 	}
 	printRecipeNote(warn, rr, true)
@@ -1195,17 +1208,8 @@ func carryChosenRecipe(ctx context.Context, env *cloudEnv, provider, repo string
 // repository whose own default is mode: artifact or a report recipe would
 // otherwise be run as one by a launch that asked for nothing.
 func inheritDefaultRecipe(ctx context.Context, env *cloudEnv, provider, repo string) (*task.Recipe, error) {
-	rr, err := resolveLaunchRecipe(ctx, env, provider, repo, recipe.DefaultName, time.Now())
+	rr, err := followUpRecipeOfName(ctx, env, provider, repo, recipe.DefaultName)
 	if err != nil {
-		return nil, err
-	}
-	if err := refuseFollowUpReviewMode(rr.Recipe, rr.Name); err != nil {
-		return nil, err
-	}
-	if err := refuseFollowUpArtifactMode(rr.Recipe, rr.Name); err != nil {
-		return nil, err
-	}
-	if err := refuseFollowUpReportMode(rr.Recipe, rr.Name); err != nil {
 		return nil, err
 	}
 	return rr.taskRecipe(), nil

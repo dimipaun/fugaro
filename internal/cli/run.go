@@ -587,6 +587,16 @@ var prFlags = []string{"ref", "workflow"}
 
 func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	ctx := cmd.Context()
+	// One document read per command, installed over the whole of it rather than
+	// by each shape below: not every reader of a launch's document sits under
+	// the cache finishLaunch installs any more, because the recipe a first run
+	// resolves is one of them (agent.recipe, read from the ref where the
+	// working tree cannot give a document) and it is resolved before that. A
+	// read mint is an act the credentials service audits, so the recipe, the
+	// gates and the job decision share the one (D904). Idempotent, so the
+	// installs runAttempts and runChangeSet make for their own launches change
+	// nothing.
+	ctx = withServiceReadCache(ctx)
 	attemptsSet := cmd.Flags().Changed("attempts")
 	if attemptsSet {
 		if o.attempts < 2 || o.attempts > 4 {
