@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/versionstamp"
 )
 
@@ -162,7 +163,13 @@ func (versionStampStage) Left() initflow.Left {
 //
 // A malformed stamp is returned as it is and not turned into a skip: it is the
 // one read failure the spec fails closed on (spec, D3264), and this stage is a
-// writer that must never overwrite a node it cannot read.
+// writer that must never overwrite a node it cannot read. Every other failed
+// read fails open — an unreachable database, a timeout, a permission — because
+// the stamp is a fence and not a boundary, and the one command that brings the
+// installation forward is not stopped by a database blip. The door's own guard
+// has already made the same read and warned on stderr (update_stamp_guard.go),
+// and the cached value that read would have refused on was refused before any
+// stage ran, so the skip here is the whole of what this stage has left to say.
 func (s *versionStampStage) read(ctx context.Context) (*versionStampPlan, error) {
 	ver := releaseVersion()
 	if ver == "" {
@@ -182,7 +189,7 @@ func (s *versionStampStage) read(ctx context.Context) (*versionStampPlan, error)
 	var raw json.RawMessage
 	etag, found, err := db.GetETag(ctx, versionstamp.Path, &raw)
 	if err != nil {
-		return nil, dbErr(lc, err, false)
+		return nil, &versionStampSkip{reason: fmt.Sprintf("the required CLI could not be read (%s), so this run leaves it exactly as it is", safetext.FieldErr(err)), undone: true}
 	}
 	p := &versionStampPlan{lc: lc, db: db, ver: ver, etag: etag, found: found}
 	if found {

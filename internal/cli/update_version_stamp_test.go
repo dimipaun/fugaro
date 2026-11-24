@@ -505,3 +505,30 @@ func TestStampStageSkipsAnUnadoptedDatabase(t *testing.T) {
 		t.Error("a database that is not this installation's was stamped")
 	}
 }
+
+// TestStampStageFailsOpenWhenTheReadFails: a node the run cannot read is not a
+// failure of the one command that brings the installation forward (spec, "Read
+// failures fail open"; D3264). The door's own guard makes the same read and
+// warns on stderr; the stage says the same thing in its own line, leaves the
+// node exactly where it is, and reports the raise as still owed, so the next
+// update takes it. A malformed node is the one read that refuses, and the test
+// beside this one pins that.
+func TestStampStageFailsOpenWhenTheReadFails(t *testing.T) {
+	r, db := stampRig(t)
+	publishedSeam(t, true)
+	db.RefusePath("required_cli", 503, "UNAVAILABLE", "", "down")
+	e := stampEngine(t, r, &initOptions{door: updateDoor.name, yes: true})
+	st, err := checkStamp(t, e)
+	if err != nil {
+		t.Fatalf("a node that could not be read failed the stage: %v", err)
+	}
+	if st.State != initflow.Skipped || !st.Undone {
+		t.Fatalf("Check = %+v, want skipped and owed: the stamp is still a step this installation owes", st)
+	}
+	if !strings.Contains(st.Detail, "could not be read") {
+		t.Errorf("the skip does not say the node could not be read: %q", st.Detail)
+	}
+	if db.Value(versionstamp.Path) != nil {
+		t.Error("a node this run could not read was written")
+	}
+}
