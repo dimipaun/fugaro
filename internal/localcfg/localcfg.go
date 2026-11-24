@@ -36,6 +36,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -187,7 +188,9 @@ type Config struct {
 	// cost estimates (design §10.1).
 	ComputePrices map[string]Price `yaml:"compute_prices,omitempty"`
 	// LogView is the log view Fugaro job logs are read through
-	// (projects/<p>/locations/global/buckets/<b>/views/<v>); empty reads
+	// (projects/<p>/locations/<l>/buckets/<b>/views/<v>, where <l> is the
+	// run log bucket's own location — the mapping's, or `global` for an
+	// installation made before it — and not always a region); empty reads
 	// the project's default logs.
 	LogView string `yaml:"log_view,omitempty"`
 	// SchedulerRegion is where the daily image check's Cloud Scheduler
@@ -235,6 +238,24 @@ type Config struct {
 	// the active route the node carries, and only --remove-routing says that on
 	// purpose (the review of PR #414).
 	Routing *config.Routing `yaml:"routing,omitempty"`
+	// ModelRouting is where the project's models are reached: the routing
+	// table, an ordered list of entries naming a model or a pattern and the
+	// credential sources that may serve it (docs/model-credentials-routing/
+	// spec.md, D3182). It is the successor of the crafts' access and of
+	// Routing above, and it is the table itself rather than a block holding
+	// one, which is what a person writing it expects to see (contract-table.md,
+	// "The one contract the config does not share").
+	//
+	// It is written here, by `fugaro routing set` and by `fugaro update`'s
+	// migration, and by nothing else: a repository's `fugaro.yaml` and the
+	// project layer have no such key, because a repository may not choose its
+	// own routing — the project's table is the project's — so a file that names
+	// it is refused as an unknown field (both documents decode strictly). It
+	// reaches the runs through the published policy, whose own `model_routing`
+	// key carries the table beside the pools (RT4), and never through the
+	// published shared config: Shared drops it for the reason it drops the
+	// crafts' access, one step out.
+	ModelRouting routing.Table `yaml:"model_routing,omitempty"`
 	// ClaudeAccounts are named Claude OAuth credentials a repository may
 	// choose among by name (design docs/named-oauth-tokens/spec.md).
 	// Only the owner sets them, here, never in fugaro.yaml.
@@ -998,7 +1019,7 @@ func (p WorkspacePin) IsZero() bool { return p == WorkspacePin{} }
 // WorkspaceMember is one member of a workspace, as the workspace owner
 // declares it: how the workspace's own service reaches that member. It is the
 // owner's declaration and never the member's, and every value in it is one the
-// owner writes by hand (`fugaro workspace member add`).
+// owner writes by hand (`fugaro workspace project add`).
 type WorkspaceMember struct {
 	// Repos are the repositories this member contributes to the workspace, as
 	// `owner/repo`. Empty for a member that contributes none.
@@ -1057,7 +1078,7 @@ type WorkspaceJobAccount struct {
 }
 
 // IsZero reports whether the entry declares nothing at all, which is the state
-// validateWorkspace refuses and `fugaro workspace member rm` reads as "there is
+// validateWorkspace refuses and `fugaro workspace project rm` reads as "there is
 // no entry to remove". It is one rule with two readers, so the loader and the
 // command cannot come to different answers about an entry that is there and
 // says nothing.
@@ -1097,6 +1118,18 @@ type WorkspaceShared struct {
 	// file does not know is refused rather than read as a model one, because
 	// the kind is what decides whether Covers is required.
 	Kind string `yaml:"kind"`
+	// AllMembers offers the credential to every member of the workspace, the
+	// ones that join later included (D2977). It is exclusive with Projects and
+	// one of the two is written (contract C3's rule 5): an entry offered to the
+	// members it names carries Projects and no AllMembers at all, and one
+	// offered to every member carries AllMembers and no Projects. The reader
+	// refuses a node that carries both rather than picking one, because a
+	// reader that picked would be deciding who may be served a credential.
+	//
+	// An entry offered to every member is bounded by the workspace's ceiling
+	// alone, which is why the workspace's own cap has to be stated before
+	// `fugaro workspace share --all-members` writes one (D2977).
+	AllMembers bool `yaml:"all_members,omitempty"`
 	// Projects are the member projects this credential may be served to, as
 	// project names. It is the workspace's own allow-list, and the effective
 	// set is this list intersected with the member's own policy (D1298): a
@@ -1687,7 +1720,10 @@ func (c *Config) Overrides() (pricing.Overrides, error) {
 // validateBudget checks the budget block and the model prices.
 func (c *Config) validateBudget(bad func(string, ...any)) {
 	if b := c.Budget; b != nil {
-		if b.Mode != "" && !policy.ValidMode(b.Mode) {
+		// The word that was a budget mode is read before it is judged, so a
+		// config that says it still loads for the update that rewrites it
+		// (F22; load_removed_mode.go).
+		if b.Mode != "" && !acceptedBudgetMode(b.Mode) {
 			bad("budget.mode %q must be off, observe or enforce", b.Mode)
 		}
 		if b.MaxRunTokens < 0 {
@@ -3888,8 +3924,17 @@ func validateWorkspace(c *Config, bad func(string, ...any)) {
 					bad("workspace_shared.%s: covers lists %s twice", name, why)
 				}
 			}
-			if len(s.Projects) == 0 {
-				bad("workspace_shared.%s names no project: a written entry states the members it may be served to, and an empty list is refused rather than read as every member", name)
+			// Who the entry may be served to is one of two declarations and
+			// never both (contract C3's rule 5): the members it names, or every
+			// member of the workspace. A file that carried both, or neither, is
+			// refused here as the node's own reader refuses it — an entry read
+			// as one of the two when the owner wrote the other would be a pool
+			// wider or narrower than the declaration beside it.
+			switch {
+			case s.AllMembers && len(s.Projects) > 0:
+				bad("workspace_shared.%s carries both all_members and projects: they are exclusive — an entry offered to the members it names carries `projects` and no all_members, and one offered to every member carries `all_members: true` and no projects", name)
+			case !s.AllMembers && len(s.Projects) == 0:
+				bad("workspace_shared.%s names no project and does not offer the credential to every member: a written entry states the members it may be served to — a list of `projects`, or `all_members: true` — and one that says neither is refused rather than read as every member", name)
 			}
 			for _, p := range s.Projects {
 				if !config.ProjectNameRE.MatchString(p) {
@@ -3901,6 +3946,12 @@ func validateWorkspace(c *Config, bad func(string, ...any)) {
 			}
 		}
 	}
+	// The routing table's own decode rules, which are the members a kind cannot
+	// use and nothing that decides anything about a chain: what a table is
+	// missing, or what it routes to a source that cannot reach a model, is
+	// routing.Problems' answer (RT3), reported by `fugaro validate` and refused
+	// by `fugaro routing set` — not a load of a file every member parses.
+	c.validateModelRouting(bad)
 }
 
 // duplicated is the first value a list holds twice, "" when it holds none

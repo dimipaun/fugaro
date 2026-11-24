@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -252,6 +253,15 @@ type InstallationSpec struct {
 	// (infra.CarriedProjectJobs). It is a working note of the run and not a
 	// variable — the root has no such input — so it never reaches the document.
 	CarriedProjectJobs []string `json:"-"`
+	// CarriedBudget is the alert the installation already holds, as the run
+	// read it out of the cloud: the amount and the currency from the project's
+	// creation fact, the billing account from the alert's own resource in the
+	// installation root's state (R5 and R7 of docs/managed-flag-ergonomics).
+	// prepare writes it in where this spec carries no budget of its own, so a
+	// run given no budget flags plans no change to the alert; Budget above is
+	// the variable the module takes, and this is a working note of the run, so
+	// it never reaches the document as itself.
+	CarriedBudget *Budget `json:"-"`
 	// CarriedProjectJobAccounts are the points of the account axis this spec
 	// composes no job for, because the local config declares a KEY credential
 	// under the name (ProjectKeyAccountJobs, the filter's own answer), while
@@ -390,6 +400,37 @@ type CredentialsServiceSpec struct {
 	//   - a pointer to the owner's list: written as it is. The account is never
 	//     ADDED to it: a union would admit an identity `[]` cannot remove.
 	VerifierAccounts *[]string `json:"verifier_accounts,omitempty"`
+	// SignerAccount is the runs' signer account the service signs a run's
+	// identity as (launcher-does-not-mint plan tasks LM12 and LM13; D3121):
+	// the account the installation's Firebase root creates, as the bare
+	// address this process reads (FUGARO_SIGNER_ACCOUNT). It is derived from
+	// the local config's own budget block — the Firebase project the same
+	// root published — and it is written whenever that block is, because the
+	// service is deployed only into an installation that has one
+	// (firebaseBackend), and an installation whose budget backend exists has
+	// had that root applied: the signer is created there and not by the
+	// credentials service. Leaving it out is the state of an installation
+	// this release has not converged: the service starts with the entry
+	// absent and serves no identity route at all (I1's contract), rather
+	// than naming an account nothing created.
+	SignerAccount string `json:"signer_account,omitempty"`
+	// RosterServiceAccounts are the roster's `serviceAccount:` entries as
+	// bare addresses (LM12, LM13; D3123): the class a person's list cannot
+	// hold, because such a caller presents the account's own Google ID token
+	// rather than a person's, and — in the module — the list the service's
+	// invoker grant is made for. launchers.go derives it from the same
+	// merged list the launcher class comes from, so the accounts IAM admits
+	// to the service and the ones the process admits are one derivation, and
+	// a `group:` entry is on neither (launcherServiceAccounts says why).
+	RosterServiceAccounts []string `json:"roster_service_accounts,omitempty"`
+	// ImplicitAdmins are the installing machine's implicit admins as bare
+	// addresses (LM12, LM13; F29, R16 arm 1): the identity the launch gate
+	// admits whatever the roles node says, handed to the service so that the
+	// issuer's scope check gives the gate's answer and an owner is not
+	// refused a launch that works today. It is read from the machine's own
+	// terraform.budget_admins, through the same normalisation the gate reads
+	// it with (implicitAdmins).
+	ImplicitAdmins []string `json:"implicit_admins,omitempty"`
 	// URL is the service's OWN URL, the audience its callers' Google ID
 	// tokens are minted for. It is empty on the apply that CREATES the
 	// service: Cloud Run assigns the URL, nothing in the module may read the
@@ -435,6 +476,18 @@ type IntakeSpec struct {
 	// .invalid host no ID token is ever minted for) until the same stage reads
 	// the URL back from the module's own output and applies it.
 	URL string `json:"url,omitempty"`
+	// People is the intake's SECOND class list (WC3, R5, D3143): the people of
+	// a workspace's roster, as the bare addresses a Google ID token's email
+	// claim holds (infra.IntakePeople). It is a member of the INTAKE's own
+	// block and never of `launchers`, which is the workspace project's
+	// credentials service invoker set as well (F10), and it is empty — no key
+	// at all — for every installation that is not a workspace's project.
+	//
+	// `fugaro update` renders it from the workspace's roster on the owner's own
+	// run (init_stages.go's renderIntakePeople), so a person the roster gains
+	// waits for that one command, which binds the invoke grant beside it
+	// (D2971).
+	People []string `json:"people,omitempty"`
 }
 
 // VoiceServiceSpec is the installation root's var.voice_service (P5.3.3): the
@@ -640,6 +693,7 @@ func Credentials(lc *localcfg.Config, image string, publishedVerifiers []string)
 	if err != nil {
 		return CredentialsServiceSpec{}, err
 	}
+	signer, roster, admins := credentialsServiceIdentity(lc, b)
 	return CredentialsServiceSpec{
 		AccountID:         CredentialsAccountID,
 		Service:           CredentialsServiceName,
@@ -656,7 +710,70 @@ func Credentials(lc *localcfg.Config, image string, publishedVerifiers []string)
 		// field's own comment): nil here is the state the module's default is
 		// for, and the account it creates is admitted.
 		VerifierAccounts: verifierAccountsField(lc.VerifierAccountsEffective(publishedVerifiers)),
+		// The identity half's three names (LM12's variables, D3121, D3123,
+		// F29/R16), through the one derivation the carry reads too
+		// (credentialsServiceIdentity), so the run that deploys the service and
+		// every run after it configure it the same way.
+		SignerAccount:         signer,
+		RosterServiceAccounts: roster,
+		ImplicitAdmins:        admins,
 	}, nil
+}
+
+// credentialsServiceIdentity is the block's three identity names — the runs'
+// signer, the roster's service accounts and the implicit admins (LM12's
+// variables, D3121, D3123, F29/R16) — as one derivation, read by both writers
+// of the block: the deploy that composes it (Credentials) and the carry that
+// brings an installation's own block up to date
+// (RefreshCredentialsServiceIdentity). It is one function so the two cannot
+// disagree about what the service is configured with, which is the property
+// every class list of this service has.
+//
+// b is the budget block the signer's project comes from: the signer is the
+// Firebase root's own account, in the project that root creates it in, and the
+// root has been applied by the time the local config names the project. The
+// roster is the same merged launcher list the installation root's class is
+// derived from, read one member class over (launcherServiceAccounts), and the
+// implicit admins are the gate's own list, read the way the gate reads it
+// (implicitAdmins).
+func credentialsServiceIdentity(lc *localcfg.Config, b *localcfg.Budget) (string, []string, []string) {
+	return serviceAccountEmail(SignerAccountID, b.FirebaseProject),
+		launcherServiceAccounts(launchersWithOperators(lc.Terraform.Operators, lc.Terraform.Admins)),
+		implicitAdmins(lc.Terraform.BudgetAdmins)
+}
+
+// implicitAdmins is the machine's implicit admins as the bare addresses the
+// service compares a caller's Google ID token against (LM13; F29, R16 arm 1),
+// and it is the LAUNCH GATE's own list: the `user:` entries of the local
+// config's terraform.budget_admins, normalised by access.Member — the
+// function the gate reads them with (internal/cli's userImplicitAdmins),
+// whose member spelling is this list with `user:` in front of each address.
+// Handing the service the same people is what makes the issuer's scope check
+// give the gate's answer: an owner whose own address is on the list is
+// admitted to a launch the gate admits today, and one the config does not
+// name is refused in both places.
+//
+// A `group:` or `serviceAccount:` entry is not here and is not on the gate's
+// list either: neither is a person the roles node can place, and the implicit
+// class exists for the person whose grants are not written down yet. An
+// address that does not parse is dropped, exactly as the gate drops it.
+func implicitAdmins(members []string) []string {
+	out := []string{}
+	for _, m := range members {
+		address, ok := strings.CutPrefix(m, "user:")
+		if !ok {
+			continue
+		}
+		member, err := access.Member(address)
+		if err != nil {
+			continue
+		}
+		if email, ok := strings.CutPrefix(member, "user:"); ok {
+			out = append(out, email)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // CredentialsInstallationFacts is Credentials' own question about the
@@ -916,6 +1033,81 @@ func RefreshCredentialsServiceJobAccounts(vars []byte, lc *localcfg.Config) ([]b
 			return strings.Compare(credentialsReviewJobKey(a), credentialsReviewJobKey(b))
 		})
 		svc["review_job_accounts"] = mergedReview
+	}
+	doc["credentials_service"] = svc
+	return sortedJSON(doc)
+}
+
+// RefreshCredentialsServiceIdentity returns vars with the credentials service
+// block's three identity names — signer_account, roster_service_accounts and
+// implicit_admins — brought up to date with the installation the local config
+// names now, and every other member of the block exactly what it was.
+//
+// The three names are the block's members this side derives from the local
+// config, and the deploy is their only other writer (Credentials): the run that
+// CREATES the block fills them in, and every later run carries the block as it
+// is found (CarriedCredentialsService). The names are new in this release, so
+// every installation that has the block from before it carries one without
+// them — and the block is carried byte for byte, so nothing else ever adds
+// them. That is the whole of LM13's acceptance at the installations that
+// matter: the roster's `serviceAccount:` entries and the implicit admins are
+// rendered to the service there too, the account that may knock and the account
+// that may be served stay one list (the module makes the service's invoker
+// grant for the same variable, iam.tf's credentials_roster_service_account),
+// and the runs' signer reaches the process, without which LM14's probe has
+// nothing to read and the minter grant can never move.
+//
+// The three are REPLACED, not unioned, which is where they part from the two
+// job tables RefreshCredentialsServiceJobAccounts composes: a job row the
+// refresh dropped is a job that holds an invoker grant and is refused by the
+// service (the union's own comment), while a roster or implicit-admin member
+// the config no longer names is a GRANT the service would keep for an account
+// that no longer launches, or an admission the CLI's own gate has already
+// withdrawn — a widening nothing can undo, and, for the implicit admins, a
+// disagreement between the two ends of the one rule F29/R16 arm 1 states.
+// Replacing is also what keeps an installation whose config has not changed
+// converging on the bytes it already has, because the derivation is the
+// deploy's own (credentialsServiceIdentity).
+//
+// A name with nothing to carry is DELETED rather than written empty, which is
+// what the spec's `omitempty` tags write and what the module's own defaults
+// read as the empty class: an installation whose roster names no service
+// account, or whose config names no implicit admin, then carries exactly the
+// bytes the run that deployed the service would have written.
+//
+// A config that cannot name the Firebase project the signer lives in is refused
+// rather than written around (firebaseBackend), the direction the job tables'
+// refresh takes: the caller then keeps the block it found, so an installation
+// whose service is deployed but whose config no longer names the project is
+// left with the names it has rather than a block with the signer dropped.
+func RefreshCredentialsServiceIdentity(vars []byte, lc *localcfg.Config) ([]byte, error) {
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	svc, _ := doc["credentials_service"].(map[string]any)
+	if svc == nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json carries no credentials_service to refresh the identity names of")
+	}
+	b, err := firebaseBackend(lc, "the credentials service")
+	if err != nil {
+		return nil, err
+	}
+	signer, roster, admins := credentialsServiceIdentity(lc, b)
+	if signer == "" {
+		delete(svc, "signer_account")
+	} else {
+		svc["signer_account"] = signer
+	}
+	if len(roster) == 0 {
+		delete(svc, "roster_service_accounts")
+	} else {
+		svc["roster_service_accounts"] = roster
+	}
+	if len(admins) == 0 {
+		delete(svc, "implicit_admins")
+	} else {
+		svc["implicit_admins"] = admins
 	}
 	doc["credentials_service"] = svc
 	return sortedJSON(doc)
@@ -1304,6 +1496,7 @@ func IntakeOf(vars []byte) (IntakeSpec, bool, error) {
 	spec.Service, _ = block["service"].(string)
 	spec.Image, _ = block["image"].(string)
 	spec.URL, _ = block["url"].(string)
+	spec.People = stringList(block["people"])
 	if spec.Service == "" || spec.Image == "" {
 		return IntakeSpec{}, false, nil
 	}
@@ -1327,6 +1520,27 @@ func IntakeURLOf(vars []byte) (string, error) {
 	block, _ := doc["intake"].(map[string]any)
 	url, _ := block["url"].(string)
 	return url, nil
+}
+
+// LauncherAccountsOf returns the launcher_accounts the installation root's
+// tfvars carry, and the empty list when they carry none — the module's own
+// default, which is also what the key's omitempty writes for an installation
+// whose launcher list names no `user:` member (InstallationSpec.LauncherAccounts,
+// InstallationVars).
+//
+// It is read beside IntakeOf's people because the intake's class is the two
+// TOGETHER: the block's people list is the roster's own, and whether it moves
+// the class the module reads depends on what the launchers already carry
+// (IntakeClass, intake.tf's local.intake_accounts).
+func LauncherAccountsOf(vars []byte) ([]string, error) {
+	if vars == nil {
+		return []string{}, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, err
+	}
+	return stringList(doc["launcher_accounts"]), nil
 }
 
 // SetIntakeURL returns vars with intake.url set to url and every other entry —
@@ -1373,6 +1587,49 @@ func SetIntakeImage(vars []byte, image string) ([]byte, error) {
 		return nil, fmt.Errorf("the installation's terraform.tfvars.json carries no intake to set the image of")
 	}
 	block["image"] = image
+	doc["intake"] = block
+	return sortedJSON(doc)
+}
+
+// SetIntakePeople returns vars with the intake's second class list set to
+// people, and every other entry — of the document and of the intake's own
+// block — unchanged (SetIntakeURL's read-modify-write, on the block's other
+// member).
+//
+// An empty list REMOVES the key rather than writing [], and that is the
+// document's own shape: the module's default is the empty list, so the absent
+// key and [] are one plan, and IntakeSpec.People's omitempty writes a block
+// without it. It is also the state every installation that is not a workspace's
+// project is in, and a run that wrote [] into one would put a diff in its
+// tfvars for a fact it does not have.
+//
+// The list is sorted and deduplicated here, so two equal rosters give equal
+// bytes (sortedJSON's promise) whatever order a caller read them in.
+//
+// A document with no intake block is refused rather than given one, for
+// SetIntakeURL's reason: the people are a member of a block that turns on an
+// account, two roles, a service and its invoker grants, and a caller that
+// invented one would deploy the intake for an installation whose run never
+// resolved an image for it.
+func SetIntakePeople(vars []byte, people []string) ([]byte, error) {
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := doc["intake"].(map[string]any)
+	if block == nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json carries no intake to set the roster's people on")
+	}
+	sorted := append([]string{}, people...)
+	slices.Sort(sorted)
+	delete(block, "people")
+	if sorted = slices.Compact(sorted); len(sorted) > 0 {
+		arr := make([]any, 0, len(sorted))
+		for _, p := range sorted {
+			arr = append(arr, p)
+		}
+		block["people"] = arr
+	}
 	doc["intake"] = block
 	return sortedJSON(doc)
 }
@@ -1923,9 +2180,8 @@ const OrchestratorKey = "orchestrator"
 // fugaro-orch, the launcher's project role, the runs bucket's conditioned write
 // and its unconditioned read, the token-minter role on the budget signer ACCOUNT
 // and the job runner's role on each of the installation's jobs — and the
-// installation holds it as STATE. The ONE writer is `fugaro update
-// --firebase-project <id> --orchestrator` (internal/cli's
-// ensureOrchestratorBlock, through infra.Orchestrator and SetOrchestrator), and
+// installation holds it as STATE. The ONE writer is `fugaro update`
+// (internal/cli's ensureOrchestratorBlock, in the credentials-service stage; through infra.Orchestrator and SetOrchestrator), and
 // it writes the block only where the installation holds none: from the apply
 // that creates the account onwards every path that re-serializes the root's
 // tfvars rebuilds the document from a spec that does not carry the key, so
@@ -1992,7 +2248,7 @@ func CarriedOrchestrator(vars, prev []byte) ([]byte, error) {
 // renders and the invoker grant orchestrator.tf adds — exists on exactly the
 // installations this answers true for. The writer asks it before it writes, and
 // the credentials-service stage asks it before it re-pins an image: an
-// installation that has not opted in is one no run hands an orchestrator.
+// installation that holds no block is one no run recomposes one for.
 //
 // A key present as null is NOT recorded. VoiceServiceRecorded answers the other
 // way for the same shape, because the question there is whether a run may
@@ -2077,6 +2333,122 @@ func CarriedLicence(vars, prev []byte) ([]byte, error) {
 	}
 	doc[LicenceKey] = block
 	return sortedJSON(doc)
+}
+
+// BudgetKey is the installation root's variable for the project's budget alert
+// (Budget above), and it is the key CarriedBudget keeps.
+const BudgetKey = "budget"
+
+// CarriedBudget returns vars with the alert the installation already holds,
+// when vars carry none of their own: prepare's carry for the one key whose
+// source is not a document but the cloud.
+//
+// The figures are read by the caller, and they come from where a machine that
+// never ran the apply can read them (R5 and R7 of
+// docs/managed-flag-ergonomics): the amount and the currency from the project's
+// creation fact, which is the record a rewrite by `fugaro managed flag` moves,
+// and the billing account from the alert's own resource in the installation
+// root's state, which is the only place an account survives a work directory
+// that was cleaned, or a console on another host. Neither comes from the local
+// work directory.
+//
+// nil carried is a run that answered the budget itself — its document has the
+// key and it stands (D2215: a default never overwrites a recorded amount) — and
+// an installation that holds no alert; a document that already carries the key
+// is returned untouched, so the flags always replace what was carried.
+func CarriedBudget(vars []byte, carried *Budget) ([]byte, error) {
+	if carried == nil {
+		return vars, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		// A tfvars that cannot be read is not a reason to write a plan that
+		// deletes the installation's alert: fail rather than carry nothing
+		// forward.
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	if own, ok := doc[BudgetKey]; ok && own != nil {
+		return vars, nil // the caller's own answer stands
+	}
+	raw, err := json.Marshal(carried)
+	if err != nil {
+		return nil, err
+	}
+	return setVarsKey(vars, BudgetKey, raw)
+}
+
+// budgetResourceType is the resource type of the installation module's alert
+// (deploy/terraform/gcp/modules/installation/budget.tf), the one resource a raw
+// state document has to name for budgetBillingAccountOf to read an account out
+// of it.
+const budgetResourceType = "google_billing_budget"
+
+// rawStateFormatVersion is the version a raw state object this build reads is
+// written with. Terraform 1.x writes 4; a document of another version could
+// have moved the fields read below, and reading it anyway would be a guess
+// about what the installation holds.
+const rawStateFormatVersion = 4
+
+// budgetBillingAccountOf is the billing account the alert's own resource in a
+// Terraform state object records: the one member of a state this carry reads,
+// and the only copy of the account a machine that never ran the apply can
+// reach (R7).
+//
+// A state that holds no budget resource answers found=false and no error — an
+// installation with no alert has none, which is the state of every installation
+// before the alert's first apply — and one that holds the resource with no
+// account, or with an account that is not a string, is an error rather than a
+// missing alert: that is a state this build cannot read as the thing it is, and
+// carrying nothing from it would plan the alert's deletion.
+func budgetBillingAccountOf(state []byte) (account string, found bool, err error) {
+	var st struct {
+		Version   int `json:"version"`
+		Resources []struct {
+			Mode      string `json:"mode"`
+			Type      string `json:"type"`
+			Instances []struct {
+				Attributes map[string]json.RawMessage `json:"attributes"`
+			} `json:"instances"`
+		} `json:"resources"`
+	}
+	if err := json.Unmarshal(state, &st); err != nil {
+		return "", false, fmt.Errorf("reading a Terraform state document: %w", err)
+	}
+	if st.Version != rawStateFormatVersion {
+		return "", false, fmt.Errorf("the state document is format version %d, and this build reads only %d", st.Version, rawStateFormatVersion)
+	}
+	for _, r := range st.Resources {
+		if r.Type != budgetResourceType || (r.Mode != "" && r.Mode != "managed") {
+			continue
+		}
+		for _, inst := range r.Instances {
+			raw, ok := inst.Attributes["billing_account"]
+			if !ok {
+				return "", false, fmt.Errorf("the state's %s records no billing_account", budgetResourceType)
+			}
+			var s string
+			if err := json.Unmarshal(raw, &s); err != nil || s == "" {
+				return "", false, fmt.Errorf("the state's %s records a billing_account that is not an account", budgetResourceType)
+			}
+			return s, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+// stringList is a decoded JSON array as the list of strings it holds, empty for
+// anything else: a member that is not a string is dropped rather than read as
+// one, because the block a caller asks about is a document this program either
+// wrote (where every member is a string) or one it refuses to act on at all.
+func stringList(v any) []string {
+	arr, _ := v.([]any)
+	out := make([]string, 0, len(arr))
+	for _, e := range arr {
+		if s, ok := e.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // varsDoc decodes an installation tfvars document, keeping numbers as

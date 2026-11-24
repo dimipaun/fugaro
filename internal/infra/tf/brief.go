@@ -214,6 +214,7 @@ var nouns = map[string]string{
 	"google_compute_router_nat":                      "NAT",
 	"google_firebase_database_instance":              "Realtime Database",
 	"google_firebase_project":                        "Firebase project",
+	"google_firestore_index":                         "composite index",
 	"google_logging_log_view":                        "log view",
 	"google_logging_log_view_iam_member":             "log view grant",
 	"google_logging_project_bucket_config":           "log bucket",

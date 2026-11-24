@@ -276,7 +276,7 @@ var budgetBoolFlags = map[string]bool{
 	"--ask": true,
 	"--all": true, "--json": true, "--compute": true, "--stream": true,
 	// budget history's own, and the --help cobra adds at Execute time.
-	"--sweep": true, "--rollover": true, "--force": true, "--help": true,
+	"--sweep": true, "--rollover": true, "--reindex": true, "--force": true, "--help": true,
 }
 
 // optionalRepoVerb returns the index of the verb (set, kill, resume, ls) that

@@ -115,16 +115,20 @@ type MapHealth struct {
 // back. The two lists are filled in when they are empty, so the published shape
 // is honest: a nil slice marshals as null, which the console's schema refuses.
 func EncodeMapDoc(d MapDoc) ([]byte, error) {
+	d = d.withLists()
 	if err := ValidateMapDoc(d); err != nil {
 		return nil, err
 	}
-	return json.Marshal(d.withLists())
+	return json.Marshal(d)
 }
 
 // DecodeMapDoc reads the document. Strict, and checked exactly as it is on the
 // way out: an unknown field is an error rather than something carried along,
 // and every rule ValidateMapDoc holds is applied to what was read.
 func DecodeMapDoc(raw []byte) (MapDoc, error) {
+	if err := requireMapFields(raw); err != nil {
+		return MapDoc{}, err
+	}
 	d, err := decodeStrict[MapDoc](raw)
 	if err != nil {
 		return MapDoc{}, err
@@ -133,6 +137,43 @@ func DecodeMapDoc(raw []byte) (MapDoc, error) {
 		return MapDoc{}, err
 	}
 	return d, nil
+}
+
+// mapRequired is every field the contract says a document always carries, and
+// what it is. The two lists are never null, and the health and the time the
+// document was assembled are always there; a document that omits one is not a
+// document of this shape, whatever a decoder's zero values make of it.
+var mapRequired = []struct{ key, what string }{
+	{"nodes", "the nodes are a list of the active orchestrators, never null"},
+	{"edges", "the edges are a list of the connections between them, never null"},
+	{"health", "the health is the coordinator's own state, and a map with no heartbeat says so with sweep false"},
+	{"generated_at", "the document says when it was assembled"},
+}
+
+// requireMapFields refuses a document that does not carry one of those fields,
+// or carries it as null. Strict decoding refuses a field this release does not
+// model; this is the other half of the same rule — a field the contract always
+// writes is one a reader must not fill in with a zero value. The check is made
+// on the raw value because the struct decode cannot tell the two apart: an
+// absent field, a null one and a zero one all decode without an error, and a
+// zero health is a shape this release does read.
+func requireMapFields(raw []byte) error {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		// A value that is not a document at all: decodeStrict's own sentence
+		// for it is better than one written here, and it runs next.
+		return nil
+	}
+	for _, f := range mapRequired {
+		v, ok := doc[f.key]
+		if !ok {
+			return fmt.Errorf("%w: the document carries no %q, and %s", ErrInvalid, f.key, f.what)
+		}
+		if string(v) == "null" {
+			return fmt.Errorf("%w: the document's %q is null, and %s", ErrInvalid, f.key, f.what)
+		}
+	}
+	return nil
 }
 
 // ValidateMapDoc is every rule the document must satisfy to be read. It is the
@@ -181,6 +222,20 @@ func ValidateMapDoc(d MapDoc) error {
 	}
 	if !d.Health.Sweep && (d.Health.StartedAt != nil || d.Health.OkAt != nil || d.Health.At != nil) {
 		return fmt.Errorf("%w: the health says the sweep is off and carries a heartbeat", ErrInvalid)
+	}
+	// The document's own envelope, last so that a document that breaks a rule
+	// of its contents is refused for that rule. A document built in Go has no
+	// way to spell an absent field, which is what a nil list and a zero time
+	// are here; requireMapFields refuses the same two things spelled as an
+	// absent or null field on the wire.
+	if d.Nodes == nil {
+		return fmt.Errorf("%w: the nodes are null, and a project with no active orchestrator carries an empty list", ErrInvalid)
+	}
+	if d.Edges == nil {
+		return fmt.Errorf("%w: the edges are null, and a map with no connection carries an empty list", ErrInvalid)
+	}
+	if d.GeneratedAt.IsZero() {
+		return fmt.Errorf("%w: the document carries no time it was assembled", ErrInvalid)
 	}
 	return nil
 }

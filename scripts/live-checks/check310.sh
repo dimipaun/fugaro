@@ -1112,20 +1112,30 @@ def lines_cmd(path):
     }
     steps = waits = plan_rows = context = 0
     closing = header = full_output = diagnose = odd = last = ""
+    failed_block = False
     for line in real_lines(text):
         last = line
         if re.match(r"^(Done|Left for you|Failed) in ", line):
             closing = line
         elif re.match(r"^fugaro (setup|update): project ", line):
             header = line
-        elif re.match(r"^ {4}full output: ", line):
-            full_output = line[4 + len("full output: "):]
-        elif re.match(r"^ {4}Something went wrong\. Run: fugaro troubleshoot ", line):
+        elif re.match(r"^Error: ", line):
+            # A failed step's message opens the block under it, and every line
+            # of that block is two spaces in (report.Step.Failed: the label on
+            # the message's first line, at the step line's own column, with the
+            # rest of the message, the log's path and the diagnose command
+            # under it). The state is what tells those lines from a plan view's
+            # rows: both are drawn two spaces in, and a run prints one or the
+            # other and never both.
+            failed_block = True
+        elif re.match(r"^ {2}Log:  ", line):
+            full_output = line[2 + len("Log:  "):]
+        elif re.match(r"^ {2}Help: fugaro troubleshoot ", line):
             diagnose = line.split("troubleshoot ", 1)[1]
-        elif re.match(r"^ {4,}\S", line):
-            # The indent is four spaces and the line under it keeps its own, so
-            # a context line an error already indented reads as six (report.go
-            # writes "    " + the line).
+        elif failed_block and re.match(r"^ {2,}\S", line):
+            # The block's own lines are two spaces in, and a context line the
+            # error already indented keeps its own indent under them (the
+            # reporter writes "  " + the line), so the whole run of them counts.
             context += 1
         elif re.match(r"^ {2}\S", line):
             plan_rows += 1
@@ -1988,7 +1998,7 @@ SHIM_EOF
     detail="the failed step printed no context line under it: the error's own lines after the first are printed on the screen beside it, because a session that cannot open the log still has to see them (G8)"
   elif [ -z "$full" ]; then
     verdict=FAIL
-    detail="the failed step printed no 'full output: <path>' line under it, so nothing sends a person to the log that holds the whole of what went wrong (G8, D1352)"
+    detail="the failed step printed no 'Log:  <path>' line under it, so nothing sends a person to the log that holds the whole of what went wrong (G8, D1352)"
   elif [ ! -f "$full" ]; then
     verdict=FAIL
     detail="the failure names the log $full and there is no such file: the path under a failure has to be the log this run wrote (G5, G8)"
@@ -1997,7 +2007,7 @@ SHIM_EOF
     detail="the failure names $full and the log this run filed is $LOGDIR/$FAIL_LOG: the path under the failure is not the run's own log"
   elif [ -z "$diagnose" ]; then
     verdict=FAIL
-    detail="the failed step printed no 'Something went wrong. Run: fugaro troubleshoot <id>' line: that line is how a person hands the run on without a path (T-DG9, G8)"
+    detail="the failed step printed no 'Help: fugaro troubleshoot <id>' line: that line is how a person hands the run on without a path (T-DG9, G8)"
   else
     detail="the stage's failure printed its own step line, $context line(s) of context under it, the log's path and the command that explains the run (fugaro troubleshoot $diagnose), and the run exited 2 with a closing line that says Failed (G3, G8)"
   fi

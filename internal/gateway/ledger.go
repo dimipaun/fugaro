@@ -234,6 +234,42 @@ type charge struct {
 	// that did not go through the service, which settles as it always did.
 	// It decides whether the call is notional or money (C1.16, D140).
 	tier string
+	// chain is the answer the credentials service wrote for this call (C1,
+	// contract-table.md): the source that served, whether it was a fallback,
+	// and the model that served. Its zero -- a call the service did not answer
+	// -- leaves the call settling exactly as it did before the member existed.
+	//
+	// **Nothing fills it yet.** The members are response headers the service
+	// writes only to a caller that sent the stage header, and both the read and
+	// the option that turns it on are CS2's (chainwire.go, Options.ChainServed):
+	// CS2 fills this field where it reads the answer, in forward.go beside the
+	// serviceAnswer call that already reads the tier. Every call this tree
+	// serves today therefore carries a zero here and settles exactly as it did
+	// before, and the chain tests are the only callers that fill one.
+	//
+	// **What the ledger does with a filled one (CS8, D140), and what it does
+	// not.** The rows and the fallback money are the ledger's own: a settled
+	// call's model rows, its per-stage report split and band and the run's
+	// last-settled model follow the SERVED model and not the name the response
+	// body claims in place of it (a source entry may name a model -- a written
+	// downgrade -- and a route's spelling differs from the canonical one, CS3,
+	// so the body carries the model the agent asked for and only the answer says
+	// which model served), and a fallback a metered source paid for is real
+	// money, charged, held to the caps and counted into fallbackUSD like any
+	// other key call, which is what Cost.FallbackUSD reports. The AMOUNT is not
+	// the ledger's: it is the figure forward.go's fromUsage priced, and pricing
+	// the call at the served model's rates, band and pinSpelling is the other
+	// half of this same member -- CS2's, in CS2's forward.go, because the answer
+	// is only in hand after serviceAnswer and fromUsage runs with it.
+	//
+	// The two halves must land together, which is why this comment names the
+	// coupling: an amount priced at the model the body named, filed under the
+	// row of the model that served, would put one model's price under another
+	// model's name and take its band from a row the call was never charged at.
+	// The answer is zero until CS2 prices by it, so no call can be filed that
+	// way today, and fromUsage taking `serving` from this member -- one line,
+	// where it reads t.model now -- is what keeps it so.
+	chain ChainAnswer
 	// usage is the call's reported token counts as the gateway priced them,
 	// which is what the run's cache totals are summed from and what its
 	// per-model token counts are keyed by (G1.2). The counts are the call's
@@ -261,6 +297,31 @@ type charge struct {
 	// redirect, a 2xx whose usage did not parse -- says nothing about what
 	// the run had cached, and that is not zero (F24).
 	usageRead bool
+}
+
+// servedModel is the model this call is accounted by: the canonical id the
+// credentials service's answer named, which is the model that actually served
+// it, or the response's own claim for every call the service did not answer
+// (CS8, C1's X-Fugaro-Model).
+//
+// The answer wins and the body's claim does not, which is the whole reason the
+// member travels on the answer: a source entry may name a model (a written
+// downgrade) and a route's own spelling differs from the canonical one (CS3),
+// and the answer is where the model the call was really sent to is written
+// down. Pricing the call by the name the body carries would charge the model
+// the agent asked for while another model answered.
+//
+// It names the model the call is FILED under: the model rows, the per-stage
+// report split and band, and the run's last-settled model. The rates the amount
+// was taken at are decided in forward.go's fromUsage, which must take its
+// serving model from this same member (CS2) -- the ledger is handed an amount
+// and cannot reprice it -- and charge.chain's comment carries why the two land
+// together.
+func (c charge) servedModel() string {
+	if c.chain.Model != "" {
+		return c.chain.Model
+	}
+	return c.model
 }
 
 // recordReport takes the provider's own figure for this call into the charge,
@@ -301,6 +362,11 @@ func (c *charge) recordReport(rep pricing.Micros, lo, hi pricing.Rates, u pricin
 func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// The model this call's rows, its report split and band and the run's
+	// last-settled model follow: the credentials service's answer when it named
+	// one, the response's own claim otherwise (CS8, C1's X-Fugaro-Model). The
+	// amount charged is the figure forward.go priced, not one taken here.
+	served := c.servedModel()
 	s.reserved -= w
 	if s.reserved < 0 { // never: every settle matches one reserve
 		s.log.Error("budget: a settle released more than was reserved", "stage", st.st.Name, "reserved_micros", int64(s.reserved), "released_micros", int64(w))
@@ -309,6 +375,18 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 	real := c.tier != TierA
 	if real {
 		s.used = satAdd(s.used, c.amount)
+		// What a fallback spent, when a metered source paid for it (C1, CS8,
+		// D140): a paid fallback is settled against the caps as any key call
+		// -- it is in used above, in its stage's Used and in every overrun it
+		// caused, exactly like the call it fell back from -- and this is the
+		// part of that money that bought a source other than the chain's
+		// first, which Cost.FallbackUSD reports. It is real money and only
+		// real money: a fallback a subscription served is notional, is in
+		// notional above, and is in no fallback figure at all, because no
+		// dollar of it was paid (P12).
+		if c.chain.Fallback {
+			s.fallbackUSD = satAdd(s.fallbackUSD, c.amount)
+		}
 	} else {
 		s.notional = satAdd(s.notional, c.amount)
 	}
@@ -345,7 +423,7 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 	} else {
 		s.lastCacheRead, s.lastCacheKnown = 0, false
 	}
-	s.lastModel = c.model
+	s.lastModel = served
 	r := &st.rep
 	if c.sent {
 		r.Calls++
@@ -366,11 +444,11 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 	} else {
 		r.Notional = satAdd(r.Notional, c.amount)
 		if c.amount > 0 {
-			r.NotionalBy[c.model] = satAdd(r.NotionalBy[c.model], c.amount)
+			r.NotionalBy[served] = satAdd(r.NotionalBy[served], c.amount)
 		}
 	}
 	if c.amount > 0 {
-		r.ByModel[c.model] = satAdd(r.ByModel[c.model], c.amount)
+		r.ByModel[served] = satAdd(r.ByModel[served], c.amount)
 		if c.route != "" {
 			r.ByRoute[c.route] = satAdd(r.ByRoute[c.route], c.amount)
 		}
@@ -381,7 +459,7 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 		// together (F25). It is the same gate as Tokens and as the run's own
 		// per-model counts: a call whose usage the gateway could not read
 		// contributed no tokens anywhere.
-		r.TokensBy[c.model] = addUsage(r.TokensBy[c.model], c.usage)
+		r.TokensBy[served] = addUsage(r.TokensBy[served], c.usage)
 	}
 	r.Reported = satAdd(r.Reported, c.reported)
 	// The per-model report and the table's band are over the calls the
@@ -394,10 +472,10 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 	// is in no split the run's own report total carries either. Only a call
 	// the gateway sent can be counted, which is the gate Calls has too.
 	if c.hasReport {
-		r.ReportedBy[c.model] = satAdd(r.ReportedBy[c.model], c.reported)
+		r.ReportedBy[served] = satAdd(r.ReportedBy[served], c.reported)
 		if c.hasRow {
-			r.TableLoBy[c.model] = satAdd(r.TableLoBy[c.model], c.tableLo)
-			r.TableHiBy[c.model] = satAdd(r.TableHiBy[c.model], c.tableHi)
+			r.TableLoBy[served] = satAdd(r.TableLoBy[served], c.tableLo)
+			r.TableHiBy[served] = satAdd(r.TableHiBy[served], c.tableHi)
 		}
 	} else if c.sent {
 		r.UnreportedCalls++
@@ -406,10 +484,10 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 	// stages' reports: a call that settles after its stage's report was
 	// taken is in these and in no report at all (F24).
 	if c.hasReport {
-		s.reportedBy[c.model] = satAdd(s.reportedBy[c.model], c.reported)
+		s.reportedBy[served] = satAdd(s.reportedBy[served], c.reported)
 		if c.hasRow {
-			s.tableLoBy[c.model] = satAdd(s.tableLoBy[c.model], c.tableLo)
-			s.tableHiBy[c.model] = satAdd(s.tableHiBy[c.model], c.tableHi)
+			s.tableLoBy[served] = satAdd(s.tableLoBy[served], c.tableLo)
+			s.tableHiBy[served] = satAdd(s.tableHiBy[served], c.tableHi)
 		}
 	} else if c.sent {
 		s.unreportedCalls++
@@ -432,7 +510,7 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 		r.ServiceTiers.Add("usage.service_tier " + c.serviceTier)
 	}
 	if over > 0 {
-		s.log.Warn("budget: call cost more than its reservation", "stage", st.st.Name, "model", logValue(c.model),
+		s.log.Warn("budget: call cost more than its reservation", "stage", st.st.Name, "model", logValue(served),
 			"reserved_micros", int64(w), "charged_micros", int64(c.amount), "overrun_micros", int64(over))
 	}
 	s.checkLocked()

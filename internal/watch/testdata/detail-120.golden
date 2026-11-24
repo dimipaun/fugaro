@@ -12,6 +12,7 @@ TOTAL  ▓▓▓▓▓▓▓▓▓▓▓▓▓░░░ counted $41.00 of $50.00
     PR         https://github.com/acme/app/pull/42
     spent      $1.25
     credential -
+    source     -
     deadline   2026-10-03 12:45Z
     models     opus / sonnet
   bb22 Add pagination to the list endpo… review    r1  12m03s  $1.25 NOTIONAL  -         ⚠ near deadline

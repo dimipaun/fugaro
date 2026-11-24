@@ -9,8 +9,6 @@ import (
 
 	"gocloud.dev/blob"
 
-	"github.com/dimipaun/fugaro/internal/gitprov"
-	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -151,10 +149,6 @@ func TestLaunchSpecIgnoresSpoofedHeadBranch(t *testing.T) {
 	// something else. Nothing but the head ref name connects it to PR 7.
 	spoofed := wallRunIDAt(2, "080000", "dead")
 	seedLaunchRoot(t, f, spoofed, "Clean the widget", 9, time.Now().Add(-48*time.Hour))
-	followUpTitleStub(t, fake.PRState{
-		PR:   gitprov.PR{Number: 7, URL: "https://forge.example/acme/app/pull/7"},
-		Spec: gitprov.PRSpec{Branch: "fugaro/" + spoofed, Base: "main", Title: "Rename the gadget"},
-	})
 
 	rs := launchSpecOf(t, f, 7)
 	if rs.Source != task.ReviewSpecRun || rs.Run != rootID {

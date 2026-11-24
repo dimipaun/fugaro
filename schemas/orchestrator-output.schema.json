@@ -17,8 +17,8 @@
     },
     "id": {
       "type": "string",
-      "description": "The orchestrator id, which is the selected project's name: the commands take no id of their own (D1358 puts one orchestrator per project). The pattern is internal/orchestrator's agentRE, the rule every path under orchestrator/<id> is built and checked by.",
-      "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+      "description": "The orchestrator id: the selected project's own orchestrator is the project's name, and one of its named orchestrators is `<project>~<name>` (C-ORCH, D3206, D3207), which a command names with `--name` and never as a whole id. The pattern is internal/orchestrator's orchestrator id rule (ParseOrchestratorID), the rule every path under orchestrator/<id> is built and checked by: the project half is config.ProjectNameRE, the separator is `~`, and the name half is 1 to 40 characters of a-z, 0-9 and `-` starting with a letter or a digit. It is not agentRE widened (F36) — a work item's id and an orchestrator's are not the same string in one keyspace — and there is no cap on how many named orchestrators a project has.",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?(?:~[a-z0-9][a-z0-9-]{0,39})?$"
     },
     "stamp": {
       "type": "string",
@@ -39,15 +39,23 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["kind", "project"],
+            "required": ["kind", "project", "name", "driver"],
             "properties": {
               "kind": {
                 "description": "Where the orchestrator is kept. `local` is one this machine runs: the daemon here wrote its cached brief. `central` is one only the project's database holds.",
                 "enum": ["local", "central"]
               },
               "project": {
-                "description": "The orchestrator id, which is the selected project's name (D1358 puts one orchestrator per project). The pattern is internal/orchestrator's agentRE, the rule every path under orchestrator/<id> is built and checked by.",
-                "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+                "description": "The orchestrator id, as it stands under `orchestrator/` in the database: the project's own orchestrator's id is the project's name, and a named one's is `<project>~<name>` (C-ORCH, D3206, D3207). The field is named `project` from when an id was always a project's name; the id is what it carries now, so a consumer that wants the project reads the part before `~`. The pattern is internal/orchestrator's orchestrator id rule, and it is written on every entry: an older CLI's document is the one that lacks the field, so an entry that does not carry it is not this release's.",
+                "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?(?:~[a-z0-9][a-z0-9-]{0,39})?$"
+              },
+              "name": {
+                "description": "The name half of the id — what `--name` takes: the slug after `~` for a named orchestrator, and the empty string for the project's own, which is a real answer and not an absent one. It is written on every entry, so a consumer can label a node without parsing the id itself, and it is never the project's name: that half of the id is `project`.",
+                "pattern": "^$|^[a-z0-9][a-z0-9-]{0,39}$"
+              },
+              "driver": {
+                "description": "The principal of the credential driving the orchestrator, read from its `orchestrator/<id>/driver` node (D3218, F18) — the account whose login unit or foreground run holds the id, in the address spelling the rest of the tree uses for a person (localcfg's Me). It is written on every entry, and the empty string is the honest answer for an id whose node does not exist — every orchestrator nothing has driven since the node was introduced, and every one this machine caches and the database does not hold — or whose node this release cannot read: the contract's own reading is that an empty driver is never \"nobody drives this\" (contract-orchestrators.md, \"what each side may rely on\" 2), and which of the two it is, is not a value this field can carry. Nothing is checked of a non-empty value here, which is the whole of what the node's decoder refuses (internal/orchestrator.DecodeDriver): a pattern here would be a second rule for a value this side does not mint.",
+                "type": "string"
               },
               "lease_holder": {
                 "description": "The holder the id's lease node names, which is the daemon driving it. Absent when the node carries no claim, and always absent for an orchestrator this machine caches and the database does not hold.",
@@ -104,6 +112,23 @@
           "type": "string",
           "description": "The generated summary: the goal, the work items with their phases, the questions waiting on someone and the facts, with every stored string fenced and cleaned and the whole of it capped by the generator (internal/orchestrator.Summarize). It is the same text `fugaro orchestrator state --brief` prints without --json.",
           "maxLength": 3072
+        },
+        "items": {
+          "type": "array",
+          "description": "Every work item of the live state node, uncapped and in the state's own order, so a reader never has to parse the brief's prose (which lists running items first and is capped). Written for `node` and never for `cache`, and empty when the node holds none: an empty list is omitted.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "phase", "attempts", "repo"],
+            "properties": {
+              "id": { "type": "string" },
+              "phase": { "enum": ["queued", "running", "review", "done", "failed", "blocked", "cancelled"] },
+              "run_id": { "type": "string", "description": "The run id the item's last attempt recorded; absent before any run." },
+              "attempts": { "type": "integer", "minimum": 0 },
+              "repo": { "type": "string" },
+              "spec": { "type": "string", "description": "The plan folder the item declares; absent when it declares none." }
+            }
+          }
         },
         "cached_at": {
           "allOf": [{ "$ref": "#/$defs/stamp" }],

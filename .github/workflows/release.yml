@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
       - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
@@ -43,7 +43,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
       - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
@@ -65,6 +65,7 @@ jobs:
       contents: write # create the release and upload its assets
       id-token: write # cosign keyless signing
       checks: read # the gate reads the commit's check-runs
+      actions: read # the gate lists the tag's workflow runs and reads their titles
     # One release at a time; GitHub keeps a single pending run per group, so
     # tags pushed in quick succession can drop the middle one (re-push it).
     concurrency:
@@ -89,7 +90,7 @@ jobs:
           # the tag's tree (.goreleaser.yaml); a missing file would publish a
           # release with no Highlights, so refuse before anything is built.
           scripts/release-policy.sh check-highlights "${TAG#v}"
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
       - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3

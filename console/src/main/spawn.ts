@@ -129,6 +129,8 @@ import { dirname, isAbsolute, join } from 'node:path'
 
 import {
   CONSOLE_OPERATIONS,
+  IMAGE_TAGS_MAX,
+  IMAGE_TAG_RE,
   RUNS_LIST_MAX_LIMIT,
   RUNS_STREAM_SINCE_WINDOWS,
   SETTINGS_VALUE_MAX_LENGTH,
@@ -373,8 +375,11 @@ export function locationsFor(platform: string = process.platform): PlatformLocat
  * -- git, the tools `doctor` finds with `LookPath`, `gcloud`, and their
  * plugins -- which is the leak F41 exists to forbid, and the same "a credential
  * handed over for no reader" the WSL route below leaves the key out for.
- * Nothing reaches that state yet, only because `PRODUCTION_KEYRING` is empty
- * and every paste is refused until S2.9. **A real installation must not be
+ * Nothing reaches that state, and it is the floor below that keeps it out rather
+ * than the ring: `PRODUCTION_KEYRING` is held empty (S2.9 publishes the key in
+ * `ee/licence/keys/production.pub` and the release that closes this hand-off
+ * fills the ring), and the floor hands a key to no child at all in the meantime.
+ * **A real installation must not be
  * handed the key before the child can take it back out**, so the hand-off asks a
  * floor on the child's version -- `LICENCE_KEY_CLI_FLOOR`
  * (`src/shared/version.ts`), the release that carries the registration point --
@@ -762,6 +767,26 @@ export type SpawnArgumentKind =
   // value already has.
   | 'equalsValue'
   | 'terminatedValue'
+  // The image write's two (the same plan's MW2, D2903), and both are one word
+  // each for the reason the kinds above are -- a value inside the flag's own
+  // word cannot be read as a flag.
+  //
+  // **`equalsList` is the comma-joined list** the CLI's own `StringSliceVar`
+  // reads (`--tags=node,redis`): it is a kind of its own rather than `equalsText`
+  // because its members are a closed set -- the CLI's five tag words -- and the
+  // membership is asked again in `argvFor` rather than trusted, the way
+  // `summarySince`'s window and `settingOp`'s subcommand are. The renderer's
+  // alphabet (`ARGUMENT_RE`) refuses a comma, so no kind of the table below can
+  // spell this value.
+  //
+  // **`equalsText` is one `=`-form word holding spaces** (the entry's
+  // description, as `fugaro image ls` prints it): the space is why it is not
+  // `equalsValue`, and it is the one value of this surface that is prose. What
+  // this module refuses about it is what an argv cannot carry -- a control
+  // character, a NUL and an absurd length -- and the validator's own rule
+  // (printable, no newline, at most 200) is `ipc.ts`'s.
+  | 'equalsList'
+  | 'equalsText'
 
 /**
  * SPAWN_KIND_FOR is the one place the two kind vocabularies are related: the
@@ -834,6 +859,14 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   modelRoute: 'equalsValue',
   modelPrice: 'equalsValue',
   modelId: 'terminatedValue',
+  // The image write's four (MW2, D2903): the entry's name is the positional
+  // behind the terminator, its definition is an `=`-form word, and the tags and
+  // the description are the two kinds above -- a comma-joined list and a word
+  // that may hold spaces.
+  imageName: 'terminatedValue',
+  imageDockerfile: 'equalsValue',
+  imageTags: 'equalsList',
+  imageDescription: 'equalsText',
   // `licenceKey` is the second kind whose operation spawns nothing
   // (`licence.read`/`licence.save`, S2.7, carry `command: null`), for
   // `gitProvider`'s reason: the mapping is total over ipc.ts's kinds, and
@@ -930,6 +963,18 @@ export interface SpawnCommand {
  */
 export const MODELS_ADD_PLAN_OPERATION = 'models.add.plan'
 export const MODELS_ADD_OPERATION = 'models.add'
+
+/**
+ * IMAGE_ADD_PLAN_OPERATION and IMAGE_ADD_OPERATION are the image write's two
+ * rows (the console improvements plan's MW2, D2903), named here for the reasons
+ * the models write's two are: `EQUALS_FORM_FLAGS` names the three `=`-form
+ * prefixes both rows carry, and `TERMINATOR_OPERATIONS` names the two as rows
+ * whose own value is passed behind `--`. The two are one command's two phases --
+ * the plan is the CLI's own `--dry-run` and the write is the same argv less it
+ * -- so they are two operations of the surface and two rows here.
+ */
+export const IMAGE_ADD_PLAN_OPERATION = 'image.add.plan'
+export const IMAGE_ADD_OPERATION = 'image.add'
 
 /**
  * SPAWN_COMMANDS is the table, read off the operations Task 1.2 declared and the
@@ -1288,6 +1333,85 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     dirFlag: false,
   },
   {
+    // **The image write's plan** (the console improvements plan's MW2, D2903):
+    // `image add --no-apply --dry-run --json`, the CLI's own dry run of the
+    // write below, and the document the window is drawn from
+    // (`schemas/image-add-plan.schema.json`). The row is the models write's plan
+    // one command over, and the three things that make it safe are the same
+    // three.
+    //
+    // **`--dry-run` is what makes it a read.** The command builds the entry from
+    // its flags, asks every refusal the real add would ask -- the definition's
+    // own rules, a name the catalog already has, a definition no build could
+    // fetch, D1573's agent refusal and the installation's skew gate -- prints the
+    // versioned document and writes nothing: no catalog entry, no build, no
+    // saved step, and nothing priced.
+    //
+    // **`--no-apply` is a word of the command path and not a payload's.** It is
+    // what keeps the add's own follow-up steps -- the catalog's build, the
+    // redeploy of the repository and the publish of the node every run is
+    // admitted by (D1561) -- off the operator's machine until they run them
+    // (D1565). **The build is the one step here that bills**, which is why this
+    // word is not a payload's: the console saves the entry and owes the build.
+    //
+    // **The entry's name is the positional behind the terminator**
+    // (`terminatedValue`), the word `image add <name>` reads: a terminator is
+    // what makes a name spelled `--json` the positional it is. The three values
+    // the renderer does send are `=`-form words -- `--dockerfile=<owner/name:path>`,
+    // `--tags=<a,b>` and `--description=<text>` -- so no value of this row can be
+    // read as a flag either, and every one of them is held to a grammar in main
+    // before this argv exists (`ipc.ts`'s `imageName`, `imageDockerfile`,
+    // `imageTags` and `imageDescription`).
+    //
+    // **`--inline`, `--image`, `--default` and `--branch` are words of neither
+    // this row nor the write.** They are the other three definitions of one
+    // entry, and the CLI refuses three of them -- with `--branch` -- only in a
+    // coding agent's session (`imageAddAgentRefusal`, D1573). The console's
+    // child carries no agent marker, so that refusal would not fire for it: what
+    // keeps them off the wire is this table, and `assertArgvFlags` refuses each
+    // one for every operation but the rows that declare it.
+    operation: 'image.add.plan',
+    words: ['image', 'add', '--no-apply', '--dry-run', '--json'],
+    takesProject: true,
+    args: [
+      { key: 'dockerfile', flag: '--dockerfile=', kind: 'equalsValue' },
+      { key: 'tags', flag: '--tags=', kind: 'equalsList' },
+      { key: 'description', flag: '--description=', kind: 'equalsText' },
+      { key: 'name', flag: null, kind: 'terminatedValue' },
+    ],
+    dirFlag: false,
+  },
+  {
+    // **The image write** (the same plan's MW2, D2903): the row above less
+    // `--dry-run --json`, and the console's sixth write. It appends an entry to
+    // the installation's image catalog and, through the steps `--no-apply`
+    // saves, is the change every run of the project is admitted by: a project
+    // setting a reviewer signed off on, and the reason the never table refuses
+    // `image add` everywhere but here.
+    //
+    // **It declares the plan's own four arguments and no others**, so the argv
+    // the operator confirmed is the argv this row builds: main holds the plan's
+    // own document digest and the argv beside it and re-runs *that*, never one a
+    // renderer sends again (`src/main/imageadd.ts`).
+    //
+    // **A project admin's, and nothing else's.** `image add` refuses anyone but
+    // a project admin (`accessGateProject`) and so does the CLI's own skew gate,
+    // which is the authority check that survives this console: the window's
+    // action is enabled only for a project admin (RB4's gating), and a role that
+    // changed between the two is refused by the CLI's own sentence, which the
+    // screen shows like any other refusal.
+    operation: 'image.add',
+    words: ['image', 'add', '--no-apply'],
+    takesProject: true,
+    args: [
+      { key: 'dockerfile', flag: '--dockerfile=', kind: 'equalsValue' },
+      { key: 'tags', flag: '--tags=', kind: 'equalsList' },
+      { key: 'description', flag: '--description=', kind: 'equalsText' },
+      { key: 'name', flag: null, kind: 'terminatedValue' },
+    ],
+    dirFlag: false,
+  },
+  {
     // **The settings read** (the settings-edit plan's C1, D1102): the project's
     // settings, each with the value a run gets, the layer that decided it and
     // the three writability facts the row set draws its pencils from. It is
@@ -1473,6 +1597,35 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // provider is opened and nothing is sent anywhere.
     operation: 'coordinator.intents',
     words: ['coordinator', 'intents', '--all', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
+    // The orchestrator map (the console-fixes plan's CG7a; C-ORCH's document,
+    // D3221): `fugaro orchestrator map --json`, the project's active
+    // orchestrators, their connections and the coordinator's heartbeat, which is
+    // what the Coordinator tab draws. It is `coordinator status`'s shape rather
+    // than `coordinator show`'s -- `words` carries the whole argv and `args` is
+    // empty -- and that is the security answer here too: there is no field a
+    // renderer could fill, so no word of the argv is caller-influenced at all.
+    //
+    // **The command is registered from `ee/`** (`ee/orchestrator/cli/map.go`) and
+    // no released CLI carries it, so the row is unreachable today: the read is
+    // behind `ORCHESTRATOR_MAP_CLI_FLOOR` (`src/shared/version.ts`), and below
+    // it the tab names the CLI version it needs instead of spawning this row.
+    // The row is declared now because it is the allow-list's entry, and the one
+    // independent review it needs is this task's.
+    //
+    // It takes `--project`/`--config` like every other read of a project (rule
+    // 3) -- the command resolves the project's own database the way the stored
+    // view does -- and it carries no `--dir`: the map is built from the
+    // caller's database and needs no checkout. Nothing else is fixed here and
+    // nothing else is reachable: no `--repo`, no `--since` and no `--source`,
+    // because the map is already the project's active set and this console
+    // draws no control that narrows it.
+    operation: 'orchestrator.map',
+    words: ['orchestrator', 'map', '--json'],
     takesProject: true,
     args: [],
     dirFlag: false,
@@ -2041,17 +2194,20 @@ export const TERMINATOR_WORD = '--'
 /**
  * TERMINATOR_OPERATIONS are the rows whose argv may carry that terminator, and
  * they are exactly the rows whose **own value** is a positional the command
- * reads: the settings write's value (C3, D1104) and the models write's model ID
- * (MW1, D2903). It is a frozen list rather than a rule read off the table because
- * `assertArgvFlags` is handed an operation's *name* and no row -- and the list is
- * held two-sided by `assertSpawnSurface`, which refuses a row that emits a
- * terminated value without being named here and a name whose row emits none, so
- * a third row cannot quietly join it.
+ * reads: the settings write's value (C3, D1104), the models write's model ID
+ * (MW1, D2903) and the image write's entry name (MW2, D2903). It is a frozen list
+ * rather than a rule read off the table because `assertArgvFlags` is handed an
+ * operation's *name* and no row -- and the list is held two-sided by
+ * `assertSpawnSurface`, which refuses a row that emits a terminated value without
+ * being named here and a name whose row emits none, so no further row can quietly
+ * join it.
  */
 export const TERMINATOR_OPERATIONS: readonly string[] = Object.freeze([
   SETTINGS_EDIT_OPERATION,
   MODELS_ADD_PLAN_OPERATION,
   MODELS_ADD_OPERATION,
+  IMAGE_ADD_PLAN_OPERATION,
+  IMAGE_ADD_OPERATION,
 ])
 
 /**
@@ -2067,6 +2223,15 @@ export const TERMINATOR_OPERATIONS: readonly string[] = Object.freeze([
  * word, and with `shell: false` there is no shell to spell it for.
  */
 const ARGUMENT_RE = /^[A-Za-z0-9._:@/+-]+$/
+
+/**
+ * CONTROL_CHARACTER_RE matches the characters an argv element may not carry at
+ * all: every C0 control, and DEL. It is `isSafeInstallationValue`'s own rule,
+ * named here because the one kind that admits prose (`equalsText`, the image
+ * write's description) has an alphabet of its own rather than `ARGUMENT_RE`'s --
+ * a space and a comma are a description's to have, a newline is not.
+ */
+const CONTROL_CHARACTER_RE = /[\u0000-\u001f\u007f]/
 
 /**
  * sameArgv answers whether two argv arrays are the same command line, element by
@@ -2508,12 +2673,13 @@ export function argvFor(
         break
       }
       case 'terminatedValue': {
-        // The positional the command reads -- `models add <id>` -- and it emits
-        // no word here: it is pushed after the installation's flags
-        // (`terminated`, above), behind the row's `--`, which is what makes a
-        // value spelled `--route` or `-x` the positional it is. What is checked
-        // here is what an argv element can be at all: a non-empty string, no
-        // NUL (execve refuses one), and inside the console's own bound.
+        // The positional the command reads -- `models add <id>`, `image add
+        // <name>` -- and it emits no word here: it is pushed after the
+        // installation's flags (`terminated`, above), behind the row's `--`,
+        // which is what makes a value spelled `--route` or `-x` the positional
+        // it is. What is checked here is what an argv element can be at all: a
+        // non-empty string, no NUL (execve refuses one), and inside the
+        // console's own bound.
         if (
           typeof value !== 'string' ||
           value === '' ||
@@ -2523,6 +2689,57 @@ export function argvFor(
           refused(`${operation}'s ${spec.key} is not a value this console will pass to the CLI`)
         }
         terminated.push(value)
+        break
+      }
+      case 'equalsList': {
+        // One word, `--flag=a,b`: the comma-joined list the CLI's own
+        // `StringSliceVar` reads, and the reason this kind is not `equalsValue`
+        // -- `ARGUMENT_RE` refuses a comma.
+        //
+        // **The members are asked again here rather than trusted**, the way
+        // `summarySince`'s window and `settingOp`'s subcommand are: the schema
+        // is the renderer's gate (`ipc.ts`'s `imageTags`) and this is the
+        // argv's, and a tag is a shape rather than a membership -- the CLI's own
+        // free-form tag rule, which is why the set is not a list of words. Every
+        // member has to match it, the list has to be non-empty and no longer than
+        // the CLI's own count, and the whole word has to be inside the console's
+        // bound -- so a list that grew a member of another shape is refused
+        // before a child exists rather than by the CLI one process later.
+        if (typeof value !== 'string') refused(`${operation}'s ${spec.key} is not a string`)
+        const members = value === '' ? [] : value.split(',')
+        if (
+          members.length === 0 ||
+          members.length > IMAGE_TAGS_MAX ||
+          members.some((member) => !IMAGE_TAG_RE.test(member)) ||
+          value.length > MAX_ARGUMENT_LENGTH ||
+          value.includes('\u0000')
+        ) {
+          refused(`${operation}'s ${spec.key} is not a list of tags this console will pass to the CLI`)
+        }
+        argv.push(`${spec.flag ?? ''}${value}`)
+        break
+      }
+      case 'equalsText': {
+        // One word, `--flag=<text>`: a value that may hold spaces, which is why
+        // it is not `equalsValue` -- the renderer's alphabet refuses a space. It
+        // stays inside the flag's own word, so a text that begins with `-` is a
+        // text and never a word of its own.
+        //
+        // What is refused here is what an argv cannot carry at all: a control
+        // character (a newline would break a listing that prints one line per
+        // entry, and the CLI's own `badKeyRune` refuses one too), a NUL
+        // (execve refuses one) and the console's own bound. The value's own
+        // grammar -- printable, no newline, at most the CLI's own 200 -- is the
+        // validator's (`ipc.ts`'s `imageDescription`).
+        if (typeof value !== 'string') refused(`${operation}'s ${spec.key} is not a string`)
+        if (
+          value === '' ||
+          value.length > MAX_ARGUMENT_LENGTH ||
+          CONTROL_CHARACTER_RE.test(value)
+        ) {
+          refused(`${operation}'s ${spec.key} is not a value this console will pass to the CLI`)
+        }
+        argv.push(`${spec.flag ?? ''}${value}`)
         break
       }
     }
@@ -2684,6 +2901,8 @@ function emitsArgvWord(spec: SpawnArgument, value: ValidatedArgument): boolean {
     case 'roadmapRelease':
     case 'equalsValue':
     case 'terminatedValue':
+    case 'equalsList':
+    case 'equalsText':
       return true
   }
 }
@@ -2735,6 +2954,25 @@ export const MODELS_ADD_EQUALS_FLAGS: readonly string[] = Object.freeze([
   '--price-out=',
 ])
 
+/** IMAGE_ADD_EQUALS_FLAGS are the image write's three `=`-form prefixes (the
+ * same plan's MW2, D2903): the entry's definition, its tags and its description.
+ * All three are one word each, so no value a renderer sends can be read as a
+ * flag -- which is what the row's fourth value, the entry's name, is the
+ * terminator for.
+ *
+ * It is one list for the two rows for the models write's reason: the two rows are
+ * one command's two phases and declare the same three arguments, and
+ * `assertSpawnSurface` holds this table to each row's own declared flags. What
+ * the table deliberately leaves out is `image add`'s other three definitions of
+ * one entry -- `--inline`, `--image` and `--branch` -- which no row of this
+ * table declares: this console writes an entry from a Dockerfile it names, and
+ * `assertArgvFlags` refuses each of those three for every operation here. */
+export const IMAGE_ADD_EQUALS_FLAGS: readonly string[] = Object.freeze([
+  '--dockerfile=',
+  '--tags=',
+  '--description=',
+])
+
 /**
  * EQUALS_FORM_FLAGS is, **per operation**, the `=`-form flag prefixes that
  * operation's argv may carry -- the one place `assertArgvFlags` reads its
@@ -2757,6 +2995,8 @@ export const EQUALS_FORM_FLAGS: Readonly<Record<string, readonly string[]>> = Ob
   'runs.summary': RUNS_SUMMARY_EQUALS_FLAGS,
   [MODELS_ADD_PLAN_OPERATION]: MODELS_ADD_EQUALS_FLAGS,
   [MODELS_ADD_OPERATION]: MODELS_ADD_EQUALS_FLAGS,
+  [IMAGE_ADD_PLAN_OPERATION]: IMAGE_ADD_EQUALS_FLAGS,
+  [IMAGE_ADD_OPERATION]: IMAGE_ADD_EQUALS_FLAGS,
 })
 
 /** assertArgvFlags refuses an argv carrying a flag outside `SPAWN_FLAGS`, and one

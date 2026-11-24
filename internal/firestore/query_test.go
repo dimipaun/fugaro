@@ -180,8 +180,15 @@ func TestRunQueryOrdersAndPages(t *testing.T) {
 		"unencodable filter": {Collection: "runIndex", Where: map[string]any{"plan": struct{}{}}, OrderBy: sortKey},
 		"cursor without the sort key": {Collection: "runIndex", OrderBy: sortKey,
 			StartAfter: &firestore.Doc{Collection: "runIndex", ID: "run-nosort", Fields: map[string]any{"plan": "alpha"}}},
+		// A cursor is a document of the queried collection: one of another
+		// collection carries the wrong fields and the wrong name, and the
+		// service reads a cursor positionally.
 		"cursor outside the collection": {Collection: "runIndex", OrderBy: sortKey,
-			StartAfter: &firestore.Doc{Collection: "no/such", ID: "run-a4"}},
+			StartAfter: &firestore.Doc{Collection: "other", ID: "run-a4", Fields: map[string]any{"updated_at": runIndexAt(t, "2026-11-22T09:00:00Z")}}},
+		// And a document path the service would not take at all, which is a
+		// refusal of its own: the collection matches, the name does not.
+		"cursor with a name that is not a document path": {Collection: "runIndex", OrderBy: sortKey,
+			StartAfter: &firestore.Doc{Collection: "runIndex", ID: "..", Fields: map[string]any{"updated_at": runIndexAt(t, "2026-11-22T09:00:00Z")}}},
 	} {
 		if _, err := c.RunQuery(ctx, q); err == nil {
 			t.Errorf("%s: accepted", name)

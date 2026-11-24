@@ -252,6 +252,70 @@ func TestTicketRecordClaimIsOnceAndItsRetryWritesNothing(t *testing.T) {
 	}
 }
 
+// TestTicketRecordClaimFoldsTheAccount: the store's account floor folds as the
+// claim route's own check does (sameAccount). The ticket route admits the
+// account an ask names folded and writes the ask's OWN spelling on the record
+// (ticketAccountAdmitted, identity_ticket.go), while the claim's account is the
+// CONFIGURED spelling the verifier answers (auth.go's verifyJob) — so a
+// byte-for-byte comparison here refuses a run whose ticket names a
+// differently-cased account that the route itself admitted, which is the review
+// of LM2's finding. Both the fence and the retry fold, so the same claim retried
+// in another spelling is still R2's retry and not a second claim.
+func TestTicketRecordClaimFoldsTheAccount(t *testing.T) {
+	client, _, _ := ticketStore(t)
+	counted := &countingDB{DB: client}
+	store := NewIssuanceStore(counted)
+	ctx := context.Background()
+	run := ticketTestRun()
+
+	// The record holds the ask's own spelling, which differs from the claim's
+	// configured one only in case: the two are one account.
+	rec := ticketRecord(testLauncherAccount)
+	rec.ExpectedAccount = strings.ToUpper(testJobSA)
+	if err := store.Put(ctx, ticketTestSlug, run, rec); err != nil {
+		t.Fatalf("writing the record: %v", err)
+	}
+	counted.writes = 0
+
+	claim := identitywire.Claim{Account: testJobSA, At: testNow(), NonceHash: identitywire.Digest("a-nonce-the-run-drew")}
+	got, err := store.Claim(ctx, ticketTestSlug, run, claim)
+	if err != nil {
+		t.Fatalf("a claim whose account differs from the record's only in case is answered %v, want the record claimed", err)
+	}
+	if !sameAccount(got.Claimed.Account, testJobSA) || got.Claimed.NonceHash != claim.NonceHash {
+		t.Errorf("the claimed record says %+v, want the claim that was made", got.Claimed)
+	}
+	if counted.writes != 1 {
+		t.Fatalf("the claim wrote %d times, want 1", counted.writes)
+	}
+
+	// The same claim, retried in the record's own spelling: the retry's fold has
+	// to agree with the fence's, or a retry of a lost answer would be refused as
+	// a second claim.
+	again := identitywire.Claim{Account: strings.ToUpper(testJobSA), At: testNow(), NonceHash: identitywire.Digest("a-nonce-the-run-drew")}
+	retried, err := store.Claim(ctx, ticketTestSlug, run, again)
+	if err != nil {
+		t.Fatalf("the same claim retried in another spelling is answered %v, want the record as it stands", err)
+	}
+	if retried.Claimed != got.Claimed {
+		t.Errorf("the retry answered %+v, want the record as it stands %+v", retried.Claimed, got.Claimed)
+	}
+	if counted.writes != 1 {
+		t.Errorf("the retry wrote %d times, want the record left alone", counted.writes)
+	}
+
+	// The fold makes two spellings of one address one account and never two
+	// accounts one: a DIFFERENT account is still refused, on a record of its own.
+	otherRun := ticketTestRun() + "b"
+	if err := store.Put(ctx, ticketTestSlug, otherRun, ticketRecord(testLauncherAccount)); err != nil {
+		t.Fatalf("writing the second record: %v", err)
+	}
+	other := identitywire.Claim{Account: testSiblingSA, At: testNow(), NonceHash: identitywire.Digest("a-nonce-the-run-drew")}
+	if _, err := store.Claim(ctx, ticketTestSlug, otherRun, other); !errors.Is(err, identitywire.ErrAnotherCaller) {
+		t.Errorf("another account is answered %v, want %v", err, identitywire.ErrAnotherCaller)
+	}
+}
+
 // TestTicketRecordRefusesWhatItCannotRead is the store's fail-closed floor: a
 // node that is not one record of this release — a member this build does not
 // model, a value that is not an object at all — is the SERVICE's failure and
@@ -359,23 +423,32 @@ func (e errDB) GetETag(context.Context, string, any) (string, bool, error) {
 	return "", false, errors.New("the database could not be reached")
 }
 
-// TestTicketDrawnIsASecret pins the ticket itself: drawn from crypto/rand at
-// the width a credential needs, spelled in hex, and different every time. A
-// ticket two callers could predict would be claimable by either of them, and
-// the only thing left between it and the record would be the account the claim
-// checks — a fence this route must not have to lean on.
+// TestTicketDrawnIsASecret pins the ticket's secret: drawn from crypto/rand at
+// the width a credential needs, spelled in hex, carried beside the record's own
+// two names, and different every time. A secret two callers could predict would
+// make the ticket claimable by either of them, and the only thing left between
+// it and the record would be the account the claim checks — a fence this route
+// must not have to lean on.
 func TestTicketDrawnIsASecret(t *testing.T) {
+	f := newTickets(t)
 	seen := map[string]bool{}
 	for range 32 {
-		tkt, err := newTicket()
+		tkt, err := newTicket(f.slug, f.run)
 		if err != nil {
 			t.Fatalf("drawing a ticket: %v", err)
 		}
-		if len(tkt) != ticketBytes*2 {
-			t.Fatalf("the ticket is %d characters, want %d: %d bytes in hex", len(tkt), ticketBytes*2, ticketBytes)
+		// The ticket is the record's own two names beside the secret
+		// (joinIdentityTicket, identity_claim.go): what this test pins is the
+		// SECRET, the part of it a caller could otherwise predict.
+		parts := strings.Split(tkt, identityTicketSeparator)
+		if len(parts) != 3 || parts[0] != f.slug || parts[1] != f.run {
+			t.Fatalf("the ticket %q does not name the record it was drawn for", tkt)
 		}
-		if _, err := hex.DecodeString(tkt); err != nil {
-			t.Fatalf("the ticket is not hex: %v", err)
+		if len(parts[2]) != ticketBytes*2 {
+			t.Fatalf("the ticket's secret is %d characters, want %d: %d bytes in hex", len(parts[2]), ticketBytes*2, ticketBytes)
+		}
+		if _, err := hex.DecodeString(parts[2]); err != nil {
+			t.Fatalf("the ticket's secret is not hex: %v", err)
 		}
 		if seen[tkt] {
 			t.Fatalf("the ticket %q was drawn twice", tkt)

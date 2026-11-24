@@ -5,7 +5,7 @@
 // `readStream` is one read with two shapes: the opt-in line-delimited read
 // (`runs.stream`, C-OPS's contract) whose rows are drawn **as they arrive**, and
 // the whole-document read it falls back to when the operation cannot be asked at
-// all. Three facts are this suite's subject, and each is a rule rather than a
+// all. Four facts are this suite's subject, and each is a rule rather than a
 // behaviour of the module:
 //
 //   - **the rows arrive in the CLI's order, one paint at a time.** The bridge
@@ -23,10 +23,14 @@
 //     `runs.stream` (the floor is unset, the CLI is older, the channel refused
 //     before spawning) reads `runs.list` exactly as it did before this module
 //     existed: one answer, one drawing, and no stream at all.
+//   - **a view the reduced mode withholds asks neither read.** `withheld` is the
+//     caller's `hidesView` answer (`shared/version.ts`), asked **before** either
+//     operation is spawned: the read whose figures the mode withholds is never
+//     made, so the console cannot draw them by mistake.
 //
 // The fake bridge is built here from `new-ops.ts`'s types, the way every consumer
-// of C-OPS does (`contract-ops.md`: no consumer imports the stub, which is what
-// lets I-OPS delete it whole).
+// of C-OPS does (`contract-ops.md`: no consumer imports a fixture bridge, which
+// is what let I-OPS delete the stub one whole).
 
 import { describe, expect, it } from 'vitest'
 
@@ -217,6 +221,37 @@ describe('a bridge that cannot ask', () => {
     expect(result.status).toBe('failed')
     expect(result.sentence).toBe('no project is configured')
     expect(result.rows).toEqual([])
+  })
+})
+
+describe('a view the reduced mode withholds', () => {
+  it('asks neither read, and answers the withheld view rather than a list', async () => {
+    let asked = 0
+    let fellBack = false
+    const result = await readStream<RunsListRow>({
+      withheld: true,
+      stream: () => {
+        asked += 1
+        return aFeedBridge([aLine('run-1'), END_LINE]).streamRuns({ since: '24h' })
+      },
+      document: () => {
+        fellBack = true
+        return Promise.resolve({ ok: true as const, rows: [] })
+      },
+      paint: synchronous,
+    })
+    expect(result.status).toBe('withheld')
+    expect(result.source).toBe('none')
+    expect(result.rows).toEqual([])
+    // No sentence: the console's own word for the withheld view is the caller's
+    // (each screen names the view), and nothing here is the CLI's to draw.
+    expect(result.sentence).toBeNull()
+    expect(result.end).toBeNull()
+    // **Neither read was made.** A withheld view whose figures may not be drawn
+    // must not have the console spawn the read that would produce them: this is
+    // what `hidesView` is for, and it is checked before anything else.
+    expect(asked).toBe(0)
+    expect(fellBack).toBe(false)
   })
 })
 

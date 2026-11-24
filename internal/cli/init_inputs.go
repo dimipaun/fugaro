@@ -30,7 +30,9 @@ import (
 //
 // The GCP project's ID (D4): `fugaro setup`'s suggestion is a project to
 // create, named after this one — `fugaro-<name>`, defaultGCPProject — and
-// nothing else, because Fugaro only starts fresh. `fugaro update` on a new
+// nothing else. That name is one to create, or to adopt where a project
+// already carries it and holds nothing of Fugaro's (the owner's ruling of
+// 2026-11-22). `fugaro update` on a new
 // machine asks for an installation that already exists, so it also offers the
 // project this machine is already working in (suggestGCPProject:
 // GOOGLE_CLOUD_PROJECT or the quota project of the application default
@@ -45,10 +47,12 @@ import (
 // LP1). The region is the one setting an installation stores; the place is
 // derived from it (D3080), and a region typed in full (--region) settles both.
 //
-// It is not the Firestore database's location (infra.FirestoreLocation, C1),
-// which is permanent and is confirmed by typing it: the two hold the same
-// value because us-east5 is where the mapping puts a US installation's
-// history database (D3085), and neither is derived from the other.
+// It is not the Firestore database's location (C1): the mapping derives that
+// one from the region (place.For, D3085), so it equals this value only where
+// Firestore is offered in the region — an installation in us-west8 runs its
+// jobs in this region and keeps its history in us-east5 — and a location is
+// permanent, which is why the person confirms it at the terminal rather than
+// this constant settling it.
 var defaultRegion = place.DefaultRegion(place.US)
 
 // regionRE is the shape of a Google Cloud region (us-east5, europe-west4).
@@ -466,39 +470,63 @@ func noAnswer(format string, args ...any) error {
 	return &noAnswerError{msg: e.Error(), user: e}
 }
 
-// prompt asks for the value spec names, with def as the suggestion, and returns
-// the validated answer. It is promptChoice with no second suggestion, and the
-// questions that offer one answer are unchanged by it.
-func (r *initRun) prompt(spec valueSpec, def string, valid func(string) error) (string, error) {
-	return r.promptChoice(spec, def, "", "", valid)
+// wizardAsk is one question as the wizard draws it: the label, what the
+// question says about the shape of the answer, the answer Enter takes and the
+// words that answer is offered in, and the second answer a person may type
+// instead with the one line saying why.
+//
+// def and show are two fields because Enter's answer and the words the question
+// offers it in are different strings in two places: the bake switch is drawn
+// [Y/n] and takes yes, and the billing account is drawn by its name and taken
+// by its number (askBilling). Everywhere else they are one string, and show is
+// left empty.
+type wizardAsk struct {
+	label string
+	hint  string
+	def   string
+	show  string
+	alt   string
+	why   string
+	// empty is what the question says when Enter is pressed at it and it has no
+	// suggestion to take, in place of the "a value is needed" every other
+	// question says. Only the rigor question has none, and saying so here is
+	// what lets it stop being said up front in a sentence above the four modes
+	// (askRigor).
+	empty string
 }
 
-// promptChoice is prompt with a second suggestion: def is what Enter takes, and
-// alt — offered after it, with the one line saying why, when it is neither
-// empty nor def itself — is an answer a person may type instead. Only the GCP
-// project's ID is asked this way (D4): a project to create, or the project the
-// machine is already running in, are both reasonable answers and only the
-// person knows which one they mean.
+// ask prints one question and reads its answer. It is the one way the wizard
+// asks, and what it prints is one line: the label, what the answer looks like,
+// and the suggestion Enter takes in brackets, with the colon the answer is
+// typed after — the value entry beneath adds nothing, because a second line
+// asking for the same value in the same words is one question asked twice
+// (valueSpec.asked).
+//
+// Only the GCP project's ID has a second suggestion (alt, with the one line
+// saying why): a project to create and the project this machine already works
+// in are both reasonable answers, and only the person knows which they mean.
 //
 // The value itself comes through the one value-entry helper (readValue, D1540):
 // at a terminal it is read, beside no terminal it is refused at once naming the
 // flag or the variable that supplies it, and neither is a confirmation — so
-// what the helper reads here is a value and never a yes or a no. The suggestion
-// is printed above the read, the way the wizard has always offered it, and the
-// entry asks for the value under it in its own words ("Type …: "): an empty
-// line takes the suggestion, and the entry has no default of its own, so a
+// what is read here is a value and never a yes or a no. Enter takes the
+// suggestion where there is one, and the entry has no default of its own, so a
 // value that cannot be defaulted is refused rather than guessed (a run with no
 // terminal gets the refusal, never the suggestion in the person's place), and
 // an input that ended with nothing on the line is noAnswer rather than an empty
 // line — the suggestion is what the person took with Enter, not what this run
 // takes for them when they walked away. A value the caller's own rule refuses
-// is asked again, three attempts in all, and a question that runs out of
-// attempts is noAnswer — a run that stopped at a question, not a refusal.
-func (r *initRun) promptChoice(spec valueSpec, def, alt, why string, valid func(string) error) (string, error) {
-	if line := suggestionLine(spec.what, def, alt, why); line != "" {
-		fmt.Fprintf(r.w, "%s\n", line)
-	}
+// is asked again, question line and all, three attempts in all, and a question
+// that runs out of attempts is noAnswer — a run that stopped at a question, not
+// a refusal.
+func (r *initRun) askValue(a wizardAsk, spec valueSpec, valid func(string) error) (string, error) {
+	spec.asked = true
 	for range 3 {
+		line := r.qs.Ask(a.label, a.hint, cmp.Or(a.show, a.def))
+		if a.alt != "" && a.alt != a.def {
+			line += fmt.Sprintf(" (or %s: %s)", pluginwire.Printable(a.alt), a.why)
+		}
+		fmt.Fprint(r.w, line)
 		b, err := readValueIn(r.ctx(), r.in, r.w, spec)
 		if errors.Is(err, io.EOF) {
 			// The input ended with nothing on the line: a question nobody
@@ -510,9 +538,9 @@ func (r *initRun) promptChoice(spec valueSpec, def, alt, why string, valid func(
 		if err != nil {
 			return "", err
 		}
-		v := cmp.Or(strings.TrimSpace(string(b)), def)
+		v := cmp.Or(strings.TrimSpace(string(b)), a.def)
 		if v == "" {
-			fmt.Fprintln(r.w, "  a value is needed")
+			fmt.Fprintln(r.w, "  "+cmp.Or(a.empty, "a value is needed"))
 			continue
 		}
 		if verr := valid(v); verr != nil {
@@ -522,24 +550,4 @@ func (r *initRun) promptChoice(spec valueSpec, def, alt, why string, valid func(
 		return v, nil
 	}
 	return "", noAnswer("no usable answer for %q after 3 tries", spec.what)
-}
-
-// suggestionLine is what the wizard shows above a value entry: the question's
-// own name, the answer Enter takes, and the second answer with the one line
-// saying why — the line the prompt printed before the value entry read the
-// value itself (promptChoice). It is empty where the question has neither a
-// suggestion nor a second one, so a question with nothing to offer prints only
-// the entry's own "Type …: ".
-func suggestionLine(what, def, alt, why string) string {
-	second := ""
-	if alt != "" && alt != def {
-		second = fmt.Sprintf(" (or %s: %s)", pluginwire.Printable(alt), why)
-	}
-	switch {
-	case def != "":
-		return fmt.Sprintf("%s [%s]%s", what, def, second)
-	case second != "":
-		return what + ":" + second
-	}
-	return ""
 }

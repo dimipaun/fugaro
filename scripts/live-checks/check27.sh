@@ -17,7 +17,10 @@
 #     observe --firebase-project <project> --link-billing <account>
 #     --bake-repos --rigor pro`, at a real terminal, with the ONE question a
 #     person has to answer — the GCP project's ID — typed at the pty this script
-#     gives it (readValueIn's "Type the GCP project's ID: "). The project's own
+#     gives it (the question's own line, "GCP project ID [<suggestion>]: ",
+#     whose label is drawn bold and whose suggestion is dimmed at a terminal:
+#     this script matches the label, which is the part no escape sequence
+#     interrupts). The project's own
 #     confirmation banner, the billing banner and the Firestore location's
 #     banner are read and nothing is typed under them (T7, D1540: being at the
 #     terminal is what confirms those), which is exactly what a person sees.
@@ -251,12 +254,34 @@ need_tools() {
 # The region this check's own throwaway used — the third live run's — and the
 # value every later --region flag resolves.
 REGION_DEFAULT=us-east5
-# Where the CLI creates the (default) Firestore database of a project it makes:
-# `infra.FirestoreLocation` (internal/infra/firestore.go:21), a fixed value the
-# CLI uses whatever --region says, because a Firestore location is permanent.
-# The read-back is compared with THIS and never with $REGION, or a correct
-# installation on another --region would FAIL.
-FIRESTORE_LOCATION=us-east5
+# firestore_location is where the CLI creates the (default) Firestore database
+# of an installation whose region is $1: the mapping's answer for that region
+# (D3085, internal/place/place.go — the CLI asks place.For and holds no
+# location of its own). Firestore's own location where it offers a database
+# there, the place's default region where it does not, and us-east5 for a
+# region in neither place. The read-back below is compared with THIS, which is
+# the region itself for most regions and is never assumed to be: a database in
+# the run's own --region where Firestore is not offered there is a finding.
+firestore_location() {
+  case "$1" in
+    asia-east1 | asia-east2 | asia-northeast1 | asia-northeast2 | asia-northeast3 | asia-south1 | asia-south2 | asia-southeast1 | asia-southeast2 | \
+      australia-southeast1 | australia-southeast2 | \
+      europe-central2 | europe-north1 | europe-north2 | europe-southwest1 | europe-west1 | europe-west2 | europe-west3 | europe-west4 | europe-west6 | \
+      europe-west8 | europe-west9 | europe-west10 | europe-west12 | \
+      me-central1 | me-central2 | me-west1 | \
+      northamerica-northeast1 | northamerica-northeast2 | northamerica-south1 | \
+      southamerica-east1 | southamerica-west1 | \
+      us-central1 | us-east1 | us-east4 | us-east5 | us-south1 | us-west1 | us-west2 | us-west3 | us-west4)
+      printf '%s\n' "$1"
+      ;;
+    us-*) printf '%s\n' us-east5 ;;
+    europe-*) printf '%s\n' europe-west1 ;;
+    *) printf '%s\n' us-east5 ;;
+  esac
+}
+# FIRESTORE_LOCATION is that answer for the region this run was given. It is set
+# once the flags are parsed (parse_args), because --region decides it.
+FIRESTORE_LOCATION=
 # The installation's name: the plan's own allocation for this check, and the
 # name every later --project flag resolves. Nothing else is accepted.
 NAME_FIXED=fugaro
@@ -984,7 +1009,7 @@ step_create() {
   # failure can end it between the two.
   CREATE_STARTED=yes
   run_pty create "$CREATE_SECONDS" "$WIZARD_DIR" \
-    "Type the GCP project's ID" "$P" -- \
+    "GCP project ID [" "$P" -- \
     fugaro setup --name "$N" --region "$REGION" --budget-mode observe \
     --firebase-project "$P" --link-billing "$A" --bake-repos --rigor pro
   CREATE_STATUS=$LAST_STATUS
@@ -1003,8 +1028,13 @@ step_create() {
     stop "the create run exited $CREATE_STATUS (transcript $CREATE_LOG). The project may be half-created, and the Restore below does NOT delete that one: it reads $P back and, when it is there, records the one command that deletes it — this check deletes a project only once its create run has finished and been read back"
   fi
   CREATED=yes
-  local suggested
-  suggested=$(grep -m1 -o "the GCP project's ID \[[^]]*\]" "$CREATE_LOG" 2>/dev/null || true)
+  # The question's line is drawn at a terminal, so the suggestion comes out of
+  # the transcript with the escape sequences the colour puts around the label
+  # and the brackets taken off first: the entry is a reading of what the run
+  # printed, and a reading that could only ever be empty is not one.
+  local suggested esc
+  esc=$(printf '\033')
+  suggested=$(sed "s/${esc}\[[0-9;]*m//g" "$CREATE_LOG" 2>/dev/null | grep -m1 -o "GCP project ID \[[^]]*\]" || true)
   fact wizard PASS "exit 0, with the project's ID typed at a real terminal and the id it proposed recorded: $(one_line "${suggested:-the run printed no suggestion line — read $CREATE_LOG}")"
 }
 
@@ -1054,8 +1084,10 @@ step_billing() {
 
 # step_firestore: the Firestore database and its PERMANENT location (step 3's
 # last input-phase answer, and the one that can never be changed). The location
-# is the CLI's own fixed one and NOT the region this run converged: the two are
-# the same value by coincidence, and a run on another --region is still correct.
+# is the mapping's answer for the region this run converged (D3085), which is
+# the region itself where Firestore offers a database there and the place's
+# default region where it does not: the read-back is compared with that answer
+# and never with --region.
 step_firestore() {
   read_out gcloud firestore databases describe --database='(default)' --project="$P" --format='value(locationId)'
   if [ "$READ_STATUS" -ne 0 ]; then
@@ -1065,10 +1097,10 @@ step_firestore() {
   local loc
   loc=$(printf '%s\n' "$READ_OUT" | head -1)
   if [ "$loc" = "$FIRESTORE_LOCATION" ]; then
-    fact firestore PASS "the (default) database's locationId is $FIRESTORE_LOCATION, the CLI's own fixed location, which does not follow --region (this run converged $REGION)"
+    fact firestore PASS "the (default) database's locationId is $FIRESTORE_LOCATION, which is where the mapping puts the history database of a $REGION installation (D3085)"
     return 0
   fi
-  fact firestore FAIL "the (default) database's locationId reads '${loc:-empty}' and not $FIRESTORE_LOCATION, the location the CLI creates in whatever --region says: the location is permanent, so this is a finding for the section, not a retry"
+  fact firestore FAIL "the (default) database's locationId reads '${loc:-empty}' and not $FIRESTORE_LOCATION, the location the mapping gives a $REGION installation: the location is permanent, so this is a finding for the section, not a retry"
   stop "the Firestore location is '${loc:-empty}' and not $FIRESTORE_LOCATION"
 }
 
@@ -1411,10 +1443,10 @@ print_plan() {
   say "  [network, reads] gcloud projects describe $P — the guard that says the throwaway project does not exist yet, and again in the Restore and after each create"
   say "  [network, reads+writes] the whole create path, run at a REAL TERMINAL (a pty) in a directory that is NOT a checkout, with ONE answer typed by this script:"
   say "      fugaro setup --name $N --region $REGION --budget-mode observe --firebase-project $P --link-billing <the account you gave> --bake-repos --rigor pro"
-  say "    which asks 'Type the GCP project's ID: ' and is answered '$P'; the project's confirmation banner, the billing banner and the Firestore location's banner are read and nothing is typed under them. --rigor pro answers the wizard's other question, the project's rigor mode, which proposes nothing: nothing types Enter under it"
+  say "    which asks 'GCP project ID [<the id it proposes>]: ' and is answered '$P'; the project's confirmation banner, the billing banner and the Firestore location's banner are read and nothing is typed under them. --rigor pro answers the wizard's other question, the project's rigor mode, which proposes nothing: nothing types Enter under it"
   say "  [network, reads] gcloud projects describe $P --format='value(projectId,lifecycleState)' (must read $P ACTIVE)"
   say "  [network, reads] gcloud billing projects describe $P --format='value(billingAccountName,billingEnabled)' (must name the account you gave, enabled True)"
-  say "  [network, reads] gcloud firestore databases describe --database='(default)' --project=$P --format='value(locationId)' (must read $FIRESTORE_LOCATION, the CLI's own fixed location and not --region)"
+  say "  [network, reads] gcloud firestore databases describe --database='(default)' --project=$P --format='value(locationId)' (must read $FIRESTORE_LOCATION, where the mapping puts a $REGION installation's history database)"
   say "  [network, reads] gcloud storage buckets list --project=$P (must name fugaro-runs-$P), gcloud run jobs list --project=$P --region=$REGION (must name fugarohist)"
   say "  [network, reads] gcloud artifacts docker images list $REGION-docker.pkg.dev/$P/fugaro-base --include-tags (must name the history image)"
   say "  [network+local, reads] fugaro doctor --project $N --all, with no terminal: exit 0, and its project line must name (GCP $P,"
@@ -1593,6 +1625,7 @@ parse_args() {
   [ -n "$R" ] || die "--repo is required (an owner/name): the section's step 20 and its Restore's App line are about it, and this script never touches it. usage: $USAGE"
   printf '%s' "$REGION" | grep -qE '^[a-z]+-[a-z]+[0-9]+$' \
     || die "--region '$REGION' does not look like a region (us-east5, europe-west4). usage: $USAGE"
+  FIRESTORE_LOCATION=$(firestore_location "$REGION")
 }
 
 main() {

@@ -14,9 +14,10 @@ CM3, CM22 and CM32 — with the two-release removal of `agent.auth` (R3) and the
 unmigrated repository runs as its file says. **Contract C1 is withdrawn, its draft pull
 request #3460 still open and to be closed unmerged by the owner** (that plan's O1), and re-cut as
 that plan's C1; its section is kept below as the
-record. The withdrawn tasks' sections are kept and marked, each naming the task that carries it;
-the graph marks the withdrawn nodes in their titles. The owner stops the withdrawn tasks by hand
-before any launches (that plan's O1). Nothing below is a launch order any more: §5's levels, §6's
+record. The withdrawn tasks' sections are kept and marked, each naming the task that carries it, or
+that it is not replaced (CM2); the graph marks the withdrawn nodes in their titles. The owner stops
+the withdrawn tasks by hand before any launches (that plan's O1). Nothing below is a launch order
+any more: §5's levels, §6's
 estimate, §7's contract change and §8's Checks 810 and 811 are the record of what was planned.
 
 | Earlier task | State | Carried by, in model credentials routing |

@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/runindex"
 )
 
 // runHistoryRollover is `budget history --rollover`: the daily move of finished
@@ -140,6 +141,11 @@ func runHistoryRollover(ctx context.Context, cmd *cobra.Command, getenv func(str
 	r := &budget.Roller{
 		DB: db, FS: fs, Project: env[envProject], Now: now, MaxSkew: skew, Warn: warn,
 		StartLimit: limit,
+		// The run index, for the one rule the rollover owes it (RI4, D3201): a
+		// day is pruned only once the fold has read it, and a stamp older than
+		// the days this database keeps marks the index incomplete. It is the
+		// same Firestore client, read through the same credentials.
+		Index: runindex.Index{Store: fs},
 		// The backend is left unnamed on purpose: this job runs in Terraform's
 		// environment, which carries no project config file to read the name
 		// from, and a pass that cannot name the backend takes the longest

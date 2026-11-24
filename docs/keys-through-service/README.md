@@ -31,7 +31,7 @@ release 1 is integrated. **Amended 2026-11-22:** credentials belong to models is
 in part by [model credentials routing](../model-credentials-routing/README.md) (its D3170), whose
 table supersedes that plan's craft access and which withdraws every task of it that is not merged
 — including the CM6, CM9, CM15 and CM16 that KS6, KS9 and KS10 were replaced by. **KS13 now waits
-on model credentials routing's I1** (its F50), and that plan's A1 is what says so here. **C1's second fact, "the stage account is served", is not needed** (its
+on model credentials routing's I1** (its A1, the task that says so here). **C1's second fact, "the stage account is served", is not needed** (its
 F20): one fact per repository, "its credentials are served", covers it. **KS3's clause that offers
 a provider credential "under every auth the service serves" is CM6's** (its F21); KS3 keeps the
 narrowed Check 50 gate and the per-repository Anthropic entry. The owner stopped KS6, KS9 and KS10

@@ -126,7 +126,6 @@ type initOptions struct {
 	ask                                 bool
 	provisionBatch                      bool   // --provision-batch: provision the Batch backend's installation-level root (owner-run, typed confirmation)
 	coordinator                         bool   // --coordinator: opt the installation in to the coordinator's aggregation job (owner-run, at a terminal, and no flag stands in for one)
-	orchestrator                        bool   // --orchestrator: opt the installation in to the resident orchestrator (owner-run, at a terminal, and no flag stands in for one)
 	onboardRepo                         string // --onboard-repo owner/name: the explicit opt-in to onboard the checkout's repository
 	allowDelete                         []string
 	operatorsChanged, adminsChanged     bool
@@ -195,7 +194,7 @@ type initOptions struct {
 	// --region.
 	location string
 
-	// answersFile is --answers-file: the wizard's five questions answered as
+	// answersFile is --answers-file: the wizard's questions answered as
 	// one document, whose members fill the fields above and nothing else
 	// (setup_answers.go, D2904 of docs/console-improvements). "-" reads it from
 	// stdin, which is what a surface with no file of its own passes.
@@ -584,7 +583,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// this is where its answers travel. The help names the members because the
 	// file is the reader's whole contract, and it says what the file is not: an
 	// answer is not a confirmation.
-	f.StringVar(&o.answersFile, "answers-file", "", "answer the wizard's questions from one JSON document: "+strings.Join(setupAnswerKeys(), ", ")+" — the five questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation")
+	f.StringVar(&o.answersFile, "answers-file", "", "answer the wizard's questions from one JSON document: "+strings.Join(setupAnswerKeys(), ", ")+" — the questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor, --budget with --budget-currency, and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation")
 	// --events writes the same account --json prints as a stream of lines
 	// instead of one document (setup_events.go, D2904 of
 	// docs/console-improvements). The help names every kind of line, because
@@ -599,7 +598,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.StringSliceVar(&o.baseKinds, "base", nil, "copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated)")
 	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository, a history image is copied from it (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme)")
 	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it "+d.name+" trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag")
-	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so a person at a real terminal confirms it by being there (a pipe, --json and a coding agent's session confirm nothing)")
+	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history; repeatable): let the converge replace that image's tag in your registry when it names an image the release source never published (a customised or hand-pushed history:latest needs it once; the image of an earlier release needs no flag, and is moved on its own). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so a person at a real terminal confirms it by being there (a pipe, --json and a coding agent's session confirm nothing)")
 	// The bake switch (IS7, D1901). Its usage is read on both doors, so it
 	// names no door: what it says about where the question is asked is about
 	// the run that creates the installation, which is the one whose answer is
@@ -614,9 +613,9 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.BoolVar(&o.noLogIsolation, "no-log-isolation", false, "leave Fugaro job logs in _Default instead of their own log bucket")
 	f.StringVar(&o.registryCleanup, "registry-cleanup", "", "Artifact Registry cleanup: dry-run (the default), on or off")
 	f.StringVar(&o.firebase, "firebase-project", "", "turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: confirmed by the person at the terminal where it is a first-time question, already there on a run that re-converges an installation that has it) and the config")
-	f.StringVar(&o.budgetMode, "budget-mode", "", "with --firebase-project: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe)")
+	f.StringVar(&o.budgetMode, "budget-mode", "", "with --firebase-project: observe or enforce: the jobs' budget mode in the project config, and the project-wide mode in the database (an absent one is seeded observe)")
 	f.StringArrayVar(&o.budgetAdmins, "budget-admin", nil, "with --firebase-project: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins)")
-	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, at your own real terminal (never with --json; nothing is typed there, being at it is what confirms the step). A first run of "+d.name+" always creates its project, so the flag only says so explicitly. Fugaro only starts fresh: an ID that already exists is refused, unless an earlier run of "+d.name+" created it (the resume). Billing is not linked unless --link-billing is also given; without it "+d.name+" prints the one gcloud command that links it, unless the run asks the billing question (no --json and no coding agent's session) and has no terminal, where it is refused there at once instead, in the sentence naming --link-billing")
+	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, at your own real terminal (never with --json; nothing is typed there, being at it is what confirms the step). A first run of "+d.name+" always creates its project, so the flag only says so explicitly. An ID that already exists is refused unless an earlier run of "+d.name+" made it Fugaro's (the resume), and one that holds nothing of Fugaro's is adopted instead: "+d.name+" uses it as if it had created it. Billing is not linked unless --link-billing is also given; without it "+d.name+" prints the one gcloud command that links it, unless the run asks the billing question (no --json and no coding agent's session) and has no terminal, where it is refused there at once instead, in the sentence naming --link-billing")
 	f.StringVar(&o.displayName, "display-name", "", "on a first run, which creates the project: its display name (default: its ID)")
 	f.StringVar(&o.parent, "parent", "", "on a first run, which creates the project: organizations/<number> or folders/<number> to create it under (default: no parent; an organization is never guessed)")
 	f.BoolVar(&o.managed, "managed", false, "on a first run, which creates the project: record its monthly budget in the creation fact. Every project "+d.name+" creates is Fugaro-managed (its runs bucket's creation fact and the fugaro_managed label); --managed is what records the budget amount the managed apply needs. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: creating the project still takes a person at a real terminal, and the installation's ordinary steps share the run's one review. Flagging a project that already exists as managed is fugaro managed flag's, run by the owner at a terminal, "+managedFlaggingSentence)
@@ -656,7 +655,6 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// get to.
 	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (neither it nor this flag is honoured in a coding agent's session; any other origin takes the confirmation of a person at the terminal)")
 	f.BoolVar(&o.coordinator, "coordinator", false, "with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. No flag covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
-	f.BoolVar(&o.orchestrator, "orchestrator", false, "with --firebase-project, opt the installation in to the resident orchestrator (docs/mobile/design/always-on-orchestrator.md, P5.1): the fugaro-orch service account with exactly the grants that design's section 4.3 table lists — the launcher's project role, the runs bucket's conditioned write and its unconditioned read, iam.serviceAccounts.signJwt on the budget signer (the widest grant there is: a holder may mint any identity in the installation), the job runner's role on each of the installation's jobs and roles/run.invoker on the credentials service — the fugaro-orch-pairing secret container, the Cloud Run service that account runs (min-instances = 0, woken by a Scheduler tick) and a Scheduler job per minute. Nothing creates any of it by default, and it is refused where the installation has no credentials service, no Firebase backend or no released image to pin. The opt-in is recorded in the installation root's tfvars (its orchestrator block) by the same command, so later runs keep it and move only the image inside it. No flag covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
 	f.BoolVar(&o.ask, "ask", false, "ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the review's own question, and each step's own, the billable builds included. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never stands in for a confirmation: the step's own question is asked, and a no is a no. In a project whose marks do not answer \"managed\" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
 	f.BoolVar(&o.repo, "repo", false, "onboard the repository of the checkout at PATH (default: the current directory) instead of the installation")
@@ -680,6 +678,16 @@ type initRun struct {
 	cmd *cobra.Command
 	o   *initOptions
 	w   io.Writer // the human-readable account: stdout, or stderr with --json
+	// qs is the colour the run's own lines are drawn with before there is a
+	// reporter to draw them: the wizard's questions are asked before the
+	// converge builds one (gatherInputs runs before the run has a config to
+	// redact a log with), and the two hands have to draw one screen
+	// (report.NewStyle).
+	qs report.Style
+	// headed says the run's own `==> Setting up …` line is out. It is printed
+	// with the first thing the run says — the first question, or the converge's
+	// first block on a run that asks nothing — and never twice.
+	headed bool
 	// in is the run's own input, which the value entry reads through
 	// (valueentry.go's readValue, which asks the command for the same reader)
 	// and which a value question left over from an earlier shape of this file
@@ -757,6 +765,17 @@ type initRun struct {
 	// job is deployed, and the two differ on exactly the installations
 	// licenceJob drops it for.
 	licence *infra.LicenceSpec
+	// budgetAccount is the billing account this run's budget block is on, once
+	// the run's variables are written: --billing-account where it was given, and
+	// the account the carry took out of the installation's own state where it was
+	// not (carriedBudget, R7 of
+	// docs/managed-flag-ergonomics/reconciliation.md). It is recorded on the run
+	// for the reason licence is: the review screen shows this account and the
+	// cover admits the plan's budget resource on it (init_review.go), and the
+	// account a carried block names comes from no flag — a cover reading only
+	// --billing-account would refuse, as a plan the run never announced, the
+	// create or update of the alert this run carried the account for.
+	budgetAccount string
 	// notedOpenProviders is the once-per-run guard on the note about the
 	// providers every repository may use: the converge's repository stage
 	// runs the repo engine too, and the note belongs once.
@@ -781,11 +800,14 @@ type initRun struct {
 	// stage, held in memory for the pre-check and cleared when the run ends.
 	appKeyMem []byte
 
-	// resumedCreation is whether the project stage resumed a creation an
-	// earlier run of fugaro setup made: the project was there, and it carries
-	// infra.CreatedLabelKey, which only that run's create request writes
-	// (projectStage.read). markCreated marks it as it marks a creation.
-	resumedCreation bool
+	// resumedCreation is the origin label (infra.CreatedLabelKey's value) of
+	// the project the project stage resumed: infra.CreatedLabelValue for a
+	// creation an earlier run of fugaro setup made, infra.AdoptedLabelValue
+	// for a project an earlier run adopted. Both are labels only a run of
+	// fugaro setup writes (projectStage.read), and markCreated marks the
+	// project as it marks a creation. "" is every other run: one that made the
+	// project Fugaro's itself (Created, Adopted) and one that made nothing.
+	resumedCreation string
 
 	// resumeConfirmed is whether the person typed the resumed project's ID to
 	// have it marked managed (confirmResumedMark).
@@ -954,12 +976,12 @@ type initRun struct {
 	// rootPlanEmpty and rootApplied are the LAST install-root call's own
 	// outcome: whether the plan it made changed nothing, and whether it reached
 	// an apply at all. installRoot's cycle sets them, and the one stage that
-	// asks — the installation-2 stage, around the call that carries the
+	// asks — the credentials-service stage, around the call that carries the
 	// resident orchestrator's block — resets them first, because every earlier
 	// stage plans that same root and a plan of theirs says nothing about the
 	// orchestrator. The pair is what decides whether the block that stage's
 	// writer has already put in the workdir has become a fact about the
-	// installation or has to be taken back out (init_stages.go's
+	// installation or has to be taken back out (update_orchestrator.go's
 	// unsetOrchestratorBlock).
 	rootPlanEmpty bool
 	rootApplied   bool
@@ -1025,6 +1047,11 @@ type initResult struct {
 	RTDBURL  string `json:"rtdb_url,omitempty"`
 	// Anchor is set by update --anchor.
 	Anchor *anchorResult `json:"anchor,omitempty"`
+	// Adopted is the existing project this run adopted (the owner's ruling of
+	// 2026-11-22): it was there, held nothing of Fugaro's, and the run used it
+	// as if it had created it. Created and Adopted are never both set — a run
+	// makes at most one project Fugaro's, and it either made it or found it.
+	Adopted string `json:"adopted_project,omitempty"`
 	// ResolvedIssues is what `fugaro update` found this release fixes about
 	// the project's filed issues (update_resolved.go, T-RU5): the additive
 	// field the console, the mobile app and the history read, so its entries
@@ -1051,6 +1078,7 @@ func newInitRun(cmd *cobra.Command, o *initOptions) *initRun {
 		r.events = newSetupEvents(cmd.OutOrStdout())
 	}
 	r.in = cmd.InOrStdin()
+	r.qs = questionStyle(cmd, cmd.OutOrStdout())
 	return r
 }
 
@@ -1173,11 +1201,6 @@ func runInit(r *initRun) error {
 	}
 	if o.coordinator {
 		if err := r.refuseCoordinatorUnattended(); err != nil {
-			return err
-		}
-	}
-	if o.orchestrator {
-		if err := r.refuseOrchestratorUnattended(); err != nil {
 			return err
 		}
 	}
@@ -1311,6 +1334,9 @@ func runInit(r *initRun) error {
 		// Printed without a cloud call, so without discovery: stdout stays
 		// the tfvars alone.
 		fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+printVarsUngatedInstallation)
+		if spec.Budget == nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+printVarsNoBudget)
+		}
 		if o.firebase != "" {
 			if data, err = r.firebaseVars(data, spec, lc); err != nil {
 				return err
@@ -1406,40 +1432,54 @@ func runInit(r *initRun) error {
 	return r.printResult()
 }
 
-// creation is the project this run created, or the one it resumed and whose
-// mark the person confirmed by typing its ID (resumeConfirmed): the project
-// markCreated marks. "" when it did neither.
+// creation is the project this run made Fugaro's, or the one it resumed and
+// whose mark the person confirmed by typing its ID (resumeConfirmed): the
+// project markCreated marks. "" when it did neither. Making a project
+// Fugaro's is creating it or adopting an existing one that held nothing of
+// Fugaro's (the owner's ruling of 2026-11-22, projectStage.Apply), and the two
+// are the same fact to everything downstream: the project is this
+// installation's, and the run that made it that writes its creation fact.
 func (r *initRun) creation() string {
 	if r.res.Created != "" {
 		return r.res.Created
 	}
-	if r.resumedCreation && r.resumeConfirmed {
+	if r.res.Adopted != "" {
+		return r.res.Adopted
+	}
+	if r.resumedCreation != "" && r.resumeConfirmed {
 		return r.gcpProject
 	}
 	return ""
 }
 
-// confirmResumedMark is the confirmation a resumed creation is marked managed
-// behind. fugaro_created=true says an earlier run of fugaro setup created the
-// project, but it is a label anyone with resourcemanager.projects.update can
-// set, so it is never enough on its own: the run must be one a person is at,
-// the bar fugaro managed flag keeps (stepConfirmation(false): a real terminal,
-// no --json, no --non-interactive, no coding agent's session, and no answer a
-// run carries stands in for it), and the banner above the mark is what that
-// reader reads.
+// confirmResumedMark is the confirmation a resumed project is marked managed
+// behind. The origin label says an earlier run of fugaro setup made the
+// project Fugaro's — created it (fugaro_created=true) or adopted it
+// (fugaro_created=adopted) — but it is a label anyone with
+// resourcemanager.projects.update can set, so it is never enough on its own:
+// the run must be one a person is at, the bar fugaro managed flag keeps
+// (stepConfirmation(false): a real terminal, no --json, no --non-interactive,
+// no coding agent's session, and no answer a run carries stands in for it),
+// and the banner above the mark is what that reader reads.
 // Nothing is typed: the policy's confirmations are gone (T7), and --ask is the
 // flag that puts the question back. Where no person is at the terminal, and
 // under --yes, nothing is marked and the run says how to mark it.
 func (r *initRun) confirmResumedMark() bool {
 	id := r.gcpProject
-	later := fmt.Sprintf("project %s carries %s=%s (an earlier run of fugaro setup created it) and this run finished its setup, but it is not marked as managed: marking it takes a run a person is at, at your own terminal. Rerun fugaro setup there, or run fugaro managed flag %s --budget N --budget-currency CCC",
-		id, infra.CreatedLabelKey, infra.CreatedLabelValue, id)
+	// How the project became Fugaro's, in the two sentences the reader acts
+	// on: the label's own value says which of the two it was.
+	made, says := "an earlier run of fugaro setup created it", "which says fugaro setup created it"
+	if r.resumedCreation == infra.AdoptedLabelValue {
+		made, says = "an earlier run of fugaro setup adopted it", "which says fugaro setup adopted it"
+	}
+	later := fmt.Sprintf("project %s carries %s=%s (%s) and this run finished its setup, but it is not marked as managed: marking it takes a run a person is at, at your own terminal. Rerun fugaro setup there, or run fugaro managed flag %s --budget N --budget-currency CCC",
+		id, infra.CreatedLabelKey, r.resumedCreation, made, id)
 	if r.stepConfirmation(false) != stepTyped {
 		r.warn(later)
 		return false
 	}
-	fmt.Fprintf(r.w, "⚠ CONFIRM: this MARKS project %s as Fugaro-managed (gs://fugaro-runs-%s/%s and the label %s=%s): its applies then need no confirmation at all, and the deterministic gate, the inventory and the owner's delete list stand in for one. It carries %s=%s, which says fugaro setup created it.\n",
-		id, id, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, infra.CreatedLabelKey, infra.CreatedLabelValue)
+	fmt.Fprintf(r.w, "⚠ CONFIRM: this MARKS project %s as Fugaro-managed (gs://fugaro-runs-%s/%s and the label %s=%s): its applies then need no confirmation at all, and the deterministic gate, the inventory and the owner's delete list stand in for one. It carries %s=%s, %s.\n",
+		id, id, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, infra.CreatedLabelKey, r.resumedCreation, says)
 	ok, err := r.confirmNow("mark project " + id + " as Fugaro-managed?")
 	if err != nil || !ok {
 		r.warn(later)
@@ -1504,29 +1544,43 @@ func (e *initEngine) markCreated(ctx context.Context) {
 		// if this run did not create it.
 		c.Created, c.Existed = r.res.Created, r.projectExisted && r.res.Created == ""
 	}
-	// created is the project this converge marks, and it is one of two
+	// created is the project this converge marks, and it is one of three
 	// things. Created is set by the project stage alone, inside its create
-	// branch (projectStage.Apply in init_project.go). The other is a resumed
-	// creation (the owner's ruling of 2026-10-23: a setup resumed by a later
-	// run is managed by default): the project stage read a project carrying
-	// fugaro_created=true, the label the creating run's create request writes
-	// (infra.CreateProject). That label is forgeable by anyone who may update
-	// the project, so it only says which project to ask about: the mark is
-	// written only where a person at their own terminal confirms the step
-	// (confirmResumedMark; nothing is typed there, the policy's confirmations
-	// being gone — T7), and never under --yes, --non-interactive, --json or in
-	// a coding agent's session. It is asked only once the installation's
-	// runs bucket is known, since that is where the mark goes. "" means this
-	// run neither created nor confirmed a resumed project, and then there is no
-	// fact to record: every ordinary run of an existing installation —
-	// fugaro's own, belong, the owner's — comes through here with it empty.
-	if r.res.Created == "" && r.resumedCreation && !r.resumeConfirmed && e.c != nil && r.res.Outputs != nil && r.res.Outputs.RunsBucket != "" {
+	// branch, and Adopted beside it, inside its adopt branch (projectStage.Apply
+	// in init_project.go): a project that was there and held nothing of
+	// Fugaro's, which this run uses as if it had created it (the owner's
+	// ruling of 2026-11-22) and marks exactly as a creation is marked — the
+	// run decided to adopt it on what it read of the project itself, so there
+	// is no label of anyone's to confirm. The other is a resumed project (the
+	// owner's ruling of 2026-10-23: a setup resumed by a later run is managed
+	// by default): the project stage read a project carrying
+	// fugaro_created=true or fugaro_created=adopted, the label the run that
+	// made it Fugaro's wrote (infra.CreateProject, infra.WriteAdoptedLabel).
+	// That label is forgeable by anyone who may update the project, so it only
+	// says which project to ask about: the mark is written only where a person
+	// at their own terminal confirms the step (confirmResumedMark; nothing is
+	// typed there, the policy's confirmations being gone — T7), and never
+	// under --yes, --non-interactive, --json or in a coding agent's session.
+	// It is asked only once the installation's runs bucket is known, since
+	// that is where the mark goes. "" means this run neither made nor
+	// confirmed a resumed project, and then there is no fact to record: every
+	// ordinary run of an existing installation — fugaro's own, belong, the
+	// owner's — comes through here with it empty.
+	if r.res.Created == "" && r.res.Adopted == "" && r.resumedCreation != "" && !r.resumeConfirmed && e.c != nil && r.res.Outputs != nil && r.res.Outputs.RunsBucket != "" {
 		r.resumeConfirmed = r.confirmResumedMark()
 	}
 	created := r.creation()
+	// made is how the project became Fugaro's, for the sentences below: the
+	// same word confirmResumedMark uses for the two kinds of resume. noun is
+	// the same fact as the thing a run resumes, which those sentences need
+	// ("resumed the creation of", "resumed the adoption of").
+	made, noun := "created", "creation"
+	if r.res.Adopted != "" || r.resumedCreation == infra.AdoptedLabelValue {
+		made, noun = "adopted", "adoption"
+	}
 	if created == "" {
-		// --managed asked for a managed creation and this run created no
-		// project, so there is no fact to record — and the owner must not
+		// --managed asked for a managed creation and this run made no project
+		// Fugaro's, so there is no fact to record — and the owner must not
 		// silently get an unmarked project where they asked for a managed
 		// one.
 		if r.o.managed {
@@ -1547,7 +1601,7 @@ func (e *initEngine) markCreated(ctx context.Context) {
 		bucket = r.res.Outputs.RunsBucket
 	}
 	if bucket == "" {
-		r.warn(fmt.Sprintf("project %s was created but the runs bucket it would be marked in is not known in this run (the installation did not finish): it is not marked, so nothing is skipped for it until it is", created))
+		r.warn(fmt.Sprintf("project %s was %s but the runs bucket it would be marked in is not known in this run (the installation did not finish): it is not marked, so nothing is skipped for it until it is", created, made))
 		return
 	}
 	// The bucket must be the project's own, under the default name, for the
@@ -1559,7 +1613,7 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// so this writes only into the name the read knows and says which name
 	// it found instead.
 	if want := "fugaro-runs-" + created; bucket != want {
-		r.warn(fmt.Sprintf("project %s was created but its runs bucket is %s, not %s: it is not marked as managed, because the marker is only read from the default bucket name", created, bucket, want))
+		r.warn(fmt.Sprintf("project %s was %s but its runs bucket is %s, not %s: it is not marked as managed, because the marker is only read from the default bucket name", created, made, bucket, want))
 		return
 	}
 	// The number is what makes the marker about this project and not about a
@@ -1621,8 +1675,11 @@ func (e *initEngine) markCreated(ctx context.Context) {
 			c.Marked = true
 		}
 		how := "this run created"
-		if r.res.Created == "" {
-			how = "this run resumed the creation of"
+		switch {
+		case r.res.Adopted != "":
+			how = "this run adopted"
+		case r.res.Created == "":
+			how = "this run resumed the " + noun + " of"
 		}
 		fmt.Fprintf(r.w, "recorded that %s project %s: it is Fugaro-managed (gs://%s/%s, labelled %s=%s)\n", how, created, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue)
 	case fact:
@@ -1635,7 +1692,7 @@ func (e *initEngine) markCreated(ctx context.Context) {
 		// fact that does, and there the label goes on the project itself. The
 		// warning this replaced gave both halves to the creating run alone
 		// and offered the flag for both states, which for the second refuses.
-		r.warn(fmt.Sprintf("project %s was created but not marked as managed (%v): gs://%s/%s holds the creation fact and the project does not carry the label %s=%s, and the read requires both, so nothing is skipped for it. What completes the mark is the owner's own command at their terminal, and which one depends on what the object records: `fugaro managed flag %s --budget N --budget-currency CCC` replaces a creation fact that records no amount, writing the amount and the label in the same command, while a fact that already records one is replaced by no command of ours — for it the label goes on the project itself (gcloud projects update %s --update-labels %s=%s), the backfill docs/managed-projects/spec.md carries", created, err, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, created, created, managed.ProjectLabelKey, managed.ProjectLabelValue))
+		r.warn(fmt.Sprintf("project %s was %s but not marked as managed (%v): gs://%s/%s holds the creation fact and the project does not carry the label %s=%s, and the read requires both, so nothing is skipped for it. What completes the mark is the owner's own command at their terminal, and which one depends on what the object records: `fugaro managed flag %s --budget N --budget-currency CCC` replaces a creation fact that records no amount, writing the amount and the label in the same command, while a fact that already records one is replaced by no command of ours — for it the label goes on the project itself (gcloud projects update %s --update-labels %s=%s), the backfill docs/managed-projects/spec.md carries", created, made, err, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, created, created, managed.ProjectLabelKey, managed.ProjectLabelValue))
 	default:
 		// Nothing of the fact is there, so the read answers "not managed"
 		// for a project no half of it describes. The flag is still the way
@@ -1643,7 +1700,7 @@ func (e *initEngine) markCreated(ctx context.Context) {
 		// replaces the version-1 one (managed.writeFlag), on the owner's own
 		// credentials at their terminal, and a later run of ours cannot —
 		// this function returns above for every run that creates no project.
-		r.warn(fmt.Sprintf("project %s was created but not marked as managed (%v): gs://%s/%s was not written and the project carries no %s=%s label, and the read requires both, so nothing is skipped for it. No later run of ours writes either half — a run that creates no project records nothing — and the mark is completed by the owner's own command at their terminal: `fugaro managed flag %s --budget N --budget-currency CCC` writes the creation fact and the label in the same command", created, err, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, created))
+		r.warn(fmt.Sprintf("project %s was %s but not marked as managed (%v): gs://%s/%s was not written and the project carries no %s=%s label, and the read requires both, so nothing is skipped for it. No later run of ours writes either half — a run that creates no project records nothing — and the mark is completed by the owner's own command at their terminal: `fugaro managed flag %s --budget N --budget-currency CCC` writes the creation fact and the label in the same command", created, made, err, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, created))
 	}
 
 	// D77's state bucket, the other half of what a managed project needs
@@ -1931,15 +1988,16 @@ func (o *initOptions) firebaseProject() string {
 }
 
 // checkFirebaseProject refuses a Firebase project other than the
-// installation's own GCP project. Fugaro only starts fresh (the owner's ruling
-// of 2026-10-23): the budget backend goes in the project fugaro setup created
-// for the installation and nowhere else, so --firebase-project, which asks for
-// the backend, names that project or is refused before anything is read.
+// installation's own GCP project. The budget backend goes in the project
+// fugaro setup made Fugaro's for the installation — one it created, or one it
+// adopted (the owner's ruling of 2026-11-22) — and nowhere else, so
+// --firebase-project, which asks for the backend, names that project or is
+// refused before anything is read.
 func checkFirebaseProject(fp, gcpProject string) error {
 	if fp == "" || gcpProject == "" || fp == gcpProject {
 		return nil
 	}
-	return userErr("--firebase-project %s is not the installation's GCP project %s: Fugaro builds the budget backend only in the project fugaro setup created for the installation, and uses no Firebase project of its own; pass --firebase-project %s", fp, gcpProject, gcpProject)
+	return userErr("--firebase-project %s is not the installation's GCP project %s: Fugaro builds the budget backend only in the project fugaro setup created or adopted for the installation, and uses no Firebase project of its own; pass --firebase-project %s", fp, gcpProject, gcpProject)
 }
 
 // check refuses flag combinations that mean nothing.
@@ -2057,11 +2115,6 @@ func (o *initOptions) check() error {
 			return err
 		}
 	}
-	if o.orchestrator {
-		if err := o.checkOrchestrator(); err != nil {
-			return err
-		}
-	}
 	if o.forget && len(o.allowDelete) > 0 {
 		return userErr("--forget allows exactly the log isolation's deletes; it takes no --allow-delete")
 	}
@@ -2117,15 +2170,41 @@ func (o *initOptions) check() error {
 			return userErr("--firebase-project %q is not a project ID (6 to 30 of a-z, 0-9 and '-', starting with a letter)", fp)
 		case checkFirebaseProject(fp, o.cloud.gcpProject) != nil:
 			return checkFirebaseProject(fp, o.cloud.gcpProject)
-		case o.budgetMode != "" && !slices.Contains([]string{"off", "observe", "enforce"}, o.budgetMode):
-			return userErr("--budget-mode %q must be off, observe or enforce", o.budgetMode)
+		case policy.Mode(o.budgetMode).Removed():
+			// The old word is refused with the vocabulary's own text, not with a
+			// list of the words that are left: a person who wrote it is told why
+			// it is gone and what to write instead (AB3, C1, D3009).
+			return userErr("--budget-mode: %s", policy.ModeOffRefusal)
+		case o.budgetMode != "" && !slices.Contains([]string{policy.ModeObserve, policy.ModeEnforce}, o.budgetMode):
+			return userErr("--budget-mode %q must be observe or enforce", o.budgetMode)
 		}
 	}
-	if (o.budget != 0 || o.budgetCurrency != "" || o.billingAccount != "") && (o.budget <= 0 || o.budgetCurrency == "" || o.billingAccount == "") {
-		return userErr("a budget needs --budget (more than 0), --budget-currency and --billing-account together")
+	// A budget is declared by --budget and --budget-currency together, and the
+	// billing account with them wherever the run cannot take the carried one
+	// (carriesBudget): an explicit --budget with no --billing-account takes the
+	// account the installation's own state records (R7,
+	// docs/managed-flag-ergonomics/reconciliation.md), which is what lets the
+	// owner change the amount without knowing the account by heart. A run that
+	// reads no cloud has nothing to take it from, so there the three are still
+	// required together.
+	if o.budget != 0 || o.budgetCurrency != "" || o.billingAccount != "" {
+		if o.budget <= 0 || o.budgetCurrency == "" {
+			return userErr("a budget needs --budget (more than 0) and --budget-currency together")
+		}
+		if o.billingAccount == "" && !o.carriesBudget() {
+			return userErr("a budget needs --billing-account: this run reads no cloud, so it cannot take the account the installation's state records")
+		}
 	}
 	return nil
 }
+
+// carriesBudget is whether this run reads the installation's own budget
+// records, which is what an explicit --budget without --billing-account takes
+// the account from (R7). Two modes do not, and for a reason each:
+// --print-vars reads no cloud by design, so it has no state to read the
+// account out of, and --forget is the rollback, which carries nothing forward
+// at all.
+func (o *initOptions) carriesBudget() bool { return !o.printVars && !o.forget }
 
 // setProject records lc's project: its GCP ID for the Google calls, its
 // name for the account and the confirmations.
@@ -2442,9 +2521,12 @@ func initErr(err error) error {
 	return remote(err)
 }
 
+// warn is the run's own line about something it has to say and that is not a
+// failure: the message in the result, unchanged, and the same message on the
+// screen under the Warning label the whole CLI draws one with (report.Style).
 func (r *initRun) warn(msg string) {
 	r.res.Warnings = append(r.res.Warnings, msg)
-	fmt.Fprintln(r.w, "warning: "+msg)
+	fmt.Fprintln(r.w, r.qs.Warning(msg))
 }
 
 // printWorkflowWarnings prints what the workflows' deploy-time specs carry
@@ -2980,6 +3062,85 @@ func (r *initRun) managedProject(ctx context.Context, c *infra.Clients) (bool, e
 	return ok, nil
 }
 
+// carriedBudget is the alert the installation already holds, for a run whose own
+// flags and wizard answered no budget: the amount and the currency from the
+// project's creation fact — the record a rewrite by `fugaro managed flag` moves,
+// so a rewrite reaches the alert on the next update — and the billing account
+// from the alert's own resource in the installation root's state, which is the
+// one copy of it a machine that never ran the apply can read. Neither comes
+// from the local work directory, which a new machine, a cleaned one or a
+// console on another host does not have (F19, R7 of
+// docs/managed-flag-ergonomics).
+//
+// A run that answered the budget itself carries nothing: its own figures stand,
+// which is D2215's rule — a default never overwrites a recorded amount — seen
+// from the other side. An installation whose creation fact records no amount,
+// or whose state holds no alert, carries nothing either, and that is the answer
+// for every installation that has neither.
+//
+// The account is read FIRST, and the amount only for an installation that has
+// one. The alert's own resource in the state is the one record that says
+// whether this installation holds an alert at all, and an installation that
+// holds none has nothing to carry — so the creation fact, which is a read of
+// the runs bucket and the one both the run's own gate and this carry consult,
+// is not read for it. That is most runs: every unmanaged project, and every
+// managed one whose alert was never applied.
+//
+// A read that fails is this run's warning and not its answer: the carry is what
+// keeps the alert, and a run that cannot make it plans the alert's deletion,
+// which the guard refuses by name with the flags that declare one — the loud
+// direction, and the one that never plans a document that forgot the alert on a
+// read this program could not make.
+func (r *initRun) carriedBudget(ctx context.Context, c *infra.Clients, spec infra.InstallationSpec) (infra.InstallationSpec, error) {
+	if spec.Budget != nil {
+		return r.explicitBudgetAccount(ctx, c, spec)
+	}
+	account, found, err := infra.InstallationBudgetAccount(ctx, c, spec.StateBucket)
+	if err != nil {
+		r.warn(fmt.Sprintf("the billing account of %s's budget alert could not be read from the installation's state, so this run carries no alert: %s", safetext.Field(spec.FugaroProject), safetext.Field(err.Error())))
+		return spec, nil
+	}
+	if !found {
+		return spec, nil
+	}
+	budget, ok, _, err := managed.ReadBudget(ctx, c.Storage, c.CRM, spec.FugaroProject, spec.Project)
+	if err != nil {
+		r.warn(fmt.Sprintf("the budget %s's creation fact records could not be read while this installation was being planned, so this run carries no alert: %s", safetext.Field(spec.FugaroProject), safetext.Field(err.Error())))
+		return spec, nil
+	}
+	if !ok {
+		return spec, nil
+	}
+	spec.CarriedBudget = &infra.Budget{BillingAccount: account, Amount: budget.Amount, CurrencyCode: budget.Currency}
+	r.budgetAccount = account
+	return spec, nil
+}
+
+// explicitBudgetAccount completes a run's own budget: a --budget with no
+// --billing-account takes the account the installation's state records for its
+// alert (R7), so the owner changes the amount without knowing the account by
+// heart. A whole trio reads nothing. Unlike the implicit carry, a failed read
+// here stops the run: the figures were asked for and the run cannot declare
+// them without the account, so there is no alert to fall back to keeping.
+func (r *initRun) explicitBudgetAccount(ctx context.Context, c *infra.Clients, spec infra.InstallationSpec) (infra.InstallationSpec, error) {
+	if spec.Budget.BillingAccount != "" {
+		r.budgetAccount = spec.Budget.BillingAccount
+		return spec, nil
+	}
+	account, found, err := infra.InstallationBudgetAccount(ctx, c, spec.StateBucket)
+	if err != nil {
+		return spec, initErr(fmt.Errorf("the installation's state bucket gs://%s could not be read for the billing account of the budget: %s", safetext.Field(spec.StateBucket), safetext.Field(err.Error())))
+	}
+	if !found {
+		return spec, userErr("--budget %d %s names no --billing-account, and the installation's state records no budget alert to take one from: pass --billing-account", spec.Budget.Amount, spec.Budget.CurrencyCode)
+	}
+	with := *spec.Budget
+	with.BillingAccount = account
+	spec.Budget = &with
+	r.budgetAccount = account
+	return spec, nil
+}
+
 // managedScope is whether the installation uses managed projects, decided from
 // the project's own creation fact: the module's managed_deployer_scoped, which
 // is what creates the managed deployer's seven scoped roles and their seven
@@ -3176,10 +3337,10 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	// carries: the account and the bindings of the mobile orchestrator design's
 	// section 4.3, which are the whole of what that account may hold (mobile plan
 	// task P5.1b). The key is written once, by the writer beside this reader
-	// (`fugaro update --firebase-project <id> --orchestrator`, init_stages.go's
-	// ensureOrchestratorBlock), and the spec never carries it: what turns the
-	// account on is the installation's own recorded opt-in, not a value this
-	// run's config holds. Without the carry the next `fugaro update` of an
+	// (`fugaro update`'s credentials-service stage,
+	// update_orchestrator.go's ensureOrchestratorBlock), and the spec never carries it: what turns the
+	// account on is the installation's own record that the block was written,
+	// not a value this run's config holds. Without the carry the next `fugaro update` of an
 	// installation that opted in hands
 	// Terraform a document with no orchestrator block: the plan is the account's
 	// and its bindings' removal, and the removal of a google_service_account is
@@ -3204,6 +3365,19 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	// (infra.CarriedLicence).
 	for _, prev := range documents {
 		if vars, err = infra.CarriedLicence(vars, prev); err != nil {
+			return nil, userErr("reading the installation's tfvars: %v", err)
+		}
+	}
+	// And the alert the installation already holds, the one carry whose figures
+	// are not in a document at all: the amount and the currency come from the
+	// project's creation fact and the billing account from the alert's own
+	// resource in the root's state, so the carry reaches the installation from
+	// any machine (R5, R7 of docs/managed-flag-ergonomics). The run reads them
+	// before this call (carriedBudget) and hands them over in the spec; a
+	// spec of its own — a run whose flags or wizard answered the budget — is
+	// never touched, and neither is a run whose document already names one.
+	if spec.CarriedBudget != nil {
+		if vars, err = infra.CarriedBudget(vars, spec.CarriedBudget); err != nil {
 			return nil, userErr("reading the installation's tfvars: %v", err)
 		}
 	}
@@ -3271,6 +3445,9 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		return outs, false, err
 	}
 	if spec, err = r.licenceJob(lc, spec); err != nil {
+		return outs, false, err
+	}
+	if spec, err = r.carriedBudget(ctx, c, spec); err != nil {
 		return outs, false, err
 	}
 	im, err := infra.DiscoverInstallation(ctx, c, spec)
@@ -3494,7 +3671,18 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// one (a condition is ForceNew); exactly that replace is allowed, and
 		// named (bucket-iam.md H5).
 		upgrade := infra.LauncherGrantUpgrade(plan, spec.RunsBucket, spec.Launchers, spec.Operators)
-		allowed := append(append(slices.Clone(r.o.allowDelete), hardening...), upgrade...)
+		// The launcher-does-not-mint switch turns off the minter rows this
+		// binary's own update removes once the credentials service signs as the
+		// runs' signer (LM14, R8); exactly those deletes are allowed, and named
+		// (LM20). Without the list the guard would refuse the update's own plan
+		// and point at --allow-delete, the step the hard rule about `fugaro
+		// update` forbids. It is the switch-off plan's own list and no other's:
+		// with the switch on, the same delete at the same address is a member
+		// dropped from the roster or an orchestrator turned off, and the guard
+		// keeps judging it as it always did. The Firebase root is not given this
+		// list here: LM14 wires that root's guard at its level (F32).
+		identity := infra.IdentityAllowDelete(plan, infra.PeopleMinter(plan))
+		allowed := append(append(append(slices.Clone(r.o.allowDelete), hardening...), upgrade...), identity...)
 		counts := infra.CountPlan(plan)
 		// The managed gate judges the plan BEFORE the guard and the
 		// confirmation, and replaces both when it admits it (D1016,
@@ -3502,7 +3690,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// what the gate refused rather than the guard's advice, which is what
 		// a managed project's refusal is about. Everything the guard's own
 		// path prints or records stays where it was, on the path that runs it.
-		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), upgrade)
+		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), upgrade, identity)
 		if err != nil {
 			return plan, err
 		}
@@ -3868,6 +4056,14 @@ func (r *initRun) readOutputs(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		return infra.InstallationOutputs{}, fmt.Errorf("%w gs://%s", errNoState, spec.StateBucket)
 	}
 	verifiers, err := r.effectiveVerifiers(ctx, lc)
+	if err != nil {
+		return infra.InstallationOutputs{}, err
+	}
+	// This prepare rewrites the installation root's tfvars from its spec, so the
+	// budget block is carried into it here too: a document left without the key
+	// by this stage is the alert's deletion in the next plan of this root, and
+	// the same rule as installRoot's read applies (carriedBudget).
+	spec, err = r.carriedBudget(ctx, c, spec)
 	if err != nil {
 		return infra.InstallationOutputs{}, err
 	}
@@ -4700,57 +4896,10 @@ func (r *initRun) refuseCoordinatorUnattended() error {
 	return nil
 }
 
-// checkOrchestrator refuses the --orchestrator opt-in where it cannot be what
-// the owner reads and confirms. It is --coordinator's gate one account over and
-// for its reasons, plus the ordering this one has of its own: the block's
-// token-minter row is bound on the Firebase root's signer account, in that
-// root's project, and `fugaro update` applies the installation root BEFORE it
-// applies Firebase — so the block may only be written by the run that has the
-// Firebase outputs already (internal/cli's newInstallation2Stage, which is why
-// --firebase-project is required rather than merely useful).
-func (o *initOptions) checkOrchestrator() error {
-	if o.firebase == "" {
-		return userErr("--orchestrator opts the installation in to the resident orchestrator, the account that launches this installation's runs and consumes its mailbox: the block it writes binds iam.serviceAccounts.signJwt on the Firebase root's signer account and starts a service that reads the installation's database, so it is written by the run that has the Firebase outputs — it needs --firebase-project (fugaro update --firebase-project <id> --orchestrator)")
-	}
-	if o.yes {
-		return userErr("--orchestrator is not covered by any flag this run takes: the opt-in creates an account that may mint any identity in the installation (iam.serviceAccounts.signJwt on the budget signer), holds a copy of the pairing key and starts a Cloud Run service, so it is confirmed at a real terminal")
-	}
-	var set []string
-	for _, f := range []struct {
-		name string
-		on   bool
-	}{{"--repo", o.repo}, {"--forget", o.forget}, {"--print-vars", o.printVars},
-		{"--config-only", o.configOnly}, {"--publish-config", o.publishConfig}, {"--anchor", o.anchor}} {
-		if f.on {
-			set = append(set, f.name)
-		}
-	}
-	if len(set) > 0 {
-		return userErr("--orchestrator turns the resident orchestrator on, which is an apply: it excludes %s", strings.Join(set, ", "))
-	}
-	return nil
-}
-
-// refuseOrchestratorUnattended is the rest of --orchestrator's gate, the part
-// that reads the environment: a coding agent's session is refused, and so is a
-// run with no terminal to confirm at.
-func (r *initRun) refuseOrchestratorUnattended() error {
-	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
-		return userErr("--orchestrator opts the installation in to the resident orchestrator: %s", initflow.AgentRefusal(m))
-	}
-	if r.cmd == nil || !stdinIsTerminal(r.cmd.InOrStdin()) {
-		return userErr("--orchestrator is confirmed at a real terminal: run it from one")
-	}
-	return nil
-}
-
 // checkRepo refuses flag combinations that mean nothing for --repo.
 func (o *initOptions) checkRepo() error {
 	if o.coordinator {
 		return userErr("--coordinator opts the installation in to the coordinator's aggregation job, which is an apply of the installation's own root: it excludes --repo (run fugaro update --firebase-project <id> --coordinator for the installation)")
-	}
-	if o.orchestrator {
-		return userErr("--orchestrator opts the installation in to the resident orchestrator, which is an apply of the installation's own root: it excludes --repo (run fugaro update --firebase-project <id> --orchestrator for the installation)")
 	}
 	if o.provisionBatch {
 		// This run validates here and never reaches check(), so the pair has
@@ -5871,6 +6020,15 @@ const printVarsUngated = "these values are ungated: no discovery or readiness ch
 const printVarsUngatedInstallation = "these values are ungated: no discovery ran, so adopt_legacy_registry is false even when the bootstrap's legacy registry exists and is ours " +
 	"(a plan from these values would try to create it, and nothing imports what exists); set up the installation through fugaro setup, not by applying these"
 
+// printVarsNoBudget is fugaro setup --print-vars's warning about the budget: an
+// ordinary run carries the block from the installation's own two records (R5,
+// docs/managed-flag-ergonomics/reconciliation.md), and this path reads no cloud
+// by design, so the values it prints hold no budget block even for an
+// installation that has an alert. Printed only where the run was given no
+// budget flag: with --budget the block is in the document, from the flags.
+const printVarsNoBudget = "the budget alert this installation holds is not in these values: --print-vars reads no cloud, so the amount and currency an ordinary run carries from the project's creation fact, " +
+	"and the billing account it carries from the installation's state, are missing (apply these and the alert would be deleted; pass --budget, --budget-currency and --billing-account to print it)"
+
 // loadRepoConfig selects the project config the first run wrote, with
 // --gcp-project and --region applied. The checkout that selects it is
 // dir's, the one being onboarded, not the working directory's.
@@ -6172,7 +6330,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 		// does not admit this plan (D1016, update_managed.go). A repository root
 		// is one of Fugaro's own too, so it is judged by the same cover and the
 		// same guard the installation's roots are.
-		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), nil)
+		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), nil, nil)
 		if err != nil {
 			return plan, err
 		}

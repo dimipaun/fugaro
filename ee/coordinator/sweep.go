@@ -438,8 +438,11 @@ func (s *Sweeper) Sweep(ctx context.Context, repos []Repo) (Result, error) {
 // beat writes the heartbeat at coordpath.PathHeartbeat, stamped with the
 // database's own clock: with ok false it moves started_at and leaves ok_at
 // where the last successful tick left it, which is what a tick's beginning
-// says; with ok true it moves both, which is what a tick that reached its end
-// says.
+// says; with ok true it moves ok_at and leaves started_at where that beginning
+// put it, which is what a tick that reached its end says. started_at is written
+// by the tick's first beat and by nothing else, so a tick that took a while
+// reads as one that began when it began rather than as one that began when it
+// finished.
 //
 // The read comes before the stamp, and the stamp before the write, for two
 // reasons. ok_at is a fact of the last successful tick and not of this one, so
@@ -471,9 +474,10 @@ func (s *Sweeper) beat(ctx context.Context, ok bool) error {
 	if !has {
 		return nil
 	}
-	hb.StartedAt = now.UTC()
 	if ok {
 		hb.OKAt = now.UTC()
+	} else {
+		hb.StartedAt = now.UTC()
 	}
 	return s.Store.Write(ctx, coordpath.PathHeartbeat, hb)
 }

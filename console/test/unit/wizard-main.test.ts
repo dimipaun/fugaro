@@ -95,6 +95,7 @@ import {
   validateSetupAnswers,
 } from '../../src/main/wizardrun'
 import type { SetupAnswersHeld, SetupBounds, SetupPlanner } from '../../src/main/wizardrun'
+import { LAPSE_REFUSAL } from '../../src/main/licence-state'
 import { NEW_READ_BOUNDS } from '../../src/source/new-reads'
 import {
   SETUP_ANSWER_KEYS,
@@ -102,7 +103,7 @@ import {
   SETUP_RIGOR_MODES,
 } from '../../src/shared/new-ops'
 import { SourceRefusal } from '../../src/source/source'
-import { LITERAL_PLACEHOLDER, PATH_PLACEHOLDER, URL_PLACEHOLDER } from '../../src/shared/sanitize'
+import { LITERAL_PLACEHOLDER } from '../../src/shared/sanitize'
 import { UNREADABLE_VERSION } from '../../src/shared/version'
 import {
   CANCEL_LABEL,
@@ -390,6 +391,8 @@ function aWizard(
     readonly digest?: (bytes: Uint8Array) => string
     readonly bounds?: SetupBounds
     readonly code?: number
+    /** the licence: valid unless a case says otherwise. */
+    readonly lapsed?: () => boolean
   } = {},
 ) {
   const confirmer = aConfirmer()
@@ -406,6 +409,9 @@ function aWizard(
     plan: rows.planner,
     cliVersion: options.cliVersion ?? '0.120.0',
     floor: options.floor ?? null,
+    // The licence is valid unless a case says otherwise: the lapse's gate is at
+    // the door (`lapseHandlers`) *and* here, where the apply really starts.
+    lapsed: options.lapsed ?? (() => false),
     spawner: recorder.spawner,
     directories: rows.directories,
     // The serialiser is counted on every wizard, so "serialised once" is a fact
@@ -1198,6 +1204,46 @@ describe('setup.apply', () => {
     expect(removed).toHaveLength(1)
   })
 
+  it('stops the apply the window’s own yes starts when the licence has lapsed', async () => {
+    // **The lapse is asked where the child is spawned, and not only at the
+    // door.** The window's yes reaches `runApply` from `decide`, and no IPC
+    // handler is on that path at all -- so `lapseHandlers`' gate on
+    // `setup.apply` (the row's own `refusedAfterLapse` column) is not what stops
+    // a plan the operator made after the lapse, which is kept and opens its
+    // window. The plan is a dry run and stays reachable; the apply it stands for
+    // is the row the lapse takes away, and this is that column on the window's
+    // path.
+    let lapsed = true
+    const feeds = [aFeed([DONE]), aFeed([DONE]), aFeed([DONE])]
+    const { wizard, calls, confirmer, removed } = aWizard({
+      floor: '0.120.0',
+      lapsed: () => lapsed,
+      feeds,
+    })
+    await wizard['setup.plan'](planArgs(anAnswers()))
+    // The plan is a child of its own and runs: the lapse takes the apply, not the
+    // plan the operator reads before deciding.
+    expect(calls).toHaveLength(1)
+    confirmer.opened[0]?.decide(true)
+    await flush()
+    // **Nothing was spawned**, and the renderer's own door answers the lapse's
+    // sentence -- the one sentence a lapsed console gives (`licence-state.ts`) --
+    // rather than the apply's. The working directory goes with the refusal
+    // instead of staying behind a record nothing will use.
+    expect(calls).toHaveLength(1)
+    expect(await refusalOf(() => wizard['setup.apply']({}))).toBe(LAPSE_REFUSAL)
+    expect(removed).toHaveLength(1)
+
+    // **The answer is read per apply and not captured once**: a renewal pasted
+    // during the session gives the apply back at the next plan, which is why the
+    // wiring asks the predicate instead of holding its answer.
+    lapsed = false
+    await wizard['setup.plan'](planArgs(anAnswers()))
+    confirmer.opened[1]?.decide(true)
+    await flush()
+    expect(calls).toHaveLength(3)
+    expect((await wizard['setup.apply']({})).document.lines).toEqual([DONE])
+  })
   it('gives the record and the directory up on a no, and applies nothing', async () => {
     const { wizard, calls, confirmer, removed } = aWizard({ floor: '0.120.0' })
     await wizard['setup.plan'](planArgs(anAnswers()))
@@ -1245,7 +1291,7 @@ describe('setup.apply', () => {
 // ---------------------------------------------------------------------------
 
 describe('the events the console answers with', () => {
-  it('puts every named field through its class, and never the raw value', async () => {
+  it('puts every named field through its class, and rebuilds the document it arrived in', async () => {
     // A `left_for_you` line is the CLI's own sentence and it can carry anything
     // a cloud project put in it. Every field the contract names goes through
     // `NEW_OPERATION_TEXT_CLASSES` before it reaches the renderer.
@@ -1274,11 +1320,12 @@ describe('the events the console answers with', () => {
     const lines = answer.document.lines as readonly JSONObject[]
     expect(lines).toHaveLength(3)
     const drawnHostile = lines[1] as JSONObject
-    expect(drawnHostile['text']).toBe(
-      `run it: ${URL_PLACEHOLDER} now ${PATH_PLACEHOLDER}`,
-    )
-    expect(drawnHostile['text']).not.toContain('evil.invalid')
-    expect(drawnHostile['text']).not.toContain('/Users/ana')
+    // The URL and the path are drawn as written: neither carries a credential,
+    // and this layer replaces a value only for the credential in it (D3213), so
+    // the sentence the CLI wrote reaches the window whole.
+    expect(drawnHostile['text']).toBe('run it: https://evil.invalid/x now /Users/ana/plan.md')
+    expect(drawnHostile['text']).toContain('evil.invalid')
+    expect(drawnHostile['text']).toContain('/Users/ana')
     // A field with no class is carried as it arrived (`kind` is not in the
     // table), and the walk still rebuilt the document: nothing the renderer
     // reads is the object the child printed.
@@ -1328,8 +1375,14 @@ describe('the events the console answers with', () => {
       expect(lines.map((line) => line['type'])).toEqual(done.map((line) => line['type']))
       expect(lines.at(-1)).toMatchObject({ type: 'done' })
       expect(finished.confirmer.opened).toHaveLength(1)
-      // ...and the golden's own bucket name is not what reaches a screen.
-      expect(JSON.stringify(answer)).not.toContain('gs://fugaro-runs-proj-1234')
+      // ...and every sentence the golden wrote is drawn as the CLI's own words:
+      // a bucket is the operator's own resource and not a credential (D3213), so
+      // the layer line that names `gs://fugaro-runs-proj-1234` arrives whole
+      // rather than masked, and so does every other line an operator reads.
+      for (const [at, line] of done.entries()) {
+        if (line['type'] !== 'stage') continue
+        expect(lines[at]?.['detail'], JSON.stringify(line['detail'])).toBe(line['detail'])
+      }
     }
 
     // The third run ends in `error`, and that is the plan's own refusal: the

@@ -13,14 +13,18 @@
 //
 // What the split costs is what F44 settles: validate.go resolves an item's
 // `depends_on` inside the one state it validates and dependenciesDone reads one
-// state, so a dependency never crosses nodes. An item's dependencies live in
-// the node the item does, and the validator refuses one naming an item of
-// another node for the same reason it refuses one naming nothing.
+// state, so a dependency never crosses nodes **by a bare name**. An item's
+// dependencies live in the node the item does, and the validator refuses one
+// naming an item of another node for the same reason it refuses one naming
+// nothing — which is why a dependency that really does cross a node is written
+// as the reference D3208 adds, `<orchestrator>/<item>`, and resolved by
+// searching that orchestrator's shards (ReadShards, FindItem).
 
 package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -117,6 +121,100 @@ func PlanNames(ctx context.Context, db Keys, agentID string) ([]string, error) {
 		names = append(names, name)
 	}
 	return names, nil
+}
+
+// ShardDB is the read half a cross-orchestrator reference is resolved through
+// (D3208): one node read (Reader) and the keys of a plan list (Keys), which is
+// the whole of what reading another orchestrator's shards needs. It is narrower
+// than CAS on purpose, like Reader beside it: a cycle resolves a reference and
+// writes nothing, and a seam that could not write is one that cannot write over
+// another orchestrator's state by mistake.
+type ShardDB interface {
+	Reader
+	Keys
+}
+
+// ReadShards reads every node of one orchestrator id: its state node, its
+// standing backlog and one node per imported plan (D2735). It is the whole of
+// what a reference into that orchestrator is resolved by searching (D3208), and
+// it is a reader that holds nothing — no ETag and no lease — for the reason
+// ReadShard is: what reads another orchestrator's items never writes its nodes.
+//
+// The role is the caller's, as it is for ReadShard: every node of this subtree
+// belongs to the orchestrator loop, and a document another loop wrote is refused
+// (ErrNotThisNode) rather than read as this one's.
+func ReadShards(ctx context.Context, db ShardDB, agentID, role string) ([]State, error) {
+	names, err := PlanNames(ctx, db, agentID)
+	if err != nil {
+		return nil, err
+	}
+	shards := make([]Shard, 0, len(names)+2)
+	shards = append(shards, ShardState, ShardBacklog)
+	for _, name := range names {
+		shards = append(shards, PlanShard(name))
+	}
+	out := make([]State, 0, len(shards))
+	for _, shard := range shards {
+		s, err := ReadShard(ctx, db, agentID, role, shard)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+// CrossReader reads the shards of one orchestrator id: what a reference into
+// that orchestrator is resolved against (D3208). It is a seam and not the
+// client because a cycle reads only the orchestrators its own items reference —
+// the reader is asked for one id at a time, and nothing here lists them — which
+// is what a test can hold it to.
+//
+// The nodes and not the items: a bare dependency of an item the reading found is
+// resolved in the node that item is on and nowhere else (F44), so a reader that
+// flattened an orchestrator's nodes into one list would lose the fact a cycle's
+// search is held to.
+type CrossReader interface {
+	Shards(ctx context.Context, agentID string) ([]State, error)
+}
+
+// CrossShards is the CrossReader over the Realtime Database: every node one
+// orchestrator has, read as the orchestrator loop reads its own (ReadShards).
+type CrossShards struct {
+	DB   ShardDB
+	Role string
+}
+
+// Shards reads every shard of one orchestrator id. A node of the subtree that
+// does not exist yet reads as that orchestrator's empty state, so an
+// orchestrator with no item at all is no error — a reference into it simply
+// resolves to nothing, which holds the item that names it.
+func (r CrossShards) Shards(ctx context.Context, agentID string) ([]State, error) {
+	if r.DB == nil {
+		return nil, errors.New("orchestrator: a cross reference needs a store to be read through")
+	}
+	return ReadShards(ctx, r.DB, agentID, r.Role)
+}
+
+// FindItem finds the item a reference names among one orchestrator's items: by
+// the work item's own id, or by the plan task it stands for (D3208, validItem).
+// A name that is both one item's id and another's plan task is the first of them
+// the shards carry, which is the order the state declares its items in.
+func FindItem(items []WorkItem, name string) (WorkItem, bool) {
+	for _, w := range items {
+		if itemNamed(w, name) {
+			return w, true
+		}
+	}
+	return WorkItem{}, false
+}
+
+// itemNamed reports whether one item is the one a name refers to: its own id, or
+// the plan task it stands for. It is the whole of what a reference's item half
+// admits (validItem), and one rule for the two readers of it — the resolution of
+// a reference (FindItem) and the cycle search that follows the same references.
+func itemNamed(w WorkItem, name string) bool {
+	return w.ID == name || (w.PlanTask != "" && w.PlanTask == name)
 }
 
 // shardPath is the node a shard names under one orchestrator id, and the whole

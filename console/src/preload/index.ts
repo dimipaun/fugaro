@@ -485,6 +485,16 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // comes back as a **declaration** -- the string a writer put in its own
   // record -- never as an identity this process establishes.
   ['coordinator.intents', 'coordinatorIntents'],
+  // The orchestrator map (the console-fixes plan's CG7a, D3221): `fugaro
+  // orchestrator map --json`, the project's active orchestrators, the
+  // connections between them and the coordinator's heartbeat. One row here for
+  // the same reason as every other, and this row is the declarations read's
+  // shape exactly: the operation has no argument at all, so the row declares
+  // none and every word of the argv is the main process's own. The document is
+  // the one the Coordinator tab draws, and the read sits behind
+  // `ORCHESTRATOR_MAP_CLI_FLOOR` (`src/shared/version.ts`) -- a CLI below it is
+  // asked for nothing, and the tab names the version it needs.
+  ['orchestrator.map', 'orchestratorMap'],
   // The record's move (the dependency-graph plan's GV3.2): one task of the
   // project's roadmap record into a release box, or out of one --
   // `coordinator roadmap move <plan>/<task> --to <release> --expect <release>
@@ -612,10 +622,10 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // Every one of them is **inert until used**: each is behind a floor
   // (`src/shared/version.ts`) that is `null` until the CLI release that carries
   // its flags, so a screen that asked anyway is refused before a child exists,
-  // and the handler in `src/main/index.ts` answers 'not available in this
-  // build' until I-OPS registers the real one. None of them has a flag a
-  // caller can choose: the mode words (`--stream`, `--me`, `--plan-only`) are
-  // fixed words of the row's command path in `src/main/spawn.ts`.
+  // and the handler `src/main/handlers.ts` puts behind each refuses in the
+  // flow's own words, naming that floor. None of them has a flag a caller can
+  // choose: the mode words (`--stream`, `--me`, `--plan-only`) are fixed words
+  // of the row's command path in `src/main/spawn.ts`.
   ['runs.stream', 'streamRuns'],
   ['spend.stream', 'streamSpend'],
   ['budget.stream', 'streamBudget'],
@@ -631,12 +641,24 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // here for AL's reason -- the rows a plan adds are one diff. Both are inert
   // until used: `MODELS_ADD_CLI_FLOOR` is `null` until the CLI release that
   // carries `--no-apply` on `models add` and the plan document (MD1), and the
-  // handlers in `src/main/index.ts` answer 'not available in this build' until
-  // the task that wires the window registers the real ones. No flag either row
-  // carries is a caller's: `--no-apply`, `--dry-run` and `--json` are fixed
-  // words of the rows' command paths (`src/main/spawn.ts`).
+  // handler behind each refuses in the write's own words, naming that floor
+  // (`src/main/handlers.ts`). No flag either row carries is a caller's:
+  // `--no-apply`, `--dry-run` and `--json` are fixed words of the rows' command
+  // paths (`src/main/spawn.ts`).
   ['models.add.plan', 'planModelsAdd'],
   ['models.add', 'addModel'],
+  // **The image write** (the console improvements plan's MW2, D2903), the two
+  // rows of the Manage view's images write: the CLI's own dry run, which prints
+  // the plan document the window draws, and the write itself. They are appended
+  // here for the models write's reason -- the rows a plan adds are one diff --
+  // and both are inert until used: `IMAGE_ADD_CLI_FLOOR` is `null` until the CLI
+  // release that carries `--no-apply` on `image add` and the plan document (MD2),
+  // and the handler behind each refuses in the write's own words, naming that
+  // floor (`src/main/handlers.ts`). No flag either row carries is a caller's:
+  // `--no-apply`, `--dry-run` and `--json` are fixed words of the rows' command
+  // paths (`src/main/spawn.ts`).
+  ['image.add.plan', 'planImageAdd'],
+  ['image.add', 'addImage'],
 ] as const) satisfies readonly (readonly [string, string])[]
 
 /**

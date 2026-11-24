@@ -205,8 +205,10 @@ func oneLine(t *testing.T, what, text string) {
 // amount — the marker's version 1 — opens the gate WITH A WARNING rather than a
 // refusal, because the read answered that the project is managed and what is
 // missing is only the evidence that the owner chose a budget. The gate is open
-// (Refuse nil) and the warning names the reason and the owner's own commands,
-// and it names no environment variable.
+// (Refuse nil) and the warning names the reason and the owner's own commands in
+// the plain forms they now have — `fugaro managed flag` takes the selected
+// installation's project and defaults the figure, and a creation takes the same
+// default (D2213, D2212) — and it names no environment variable.
 func TestApplyGateOpensWithAWarningOnAVersionOneMarker(t *testing.T) {
 	const reason = "gs://fugaro-runs-proj-1234/fugaro/managed.json records no budget amount for aurora"
 	gate, err := ApplyGate(BudgetRead{Project: project, Managed: true, Reason: reason})
@@ -221,10 +223,21 @@ func TestApplyGateOpensWithAWarningOnAVersionOneMarker(t *testing.T) {
 		t.Fatal("the gate opened with no warning, so the session is told nothing about the missing budget")
 	}
 	for _, want := range []string{project, "has no budget recorded", reason,
-		"fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC",
+		"`fugaro managed flag`",
 		"fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID"} {
 		if !strings.Contains(w, want) {
 			t.Errorf("the warning %q does not carry %q", w, want)
+		}
+	}
+	// And the shapes the commands no longer have are not offered instead: an
+	// owner sent to `fugaro managed flag <gcp-project-id> --budget N ...` would
+	// be reading a syntax this build replaced (D2213, D2212). The creation half
+	// keeps --managed, which is not a shape this build dropped: it is what makes
+	// the creation record a budget at all, so a warning without it would send
+	// its reader to the creation fact it is warning about.
+	for _, unwanted := range []string{"<gcp-project-id>"} {
+		if strings.Contains(w, unwanted) {
+			t.Errorf("the warning %q still carries %q", w, unwanted)
 		}
 	}
 	if strings.Contains(w, "FUGARO_") || strings.Contains(w, "export ") {

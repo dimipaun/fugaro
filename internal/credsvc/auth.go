@@ -61,6 +61,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -1653,21 +1654,13 @@ type LauncherCaller struct {
 	Sub string
 }
 
-// maxLauncherSubDigits bounds the account id the launcher class carries, and
-// it is 21 because that is the width of a Google account id — a number above
-// 2^53, which is why internal/infra/tf's identity handling already carries the
-// same number, a service account's unique_id, as text rather than rendering it.
-// Twenty digits would be the width of a uint64, and these ids are wider than
-// one, so a bound derived from a 64-bit number refuses every launcher there is.
-//
-// The bound is a SHAPE check rather than a fence against a stranger's text: the
-// claim is inside a token Google signed, so a caller cannot choose this value
-// — what the bound keeps out of the service's own two sinks (the slip's owner
-// and the secret name fugaro_u_<id>_<name>, whose total length Secret Manager
-// bounds) is an id Google has never issued. A value the issuer widens past this
-// one day is refused rather than carried, which is the fail-closed answer, and
-// widening it would be this constant's change and the test that pins it.
-const maxLauncherSubDigits = 21
+// maxLauncherSubDigits is gateway.MaxCredentialOwnerDigits: the width of a Google account id, which
+// the run's proxy and this service both hold a value to — one definition, in the package both ends of
+// the wire can see (this service imports the gateway, and the gateway cannot import this service,
+// F26). The number's own reasoning, and why the bound is a shape check rather than a fence, is that
+// constant's doc: it is not respelled here, because a bound spelled twice is a bound that can drift
+// with nothing red.
+const maxLauncherSubDigits = gateway.MaxCredentialOwnerDigits
 
 // VerifyLauncher admits the caller of the grant route and of the intake, or
 // refuses it with ErrUnverifiedJob (the caller is not one of the
@@ -1760,7 +1753,10 @@ func (a *Authenticator) VerifyServiceAccountLauncher(ctx context.Context, tok st
 
 // launcherSub reads the token's `sub` claim and holds it to the shape the
 // intake's name grammar can use: the digits of a Google account id, and no
-// more than maxLauncherSubDigits of them.
+// more than maxLauncherSubDigits of them. That check is
+// gateway.ValidCredentialOwner's — one definition of the rule for both ends of
+// the wire — so a widening here would widen what a credential's owner header
+// may name as well.
 //
 // The claim must be a JSON STRING of digits. A `sub` that is a number is
 // refused rather than stringified — the issuer writes it as a string, and a
@@ -1771,13 +1767,8 @@ func (a *Authenticator) VerifyServiceAccountLauncher(ctx context.Context, tok st
 // fugaro_u_<id>_<name>.
 func launcherSub(claims map[string]any) (string, bool) {
 	sub := claimString(claims, "sub")
-	if sub == "" || len(sub) > maxLauncherSubDigits {
+	if !gateway.ValidCredentialOwner(sub) {
 		return "", false
-	}
-	for i := 0; i < len(sub); i++ {
-		if sub[i] < '0' || sub[i] > '9' {
-			return "", false
-		}
 	}
 	return sub, true
 }

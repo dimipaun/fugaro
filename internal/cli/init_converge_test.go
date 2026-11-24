@@ -153,7 +153,7 @@ func TestTheStateBucketCreationNeedsARealTerminal(t *testing.T) {
 func TestNonInteractiveNeverReadsFirestoreLocation(t *testing.T) {
 	rd := &readSpy{Reader: strings.NewReader("us-east5\n")}
 	r := &initRun{o: &initOptions{nonInteractive: true}, w: &strings.Builder{}, in: bufio.NewReader(rd)}
-	err := r.confirmLocation()
+	err := r.confirmLocation(fsLocation("us-east5"))
 	var ny *initflow.NeedsYouError
 	if !errors.As(err, &ny) || strings.Contains(err.Error(), "--yes") {
 		t.Fatalf("err %v: the location is the user's, and --yes does not give it", err)

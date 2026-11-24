@@ -279,8 +279,8 @@ const RECIPES_DOC = {
 }
 
 /** fakeBridge is a bridge of this build's own making, from `new-ops.ts`'s names
- * rather than from the stub (`stubs/bridge-stub.ts` says a consumer's test
- * builds its own, which is what lets I-OPS delete the stub whole). Each named
+ * rather than from a fixture (`contract-ops.md` says a consumer's test builds
+ * its own, which is what let I-OPS delete the stub bridge whole). Each named
  * operation gets the method the contract names for it and answers the document
  * under `document`; every other operation has no method at all, which is the
  * older build this file's last case reads. */
@@ -486,12 +486,13 @@ describe('the repositories kind', () => {
         }
       }
     }
-    // Non-vacuity, in this file's own idiom (`spawnsToo` below): the fixture's
-    // third repository carries the two names a free-text class redraws, so the
-    // assertion above is one that can fail -- `label`, the class the two columns
-    // declared until this round, draws exactly that.
-    const asFreeText = sanitizeText('github/dimipaun/fugaro', 'label', 'repos.published')
-    expect(asFreeText.ok && asFreeText.text === 'github/dimipaun/fugaro').toBe(false)
+    // Non-vacuity, in this file's own idiom (`spawnsToo` below): the assertion
+    // above is one that can fail, because a class this module does not use for
+    // these columns rewrites what it is given -- `repository` refuses a
+    // three-part path rather than drawing it, which is why the columns declare a
+    // free-text class and not that one.
+    const asRepository = sanitizeText('github/dimipaun/fugaro', 'repository', 'repos.published')
+    expect(asRepository.ok && asRepository.text === 'github/dimipaun/fugaro').toBe(false)
   })
 
   it('gives each row its own two Copy-commands, and none to the kind', () => {

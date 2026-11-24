@@ -1566,38 +1566,53 @@ var hopByHop = map[string]bool{
 	"Te": true, "Trailer": true, "Transfer-Encoding": true, "Upgrade": true,
 }
 
-// dropResponseHeaders never reach the agent: they identify the
-// organization behind the real key, or set state on the gateway's origin.
+// dropResponseHeaders never reach the agent. The rule the list keeps is that a
+// header belongs here when what it says must not reach the agent: it identifies
+// the organization behind the real key, it sets state on the gateway's origin,
+// it names a credential or the person whose token it is, or it is a statement
+// one of the two services makes to the run's own process rather than to the
+// agent. A later upstream kind that answers with such a header adds it here; a
+// header whose content the agent may read does not belong here however the
+// upstream came to send it.
 //
-// The credentials service's answer headers are five more of them (C1.15,
-// service.go), and they are dropped for every upstream kind rather than only
-// under a service one: the tier is what C1.16 charges the call by, the name
-// is which of the project's credentials answered, the owner is whose token
-// that credential is (F16), the switch is which credential a call moved
+// The credentials service's answer headers (C1.15, service.go) are the ones
+// that name a credential, and they are dropped for every upstream kind rather
+// than only under a service one: the tier is what C1.16 charges the call by,
+// the name is which of the project's credentials answered, the owner is whose
+// token that credential is (F16), the switch is which credential a call moved
 // between, and the probe is which tiers were tried. The agent is the one party
-// that must never learn the set of credentials its project holds (D143), and
-// every later upstream kind that answers with them would have to remember this
-// list.
+// that must never learn the set of credentials its project holds (D143).
 //
-// The workspace's headroom header is the fifth (W7, workspace_headroom.go),
-// and the figure it carries is the workspace's own — its month across all of
-// its members, per budget.WorkspaceRoom — which is delivered to a member's job
-// and to no one else on that side (spec §5: the service answers the calling
-// member's job service account "and no one else"). So it joins the four above
-// rather than travelling beside them: the gateway reads it where they are read
-// (before this copy, so the run's own process has it through DeliveredHeadroom)
-// and the agent is handed the model's answer without it.
+// The workspace's headroom header (W7, workspace_headroom.go) is dropped for
+// the same reason, and the figure it carries is the workspace's own — its month
+// across all of its members, per budget.WorkspaceRoom — which is delivered to a
+// member's job and to no one else on that side (spec §5: the service answers
+// the calling member's job service account "and no one else"). The gateway
+// reads it where the credentials service's headers are read (before this copy,
+// so the run's own process has it through DeliveredHeadroom) and the agent is
+// handed the model's answer without it.
 //
-// The workspace's refusal marker is the sixth (workspace_refusal.go), and it
-// joins them for the headroom's reason and one of its own: the marker is the
-// workspace's own statement about itself, delivered to the calling member's
-// job, and it is between the two binaries rather than part of any answer the
-// agent is handed. A refusal is not relayed at all (D143), so the drop is the
-// belt to that brace — a 2xx that carried the header would still not reach the
-// agent with it.
+// The workspace's refusal marker (workspace_refusal.go) is dropped for the
+// headroom's reason and one of its own: the marker is the workspace's own
+// statement about itself, delivered to the calling member's job, and it is
+// between the two binaries rather than part of any answer the agent is handed.
+// A refusal is not relayed at all (D143), so the drop is the belt to that brace
+// — a 2xx that carried the header would still not reach the agent with it.
+//
+// The chain wire's three answer members (chainwire.go: the source that served
+// the call, the fallback flag and the served model) are dropped for the
+// credential headers' reason: they are the run's own accounting of which of the
+// project's sources served a call, which is the set of credentials D143 keeps
+// from the agent, and they are read into the step's record hook before this
+// copy (serviceAnswer). They join the list for every upstream kind and not
+// only a chain-serving one, which is what the list is for: the drop is what
+// makes the answer safe to relay, so it does not depend on the run's own
+// option, and a service that wrote them to a gateway that asked for nothing
+// still does not reach the agent with them.
 var dropResponseHeaders = map[string]bool{
 	"Anthropic-Organization-Id": true, "Set-Cookie": true, "Set-Cookie2": true,
 	HeaderTier: true, HeaderCredential: true, HeaderCredentialOwner: true, HeaderSwitch: true, HeaderProbe: true,
+	HeaderSource: true, HeaderFallback: true, HeaderModel: true,
 	WorkspaceHeadroomHeader: true, WorkspaceRefusalHeader: true,
 }
 

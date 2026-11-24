@@ -525,7 +525,17 @@ func (r *initRun) gateNamesAnIAMCall(bucket string) string {
 // forbids. It is the installation root's own and no other step's: the
 // runs_launcher grants live in that module, and every other call site passes
 // nil.
-func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey, cover managedmode.Cover, upgrade []string) (bool, error) {
+//
+// identity is the other half of the same fact (LM20, F25): the minter rows
+// infra.IdentityAllowDelete named out of this plan when the launcher-does-not-
+// mint switch is off, which the gate admits as this binary's own removals
+// beside the upgrade's replaces and the record below names apart from them. It
+// is the CALLER's to match out of the plan it is judging and never this
+// function's: the switch-off plan is the installation root's, so the Firebase
+// root — whose own plan drops a member's row for a reason that is not the
+// switch — passes nil here, and LM14 gives that root's guard the list at its
+// level (F32).
+func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey, cover managedmode.Cover, upgrade, identity []string) (bool, error) {
 	g := r.gate
 	if g == nil || !g.managed {
 		return false, nil
@@ -549,7 +559,7 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	}
 	verdict, err := managedmode.Gate(ctx, infra.PlanFile, managedmode.Spec{
 		Project: r.projectName, GCPProject: r.gcpProject,
-		Cover: cover, Imports: imports, TF: t, Upgrade: upgrade,
+		Cover: cover, Imports: imports, TF: t, Upgrade: append(slices.Clone(upgrade), identity...),
 	})
 	if err != nil {
 		// A plan terraform cannot read is never admitted (managed.Gate's own
@@ -598,9 +608,9 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	case !verdict.OK:
 		conv = managedmode.ConvergeRefusedWithWarnings(doc, managedmode.RuleLines(verdict.Refusals), warnings)
 	case len(warnings) == 0:
-		conv = managedmode.ConvergeAdmitted(doc, admittedRules(upgrade, false))
+		conv = managedmode.ConvergeAdmitted(doc, admittedRules(upgrade, identity, false))
 	default:
-		conv = managedmode.ConvergeWarned(doc, admittedRules(upgrade, true), warnings)
+		conv = managedmode.ConvergeWarned(doc, admittedRules(upgrade, identity, true), warnings)
 	}
 	m, err := g.g.admit(ctx, conv)
 	if err != nil {
@@ -1213,6 +1223,15 @@ func (r *initRun) gateDeleteLeft(reason string, doc []byte, verdict managedmode.
 // unless the rule says what the gate did. The empty case is the three sentences
 // every record this program wrote before the issues grant holds, unchanged.
 //
+// identity is the other half of the same fact (LM20): the minter rows this
+// update's switch turns off, as infra.IdentityAllowDelete named them out of the
+// plan, which the step passes to the gate as Spec.Upgrade's addresses beside
+// the launcher upgrade's replaces. A plan that carries one DID have a delete
+// the guard admitted, so the guard's own sentence above is false of it as well
+// — the two lists are read together for that sentence and named apart in the
+// rules, because a minter row's delete is not a replace of a grant and the
+// sentence that says it was would be one the owner cannot check.
+//
 // warned is true when the verdict recorded CONTENT rules and did not refuse on
 // them (D1545: managed.Converge.Warned). Two of the three sentences above are
 // false of such a plan and are written as what the gate did instead: the guard
@@ -1222,12 +1241,15 @@ func (r *initRun) gateDeleteLeft(reason string, doc []byte, verdict managedmode.
 // cannot check against the plan is worse than no rule — so this parameter is
 // the verdict's own answer and never a caller's preference, and the rules that
 // fired are the record's warnings beside it.
-func admittedRules(upgrade []string, warned bool) []string {
+func admittedRules(upgrade, identity []string, warned bool) []string {
+	own := len(upgrade) > 0 || len(identity) > 0
 	guard := "the guard refused no delete and no replace, so the plan removes nothing of fugaro's own (the owner's delete list admits no removal in the embedded roots)"
 	cover := "the cover of the embedded roots admitted every change in the plan"
 	costs := "the cost list blocked no attribute of the plan"
-	if len(upgrade) > 0 {
+	if own {
 		guard = "the guard refused no delete and no replace this binary's own upgrade does not make, so the plan removes nothing of fugaro's own (the owner's delete list admits no removal in the embedded roots)"
+	}
+	if len(upgrade) > 0 {
 		cover = "the cover of the embedded roots admitted every change in the plan, each of the upgrade's replaces asked as the create it makes (its removal half is this binary's own, and no rule of the cover read it)"
 	}
 	if warned {
@@ -1238,14 +1260,19 @@ func admittedRules(upgrade []string, warned bool) []string {
 		guard = "the guard refused no delete and no replace, so the plan removes nothing of fugaro's own that D1551's classification protects (the owner's delete list admits no removal in the embedded roots)"
 		cover = "the cover of the embedded roots refused no change of this plan that its integrity rules judge — the changes it did not announce did not refuse it, and they are this record's warnings (D1545)"
 		costs = "the cost list refused no attribute of the plan — a blocked attribute did not refuse it, and it is one of this record's warnings (D1545)"
-		if len(upgrade) > 0 {
+		if own {
 			guard = "the guard refused no delete and no replace this binary's own upgrade does not make, so the plan removes nothing of fugaro's own that D1551's classification protects (the owner's delete list admits no removal in the embedded roots)"
+		}
+		if len(upgrade) > 0 {
 			cover = "the cover of the embedded roots refused no change of this plan that its integrity rules judge, each of the upgrade's replaces asked as the create it makes (its removal half is this binary's own, and no rule of the cover read it) — the changes it did not announce did not refuse it, and they are this record's warnings (D1545)"
 		}
 	}
 	rules := []string{guard, cover, costs}
 	if len(upgrade) > 0 {
 		rules = append(rules, "the replaces this binary's own upgrade makes were matched out of this plan, both halves of each change compared before it was named (infra.LauncherGrantUpgrade): "+safetext.FieldListLine(upgrade))
+	}
+	if len(identity) > 0 {
+		rules = append(rules, "the minter rows this update's identity switch turns off were named out of this plan (infra.IdentityAllowDelete): "+safetext.FieldListLine(identity))
 	}
 	return rules
 }

@@ -107,6 +107,146 @@ func TestRegisteredCommandJoinsTheRoot(t *testing.T) {
 	}
 }
 
+// TestRegisteredSubcommandJoinsItsParent is RegisterSubcommand's whole point: a
+// command of a family the core keeps — `fugaro orchestrator map` is CG6's
+// (docs/console-fixes/implementation-plan.md) — joins the family the released
+// tree builds, at its own path, without the core's own `orchestrator` file
+// naming it.
+func TestRegisteredSubcommandJoinsItsParent(t *testing.T) {
+	extendState(t)
+	released := childNamed(t, findCmd(t, newCoreRoot(), "orchestrator"), "ls").Short
+	if err := RegisterSubcommand("orchestrator", "fugaro-test-map", registeredCmd("fugaro-test-map", "mapped")); err != nil {
+		t.Fatalf("registering a command under orchestrator: %v", err)
+	}
+	if !slices.Contains(commandPaths(NewRootCmd()), "fugaro orchestrator fugaro-test-map") {
+		t.Fatal("the registered command is not in the tree under its parent")
+	}
+	out, _, err := execute(t, "orchestrator", "fugaro-test-map")
+	if err != nil {
+		t.Fatalf("running the registered command: %v", err)
+	}
+	if out != "mapped\n" {
+		t.Errorf("the registered command printed %q, want %q", out, "mapped\n")
+	}
+	// The released child is where it was: a registration adds one and takes
+	// none over.
+	if got := childNamed(t, findCmd(t, NewRootCmd(), "orchestrator"), "ls").Short; got != released {
+		t.Errorf("orchestrator ls is %q, want the released one (%q)", got, released)
+	}
+}
+
+// childNamed is one command's own child, for a test that asserts about a
+// released command under a parent rather than about the root.
+func childNamed(t *testing.T, parent *cobra.Command, name string) *cobra.Command {
+	t.Helper()
+	for _, c := range parent.Commands() {
+		if c.Name() == name {
+			return c
+		}
+	}
+	t.Fatalf("%s has no %s child", parent.Name(), name)
+	return nil
+}
+
+// TestSubcommandRegistrationTakesNoParentNameAliasOrFlag is the add-never-
+// replace rule one level down: a command under a family the core builds may not
+// answer to a name that family already answers to, to a name cobra answers to
+// itself below every command with children, or to a persistent flag that family
+// hands down to everything under it.
+func TestSubcommandRegistrationTakesNoParentNameAliasOrFlag(t *testing.T) {
+	extendState(t)
+	core := coreSurface()
+	if !core.subCommands["orchestrator"]["ls"] {
+		t.Fatal("orchestrator has no ls child: this test's taken name has moved")
+	}
+
+	// A parent the released tree does not build: the registration would be kept
+	// for a tree that never shows it.
+	if err := RegisterSubcommand("fugaro-test-no-family", "fugaro-test-map", registeredCmd("fugaro-test-map", "mapped")); err == nil {
+		t.Error("a registration under a command the released tree does not build was accepted")
+	} else if !strings.Contains(err.Error(), "fugaro-test-no-family") {
+		t.Errorf("the refusal %q does not name the parent it refused", err)
+	}
+
+	// A name the parent already answers to — its own child's, its child's
+	// alias', or one of the names every command with children answers to.
+	for _, name := range []string{"ls", "run", "help", "completion"} {
+		err := RegisterSubcommand("orchestrator", name, registeredCmd(name, "impostor"))
+		if err == nil {
+			t.Errorf("a registration under orchestrator answering to %q was accepted", name)
+		} else if !strings.Contains(err.Error(), name) {
+			t.Errorf("the refusal %q does not name %q", err, name)
+		}
+	}
+
+	// A constructor that builds another name: cobra would add it under the
+	// registered name and it would answer to its own.
+	if err := RegisterSubcommand("orchestrator", "fugaro-test-map", registeredCmd("fugaro-test-other", "mapped")); err == nil {
+		t.Error("a constructor whose command is named otherwise was accepted")
+	}
+
+	// An alias is a name the family answers to as surely as a command name is.
+	withAlias := func() *cobra.Command {
+		return &cobra.Command{Use: "fugaro-test-alias", Aliases: []string{"status"}, Short: "the registered impostor"}
+	}
+	if err := RegisterSubcommand("orchestrator", "fugaro-test-alias", withAlias); err == nil {
+		t.Error("a registration answering to status as an alias was accepted: cobra would find it before the released status")
+	}
+
+	// A persistent flag the root or the parent carries is inherited by
+	// everything under the parent, so re-declaring one takes it away from that
+	// subtree.
+	if !core.rootFlags["help"] {
+		t.Fatal("the root carries no --help flag: this test's flag name has moved")
+	}
+	withHelp := func() *cobra.Command {
+		c := &cobra.Command{Use: "fugaro-test-flag"}
+		c.PersistentFlags().Bool("help", false, "takes the root's help flag over")
+		return c
+	}
+	if err := RegisterSubcommand("orchestrator", "fugaro-test-flag", withHelp); err == nil {
+		t.Error("a registration declaring --help as a persistent flag was accepted: it takes the root's flag away from everything under the parent")
+	}
+
+	// A flag neither the root nor the parent declares is the registration's own.
+	ownConfig := func() *cobra.Command {
+		c := &cobra.Command{Use: "fugaro-test-own"}
+		c.PersistentFlags().String("fugaro-test-flag-name", "", "the registered command's own flag")
+		return c
+	}
+	if err := RegisterSubcommand("orchestrator", "fugaro-test-own", ownConfig); err != nil {
+		t.Errorf("a registered subcommand's own flag was refused: %v", err)
+	}
+}
+
+// TestLateOrDuplicateSubcommandRegistrationIsRefused is the same two refusals
+// the root's registration has, at the parent's depth: one name under one parent
+// is one command, and a registration that arrives after the tree is built would
+// never reach a tree.
+func TestLateOrDuplicateSubcommandRegistrationIsRefused(t *testing.T) {
+	extendState(t)
+	if err := RegisterSubcommand("orchestrator", "fugaro-test-map", registeredCmd("fugaro-test-map", "mapped")); err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterSubcommand("orchestrator", "fugaro-test-map", registeredCmd("fugaro-test-map", "mapped")); err == nil {
+		t.Error("a second registration of the same name under one parent was accepted")
+	}
+
+	// The same name under a different parent is a different command: the
+	// registry's key is the pair.
+	if err := RegisterSubcommand("escalation", "fugaro-test-map", registeredCmd("fugaro-test-map", "mapped")); err != nil {
+		t.Errorf("the same name under another parent was refused: %v", err)
+	}
+
+	NewRootCmd()
+	err := RegisterSubcommand("orchestrator", "fugaro-test-late", registeredCmd("fugaro-test-late", "mapped"))
+	if err == nil {
+		t.Error("a registration after the tree was built was accepted: it would never reach a tree")
+	} else if !strings.Contains(err.Error(), "already built") {
+		t.Errorf("the late registration's refusal = %q, want it named as late", err)
+	}
+}
+
 // TestRegisteredCommandCannotShadowACoreCommand is the registry's whole point:
 // a registration adds a command and never takes one over, so a name the
 // released tree holds is refused — and the tree the CLI builds still answers to
@@ -621,6 +761,30 @@ func TestGraphStubRefusesWhateverTheFlags(t *testing.T) {
 	assertStubSaysWhy(t, "graph", "graph", "--source", "coordinator", "--json")
 	assertStubSaysWhy(t, "graph", "graph", "--watch", "--json")
 	assertStubSaysWhy(t, "graph", "graph", "--help")
+}
+
+// TestPaidSubcommandsAreUnderAFamilyTheReleasedTreeKeeps pins the written-down
+// list cliRefPaidSection reads (docs_website_cliref_test.go): every entry has to
+// be a name below a family the released tree builds, and a name that family does
+// not answer to itself. An entry missing either half would exempt a reference
+// section this build can judge -- a command the core holds under a name it has,
+// or a name under a parent there is no command for -- and the core's own check
+// would stop holding that page.
+func TestPaidSubcommandsAreUnderAFamilyTheReleasedTreeKeeps(t *testing.T) {
+	extendState(t)
+	core := coreSurface()
+	if len(paidSubcommands) == 0 {
+		t.Fatal("no paid subcommand is written down: this test would prove nothing")
+	}
+	for _, sub := range paidSubcommands {
+		if !core.rootCommands[sub.parent] {
+			t.Errorf("paid subcommand %s %s: the released tree has no command of that name at the root", sub.parent, sub.name)
+			continue
+		}
+		if core.subCommands[sub.parent][sub.name] {
+			t.Errorf("paid subcommand %s %s: the released tree answers to that name below %s, so that section is the core's to judge", sub.parent, sub.name, sub.parent)
+		}
+	}
 }
 
 // ---- the launch planner (A3.0) -------------------------------------------

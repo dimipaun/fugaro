@@ -298,6 +298,13 @@ variable "intake" {
     service    = string
     image      = string
     url        = optional(string)
+    # people is the intake's second class list (WC3, R5): the workspace
+    # roster's people, for an installation that is a workspace's project, and
+    # empty for every other one (`fugaro update` renders it from the roster).
+    # The root passes this block to the module whole (main.tf), so a member
+    # added here is a member the module can read; the module's own type and
+    # validation are what hold it to its shape.
+    people = optional(list(string), [])
   })
   default = null
 }
@@ -518,8 +525,8 @@ variable "orchestrator" {
   # The module's type is this same object and its validations are the ones that
   # hold them to their shape, so this root declares the value and decides
   # nothing about it. internal/infra composes the block (Orchestrator) for the
-  # one door that may write it — `fugaro update --firebase-project <id>
-  # --orchestrator` — and every run that was not asked for an orchestrator
+  # one door that writes it — `fugaro update`, for an installation that has the
+  # credentials service and the Firebase backend — and every run after it
   # leaves the key exactly as it found it.
   default = null
 }

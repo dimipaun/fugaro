@@ -108,6 +108,9 @@ func TestManagedAllowedTypesGolden(t *testing.T) {
 		"google_compute_router_nat",
 		"google_firebase_database_instance",
 		"google_firebase_project",
+		// The run index's composite indexes (RI2, C-INDEX): the owner-run
+		// Firebase root's, and the deployer holds no datastore.indexes.*.
+		"google_firestore_index",
 		"google_logging_log_view",
 		"google_logging_log_view_iam_member",
 		"google_logging_project_bucket_config",

@@ -277,7 +277,7 @@ func TestValidateWarnsWhenTheProjectLayerSetsJobs(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, layerWithJobs("jobs: { catalog_check: { paused: false } }\n"))
-	layerCheckout(t, f, minimalAnchored)
+	layerCheckout(t, f, pinnedMinimal)
 	_, errOut, err := execute(t, "validate")
 	if err != nil {
 		t.Fatalf("a file that resolves over the layer is valid: %v", err)

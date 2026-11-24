@@ -254,6 +254,12 @@ model_prices.conformance.long_context.input_per_m	open:no-writer
 model_prices.conformance.long_context.output_per_m	open:no-writer
 model_prices.conformance.output_per_m	open:writer-unproven
 model_prices.conformance.web_search_per_1k	open:writer-unproven
+model_routing.conformance.chain.conformance.admit	label:plumbing
+model_routing.conformance.chain.conformance.kind	label:plumbing
+model_routing.conformance.chain.conformance.model	label:plumbing
+model_routing.conformance.chain.conformance.pool	label:plumbing
+model_routing.conformance.chain.conformance.provider	label:plumbing
+model_routing.conformance.match	label:plumbing
 name	label:plumbing
 node_removals.craft_credentials	open:writer-unproven
 node_removals.crafts	open:writer-unproven
@@ -346,6 +352,7 @@ workspace_pin.firebase_project	open:no-writer
 workspace_pin.issuer	open:no-writer
 workspace_pin.service_account	open:no-writer
 workspace_pin.service_address	open:no-writer
+workspace_shared.conformance.all_members	open:no-writer
 workspace_shared.conformance.covers	open:no-writer
 workspace_shared.conformance.kind	open:no-writer
 workspace_shared.conformance.projects	open:no-writer

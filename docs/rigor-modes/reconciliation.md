@@ -57,7 +57,7 @@ last, since that one is a plan matter rather than a design one:
 | Where each layer lives, and what an area is | D20, D21; the project layer's closed `defaults:` (F36), the repository's `rigor:` block, and `rigor.areas` as `{name, match, mode}` `doublestar` rules (F9) |
 | What "dynamically" means | D22: chosen per run from the files it touches — declared at bootstrap where the caller knows them, measured from `runstore.Record.ChangedFiles` as they become known, monotone within the run (F38, F39) |
 | The resolved mode, and which layer won, in the run, PR and watch output | D24: the record (`runview.Row`, `fugaro runs ls`, `fugaro diagnose`), the PR body's status section (`internal/runner/prflow.go`'s `finalSection`), and `fugaro watch`'s live row, which costs a registry child (F40) |
-| A rule for a run that touches several areas | D23: the strictest matched area wins and every matched area is recorded, in the order strictest first |
+| A rule for a run that touches several areas | D23: the strictest matched area wins within one layer, the narrower layer wins across them, and every matched area is recorded, in the order strictest first (amended 2026-10-22; the D23 answer below) |
 | (The re-cut the ruling asks for, which is a plan matter and not a design one) | §2 of the [plan](implementation-plan.md): Slice 1's T1.2, T1.3 and T1.4, in that order |
 
 Two things the ruling does not change: the spec stays verbatim (its own commit,
@@ -944,7 +944,10 @@ the owner-run Check 740 in the register, whose four readings are the plain
 message delivered at a coder stage, the `--now` stop's quiet point with the same
 session going on after it, the Policy Troubleshooter asked about the real job
 accounts, and the bucket's `.msg.json` lifecycle rule — moved the table's row
-from 153 to 154.) They
+from 153 to 154.) (Amended 2026-11-21: `internal/cli/docs_model_crafts_checks_test.go`,
+the model-crafts plan's MC26 — the pin over the five owner-run live checks 628 to
+632, their register rows, their sections, their block keys and their knobs — moved
+the table's row one higher.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -981,6 +984,15 @@ file's word `level`, with the released `mode:` still read — added `rigorSpelli
 `internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 57 to 58. The
 row is named here for the reason above: a reader who finds the figure stale should find who moved it.)
 
+(Amended 2026-11-20: the periodic-reviews plan's R16 — the launcher handing the stored reports in —
+added `commitReportsSince` to `internal/cli/recipes_skew.go`, which moved the *Image-skew `Since`
+constants* row from 58 to 59. The constant names the first release whose runner reads
+`task.Spec.Reports`, which the task is decoded with `DisallowUnknownFields` for, so the launch
+against an older job image is refused at the person's terminal rather than dying at bootstrap; the
+row moved with the release that starts writing the member, as the entries above do. Nothing in this
+folder changed; the row is named here for the reason the ones above are: a reader who finds the
+figure stale should find who moved it.)
+
 (Amended 2026-11-20: the rigor-modes plan's LV6.1 — the recipe's one conditional, the `by_level` block that
 gives each rigor level its own `roles` mapping (LD9) — added `levelRolesSince` to
 `internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 59 to 60. Same
@@ -1005,6 +1017,16 @@ service too old to read the entry, so the row moved with the release that starts
 entries above do. Nothing in this folder changed; the row is named here for the reason the ones
 above are: a reader who finds the figure stale should find who moved it.)
 
+(Amended 2026-11-21: the workspace-service plan's WS13 — the keep-warm beat and its switch, the
+`agent.workspace_beat` key of `fugaro.yaml` and of the project layer's `defaults` (R10 of that
+plan, whose own register carries the ruling) —
+added `workspaceBeatSince` to `internal/cli/recipes_skew.go`, which moved the *Image-skew `Since`
+constants* row from 62 to 63. Both files are decoded with `KnownFields`, so a runner built from an
+older image refuses either key at bootstrap, after the launch was paid for, and it refuses the key
+whatever it says; the row moved with the release that starts reading it, as the entries above do.
+Nothing in this folder changed; the row is named here for the reason the ones above are: a reader who
+finds the figure stale should find who moved it.)
+
 (Amended 2026-11-21: the launcher-does-not-mint plan's LM8 — a launch that holds a ticket for its
 run's identity is refused on a job image whose runner cannot claim it — added `identitySince` to
 `internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 63 to 64. The
@@ -1027,7 +1049,7 @@ should find who moved it.)
 | Files in `internal/runner` that mention `Severity` at all | 5 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
 | Image-skew `Since` constants | 64 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 155 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 160 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 10 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Repo\|Repos\|Repository)'` |

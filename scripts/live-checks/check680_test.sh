@@ -227,6 +227,8 @@ def main(argv):
             sys.stdout.write(fh.read())
         sys.exit(0)
     if argv and argv[0] == "troubleshoot":
+        if flag("troubleshoot-hangs"):
+            time.sleep(20)
         run_id = argv[1] if len(argv) > 1 else ""
         cfg = config()
         reason = judge(cfg)
@@ -1112,6 +1114,24 @@ test_the_launch_is_bounded() {
   expect_row a-executions "not reached" "a launch the bound had to end: nothing behind the launch was measured"
 }
 
+test_the_tier_read_is_bounded() {
+  # Every call of this check that reaches the cloud goes through the same bound
+  # (fg_bounded), and this is the one the launch case above does not cover: the
+  # tier's own read in part (a). Like that case it needs timeout(1), which macOS
+  # does not ship.
+  if ! command -v timeout >/dev/null 2>&1; then
+    echo "check680_test: the bound case needs timeout(1), which this machine has not: skipped" >&2
+    return 0
+  fi
+  local dir=$work/bound-read
+  prepare "$dir"
+  : >"$dir/troubleshoot-hangs"
+  run_check "$dir" -- --cloud-seconds 2
+  expect_status "$status" 2 "a tier read the bound had to end"
+  expect_row a-decline "bound" "a tier read the bound had to end: the row names the bound that fired"
+  expect_row a-launch "not reached" "a tier read the bound had to end: nothing behind the read was measured"
+}
+
 # Sharding, so the package's Go test can run the tests of this file side by
 # side: CHECK_TEST_SHARD="i/n" runs every n-th test starting at i, and
 # CHECK_TEST_ONLY=name runs that one test alone. Neither set: all run.
@@ -1150,6 +1170,7 @@ t test_a_config_listing_that_fails_is_not_measured
 t test_a_project_fuller_than_the_read_limit_still_measures
 t test_a_project_too_full_to_count_is_not_measured
 t test_the_launch_is_bounded
+t test_the_tier_read_is_bounded
 
 if [ "$failures" -ne 0 ]; then
   echo "check680_test: $failures failure(s)" >&2
