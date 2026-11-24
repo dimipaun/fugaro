@@ -1100,6 +1100,35 @@ test('the engine that produced an utterance is tagged on that line, and stays wi
   assert.deepEqual(h.screen.state().transcript, { text: 'and the linter', final: true, engine: 'deepgram' });
 });
 
+test('the line in the conversation keeps the engine of the words it holds, not the next utterance\'s', async () => {
+  // X1 (D2788). The tag is read when the utterance arrives, and the send is a
+  // round trip: reading it again where the line is appended -- one await later
+  // -- stamps the owner's words with whatever the pipeline heard in between,
+  // which is the lie the snapshot's own rule forbids one screen up.
+  const transcript = createTranscript({ now: () => T0, newId: () => 'l-1' });
+  let engine = 'local';
+  // P6.12's dialogue, so the second final is not a second message the screen
+  // accepts: this test is about one line's tag, not about the door.
+  const h = await harness({ transcript, engine: () => engine, utterance: async () => null });
+  await h.plantHeartbeat();
+  await h.screen.poll();
+  await h.screen.start();
+
+  // The send is out and has not answered: `accept` yields at its first await,
+  // and the next utterance -- from a provider -- arrives in the same tick.
+  const accepting = h.screen.accept('run the tests');
+  engine = 'deepgram';
+  h.audioIn.speechStart();
+  h.stt.final('and the linter');
+  assert.equal(h.screen.state().transcript.engine, 'deepgram', 'the tag belongs to the words just heard');
+
+  await accepting;
+  await settle();
+  assert.deepEqual(transcript.entries().map((one) => [one.text, one.engine]),
+    [['run the tests', 'local']],
+    'and the line says the engine that produced the words it holds');
+});
+
 test('an engine that cannot be named leaves its line untagged, and never tagged local', async () => {
   const bad = [
     () => { throw new Error('no route'); },

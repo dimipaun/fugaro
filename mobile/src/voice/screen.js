@@ -480,6 +480,11 @@ export function createVoiceScreen({
    */
   async function accept(text, options) {
     if (typeof text !== 'string' || text.length === 0) return noteRefusal(refuse(SCREEN_CODES.BAD_TEXT, 'text'));
+    // The engine that produced THIS utterance, read before anything is awaited:
+    // the send can take a round trip, and a tag read after it is the tag of
+    // whatever the owner said next -- the same lie the `transcript` event's own
+    // comment forbids, one await later.
+    const engine = readEngineTag();
     if (offline()) {
       const refusedByLicence = await client.licenceRefusal(text, options);
       // The licence's refusal is the client's and is returned as itself -- it
@@ -499,23 +504,25 @@ export function createVoiceScreen({
     // give: the message has already left the phone, and what is left is whether
     // the line was kept -- one that was not (a session that signed out
     // mid-sentence) is a conversation this screen must not pretend is live.
-    record(text);
+    record(text, engine);
     return sent;
   }
 
   /**
    * Add one line to the one conversation, if a transcript is wired. The verdict
-   * is deliberately dropped: see `accept`, and note that the engine is read
-   * here rather than later, for the reason the pipeline's `transcript` event
-   * gives -- a tag read after the fact is the next utterance's.
+   * is deliberately dropped: see `accept`. `engine` is the tag `accept` read
+   * when the utterance arrived -- carrying it in rather than reading it here is
+   * the whole point: by the time the send has answered, the pipeline may have
+   * heard the next utterance, and a line tagged with its engine is a line the
+   * conversation lies about.
    */
-  function record(text) {
+  function record(text, engine) {
     if (transcript === null) return;
     transcript.append({
       who: TRANSCRIPT_WHO.OPERATOR,
       source: TRANSCRIPT_SOURCE.VOICE,
       text,
-      engine: readEngineTag(),
+      engine,
     });
   }
 

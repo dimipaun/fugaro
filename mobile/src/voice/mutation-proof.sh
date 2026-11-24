@@ -563,7 +563,17 @@ run "a question is marked heard only when its announcement played out" \
 #     holding words nobody was sent.
 run "a send the client refused is not a line in the one conversation" \
   "    if (!sent.ok) return sent;" \
-  "    if (!sent.ok) { record(text); return sent; }" \
+  "    if (!sent.ok) { record(text, engine); return sent; }" \
+  mobile/src/voice/screen.js src/voice/screen.test.js
+
+# 19. X1 (D2788): the tag on the line is the engine that produced the words the
+#     line holds. `accept` reads it when the utterance arrives, because the send
+#     is a round trip: reading it again where the line is appended tags the
+#     owner's words with whatever the pipeline heard while the send was out --
+#     the same lie the snapshot's `transcript` event refuses one function up.
+run "a line keeps the engine of the words it holds, not the next utterance's" \
+  "    record(text, engine);" \
+  "    record(text, readEngineTag());" \
   mobile/src/voice/screen.js src/voice/screen.test.js
 
 echo "guards proved: $killed killed, $survivors survived, $unapplied not applied"
