@@ -323,7 +323,7 @@ export const STUB_FIXTURES: Readonly<Record<NewOperationName, unknown>> = Object
           type: 'left_for_you',
           stage: 'billing',
           kind: 'terminal',
-          text: 'creating the project, linking billing and choosing the Firestore location stay yours',
+          text: 'creating the project and linking billing stay yours',
           commands: [],
         },
         { type: 'done' },

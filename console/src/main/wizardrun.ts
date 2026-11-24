@@ -18,10 +18,10 @@
 // **The window's yes is not a consent the CLI accepts** (O6, F27). `setup
 // --json` confirms no step (`unconfirmedWhy`, `internal/cli/init.go`), so the
 // apply runs exactly what the CLI applies without a confirmation; every step that
-// needs a person -- creating the GCP project, linking its billing account, the
-// Firestore location, a Terraform review in a managed project, every secret --
-// comes back from the child as a `left_for_you` event with its own line to run
-// in the owner's terminal, and the window says so before it asks
+// needs a person -- creating the GCP project, linking its billing account, a
+// Terraform review in a managed project, every secret -- comes back from the
+// child as a `left_for_you` event with its own line to run in the owner's
+// terminal, and the window says so before it asks
 // (`setupview.ts`'s four sentences). What the console adds is a **gate**: it
 // holds the answers, so a renderer cannot change them between the plan the
 // operator read and the run they agreed to.
