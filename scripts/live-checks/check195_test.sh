@@ -484,11 +484,23 @@ The step is the point of the check -- it mints an ID token out of the metadata
 server and calls the service with it -- and this fake answers both halves the way
 the real ones do: a JWT-shaped token whose `email` claim is the account the build
 runs as, and a 200 only for a token minted for that account and this URL.
+
+The two ends are knobbed so the step's own EXIT-CODE MAPPING can be read where it
+is written -- the six `exit`s in the step and nowhere else. FAKE_STEP_METADATA is
+`token` (mint the token, the default) or `empty` (the metadata server answers
+nothing, which is the step's exit 14); FAKE_STEP_CLAIM is the `email` claim the
+minted token carries (the account by default, another identity for exit 15); and
+FAKE_STEP_FRONT is what the service's front end answers -- `admit` (the default:
+200 for this account's token for this URL, 401 for anything else), `granted` (200
+whatever the token says), `none` (no status at all) or the status itself.
 """
 import base64, json, os, sys
 
 CALLER = "fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com"
 LOG = os.environ.get("FAKE_LOG_DIR", "")
+CLAIM = os.environ.get("FAKE_STEP_CLAIM", CALLER)
+METADATA = os.environ.get("FAKE_STEP_METADATA", "token")
+FRONT = os.environ.get("FAKE_STEP_FRONT", "admit")
 args = sys.argv[1:]
 url = ""
 for a in args:
@@ -507,7 +519,7 @@ def minted_token(audience):
     # Header, payload and signature, the shape the check's step decodes: the
     # signature is a word, not a credential, and no real token is ever here.
     return "%s.%s.%s" % (b64({"alg": "RS256", "typ": "JWT"}),
-                         b64({"email": CALLER, "aud": audience, "iss": "https://accounts.google.com"}),
+                         b64({"email": CLAIM, "aud": audience, "iss": "https://accounts.google.com"}),
                          "fake-signature")
 
 
@@ -532,6 +544,10 @@ def headers():
 
 
 if "metadata.google.internal" in url:
+    if METADATA == "empty":
+        # The metadata server that mints nothing: the step never gets a token,
+        # so it never calls the service, which is its exit 14.
+        sys.exit(0)
     audience = ""
     for part in url.split("?", 1)[-1].split("&"):
         if part.startswith("audience="):
@@ -540,26 +556,37 @@ if "metadata.google.internal" in url:
     sys.exit(0)
 
 # The service's own front end: it admits a token that names the account that ran
-# the build, for this service's URL, and refuses anything else.
-code = "401"
-for h in headers():
-    if not h.startswith("Authorization:"):
-        continue
-    token = h.split("Bearer", 1)[-1].strip()
-    try:
-        payload = token.split(".")[1]
-        payload += "=" * (-len(payload) % 4)
-        claims = json.loads(base64.urlsafe_b64decode(payload))
-    except Exception:
-        continue
-    if claims.get("email") == CALLER and claims.get("aud") == url:
-        code = "200"
+# the build, for this service's URL, and refuses anything else -- unless the test
+# asked for one answer whatever the token says, or for none at all.
+code = FRONT
+if FRONT == "admit":
+    code = "401"
+    for h in headers():
+        if not h.startswith("Authorization:"):
+            continue
+        token = h.split("Bearer", 1)[-1].strip()
+        try:
+            payload = token.split(".")[1]
+            payload += "=" * (-len(payload) % 4)
+            claims = json.loads(base64.urlsafe_b64decode(payload))
+        except Exception:
+            continue
+        if claims.get("email") == CALLER and claims.get("aud") == url:
+            code = "200"
+elif FRONT in ("granted", "none"):
+    code = "200" if FRONT == "granted" else ""
 fmt = write_out()
 sys.stdout.write(fmt.replace("%{http_code}", code) if fmt else "")
 sys.stdout.write("\n")
 sys.exit(0)
 STEP_CURL_EOF
   chmod +x "$1/curl"
+}
+
+lift_step_script() { # cloudbuild.yaml step.sh: the step's script, as Cloud Build hands it to the shell
+  awk '/^      - \|$/ { f = 1; next } f && /^        / { sub(/^        /, ""); print; next } f { exit }' \
+    "$1" | sed -e 's/\$\$/$/g' >"$2"
+  [ -s "$2" ]
 }
 
 # ------------------------------------------------------------------- harness
@@ -764,9 +791,7 @@ test_the_generated_step_mints_a_token_and_reads_its_own_email_claim() {
   expect_status "$status" 0 "the step: the run that generates it"
 
   local step=$dir/step.sh
-  awk '/^      - \|$/ { f = 1; next } f && /^        / { sub(/^        /, ""); print; next } f { exit }' \
-    "$dir/logs/cloudbuild.yaml" | sed -e 's/\$\$/$/g' >"$step"
-  [ -s "$step" ] || {
+  lift_step_script "$dir/logs/cloudbuild.yaml" "$step" || {
     fail "the step: no script could be lifted out of the generated build config"
     return 0
   }
@@ -784,6 +809,50 @@ test_the_generated_step_mints_a_token_and_reads_its_own_email_claim() {
   expect_contains "$(cat "$dir/logs/step-curl.calls")" "metadata.google.internal" "the step: it mints its token from the metadata server"
   expect_contains "$(cat "$dir/logs/step-curl.calls")" "-H Metadata-Flavor: Google" "the step: the metadata call carries the header the metadata server requires"
   expect_contains "$(cat "$dir/logs/step-curl.calls")" "Authorization: Bearer " "the step: the call to the service carries the token as a bearer header"
+}
+
+# THE MAPPING ITSELF, read where it is written. Every verdict the check now takes
+# out of the build's own record is one of the six `exit`s in this step and nowhere
+# else, and the check-side dispatch is tested with a fake gcloud that prints the
+# codes directly: break an arm of the step's `case`, or the email comparison
+# after it, and only this test notices. The step is run the way Cloud Build runs
+# it — the lifted script, against a front end that answers the way the real ones
+# do in each case — and the assertion is the pair the rest of the check reads: the
+# exit code, and the line the step prints before it exits.
+test_the_step_ends_with_one_exit_code_per_outcome() {
+  local dir=$work/stepmap spec knobs want_code want_line rest what
+  prepare "$dir"
+  run195 "$dir"
+  expect_status "$status" 0 "the step mapping: the run that generates it"
+  local step=$dir/step.sh
+  lift_step_script "$dir/logs/cloudbuild.yaml" "$step" || {
+    fail "the step mapping: no script could be lifted out of the generated build config"
+    return 0
+  }
+  write_fake_curl_for_the_step "$dir/stepbin"
+  # knobs|what it is|the exit code the record carries|the line the step prints
+  for spec in \
+    "|the account's own token, answered 200|0|CHK195 status=200 email=fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" \
+    "FAKE_STEP_FRONT=401|the front end refusing the token itself (401)|11|CHK195 status=401 email=fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" \
+    "FAKE_STEP_FRONT=403|the service refusing the caller (403)|12|CHK195 status=403 email=fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" \
+    "FAKE_STEP_FRONT=500|a status that is none of the three|13|CHK195 status=500 email=fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" \
+    "FAKE_STEP_FRONT=none|no status at all|13|CHK195 status=none email=fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" \
+    "FAKE_STEP_FRONT=granted FAKE_STEP_CLAIM=somebody-else@fugaro-dev.iam.gserviceaccount.com|a 200 earned by another identity|15|CHK195 status=200 email=somebody-else@fugaro-dev.iam.gserviceaccount.com" \
+    "FAKE_STEP_METADATA=empty|a metadata server that mints nothing|14|CHK195 status=notoken email=unread"; do
+    knobs=${spec%%|*}
+    rest=${spec#*|}
+    what=${rest%%|*}
+    rest=${rest#*|}
+    want_code=${rest%%|*}
+    want_line=${rest#*|}
+    status=0
+    env PATH="$dir/stepbin:$PATH" FAKE_LOG_DIR="$dir/logs" $knobs bash "$step" >"$dir/step.out" 2>"$dir/step.err" || status=$?
+    expect_status "$status" "$want_code" "the step mapping ($what): the exit code Cloud Build writes into the build's own record"
+    expect_contains "$(cat "$dir/step.out")" "$want_line" "the step mapping ($what): the line it prints for the log it may never reach"
+  done
+  # The token itself is never printed on any of those paths, and the credential
+  # line of a refusenik's log is the one thing this check must not put there.
+  expect_absent "$(cat "$dir/step.out")" "fake-signature" "the step mapping: no arm of the mapping prints the token"
 }
 
 # A knob the header advertises and nothing reads is worse than no knob at all: a
@@ -1317,6 +1386,7 @@ t test_a_public_iam_policy_stops_before_any_request
 t test_a_service_that_answers_unauthenticated_calls_stops_the_run
 t test_every_advertised_knob_is_read
 t test_the_generated_step_mints_a_token_and_reads_its_own_email_claim
+t test_the_step_ends_with_one_exit_code_per_outcome
 t test_happy_path
 t test_a_service_already_there_is_a_hard_stop
 t test_an_account_already_there_is_a_hard_stop
