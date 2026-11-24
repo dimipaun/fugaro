@@ -104,9 +104,10 @@ var licenceServerURL = "https://keys.fugaro.dev"
 // installation has no renewal secret container, and nothing creates that
 // container until K4.2's Terraform lands. So the ring is published in the
 // release that creates it, not before — the production half itself is already
-// published (S2.9, `ee/licence/keys/production.pub`) and ee/licence's ring is
-// built from it, which is where a key is verified. It is a variable so that a
-// test can install the ring of a keypair it minted at run time.
+// published (S2.9, `ee/licence/keys/production.pub`), ee/licence's ring is
+// built from it, and this variable is the one that takes that ring over. It is
+// a variable so that a test can install the ring of a keypair it minted at run
+// time.
 var licenceRing = licence.Keyring{}
 
 // licenceNow is the clock: the state a key is in is a fact about an instant,
