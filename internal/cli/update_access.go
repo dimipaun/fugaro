@@ -429,7 +429,7 @@ const accessNeedsAdmin = "could not write the grants node (needs roles/firebased
 // it cannot be landed: unlike the migration, this one is not a step the run may
 // carry on without. An operator who named a list asked for a change to a role,
 // and a change that cannot be written may not look applied.
-const accessFlagsNeedAdmin = "cannot write the grants node (needs roles/firebasedatabase.admin): a project Owner runs `fugaro update`, or runs `fugaro update --budget-admin` for you"
+const accessFlagsNeedAdmin = "cannot write the grants node (needs roles/firebasedatabase.admin): a project Owner's `fugaro update` does it, or `--budget-admin`"
 
 // accessNoOutputs is the warning a migration gets when the installation's own
 // outputs cannot be read: the migration has no roster to write the node from,
@@ -446,7 +446,7 @@ const accessNoOutputs = "the installation's own outputs could not be read, so it
 // by hand or by a door this release does not move is the one that would revoke
 // a member — and the sentence names both lists, so an operator who edited the
 // file sees what happened rather than finding it gone.
-const accessStale = "this machine's %s is not what the installation lists, so this run migrates the installation's: the config lists %s, it lists %s"
+const accessStale = "this machine's %s is not the installation's, so this run applies the installation's lists: %s, %s"
 
 // migrateAccess computes the grants node for an installation whose lists the
 // node has never held — the caller has read the marker and found it unset
@@ -600,7 +600,7 @@ func (e *initEngine) landSeed(ctx context.Context) error {
 	case err == nil:
 		// The roster is printed where it lands, so the migration is a thing the
 		// operator can see rather than a silent rewrite of who may do what.
-		e.r.noteAccess(accessMigrated(seed.Grants))
+		e.r.note(accessMigrated(seed.Grants))
 		return nil
 	case errors.Is(err, rtdb.ErrPrecondition):
 		e.r.warn(accessNodeMoved)
@@ -628,7 +628,7 @@ func (e *initEngine) landMark(ctx context.Context) error {
 	err := accesslib.MarkMigrated(ctx, e.accessDB)
 	switch {
 	case err == nil:
-		e.r.noteAccess(accessMigratedNoGrants)
+		e.r.note(accessMigratedNoGrants)
 		return nil
 	case errors.Is(err, rtdb.ErrPermission):
 		e.r.warn(accessMarkNeedsAdmin)
@@ -671,11 +671,12 @@ func accessMigrated(grants []accesslib.Grant) string {
 		strings.Join(lines, ", "))
 }
 
-// noteAccess prints a line of the roles step, in the shape the door's own
-// progress lines have: the program's prefix, then the sentence. It is not a
-// warning — nothing is wrong — and not a stage's line, because the step runs
-// before the loop and has no stage to report through.
-func (r *initRun) noteAccess(msg string) {
+// note prints one line of a step that has no stage of its own to report
+// through — the roles step before the loop, a job image moved after it — in the
+// shape the door's own progress lines have: the program's prefix, then the
+// sentence. It is not a warning: nothing is wrong, and the update did what the
+// line says.
+func (r *initRun) note(msg string) {
 	fmt.Fprintf(r.w, "%s%s\n", r.o.programPrefix(), msg)
 }
 
@@ -978,7 +979,7 @@ func (e *initEngine) deriveAccessAgain(ctx context.Context) (operators, admins [
 // node (foldFlagLists), and it is named rather than left to be found because
 // the other door on those keys — fugaro user add and rm — writes this machine's
 // file alone, and a change written there is exactly what this sentence is about.
-const accessDropped = "this machine's list holds %s as %s, which the grants node does not: this run applies the node's members, so those lose the role (`fugaro update --operator/--admin`)"
+const accessDropped = "the local list holds %s as %s, which the grants node does not: they lose that role (`fugaro update --operator/--admin`)"
 
 // accessAdded is what the roles step says when the grants node holds a member at
 // a role this installation's own outputs do not: either a member the outputs hold
@@ -988,7 +989,7 @@ const accessDropped = "this machine's list holds %s as %s, which the grants node
 // not list them AT ALL, so a plan that does is not covered — the step that plans
 // them names them in its banner and takes the run's ordinary confirmation
 // (init_review.go's confirmPlanned).
-const accessAdded = "the grants node holds %s, whom the installation's outputs do not hold at that role: this run's plan grants it, unlisted in the review"
+const accessAdded = "the grants node holds %s, whom the installation's outputs do not: this run's plan grants that role, unlisted in the review"
 
 // accessAddsUnknown is what a run that could not read the installation's own
 // outputs says instead. It cannot tell a member the node added from one the

@@ -477,7 +477,7 @@ const gateContentWarning = "the gate recorded the rules below and did not refuse
 // stopped here would leave the installation half-converged over an IAM call
 // the owner's next run makes anyway.
 func (r *initRun) gateNamesAnIAMCall(bucket string) string {
-	return fmt.Sprintf("project Viewers can still read %s: removing that access is an IAM call of its own and not a plan, so the gate did not make it; run %s in your own terminal to remove it", bucket, r.o.doorProgram())
+	return fmt.Sprintf("project Viewers can still read %s: removing it is an IAM call no plan covers; run %s in your own terminal", bucket, r.o.doorProgram())
 }
 
 // gateStep judges one Terraform step's saved plan, and answers whether the
