@@ -863,17 +863,17 @@ function command(state, values) {
   }
 
   // The costly start, resolved from the mode and the session's policy before
-  // anything else is spent. A mode this machine cannot read is refused as the
-  // value it is, in the same place and with the same codes as any other field.
+  // anything else is spent. `mode` is the value readCommandFields already read
+  // with the same reader every other string gets -- a mode this machine cannot
+  // read was refused there, in the same place and with the same codes as any
+  // other field -- so what is left to decide is only whether it is costly.
   let resolved = null;
   let biometric = false;
   if (isStart) {
     if (mode !== undefined) {
-      const readMode = stringField(mode, 'mode', MAX_MODE_LENGTH);
-      if (readMode.bad) return readMode.bad;
-      const costly = costlyStart(readMode.value, state.costlyModes, state.biometricOnCostly);
+      const costly = costlyStart(mode, state.costlyModes, state.biometricOnCostly);
       if (costly.costly) {
-        resolved = Object.freeze({ kind: TARGET_KIND.MODE, mode: readMode.value });
+        resolved = Object.freeze({ kind: TARGET_KIND.MODE, mode });
         biometric = costly.biometric;
       }
     }
