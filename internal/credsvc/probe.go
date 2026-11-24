@@ -200,7 +200,19 @@ func probeLeasePath(name string) string { return pathProbes + "/" + budget.Key(n
 // token work" that asked something else would be answering a question nobody
 // asked.
 func probeCall(cl *call) (*call, bool) {
-	model, ok := callModel(cl.body)
+	// The model is read from the body the CALLER sent, and on a chain-served
+	// call that is not the body the call holds: the walk rewrites its `model`
+	// member to the served source's spelling on the way out and leaves it there
+	// (chainWalk.next), so a probe owed on the retry after a 401 or a usage
+	// limit would read the LAST source's spelling — a route ID or a Vertex date
+	// — and ask this credential about a model that source serves and this one
+	// may not. What a probe asks is whether the credential works at all, and the
+	// call it asks about is the run's own.
+	body := cl.body
+	if cl.chain != nil && cl.chain.asked != nil {
+		body = cl.chain.asked
+	}
+	model, ok := callModel(body)
 	if !ok {
 		return nil, false
 	}

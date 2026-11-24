@@ -200,7 +200,7 @@ func (s *svc) walk(t *testing.T, body string, binding *slipBinding) *chainWalk {
 	}
 	settings := settingsOf(shared)
 	now := func() time.Time { return s.now }
-	return &chainWalk{
+	w := &chainWalk{
 		plan:  plan,
 		sel:   &creds.Selector{Store: s.state, Settings: settings, Now: now},
 		pick:  creds.PoolRule{Store: s.state, Settings: settings, Now: now},
@@ -209,6 +209,11 @@ func (s *svc) walk(t *testing.T, body string, binding *slipBinding) *chainWalk {
 		asked: cl.body,
 		now:   now,
 	}
+	// The call carries its walk, as server.go's own does before forward runs:
+	// what reads it is the probe (probeCall), which asks the model the CALLER
+	// named rather than the one the walk left in the body.
+	cl.chain = w
+	return w
 }
 
 // served is what the walk answers for a fresh call.
@@ -765,4 +770,48 @@ func TestABridgedRecordIsServed(t *testing.T) {
 				len(w.plan.sources))
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// 11. A probe on a chain-served call asks the model the run named
+// ---------------------------------------------------------------------------
+
+// TestAProbeAsksTheModelTheRunNamed: the walk rewrites the call's `model` member
+// to the served source's spelling on its way out and leaves it there
+// (chainWalk.next), so the probe owed on the retry after a 401 or a usage limit
+// finds a body carrying the LAST source's model. A probe asks whether a
+// credential works at all (C1.12), and the call it asks about is the run's own:
+// reading the model out of the rewritten body asks this credential about another
+// source's spelling — a route ID or a Vertex date this one may not serve — and a
+// credential refused there is marked broken for a question nobody asked.
+//
+// The fixture's one source serves a written downgrade, which is what makes the
+// two readings differ at all.
+func TestAProbeAsksTheModelTheRunNamed(t *testing.T) {
+	const downgrade = "claude-haiku-4-5"
+	src := chainKey()
+	src.Model = downgrade
+	s := chainFixture(t, routing.Table{{Match: testModel, Chain: []routing.Source{src}}})
+
+	w := s.walk(t, callBody("probe"), chainBinding(coverage(src), ""))
+	w.cl.path = MessagesPath
+	w.picked(t)
+	if left, _ := callModel(w.cl.body); left != downgrade {
+		t.Fatalf("the walk left the call's body naming %q, want the serving source's model %q: a probe is owed on the "+
+			"retry AFTER a source was served, and the body it finds there is the one this test is about",
+			left, downgrade)
+	}
+
+	probe, ok := probeCall(w.cl)
+	if !ok {
+		t.Fatal("a call on the Messages path is a call a probe is made on")
+	}
+	model, ok := callModel(probe.body)
+	if !ok {
+		t.Fatalf("the probe's own body names no model: %s", probe.body)
+	}
+	if model != testModel {
+		t.Errorf("the probe asks for the model %q, want %q: the probe asks the model the run named, and the "+
+			"rewritten body carries the model the last source was served with", model, testModel)
+	}
 }
