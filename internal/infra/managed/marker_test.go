@@ -2713,12 +2713,19 @@ var runAccountGrants = setOf(
 	// nothing else; the object itself is written by the operator's own update,
 	// not by this account).
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | google_service_account.intake[0].member | for_each= | perms=`,
-	// ... and the intake's own front door: the same roles/run.invoker on the
-	// intake service, to the same roster's people, for the read mint's reasons
-	// above. Invoking the intake hands the caller a write of a secret of THEIR
-	// OWN name (the service derives it from the verified sub), and the class
-	// inside the service refuses every caller the roster does not name.
-	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.intake.service | each.value | for_each=local.intake_on ? local.launcher_invoker_members : toset([]) [local.intake_on=var.intake != null] [local.launcher_invoker_members=toset([for m in var.launchers : m if startswith(m, "user:")])] | perms=`,
+	// ... and the intake's own front door: roles/run.invoker on the intake
+	// service to the installation's launchers AND, on a workspace's own project,
+	// the people of the workspace's roster (WC3, R5, D3143 — the union below,
+	// which is one expression shared with the class the process reads). It is the
+	// intake's grant and NEITHER the credentials service's nor its grant route's:
+	// that service's invoker set stays local.launcher_invoker_members (the row
+	// above) because its read mint reaches the installing person's whole
+	// workspace, which is not what a roster person may be given (F10). Invoking
+	// the intake hands the caller a write of a secret of THEIR OWN name (the
+	// service derives it from the verified sub), the class inside the service
+	// refuses every caller the list does not name, and a caller on it reaches the
+	// `fugaro_u_` half alone — the shared prefix is the derived admin list's.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.intake.service | each.value | for_each=local.intake_on ? local.intake_invoker_members : toset([]) [local.intake_invoker_members=setunion(local.launcher_invoker_members, toset([for e in local.intake_people : "user:${e}"]))] [local.intake_on=var.intake != null] | perms=`,
 
 	// Reviewed for W3 (the workspace's own project): the workspace root's own
 	// grant, the only resource the tree gives that project's service account.

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"cmp"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -230,6 +232,20 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	commit, err := gitRead(ctx, root, "rev-parse", "HEAD")
 	if err != nil {
 		return userErr("reading the checkout's commit: %v", err)
+	}
+	// A build of an entry that names no context clones exactly that commit —
+	// the clone step fetches it by id, the definition having been read at it —
+	// so a commit the remote does not have is a billable build that fails on
+	// the fetch two minutes in, after a definition was copied and a lease
+	// taken. It is refused here instead: before the credential, the copy, the
+	// lease and the submission, all of which come later. A prebuilt entry's run
+	// is the smoke of its own reference and clones nothing, and a context
+	// entry's build is pinned to the commit its copy resolved (D1395), so
+	// neither reads the checkout's HEAD and neither is refused over it.
+	if slices.ContainsFunc(entries, func(e config.Entry) bool { return e.Source.Kind != config.SourceImage && e.Source.Context == "" }) {
+		if err := refuseUnpushedCommit(ctx, root, commit); err != nil {
+			return err
+		}
 	}
 	// The smoke a prebuilt entry runs is the tools tier alone: the checkout's
 	// own spec (SpecForCloud) is about a container this command built — it
@@ -698,6 +714,81 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		}
 	}
 	return nil
+}
+
+// commitCheckRemoteTimeout bounds the remote read below: a remote that does not
+// answer must not hold a command that is otherwise ready to submit, and the
+// read is a small one (one ref advertisement) wherever the host does answer.
+const commitCheckRemoteTimeout = 20 * time.Second
+
+// refuseUnpushedCommit refuses a build whose clone cannot fetch the commit it
+// is pinned to. The clone step fetches that commit by id, so a commit the
+// remote does not have is a build Cloud Build bills and fails: the owner hit
+// exactly this on 2026-11-23, running `fugaro image build go` on a branch with
+// a local wip commit, where nothing had been force-pushed and the failing
+// build said one had. The refusal asks nothing and waits for nothing
+// (CLAUDE.md, Fugaro asks for nothing): it names the commit and the two ways
+// out.
+func refuseUnpushedCommit(ctx context.Context, root, commit string) error {
+	// Only a definite no refuses: a remote this machine cannot read is not an
+	// answer about the commit, and refusing over it would refuse a build that
+	// would have worked.
+	if found, known := commitOnRemote(ctx, root, commit); !known || found {
+		return nil
+	}
+	return userErr("the commit %s exists only in this checkout, and a build clones the commit it is pinned to rather than a branch: push the branch, or switch to a pushed commit (git switch main && git pull --ff-only)", commit)
+}
+
+// commitOnRemote reports whether the checkout's remote has commit, so that a
+// clone of it can fetch the commit a build names, and whether the question was
+// answered at all.
+//
+// The checkout's own remote-tracking refs answer first, and without the
+// network: a commit one of refs/remotes/origin/* contains is on the remote
+// however far back in that branch's history it sits, and this is the state a
+// checkout it was pushed from is in.
+func commitOnRemote(ctx context.Context, root, commit string) (found, known bool) {
+	if out, err := gitRead(ctx, root, "branch", "-r", "--contains="+commit); err == nil && out != "" {
+		return true, true
+	}
+	// Nothing local contains it, which is not an answer on its own: the branch
+	// it is on may have been pushed from another checkout, or fetched into this
+	// one without a remote-tracking ref of it (a pull request's head). So the
+	// remote's own refs settle it — and an answer that did not come back is not
+	// evidence about the commit, so a remote this machine cannot read leaves
+	// the build to fail on its own terms rather than refusing one that would
+	// have worked.
+	found, err := remoteHasCommit(ctx, root, "origin", commit)
+	if err != nil {
+		return false, false
+	}
+	return found, true
+}
+
+// remoteHasCommit asks the remote itself whether it publishes commit as a ref
+// (git ls-remote: a read of the refs, and no write into the checkout). It is a
+// var because a command test's fixture has no remote git can reach; its error
+// is inconclusive rather than an answer (commitOnRemote).
+var remoteHasCommit = func(ctx context.Context, root, remote, commit string) (bool, error) {
+	rctx, cancel := context.WithTimeout(ctx, commitCheckRemoteTimeout)
+	defer cancel()
+	out, err := gitRead(rctx, root, "ls-remote", "--quiet", remote)
+	if err != nil {
+		return false, err
+	}
+	return remotePublishes(out, commit), nil
+}
+
+// remotePublishes reports whether git ls-remote's output has commit as a ref:
+// one "<sha>\t<ref>" line per ref, a peeled annotated tag's line included, so
+// a branch or a tag pointing at the commit answers.
+func remotePublishes(out, commit string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		if sha, _, _ := strings.Cut(line, "\t"); sha == commit {
+			return true
+		}
+	}
+	return false
 }
 
 // catalogBuildEntries is the entries one command submits: the one the

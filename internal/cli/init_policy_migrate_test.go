@@ -1674,6 +1674,33 @@ func TestUpdateMigrationKeepsHandEditedAllowListWhileDeriving(t *testing.T) {
 	}
 }
 
+// TestUpdateMigrationKeepsAHandEditedCrashReportSwitch: the key the migration
+// carries into a node is the owner's opt-out (D731, D738), and a node that
+// already states it states the owner's answer. Carrying the publish's default
+// over a written `false` would re-enable crash reports the first time the
+// migration ran — the same way a derived allow-list must not overwrite the
+// owner's list. The key's absence is what the carry fills; its presence,
+// whatever the value, is the owner's and is left alone.
+func TestUpdateMigrationKeepsAHandEditedCrashReportSwitch(t *testing.T) {
+	f := newProjectFixture(t, bitbucketTokenConfig)
+	node := v3Node(v3NodeMountingTheBitbucketToken())
+	node[projectpolicy.MobileCrashReportsKey] = false
+	f.db.Set(projectpolicy.PathShared(), node)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	p := publishedPolicy(t, f)
+	if p.MobileCrashReports == nil {
+		t.Fatalf("the migrated node carries no %s key:\n%s", projectpolicy.MobileCrashReportsKey, out)
+	}
+	if *p.MobileCrashReports {
+		t.Errorf("the migration rewrote the owner's %s: false to true, which sends crash reports against D731's opt-out", projectpolicy.MobileCrashReportsKey)
+	}
+}
+
 // TestUpdateMigrationDerivesTheBlockWhenNoProfileMountsTheToken: the block a
 // publish derives is not a statement about a profile mounting the token — a
 // proxied per-repository job holds no credential at all and reads the block as
@@ -1783,9 +1810,10 @@ func TestUpdateMigrationWithoutABitbucketCredentialDerivesNothing(t *testing.T) 
 // every installation that already ran a fugaro update of this release.
 func currentPolicyNode() map[string]any {
 	return map[string]any{
-		"version": projectpolicy.Version,
-		"budget":  map[string]any{"mode": "enforce", "per_run_usd": 5},
-		"mobile":  defaultMobileNode(),
+		"version":                           projectpolicy.Version,
+		"budget":                            map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"mobile":                            defaultMobileNode(),
+		projectpolicy.MobileCrashReportsKey: projectpolicy.DefaultMobileCrashReports,
 	}
 }
 

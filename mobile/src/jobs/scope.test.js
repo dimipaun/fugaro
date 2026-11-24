@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The job list's scope, ENFORCED rather than observed (mobile plan, Task P3.3;
-// resolved 2026-10-17, tensions (a) and (b1); D119, D124, D125).
+// resolved 2026-10-17, tensions (a) and (b1); D119, D124, D125; amended by
+// mobile identity-pairing task J2, F30, D2797, O3).
 //
 // **What this scan is for.** The plan's own added test case for this task is
 // "no run title is on screen and no code path asks for one (a grep-style test
@@ -17,19 +18,30 @@
 //
 // **The rules, and what each is for.**
 //
-//   1. `agents` / `outcomes` -- the two families the read grant does not name
-//      (tension (b1)). A path, a family comparison or a field keyed by either
-//      is a request the rules would deny, and P3.2's own case is that such a
-//      request is **never made** rather than made and refused.
-//   2. `repos` -- the document's repository block. `config/caps/repos/$slug`
+//   1. `agents` -- the registry family the read grant does not name (tension
+//      (b1)). A path, a family comparison or a field keyed by it is a request
+//      the rules would deny, and P3.2's own case is that such a request is
+//      **never made** rather than made and refused. It is also where a run's
+//      title lives, which is the other half of the same sentence.
+//   2. `outcomes` -- the one family the read grant **did** name, for a paired
+//      device, in one node (`outcomes/$day/$slug/$run`, J1 of the mobile
+//      identity-pairing plan; F30, D2797, O3): the entry whose absence is what
+//      makes a run a running job. D2797 amends this file's ban on run rows, so
+//      the token is allowed in `src/jobs/running.js` -- and nowhere else, which
+//      is what keeps "the app reads one outcome node" from becoming "the app
+//      reads outcomes". The allow-list entry is itself controlled below: the
+//      planted line must go unflagged in the named file, so an entry nobody
+//      needs cannot sit here unexercised.
+//   3. `repos` -- the document's repository block. `config/caps/repos/$slug`
 //      and `spend/$day/repos/$slug` *are* granted, so this token is not a
-//      permission question: it is the resolution's "no repositories", and a
-//      later task that wants those rows edits this list on purpose.
-//   3. The PR fields, and every way of opening a link. The runs bucket carries
+//      permission question: it is the resolution's "no repositories", which
+//      D2797 left standing when it amended the ban on **run** rows. A later
+//      task that wants those rows edits this list on purpose.
+//   4. The PR fields, and every way of opening a link. The runs bucket carries
 //      `pr_url`/`pr_number` and the grant does not cover it; and P0.3's
 //      validator (`shared/url/index.js`) is the gate for any link the app ever
 //      opens, so a link built here would be a link built around the gate.
-//   4. The feed is reached through its **door** (`src/feed/index.js`), which is
+//   5. The feed is reached through its **door** (`src/feed/index.js`), which is
 //      that module's own rule for screens: `paths.js`'s gate and `nodes.js`'s
 //      raw readers are its business, and a screen that composed a path would be
 //      composing a read.
@@ -96,11 +108,18 @@ function specifiers(text) {
  * test files are always allowed, and so is this file. */
 const RULES = [
   {
-    name: 'no run is named, and neither family the grant denies is asked for',
-    pattern: /\b(agents|outcomes)\b/,
+    name: 'no run is named, and the registry family the grant denies is never asked for',
+    pattern: /\bagents\b/,
     allow: [],
     control: "const p = `agents/${slug}/${run}`;",
-    why: 'tension (b1): the user claim reads neither, so no path, key or family here may name one',
+    why: 'tension (b1): the user claim does not read it, and a run title lives there',
+  },
+  {
+    name: 'the run’s outcome entry is read in the running-jobs view, and nowhere else',
+    pattern: /\boutcomes\b/,
+    allow: ['src/jobs/running.js'],
+    control: "const entry = outcomes[day][slug][run];",
+    why: 'D2797: a run with no entry there is a running job, so J1\'s one node is read -- in `running.js`, the file the allow-list names',
   },
   {
     name: 'no repository row and no repository name',
@@ -134,7 +153,7 @@ function sources() {
 test('the scan walks the module, and not an empty list', () => {
   const files = moduleFiles();
   // A scan that found nothing would pass every rule below for the wrong reason.
-  assert.ok(files.length >= 5, `expected the module's source, found ${files.length} files`);
+  assert.ok(files.length >= 6, `expected the module's source, found ${files.length} files`);
   for (const expected of [
     'src/jobs/index.js',
     'src/jobs/fields.js',
@@ -142,6 +161,9 @@ test('the scan walks the module, and not an empty list', () => {
     'src/jobs/heartbeat.js',
     'src/jobs/list.js',
     'src/jobs/lines.js',
+    // The running-jobs view (J2), which is the allowed `outcomes` reader above:
+    // a walk that missed it would pass that rule for the wrong reason.
+    'src/jobs/running.js',
   ]) {
     assert.ok(files.includes(expected), `${expected} is in the walk`);
   }
@@ -161,6 +183,22 @@ for (const rule of RULES) {
     // ... and a test file is exempt, which is what lets `list.test.js` name the
     // denied families in order to prove they are never requested.
     assert.deepEqual(offences(rule, new Map([[`${JOBS}offender.test.js`, `function offence() { ${rule.control} }\n`]])), []);
+
+    // ... and each allowed file really is allowed, which is what makes the
+    // entry above a decision rather than a hole: the same planted act, in the
+    // named file, is not an offence, and the file one directory over still is.
+    for (const file of rule.allow) {
+      assert.deepEqual(
+        offences(rule, new Map([[file, `function read() { ${rule.control} }\n`]])),
+        [],
+        `${file} is on the allow-list and must be able to read it`,
+      );
+      assert.deepEqual(
+        offences(rule, new Map([['src/jobs/row.js', `function read() { ${rule.control} }\n`]])),
+        ['src/jobs/row.js'],
+        'a neighbour of an allowed file is not allowed with it',
+      );
+    }
 
     // ... and then the module itself.
     assert.deepEqual(offences(rule, new Map(sources())), [], `${rule.name}: see the allow-list above`);
@@ -338,7 +376,7 @@ test('the door carries the module\'s surface, and no dead name', async () => {
   const names = Object.keys(await import('./index.js')).sort();
   // A surface that did not load would pass the assertion below for the wrong
   // reason, so the door's size is checked before its contents.
-  assert.ok(names.length >= 19, `expected the door's surface, found ${names.length} names`);
+  assert.ok(names.length >= 22, `expected the door's surface, found ${names.length} names`);
   assert.deepEqual(names, [
     'HEARTBEAT_STATES',
     'JOB_FAMILIES',
@@ -351,6 +389,11 @@ test('the door carries the module\'s surface, and no dead name', async () => {
     'NO_REASON',
     'READ_STATES',
     'ROW_FIELDS',
+    // The running-jobs view (J2): its rows' words, its refusals, and the
+    // judgement itself -- what the screen draws beside the project's row, and
+    // what `JobList.running()` hands it readings through.
+    'RUNNING_CODES',
+    'RUN_STATES',
     'SERIES',
     'createJobList',
     'heartbeatRow',
@@ -358,6 +401,7 @@ test('the door carries the module\'s surface, and no dead name', async () => {
     'killState',
     'lines',
     'projectRow',
+    'runningJobs',
     'text',
   ]);
 
