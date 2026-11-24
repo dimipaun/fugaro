@@ -250,6 +250,18 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 	craftPools, _ := publishedCraftPools(lc, p, craftCreds)
 	add("craft_pools", craftPools, p.CraftPools, false)
 	add("crafts", publishedCrafts(lc, p), p.Crafts, false)
+	// The routing table is the same case one key over (RT4, R21, F49): the
+	// key's presence on the node is what tells the credentials service the
+	// installation is migrated (PL3), and the node is where a run reads it —
+	// no job's environment carries a table — so a config that states one where
+	// the node carries none is exactly the gap this stage exists to close:
+	// without the row the owner's own `model_routing:` block would reach no run
+	// until they ran the explicit publish, which is the second command the HARD
+	// RULE forbids. It is compared through the publisher's own merge, the craft
+	// rows' reason, and it is handed the craft_pools this publish would write
+	// (craftPools above): the pools travel in both blocks, so the row and the
+	// node cannot come to describe different projects.
+	add("model_routing", modelRoutingForPublish(lc, p, craftPools), p.ModelRouting, false)
 	// The cascade and the model grades are the same case one block over
 	// (D2607, F5, F6): the local config is their carrier from this release on,
 	// so a config that states a member the node does not carry is exactly the

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -506,5 +508,202 @@ func TestLeavingRemovesTheRoute(t *testing.T) {
 	}
 	if v := f.db.Value(gone); v != nil {
 		t.Errorf("the record at %s is still published after the member left: %v", gone, v)
+	}
+}
+
+// routeTableConfig is the local config of a project that has written its
+// routing table (RT4): one credential of the project, the pool of it, the craft
+// the table answers for, and the table itself — a pool source for the craft's
+// own model and a single-credential source carrying an admission, which is
+// where the admissions live (D3182).
+const routeTableConfig = "credentials:\n" +
+	"  - { name: acme-main, type: anthropic }\n" +
+	"pools:\n" +
+	"  - name: acme-pool\n" +
+	"    members: [acme-main]\n" +
+	"    owner: owner@example.com\n" +
+	"    rule: ordered\n" +
+	"    principal: { kind: project, id: aurora }\n" +
+	"crafts:\n" +
+	"  coder: { model: claude-opus-5-5, access: acme-pool }\n" +
+	"model_routing:\n" +
+	"  - match: claude-opus-*\n" +
+	"    chain:\n" +
+	"      - { kind: pool, pool: acme-pool }\n" +
+	"  - match: claude-*\n" +
+	"    chain:\n" +
+	"      - { kind: anthropic, admit: [github/acme/app] }\n"
+
+// TestUpdatePublishesModelRouting is RT4's own read of what the update writes:
+// one top-level key, model_routing, holding the table the installation's config
+// states — with each source's own admit list — and the project's pools in the
+// shape PL1 gives them, while craft_pools is left as the reader of the release
+// behind decodes it (R21, F49).
+//
+// The pools are the assertion that matters most: the three members a pool gained
+// (rule, principal, threshold) may not be written inside craft_pools, whose
+// block is decoded strictly by every job image of the installation, so a release
+// behind this one would refuse the WHOLE node for a key it does not know — and
+// the node is re-read while runs are in flight
+// (docs/design/update-in-flight.md).
+func TestUpdatePublishesModelRouting(t *testing.T) {
+	f := newProjectFixture(t, routeTableConfig)
+	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+	h := newMigrationRig(t, f, &initOptions{})
+	if out, err := h.apply(t, true); err != nil {
+		t.Fatalf("the update refused the publish: %v\n%s", err, out)
+	}
+
+	p := publishedPolicy(t, f)
+	if len(p.UnknownKeys) != 0 {
+		t.Errorf("the node the update published lists UnknownKeys = %v, want none", p.UnknownKeys)
+	}
+	if p.ModelRouting == nil {
+		t.Fatal("the node the update published carries no model_routing, so the service reads the project as unmigrated (PL3)")
+	}
+	if len(p.ModelRouting.Entries) != 2 {
+		t.Fatalf("the table the node carries is %+v, want the config's two entries", p.ModelRouting.Entries)
+	}
+	entry := p.ModelRouting.Entries[0]
+	if entry.Match != "claude-opus-*" || len(entry.Chain) != 1 ||
+		entry.Chain[0].Kind != routing.KindPool || entry.Chain[0].Pool != "acme-pool" {
+		t.Errorf("the first entry = %+v, want the pool the config names", entry)
+	}
+	if got := p.ModelRouting.Entries[1].Chain[0].Admit; !slices.Equal(got, []string{"github/acme/app"}) {
+		t.Errorf("the second entry's admit list = %v, want the repositories the config admits: the admissions travel on the entry's own source (D3182)", got)
+	}
+
+	if len(p.ModelRouting.Pools) != 1 {
+		t.Fatalf("the pools the node carries are %+v, want the config's one", p.ModelRouting.Pools)
+	}
+	pool := p.ModelRouting.Pools[0]
+	if pool.Name != "acme-pool" || !slices.Equal(pool.Members, []string{"acme-main"}) {
+		t.Errorf("the pool in its new shape lost its name or its members: %+v", pool)
+	}
+	if pool.Rule != config.PoolRuleOrdered {
+		t.Errorf("the pool's rule = %q, want the config's %q", pool.Rule, config.PoolRuleOrdered)
+	}
+	if pool.Principal == nil || pool.Principal.Kind != config.PrincipalProject || pool.Principal.ID != "aurora" {
+		t.Errorf("the pool's principal = %+v, want the config's own", pool.Principal)
+	}
+
+	// And craft_pools carries the members a release-behind reader knows and no
+	// others: the pool is published there as the block has always been written.
+	got := publishedPoolMemberNames(t, f)
+	if len(got) != 1 || got[0] != "members,name,owner" {
+		t.Errorf("the node's craft_pools names %v, want the one pool with the members a release behind decodes (members,name,owner): a new member there is a node that reader refuses whole", got)
+	}
+}
+
+// publishedPoolMemberNames are the member names of each pool of the node's
+// craft_pools block, sorted and joined, read off the published document rather
+// than off a decoded value: it is the document a job image of the release
+// behind decodes strictly, and what this test is about is exactly which keys it
+// finds there.
+func publishedPoolMemberNames(t *testing.T, f *projectFixture) []string {
+	t.Helper()
+	var doc struct {
+		CraftPools []map[string]json.RawMessage `json:"craft_pools"`
+	}
+	if err := json.Unmarshal([]byte(nodeJSON(t, f, projectpolicy.PathShared())), &doc); err != nil {
+		t.Fatal(err)
+	}
+	out := make([]string, 0, len(doc.CraftPools))
+	for _, pool := range doc.CraftPools {
+		names := make([]string, 0, len(pool))
+		for name := range pool {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		out = append(out, strings.Join(names, ","))
+	}
+	return out
+}
+
+// TestUpdateConvergesFromAPolicyWithoutRouting: an installation whose node
+// carries no model_routing — every installation before this release, and the
+// node a release-1 runner of this one is served by — converges in one update,
+// and the run after it writes nothing at all.
+//
+// The node the second publish builds is compared byte for byte with the first,
+// and the two are the same node: the version did not move for this key (R25,
+// F63 — a bump would stop the release-1 images a paused run resumes on) and the
+// key is additive, so what the update writes is the key and nothing else.
+func TestUpdateConvergesFromAPolicyWithoutRouting(t *testing.T) {
+	f := newProjectFixture(t, routeTableConfig)
+	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+	// The node this release publishes, written by the explicit door, because
+	// the state this test starts from is the one the release BEHIND leaves: a
+	// node with no table, a file recording that node's generation, and the
+	// update then being the one thing that closes the gap between them.
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	published, err := json.Marshal(f.db.Value(projectpolicy.PathShared()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The node the release behind left: this one with the key taken out. It is
+	// built from the published document rather than written by hand, so the
+	// only difference between the two is what this test is about, and the
+	// version does not move with the key (R25, F63), which is what makes the
+	// pair the two releases' nodes.
+	var without map[string]any
+	if err := json.Unmarshal(published, &without); err != nil {
+		t.Fatal(err)
+	}
+	delete(without, "model_routing")
+	f.db.Set(projectpolicy.PathShared(), without)
+	// The record moves with the node, as it does in nodeWithCloneURLs: the file
+	// an installation at the previous release holds records the generation of
+	// THAT node, and a record still naming the one the first publish wrote is
+	// D854's other state — the node has moved past this file — whose answer is
+	// a re-seed of the file rather than the publish this test is about.
+	recorded := recordedGeneration(t, f)
+	setConfig(t, f, func(s string) string {
+		out := strings.Replace(s, "policy_generation: "+recorded, "policy_generation: "+nodeETag(t, f), 1)
+		if out == s {
+			t.Fatalf("the fixture's config does not record %q:\n%s", recorded, s)
+		}
+		return out
+	})
+
+	h := newMigrationRig(t, f, &initOptions{})
+	st, err := h.s.Check(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the check says %s %q, want a pending publish: the node carries no table", st.State, st.Detail)
+	}
+	if out, err := h.apply(t, true); err != nil {
+		t.Fatalf("an installation whose node carries no table did not converge: %v\n%s", err, out)
+	}
+	after, err := json.Marshal(f.db.Value(projectpolicy.PathShared()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(published) {
+		t.Errorf("the node an installation without the key converged to is not the one it publishes with it:\nconverged %s\nfirst     %s", after, published)
+	}
+
+	h.s.forget()
+	st, err = h.s.Check(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Done {
+		t.Errorf("the converged installation is %s %q, want nothing to do", st.State, st.Detail)
+	}
+	if _, err := h.apply(t, true); err != nil {
+		t.Fatal(err)
+	}
+	settled, err := json.Marshal(f.db.Value(projectpolicy.PathShared()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(settled) != string(after) {
+		t.Errorf("a second update rewrote the converged node:\nbefore %s\nafter  %s", after, settled)
 	}
 }
