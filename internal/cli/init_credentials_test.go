@@ -746,10 +746,10 @@ func planDirs(t *testing.T, log string) []string {
 // already has the block keeps it. The block is the record of a service that
 // exists — its URL is the audience every caller's ID token is minted for, and
 // its job table is the installation's own — so the run carries it as it is
-// found and moves the members it owns: the image, and the two members the
-// carry's own rewrite writes over it (verifier_accounts, CSR14, and
-// review_job_accounts, the review table the same refresh unions in — see the
-// expectation below).
+// found and moves the members it owns: the image, and the members the carry's
+// own rewrites write over it (verifier_accounts, CSR14; review_job_accounts,
+// the review table the same refresh unions in; and signer_account, the first of
+// the identity half's three names — see the expectation below).
 //
 // Mutation (verified, run and restored): rebuild the block from the spec
 // (infra.Credentials) instead of carrying it, and this test fails on the
@@ -779,7 +779,12 @@ func TestUpdateKeepsAnOptedInInstallationsServiceUnchanged(t *testing.T) {
 	// rig's config records a Bitbucket repository and has the service opted in,
 	// so the installation deploys the implicit review-only job of that provider
 	// (plan task RJ8, finding F6) and the service has to admit the caller that
-	// runs it. Every other member is the earlier run's, byte for byte.
+	// runs it. And signer_account is the identity half's arrival, the same kind
+	// again: the names are written by the run that DEPLOYS the service and by
+	// no other, so an installation that already has the block gains the signer
+	// — and the roster and the implicit admins, where this rig's config names
+	// any (TestUpdateNamesTheServicesIdentity is that case) — on the next
+	// update. Every other member is the earlier run's, byte for byte.
 	want := map[string]any{
 		"account_id":       infra.CredentialsAccountID,
 		"service":          infra.CredentialsServiceName,
@@ -791,7 +796,8 @@ func TestUpdateKeepsAnOptedInInstallationsServiceUnchanged(t *testing.T) {
 			"provider": "bitbucket", "repo": "acme/sandbox", "workflow": "web"}},
 		"review_job_accounts": []any{map[string]any{
 			"profile": infra.ImplicitReviewProfile, "provider": "bitbucket", "account": config.DefaultClaudeAccount}},
-		"url": credentialsServiceURL,
+		"url":            credentialsServiceURL,
+		"signer_account": infra.SignerAccountID + "@" + fpID + ".iam.gserviceaccount.com",
 		"verifier_accounts": []any{
 			"fugaro-verifier@proj-1234.iam.gserviceaccount.com"},
 	}
