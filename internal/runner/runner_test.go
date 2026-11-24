@@ -680,7 +680,7 @@ func TestDecideToleratedHotfixRoundFilesNothing(t *testing.T) {
 	if pr.Draft {
 		t.Errorf("the pull request is a draft: %+v", pr)
 	}
-	if !strings.Contains(pr.Body, "rigor: hotfix (repo)") {
+	if !strings.Contains(pr.Body, "rigor: hotfix (project)") {
 		t.Errorf("the status section does not name the mode the run was held to:\n%s", pr.Body)
 	}
 }
