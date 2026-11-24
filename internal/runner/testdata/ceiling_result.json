@@ -7,7 +7,7 @@
     ],
     "total": 1
   },
-  "config_sha256": "3d2cab421e44197b179b39e2aa04ac4b2178b2852004a5c71ed3cd1e9986bbe3",
+  "config_sha256": "2e133484874ab121177ad59f2b60f29a8f66fa8d33abafd0a4d43d64d8e5ec57",
   "cost": {
     "compute_estimated": false,
     "compute_usd": 0,
@@ -40,6 +40,11 @@
   "pr": {
     "number": 1,
     "url": "https://example.invalid/pr/1"
+  },
+  "project_layer": {
+    "applied": true,
+    "generation": 3,
+    "sha256": "669aa8f50d25a1d6b20632afca19a747fc592805427cf0318e305f840ae7d148"
   },
   "pushed_head": "<sha>",
   "recipe": {
