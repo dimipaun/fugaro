@@ -545,11 +545,12 @@ export function drawWizard(deps: WizardDeps): WizardElement {
    * `setup.plan` and `setup.apply` is main's, and it runs for as long as a setup
    * takes (up to the hour main holds it for), while this screen's answer is one
    * document that arrives in a single reply. So the label naming what is being
-   * read goes up before the await, the whole attempt is marked `aria-busy`, and
-   * the two controls that start a read are held until it lands -- the `finally`
-   * takes all three down on every path, including a bridge that throws. The
-   * earlier attempt's own drawing is left exactly as it was: dimming it would be
-   * dimming an outcome that has stopped changing (`base.css` dims what a
+   * read goes up before the await, the attempt's own block is marked `aria-busy`,
+   * and the two controls that start a read are held until it lands -- the
+   * `finally` takes all four down on every path, including a bridge that throws,
+   * because a screen left marked busy is the endless spinner this console's rules
+   * refuse. The earlier attempt's own drawing is left exactly as it was: dimming it
+   * would be dimming an outcome that has stopped changing (`base.css` dims what a
    * `data-busy` section still holds). */
   const send = async (
     word: string,
