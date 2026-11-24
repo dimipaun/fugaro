@@ -28,7 +28,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/runindex"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/runview"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // `fugaro coordinator status --from-store` (D364): the read of the view the
@@ -655,5 +658,51 @@ func TestCoordinatorFromStoreWarnsInRepositoryOrder(t *testing.T) {
 		if !strings.HasPrefix(lines[at], wantPrefix) {
 			t.Errorf("stderr warning %d = %q, want %s's own: one repository's warnings are read together and the selection's order decides which repository comes first", at, lines[at], repo)
 		}
+	}
+}
+
+// TestIndexRunKeepsTheTaskBranch is run 1a21's deferred review finding, fixed:
+// indexRun rebuilt the view from the entry's two records alone, so a run whose
+// record is absent or unreadable lost the branch coordinatorRun falls back to
+// the task for. A task is not in the index -- its prompt is the largest thing
+// about a run -- so the fold projects the branch onto the entry (Entry.Branch,
+// runview.Join's own rule) and indexRun reads it. What this holds is the whole
+// point of the projection: the index's row and the bucket's row for one run are
+// the same row, and a run in flight carries the branch its task named on both.
+func TestIndexRunKeepsTheTaskBranch(t *testing.T) {
+	const run = "20261123-230118-f3b0"
+	branch := "fugaro/" + run
+	spec := &task.Spec{Version: 1, RunID: run, Branch: branch, PR: 41}
+	launch := &runstore.Launch{Version: 1, RunID: run, LaunchedBy: "dev@example.invalid"}
+
+	// The bucket's own row: the task is present and its branch is read from it.
+	bucket := coordinatorRun(runview.Input{RunID: run, Task: spec, Launch: launch})
+	// The index's row: no task, no record, the branch the fold projected.
+	index := indexRun(runindex.Entry{RunID: run, PR: spec.PR, Branch: branch, Launch: launch})
+
+	if bucket.Branch != branch || index.Branch != bucket.Branch {
+		t.Fatalf("the bucket drew branch %q and the index %q, want the task's %q: the two views of one run must not disagree",
+			bucket.Branch, index.Branch, branch)
+	}
+	if index.PR != bucket.PR {
+		t.Fatalf("the bucket drew PR %d and the index %d, want them equal", bucket.PR, index.PR)
+	}
+}
+
+// TestIndexRunKeepsTheRecordBranchWithoutTheEntryField is the rollout guard the
+// new Entry.Branch field needs. The index is written by the history job, whose
+// image may lag the CLI that reads it (TestContractShapes' own reason), so an
+// entry written before this field existed carries no branch: indexRun must then
+// read the record's own branch as it always did. A run with neither the field
+// nor a record draws no branch rather than a wrong one -- the absence is the
+// honest answer, and it is what a re-fold heals.
+func TestIndexRunKeepsTheRecordBranchWithoutTheEntryField(t *testing.T) {
+	const run = "20261123-230118-f3b0"
+	rec := &runstore.Record{Version: 1, RunID: run, Branch: "fugaro/" + run}
+	if got := indexRun(runindex.Entry{RunID: run, Record: rec}).Branch; got != rec.Branch {
+		t.Fatalf("branch = %q, want the record's %q when the entry carries no branch field", got, rec.Branch)
+	}
+	if got := indexRun(runindex.Entry{RunID: run}).Branch; got != "" {
+		t.Fatalf("branch = %q, want none for a run the entry and its records both leave branchless", got)
 	}
 }

@@ -51,14 +51,18 @@ func (f *fakeVerifier) Verify(_ context.Context, assertion string, want mobilese
 	return f.claims, nil
 }
 
-// fakeMembership is C1's Policy: the verdict it was configured with, and the
-// project and claims it was asked about.
+// fakeMembership is C1's Policy: the verdict and the crash-report switch it was
+// configured with, and the project and claims it was asked about.
 type fakeMembership struct {
 	verdict mobilesession.Verdict
 	err     error
 
+	crashReports    bool
+	crashReportsErr error
+
 	projects []string
 	claims   []mobilesession.Claims
+	crashes  []string
 }
 
 func (f *fakeMembership) Allow(_ context.Context, project string, claims mobilesession.Claims) (mobilesession.Verdict, error) {
@@ -68,6 +72,14 @@ func (f *fakeMembership) Allow(_ context.Context, project string, claims mobiles
 		return mobilesession.Verdict{}, f.err
 	}
 	return f.verdict, nil
+}
+
+func (f *fakeMembership) CrashReports(_ context.Context, project string) (bool, error) {
+	f.crashes = append(f.crashes, project)
+	if f.crashReportsErr != nil {
+		return false, f.crashReportsErr
+	}
+	return f.crashReports, nil
 }
 
 // fakeClaimStore is C1's ClaimStore: a map, which is the one thing the real
@@ -152,34 +164,45 @@ func (f *fakeMinter) Mint(_ context.Context, req mobilesession.MintRequest) (mob
 	return f.token, nil
 }
 
-// fakeDeviceStore is this route's device-node seam: it records every node it
-// was asked to write and every uid it was asked to remove, in order, because
-// what the cleanup tests read is that a failed restore left neither.
+// fakeDeviceStore is the pairing route's own device-node seam, which this route
+// writes through as well (MobileDeviceNodes, P3): it answers the consumer key it
+// was configured with and records every node it was asked to write and every uid
+// it was asked to retire, in order, because what the cleanup tests read is that a
+// failed restore left neither.
 type fakeDeviceStore struct {
-	createErr error
-	removeErr error
+	consumer    string
+	consumerErr error
+	writeErr    error
+	retireErr   error
 
-	created map[string]MobileDevice
+	written map[string]MobileDeviceNode
 	order   []string
-	removed []string
+	retired []string
 }
 
-func (f *fakeDeviceStore) Create(_ context.Context, project, uid string, dev MobileDevice) error {
-	f.order = append(f.order, "create "+uid)
-	if f.createErr != nil {
-		return f.createErr
+func (f *fakeDeviceStore) ConsumerKey(context.Context) (string, error) {
+	if f.consumerErr != nil {
+		return "", f.consumerErr
 	}
-	if f.created == nil {
-		f.created = map[string]MobileDevice{}
+	return f.consumer, nil
+}
+
+func (f *fakeDeviceStore) Write(_ context.Context, uid string, node MobileDeviceNode) error {
+	f.order = append(f.order, "write "+uid)
+	if f.writeErr != nil {
+		return f.writeErr
 	}
-	f.created[uid] = dev
+	if f.written == nil {
+		f.written = map[string]MobileDeviceNode{}
+	}
+	f.written[uid] = node
 	return nil
 }
 
-func (f *fakeDeviceStore) Remove(_ context.Context, project, uid string) error {
-	f.order = append(f.order, "remove "+uid)
-	f.removed = append(f.removed, uid)
-	return f.removeErr
+func (f *fakeDeviceStore) Retire(_ context.Context, uid string) error {
+	f.order = append(f.order, "retire "+uid)
+	f.retired = append(f.retired, uid)
+	return f.retireErr
 }
 
 // ---------------------------------------------------------------------------
@@ -239,11 +262,11 @@ func newRestoreFixture(t *testing.T) *restoreFixture {
 			AuthTime:      time.Unix(1_700_000_000, 0).Unix(),
 			JTI:           "assertion-1",
 		}},
-		membership: &fakeMembership{verdict: mobilesession.Verdict{Allowed: true, Role: access.RoleOperator}},
+		membership: &fakeMembership{verdict: mobilesession.Verdict{Allowed: true, Role: access.RoleOperator}, crashReports: true},
 		claims:     &fakeClaimStore{},
 		refresh:    &fakeRefreshStore{},
 		minter:     &fakeMinter{},
-		devices:    &fakeDeviceStore{},
+		devices:    &fakeDeviceStore{consumer: "the-consumer-key"},
 		projects:   &fakePolicy{shared: &projectpolicy.Policy{Version: projectpolicy.Version}, sharedFound: true},
 	}
 	auditor, buf := newAudit(t)
@@ -252,11 +275,10 @@ func newRestoreFixture(t *testing.T) *restoreFixture {
 	f.log = &logs
 	h, err := NewMobileRestore(MobileRestore{
 		Project: MobileProjectConfig{
-			ProjectID:         "the-project",
-			Endpoint:          restoreEndpoint,
-			DatabaseURL:       "https://the-project.firebaseio.invalid",
-			APIKey:            "the-api-key",
-			ConsumerPublicKey: "the-consumer-key",
+			ProjectID:   "the-project",
+			Endpoint:    restoreEndpoint,
+			DatabaseURL: "https://the-project.firebaseio.invalid",
+			APIKey:      "the-api-key",
 		},
 		ChallengeKey: restoreChallengeKey(),
 		Policy:       f.projects,
@@ -381,8 +403,8 @@ func TestMobileRestoreStrictProjectRefusesWithQR(t *testing.T) {
 	// The allow path did not run: no node, no family, no token. This is what
 	// "refuses before the allow path exists" means, and it is the half of the
 	// test that a handler which refused AFTER admitting would fail.
-	if len(f.devices.created) != 0 {
-		t.Errorf("the refused restore wrote %d device nodes, want none", len(f.devices.created))
+	if len(f.devices.written) != 0 {
+		t.Errorf("the refused restore wrote %d device nodes, want none", len(f.devices.written))
 	}
 	if len(f.refresh.issued) != 0 {
 		t.Errorf("the refused restore issued the families %v, want none", f.refresh.issued)
@@ -457,10 +479,10 @@ func noAuditLine(t *testing.T, buf *bytes.Buffer) {
 // node per admitted device, so a test that reads it has one and no more.
 func deviceUID(t *testing.T, f *restoreFixture) string {
 	t.Helper()
-	if len(f.devices.created) != 1 {
-		t.Fatalf("the restore wrote %d device nodes, want exactly one: %v", len(f.devices.created), f.devices.created)
+	if len(f.devices.written) != 1 {
+		t.Fatalf("the restore wrote %d device nodes, want exactly one: %v", len(f.devices.written), f.devices.written)
 	}
-	for uid := range f.devices.created {
+	for uid := range f.devices.written {
 		return uid
 	}
 	panic("one node, and the loop above returned nothing")
@@ -646,7 +668,7 @@ func TestMobileRestoreAdmitsADevice(t *testing.T) {
 		t.Errorf("the session's API key is %q, want the deployment's own", session.APIKey)
 	}
 	if session.ConsumerPublicKey != "the-consumer-key" {
-		t.Errorf("the session's consumer key is %q, want the deployment's own: the phone pins it and verifies every mailbox reply with it (O12)", session.ConsumerPublicKey)
+		t.Errorf("the session's consumer key is %q, want the published one: the phone pins it and verifies every mailbox reply with it (O12)", session.ConsumerPublicKey)
 	}
 	if session.Role != access.RoleOperator {
 		t.Errorf("the session's role is %q, want the roster's %q (O14)", session.Role, access.RoleOperator)
@@ -675,26 +697,33 @@ func TestMobileRestoreAdmitsADevice(t *testing.T) {
 	if session.Policy.CompactThresholdPercent != 0 {
 		t.Errorf("the session's compaction threshold is %d, want 0: no project field carries one until Z2", session.Policy.CompactThresholdPercent)
 	}
+	// The crash-report switch is the policy's own answer and never a value this
+	// route invents (D731, D738): C1 writes the member whether or not the
+	// published policy carries the key, and the app sends nothing before it has
+	// read it (D734).
+	if !session.Policy.CrashReports {
+		t.Errorf("the session's crash-report switch is off, want the policy's own answer: the app reads it before it collects anything (D731, D734, D738)")
+	}
+	if len(f.membership.crashes) != 1 {
+		t.Errorf("the policy was asked for the crash-report switch %d times, want exactly one", len(f.membership.crashes))
+	}
 
 	// What the phone holds afterwards belongs to the device the route just
 	// made: the node's uid is the family's and the token's, and a route that
 	// mixed the three would hand one device another's session.
 	uid := deviceUID(t, f)
-	node0 := f.devices.created[uid]
+	node0 := f.devices.written[uid]
 	if node0.Email != restoreEmail {
 		t.Errorf("the device node's address is %q, want the verified %q", node0.Email, restoreEmail)
 	}
-	if node0.Provider != projectpolicy.ProviderGoogle {
-		t.Errorf("the device node's provider is %q, want the assertion's %q", node0.Provider, projectpolicy.ProviderGoogle)
-	}
-	if node0.Sub != "provider-sub-1" {
-		t.Errorf("the device node's sub is %q, want the assertion's %q", node0.Sub, "provider-sub-1")
-	}
-	if node0.Role != access.RoleOperator {
+	if node0.Role != string(access.RoleOperator) {
 		t.Errorf("the device node's role is %q, want the roster's %q (O14)", node0.Role, access.RoleOperator)
 	}
 	if node0.PublicKey != deviceKey() {
 		t.Errorf("the device node's public key is not the one the call carried")
+	}
+	if _, err := time.Parse(time.RFC3339, node0.At); err != nil {
+		t.Errorf("the device node's time is %q, which is not the RFC3339 this tree writes on every node: %v", node0.At, err)
 	}
 	if len(f.refresh.issued) != 1 || f.refresh.issued[0] != uid {
 		t.Errorf("the families issued are %v, want the node's own uid %q", f.refresh.issued, uid)
@@ -773,7 +802,7 @@ func TestMobileRestoreWritesTheCanonicalAddress(t *testing.T) {
 	}
 	const canonical = "Member@example.invalid"
 	uid := deviceUID(t, f)
-	if got := f.devices.created[uid].Email; got != canonical {
+	if got := f.devices.written[uid].Email; got != canonical {
 		t.Errorf("the device node's address is %q, want the canonical %q", got, canonical)
 	}
 	lines := auditLines(t, f.audit)
@@ -865,8 +894,8 @@ func TestMobileRestoreRefusesASpentChallenge(t *testing.T) {
 	if got := auditField(lines[1], "status"); got != ErrorRequestRefused {
 		t.Errorf("the refusal's status is %q, want %q", got, ErrorRequestRefused)
 	}
-	if len(f.devices.created) != 1 {
-		t.Errorf("the two calls wrote %d device nodes, want only the first call's one", len(f.devices.created))
+	if len(f.devices.written) != 1 {
+		t.Errorf("the two calls wrote %d device nodes, want only the first call's one", len(f.devices.written))
 	}
 }
 
@@ -903,8 +932,8 @@ func TestMobileRestoreRefusesAChallengePastItsLife(t *testing.T) {
 	if got := auditField(lines[0], "caller"); got != restoreEmail {
 		t.Errorf("the refusal's caller is %q, want the verified address %q", got, restoreEmail)
 	}
-	if len(f.devices.created) != 0 {
-		t.Errorf("the refusal wrote %d device nodes, want none", len(f.devices.created))
+	if len(f.devices.written) != 0 {
+		t.Errorf("the refusal wrote %d device nodes, want none", len(f.devices.written))
 	}
 }
 
@@ -963,8 +992,8 @@ func TestMobileRestoreRefusesAPolicyVerdict(t *testing.T) {
 					}
 				}
 			}
-			if len(f.devices.created) != 0 || len(f.refresh.issued) != 0 || len(f.minter.reqs) != 0 {
-				t.Errorf("the refused restore reached the allow path: %v nodes, %v families, %d mints", len(f.devices.created), f.refresh.issued, len(f.minter.reqs))
+			if len(f.devices.written) != 0 || len(f.refresh.issued) != 0 || len(f.minter.reqs) != 0 {
+				t.Errorf("the refused restore reached the allow path: %v nodes, %v families, %d mints", len(f.devices.written), f.refresh.issued, len(f.minter.reqs))
 			}
 			lines := auditLines(t, f.audit)
 			if len(lines) != 1 {
@@ -1001,8 +1030,8 @@ func TestMobileRestoreRefusesAnAllowedVerdictWithNoRole(t *testing.T) {
 	if e := wireRefusal(t, rec); e.Error != ErrorStateUnavailable {
 		t.Errorf("the refusal is %q, want %q", e.Error, ErrorStateUnavailable)
 	}
-	if len(f.devices.created) != 0 {
-		t.Errorf("the restore wrote %d device nodes, want none: a node with no role is one no consumer can resolve", len(f.devices.created))
+	if len(f.devices.written) != 0 {
+		t.Errorf("the restore wrote %d device nodes, want none: a node with no role is one no consumer can resolve", len(f.devices.written))
 	}
 	lines := auditLines(t, f.audit)
 	if len(lines) != 1 {
@@ -1033,8 +1062,8 @@ func TestMobileRestoreRefusesAProjectPolicyItCannotRead(t *testing.T) {
 			if e := wireRefusal(t, rec); e.Error != ErrorStateUnavailable {
 				t.Errorf("the refusal is %q, want %q", e.Error, ErrorStateUnavailable)
 			}
-			if len(f.devices.created) != 0 {
-				t.Errorf("the restore wrote %d device nodes, want none", len(f.devices.created))
+			if len(f.devices.written) != 0 {
+				t.Errorf("the restore wrote %d device nodes, want none", len(f.devices.written))
 			}
 			lines := auditLines(t, f.audit)
 			if len(lines) != 1 {
@@ -1163,8 +1192,8 @@ func TestMobileRestoreRefusesAChallengeItDidNotIssue(t *testing.T) {
 			if len(f.claims.namespaces) != 0 || len(f.verifier.assertions) != 0 {
 				t.Errorf("the refused call reached the verifier (%v) or the store (%v), want neither", f.verifier.assertions, f.claims.namespaces)
 			}
-			if len(f.devices.created) != 0 || len(f.refresh.issued) != 0 || len(f.minter.reqs) != 0 {
-				t.Errorf("the refused call reached the allow path: %d nodes, %v families, %d mints", len(f.devices.created), f.refresh.issued, len(f.minter.reqs))
+			if len(f.devices.written) != 0 || len(f.refresh.issued) != 0 || len(f.minter.reqs) != 0 {
+				t.Errorf("the refused call reached the allow path: %d nodes, %v families, %d mints", len(f.devices.written), f.refresh.issued, len(f.minter.reqs))
 			}
 			noAuditLine(t, f.audit)
 		})
@@ -1208,7 +1237,7 @@ func TestMobileRestoreLeavesNothingBehindWhenItCannotAnswer(t *testing.T) {
 			}
 			if tc.wantNode {
 				uid := deviceUID(t, f)
-				if !slices.Contains(f.devices.removed, uid) {
+				if !slices.Contains(f.devices.retired, uid) {
 					t.Errorf("the node %q is still there: a device with no session is one nobody can revoke (F32)", uid)
 				}
 			}
@@ -1236,14 +1265,14 @@ func TestMobileRestoreLeavesNothingBehindWhenItCannotAnswer(t *testing.T) {
 // of a member the policy had already allowed.
 func TestMobileRestoreLeavesNothingWhenTheDeviceCannotBeWritten(t *testing.T) {
 	f := newRestoreFixture(t)
-	f.devices.createErr = errors.New("the device store is down")
+	f.devices.writeErr = errors.New("the device store is down")
 
 	rec := f.restore(t, restoreBody(f.challenge))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("a device that could not be written is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
-	if len(f.devices.removed) != 0 {
-		t.Errorf("the route removed %v, want nothing: no node was written", f.devices.removed)
+	if len(f.devices.retired) != 0 {
+		t.Errorf("the route removed %v, want nothing: no node was written", f.devices.retired)
 	}
 	if len(f.refresh.issued) != 0 {
 		t.Errorf("the route issued %v, want no family for a device it could not write", f.refresh.issued)
@@ -1270,11 +1299,11 @@ func TestMobileRestoreTakesBackADeviceItCannotRecord(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("a restore that could not be recorded is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
-	if e := wireRefusal(t, rec); e.Message != mobileUnaudited {
+	if e := wireRefusal(t, rec); e.Message != mobileRestoreUnaudited {
 		t.Errorf("the answer is %q, want the unaudited sentence: the act was not made", e.Message)
 	}
 	uid := deviceUID(t, f)
-	if !slices.Contains(f.devices.removed, uid) {
+	if !slices.Contains(f.devices.retired, uid) {
 		t.Errorf("the node %q survived a restore the service could not record", uid)
 	}
 	if len(f.refresh.revoked) != 1 {
@@ -1285,27 +1314,36 @@ func TestMobileRestoreTakesBackADeviceItCannotRecord(t *testing.T) {
 	}
 }
 
-// TestMobileRestoreRefusesADeviceUIDItCannotDraw is the other draw this route
-// makes: a device uid that is not random is a name another device's could
-// collide with, so a draw that fails refuses the call — with a line, because
-// by then the identity is known — and reaches none of the allow path.
-func TestMobileRestoreRefusesADeviceUIDItCannotDraw(t *testing.T) {
+// TestMobileRestoreRefusesAProjectWithNoConsumerKey is the allow path's first
+// step, which is a READ: a project that has published no mailbox consumer key
+// cannot complete a restore — the phone would pin nothing and could verify no
+// reply it reads (O12) — so the call is refused before a device node exists that
+// a later failure would have to take back. The identity is known by then, so the
+// refusal carries the one line.
+//
+// The device uid's own draw is not reached from here: it is the pairing route's
+// helper (mobileDeviceUID, P3), which reads crypto/rand directly, and this route
+// guards its error exactly as the pairing does.
+func TestMobileRestoreRefusesAProjectWithNoConsumerKey(t *testing.T) {
 	f := newRestoreFixture(t)
-	restoreRandom(t, failingReader{})
+	f.devices.consumerErr = errors.New("this installation never published a consumer key")
 
 	rec := f.restore(t, restoreBody(f.challenge))
 	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("a restore whose uid could not be drawn is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+		t.Fatalf("a project with no consumer key is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
-	if e := wireRefusal(t, rec); e.Message != mobileUIDUndrawn {
-		t.Errorf("the answer is %q, want the undrawn-uid sentence", e.Message)
+	if e := wireRefusal(t, rec); e.Message != mobileConsumerKeyUnread {
+		t.Errorf("the answer is %q, want the unreadable-consumer-key sentence", e.Message)
 	}
-	if len(f.devices.created) != 0 || len(f.refresh.issued) != 0 {
-		t.Errorf("the failed draw reached the allow path: %d nodes, %v families", len(f.devices.created), f.refresh.issued)
+	if len(f.devices.written) != 0 || len(f.refresh.issued) != 0 {
+		t.Errorf("the refusal reached the allow path: %d nodes, %v families", len(f.devices.written), f.refresh.issued)
 	}
 	lines := auditLines(t, f.audit)
 	if len(lines) != 1 {
 		t.Fatalf("the failure wrote %d audit lines, want exactly one: %v", len(lines), lines)
+	}
+	if got := auditField(lines[0], "status"); got != ErrorStateUnavailable {
+		t.Errorf("the line's status is %q, want %q: the service could not read its own state", got, ErrorStateUnavailable)
 	}
 }
 
@@ -1313,24 +1351,30 @@ func TestMobileRestoreRefusesADeviceUIDItCannotDraw(t *testing.T) {
 // The shapes this route states and shares
 // ---------------------------------------------------------------------------
 
-// TestMobileRestoreDeviceUIDIsTheMintersOwn holds this package's spelling of a
-// device uid to internal/budget/token's, which is the code that mints one: the
-// uid is a database key and a Firebase uid, so the two writers have to draw the
-// same shape, and the constants are duplicated because the minter's are
-// unexported (internal/voicesvc's TestDeviceShapeIsTheMintersOwn is the same
-// test for the same reason).
+// TestMobileDeviceUIDAgreesWithTheBudgetTokensDeviceUID is the test P3's own
+// comment promises (mobile_pair.go's mobileDeviceUIDPrefix): it holds this
+// package's spelling of a device uid to internal/budget/token's, which is the
+// code that mints one. The uid is a database key and a Firebase uid, so the two
+// writers have to draw the same shape, and the constants are respelled because
+// the minter's are unexported (internal/voicesvc's TestDeviceShapeIsTheMintersOwn
+// is the same test for the same reason).
+//
+// The shape checked is mobileDeviceUIDValid's, which is the ONE spelling this
+// package has of it: the pairing writes and retires nodes under it, the restore
+// writes through the same store, and internal/voicesvc/auth.go admits it. A
+// second copy of the rule in a test would be a second spelling.
 //
 // The signer is an echo: what is being read is the uid the minter DREW, not the
 // token it wrapped around it.
-func TestMobileRestoreDeviceUIDIsTheMintersOwn(t *testing.T) {
+func TestMobileDeviceUIDAgreesWithTheBudgetTokensDeviceUID(t *testing.T) {
 	seen := map[string]bool{}
 	for i := 0; i < 32; i++ {
 		dt, err := token.MintDevice(context.Background(), restoreEchoSigner{}, time.Unix(1_700_000_000, 0))
 		if err != nil {
 			t.Fatalf("MintDevice: %v", err)
 		}
-		if !isRestoreDeviceUID(dt.UID) {
-			t.Fatalf("a uid the minter produced is not one this route would write: %q", dt.UID)
+		if err := mobileDeviceUIDValid(dt.UID); err != nil {
+			t.Fatalf("a uid the minter produced is not one this service would write: %q: %v", dt.UID, err)
 		}
 		seen[dt.UID] = true
 	}
@@ -1343,27 +1387,14 @@ func TestMobileRestoreDeviceUIDIsTheMintersOwn(t *testing.T) {
 		if err != nil {
 			t.Fatalf("mobileDeviceUID: %v", err)
 		}
-		if !isRestoreDeviceUID(uid) {
-			t.Fatalf("this route drew a uid the minter would not: %q", uid)
+		if err := mobileDeviceUIDValid(uid); err != nil {
+			t.Fatalf("this service drew a uid it would not accept: %q: %v", uid, err)
 		}
 		mine[uid] = true
 	}
 	if len(mine) != 32 {
-		t.Errorf("this route drew %d distinct uids of 32", len(mine))
+		t.Errorf("this service drew %d distinct uids of 32", len(mine))
 	}
-}
-
-// isRestoreDeviceUID is the shape a device uid has for every writer: the
-// prefix, then mobileDeviceUIDBytes of unpadded base64url. Both halves are this
-// file's own constants, so the test above is what holds this spelling to the
-// minter's.
-func isRestoreDeviceUID(uid string) bool {
-	rest, ok := strings.CutPrefix(uid, mobileDevicePrefix)
-	if !ok {
-		return false
-	}
-	raw, err := base64.RawURLEncoding.Strict().DecodeString(rest)
-	return err == nil && len(raw) == mobileDeviceUIDBytes
 }
 
 // restoreEchoSigner is a token.Signer that returns the payload it was handed as
@@ -1405,7 +1436,6 @@ func TestNewMobileRestoreRefusesAnIncompleteConfiguration(t *testing.T) {
 		{"no endpoint", func(c *MobileRestore) { c.Project.Endpoint = "" }},
 		{"no database URL", func(c *MobileRestore) { c.Project.DatabaseURL = "" }},
 		{"no API key", func(c *MobileRestore) { c.Project.APIKey = "" }},
-		{"no consumer key", func(c *MobileRestore) { c.Project.ConsumerPublicKey = "" }},
 		{"no challenge key", func(c *MobileRestore) { c.ChallengeKey = nil }},
 		{"a challenge key shorter than the one this route stamps with", func(c *MobileRestore) { c.ChallengeKey = restoreChallengeKey()[:mobileChallengeKeyBytes-1] }},
 		{"no policy reader", func(c *MobileRestore) { c.Policy = nil }},

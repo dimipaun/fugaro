@@ -46,20 +46,29 @@ func Run(t *testing.T, factory Factory) {
 // testLaunchEnv is the launch's own environment (LaunchSpec.Env), the seam's
 // one field the suite can hold a backend to through the interface alone.
 //
-// Env carries the budget marker: a launcher sets it on the executions it
-// minted a token for, and the runner reads it to tell a minted token from a
-// project that published no policy (internal/cli/run.go, plan R2-8(a)). A
-// backend that dropped Env would launch every run without it — nothing here
-// could see that through the interface, and that is what the per-backend tests
-// beside the suite are for (the gcp fake's RunCall.Env, Batch's created job
-// JSON) — so what the suite checks is the other half: an Env a launcher must
-// not launch with is one nothing may be created for, on every backend, and one
-// that is well formed is not refused. backend.LaunchEnv is where both backends
-// read it, and a backend that ignored the field would accept all three.
+// Env carries what a launcher sets for one execution and no other -- a
+// switched repository's slip id is the entry below -- and a backend that
+// dropped Env would launch every run without it: nothing here could see that
+// through the interface, and that is what the per-backend tests beside the
+// suite are for (the gcp fake's RunCall.Env, Batch's created job JSON) -- so
+// what the suite checks is the other half: an Env a launcher must not launch
+// with is one nothing may be created for, on every backend, and one that is
+// well formed is not refused. backend.LaunchEnv is where both backends read
+// it, and a backend that ignored the field would accept all three.
+//
+// The budget marker (FUGARO_BUDGET_TOKEN, the entry whose value is the seal
+// key, D15) is deliberately not the well-formed entry: one backend refuses it
+// by name -- Batch, because a Batch job's variables are its definition and the
+// marker must never be one of them (AB9, D3021) -- and an entry a backend
+// refuses is not one this suite, which holds every backend to the same
+// answers, can carry. Each backend's own test holds that side of it:
+// internal/backend/gcp's carries the marker into the execution's override
+// (run_test.go), and internal/backend/batch's refuses it whatever spelling it
+// arrives in (batch_test.go).
 //
 // Both refusals are ErrRejected's meaning (a definitive refusal: nothing was
 // created) and not an ambiguity, because the launcher's caller does different
-// things with the two — a rejection drops the launch claim and the budget
+// things with the two -- a rejection drops the launch claim and the budget
 // token it minted, an ambiguity keeps both.
 func testLaunchEnv(t *testing.T, factory Factory) {
 	ctx := context.Background()
@@ -80,10 +89,10 @@ func testLaunchEnv(t *testing.T, factory Factory) {
 	t.Run("carries a well-formed entry", func(t *testing.T) {
 		b := factory(t)
 		s := spec()
-		s.Env = []string{"FUGARO_BUDGET_TOKEN=1"}
+		s.Env = []string{"FUGARO_SLIP=1"}
 		ref, err := b.Launch(ctx, s)
 		if err != nil || ref.Name == "" {
-			t.Fatalf("Launch with the budget marker = (%+v, %v), want a launched execution", ref, err)
+			t.Fatalf("Launch with a well-formed entry = (%+v, %v), want a launched execution", ref, err)
 		}
 	})
 }

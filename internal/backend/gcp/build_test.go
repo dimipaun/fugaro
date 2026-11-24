@@ -492,23 +492,28 @@ func TestSwitchedBuildRequestHasNoAvailableSecrets(t *testing.T) {
 	config.BuildServedSecretClasses = saved
 }
 
-// TestCatalogBuildKeepsItsMountsWhenServed pins the one build the flip never
-// moves (B4.9): a catalog entry's request names no service — its identity is
-// not one the build route admits, so its credential step has nothing to fetch
-// — and a request with no address is never served, whatever the class list
-// says. Its provider credential stays in availableSecrets and in the
-// credential step's secretEnv.
-func TestCatalogBuildKeepsItsMountsWhenServed(t *testing.T) {
+// TestCatalogBuildNamesNoSecretWhenServed pins the one build the flip never
+// moves (B4.9, D147): a request with no mount at all is left alone whatever
+// the class list says, and a catalog entry's build is that request — its
+// credential step fetches its git credential from the service like a
+// repository's, so it has no secret to move and the flip changes nothing for
+// it.
+func TestCatalogBuildNamesNoSecretWhenServed(t *testing.T) {
 	if !config.BuildServesClass(config.BuildSecretClassBuild) {
-		t.Fatalf("config.BuildServedSecretClasses = %v and does not carry %q: this case is about the flip being filled and a catalog build keeping its mounts (D147, D2077)", config.BuildServedSecretClasses, config.BuildSecretClassBuild)
+		t.Fatalf("config.BuildServedSecretClasses = %v and does not carry %q: this case is about the flip being filled and a catalog build still naming no secret (D147)", config.BuildServedSecretClasses, config.BuildSecretClassBuild)
 	}
 	spec := catalogBuildSpec(t)
 	b, err := CatalogBuildRequest("proj-1234", spec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.AvailableSecrets == nil || len(b.AvailableSecrets.SecretManager) != 1 {
-		t.Errorf("a catalog build's request carries %+v, want the provider credential: a catalog build is never served, so the flip moves none of its secrets (D2077)", b.AvailableSecrets)
+	if b.AvailableSecrets != nil {
+		t.Errorf("a catalog build's request carries %+v, want no secret at all: the class list moving a secret cannot move one a catalog entry's build never named (IS8, D3330)", b.AvailableSecrets)
+	}
+	for _, st := range b.Steps {
+		if st.SecretEnv != nil {
+			t.Errorf("step %q carries secretEnv %v, want none: a catalog entry's build reads its git credential from the service, not from a mount (IS8, D3330)", st.Id, st.SecretEnv)
+		}
 	}
 	if got := b.Substitutions["_SECRET_ENVS"]; got != "" {
 		t.Errorf("a catalog build's _SECRET_ENVS = %q, want the empty value it always had: an entry's build is handed no secret of the entry's (D2311, B9)", got)

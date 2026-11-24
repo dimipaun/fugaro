@@ -93,13 +93,35 @@ import (
 // that cannot be read is not a node that grants nothing.
 func (e *initEngine) syncAccess(ctx context.Context) error {
 	lc := e.lc
+	// The flags' fold is refused on a linked member, before anything at all is
+	// read: `fugaro setup --operator/--admin/--budget-admin` and `fugaro update`
+	// with them name a whole installation-level list, and on a member whose
+	// workspace holds it the workspace's own door is what writes those roles
+	// (WU10, R12, D2813, R11). It stands above the no-backend return so that a
+	// member without a database of its own — no place for the node these flags
+	// fold into — is refused for the same reason and not left with a door the
+	// other half of this step cannot open.
+	if e.r.o.operatorsChanged || e.r.o.adminsChanged || e.r.o.budgetAdminsChanged {
+		if err := installationMemberRefusal(ctx, lc, "folded into this installation's roster", installationMemberDoor("grant")); err != nil {
+			return err
+		}
+	}
 	if lc == nil || lc.Budget == nil || lc.Budget.RTDBURL == "" {
 		// No Firebase budget backend, so no Realtime Database and no node: the
 		// two lists stay the file's, which is the state every installation
 		// before this release is in. It is not silent — the run's result says
 		// so once (accessNoBackend) — because an operator who reads the grants
 		// with `fugaro user ls` and finds the config's must know why.
-		e.r.warn(accessNoBackend)
+		//
+		// A first run is neither: its Firebase stage is later in this same run
+		// and is what creates or adopts the backend, so "this installation has
+		// no budget backend" is said about a state the run is here to end —
+		// and the run that goes on to build one would have warned about a
+		// database it then created. The fact reaches the result through the
+		// Firebase stage's own lines, which are about this run's backend.
+		if !e.firstRun() {
+			e.r.warn(accessNoBackend)
+		}
 		return nil
 	}
 	if err := e.setupCloud(ctx); err != nil {
@@ -480,7 +502,7 @@ func (e *initEngine) migrateAccess(ctx context.Context, node accesslib.Node) (ac
 	// note names the same state as reachable) — and the refusal installOptions
 	// raises there is the two-GitHub-Apps message, whose remedy is the hand edit
 	// of fugaro.yaml this product never asks for (CLAUDE.md's HARD RULE).
-	spec, err := installSpec(e.r.o, e.lc, e.r.warn)
+	spec, err := installSpec(e.r.o, e.lc, e.r.withheld)
 	if err != nil {
 		return accesslib.Node{}, initErr(err)
 	}

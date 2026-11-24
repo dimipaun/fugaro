@@ -185,19 +185,8 @@ const (
 	// mobileChallengeLen is the whole value: the nonce, the issue time and the
 	// MAC, in that order, which is also the signing input's order.
 	mobileChallengeLen = mobileChallengeNonceBytes + mobileChallengeTimeBytes + mobileChallengeMACBytes
-	// mobileDevicePrefix and mobileDeviceUIDBytes are a device uid's shape: m~
-	// and 128 bits of unpadded base64url, which is what
-	// internal/budget/token's deviceNewUID draws (its own constants are
-	// unexported, and this is the second spelling of them —
-	// internal/voicesvc/auth.go's deviceUIDPrefix is the first, and
-	// TestMobileRestoreDeviceUIDIsTheMintersOwn holds this one to the minter's).
-	//
-	// The shape is not taste: a device's uid is a key of the database
-	// (config/admin/devices/$uid) and a Firebase uid, so the standard
-	// alphabet's '/' would split the node's path and '.', '#', '$', '[', ']'
-	// are characters a key may not hold at all.
-	mobileDevicePrefix    = "m~"
-	mobileDeviceUIDBytes  = 16
+	// maxMobileRestoreBytes is the bound on the body either route reads: the
+	// three short strings of C1's RestoreRequest and nothing else.
 	maxMobileRestoreBytes = 8 << 10
 )
 
@@ -258,76 +247,24 @@ const (
 	mobilePolicyNoRole        = "the project's mobile policy admitted this identity with no role, and a device node with no role is a device no consumer can resolve"
 	mobileProjectPolicyUnread = "the project's published policy could not be read, so this service cannot tell whether this project requires a QR for a new device"
 	mobileUIDUndrawn          = "this service could not draw a device id, and a device id that is not random is one another device's name could collide with"
+	mobileConsumerKeyUnread   = "the project's mailbox consumer key could not be read, so a phone would have no key to pin and every reply it reads would be one it cannot check (O12)"
 	mobileDeviceUnwritable    = "the device could not be recorded, so this service cannot admit it"
 	mobileFamilyUnwritable    = "the device's session could not be started, so this service cannot admit it"
 	mobileTokenUnminted       = "the device's first token could not be minted, so this service cannot admit it"
 	mobileAnswerUnbuildable   = "this service could not build the session it was about to answer with"
-	mobileUnaudited           = "the restore could not be recorded, and an act this service cannot record is not made: the device was not admitted"
+	// mobileRestoreUnaudited is this route's own sentence and not the pairing's
+	// (mobile_pair.go's mobileUnaudited): each act says which act could not be
+	// recorded, and an operator reading one of the two is reading one act.
+	mobileRestoreUnaudited = "the restore could not be recorded, and an act this service cannot record is not made: the device was not admitted"
 )
 
-// MobileProjectConfig is one project's mobile configuration: what the routes
-// need to name the project to the phone and to bind an assertion to it.
-//
-// It is the deployment's own value and not the request's, and every field of it
-// is read from the installation rather than from a caller: ProjectID and
-// Endpoint are what the session answer names, DatabaseURL and APIKey are what
-// the phone reaches the mailbox with (C1's SessionResponse, F4: neither travels
-// in the QR), and Endpoint is also the one source of the audience an assertion
-// must carry — AudienceOf(Endpoint) — so a relayed call is refused rather than
-// served (F39).
-//
-// The endpoint is the deployment's own and never the request's Host header:
-// that header is the caller's own text, and a service that derived its audience
-// from it would serve whatever audience its caller spelled.
-type MobileProjectConfig struct {
-	// ProjectID is the project's opaque id, the name the paired list stores.
-	ProjectID string
-	// Endpoint is the project's public mobile endpoint: scheme, host and path,
-	// the spelling a QR carries.
-	Endpoint string
-	// DatabaseURL and APIKey are the project's Realtime Database URL and its
-	// restricted Firebase API key.
-	DatabaseURL string
-	APIKey      string
-	// ConsumerPublicKey is the project's consumer key, unpadded base64url: the
-	// key the laptop signs its mailbox replies with, which the phone pins
-	// (O12).
-	ConsumerPublicKey string
-}
-
-// MobileDevice is the device node a restore writes (D222, D2791, O6): the
-// allowlist entry the Firebase rules read for existence and the consumers read
-// for the role, carrying the public key the device signs its mailbox messages
-// with.
-//
-// It is a shape of this package and not of the contract, because C1 fixes what
-// the sides call and the node is the project's own record. What it carries is
-// what three documents name: the address the roster knows (D222's administered
-// email), the first (provider, sub) this project accepted for it (F6, D2791),
-// the roster's role at the moment of the restore (O14) and the device's public
-// key (O6). Its time, and the name of the node it is written under, are the
-// store's.
-type MobileDevice struct {
-	Email     string
-	Provider  string
-	Sub       string
-	Role      access.Role
-	PublicKey string
-}
-
-// MobileDevices is the device-node store: the one seam this task invents, and
-// the one I1 reconciles with the pairing route's own writer (P3 writes the same
-// node, and the node's spelling is one fact).
-//
-// Create writes one device's node under a uid the caller drew; Remove deletes
-// it, which is what a restore that could not be answered uses to leave nothing
-// behind (F32: no device node survives a session that is not served). Remove is
-// called on a node that exists, so a store that reports "no such node" as an
-// error would make the cleanup noisy rather than wrong — the caller logs it.
-type MobileDevices interface {
-	Create(ctx context.Context, project, uid string, device MobileDevice) error
-	Remove(ctx context.Context, project, uid string) error
-}
+// The three shapes this route shares with the pairing route are the pairing
+// route's own and are NOT respelled here: MobileProjectConfig, MobileDeviceNode
+// and MobileDeviceNodes all live in mobile_pair.go, because the pairing is what
+// wrote the device node first (P3) and one node read by the database rules, the
+// mailbox's reader and this route has one spelling. This route reads the
+// consumer key and writes and retires device nodes THROUGH that store, so a
+// restore and a pairing cannot disagree about what a device is.
 
 // MobileRestore serves the two restore routes. Every side it calls is a
 // dependency of the deployment and none of them is a field of the request: the
@@ -364,8 +301,11 @@ type MobileRestore struct {
 	Refresh mobilesession.RefreshStore
 	// Minter mints the device's first custom token (C1's Minter, O8).
 	Minter mobilesession.Minter
-	// Devices is the device-node store (MobileDevices).
-	Devices MobileDevices
+	// Devices is the device-node store the pairing route also writes through
+	// (MobileDeviceNodes, P3): the mailbox consumer's key, the node this restore
+	// admits the device by, and the retirement that takes it back when the
+	// session cannot be answered (F32).
+	Devices MobileDeviceNodes
 	// Audit writes this route's lines. It is required: a restore this service
 	// cannot record is a restore it must not make (D143).
 	Audit *Auditor
@@ -392,8 +332,6 @@ func NewMobileRestore(cfg MobileRestore) (*MobileRestore, error) {
 		return nil, errors.New("credsvc: the mobile routes have no database URL, so a paired phone could not reach its mailbox")
 	case cfg.Project.APIKey == "":
 		return nil, errors.New("credsvc: the mobile routes have no API key, so a paired phone could not reach its mailbox")
-	case cfg.Project.ConsumerPublicKey == "":
-		return nil, errors.New("credsvc: the mobile routes have no consumer public key, so a phone would pin nothing")
 	case len(cfg.ChallengeKey) < mobileChallengeKeyBytes:
 		return nil, fmt.Errorf("credsvc: the mobile routes hold no challenge key (or one shorter than %d bytes), so this service could not tell a challenge it issued from one a caller invented", mobileChallengeKeyBytes)
 	case cfg.Policy == nil:
@@ -562,22 +500,44 @@ func (m *MobileRestore) ServeRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The allow path. Everything below this line has to be taken back when a
-	// later step fails (undo), because a session this service did not answer
-	// must leave no device node and no live family behind (F32).
+	// The allow path, and its first step is a READ: a project that has published
+	// no consumer key cannot complete this restore, so it is refused before a
+	// device node exists that a later failure would have to take back.
+	consumerKey, err := m.Devices.ConsumerKey(ctx)
+	if err != nil {
+		m.unavailable(ctx, w, email, mobileConsumerKeyUnread)
+		return
+	}
+	// The other published value the answer carries is the crash-report switch
+	// (C1 writes the member whether or not the project's policy states it, D738),
+	// and it is a VALUE and never a refusal: a policy that cannot answer it is a
+	// phone told nothing, which collects nothing (D734), so the answer goes out
+	// with it off rather than the session being refused over a screen's switch.
+	crashReports, err := m.Membership.CrashReports(ctx, m.Project.ProjectID)
+	if err != nil {
+		m.Log.Error("credsvc: the crash-report switch could not be read, so the session names it off", "error", err)
+	}
+	// Everything below this line has to be taken back when a later step fails
+	// (undo), because a session this service did not answer must leave no device
+	// node and no live family behind (F32).
 	uid, err := mobileDeviceUID()
 	if err != nil {
 		m.unavailable(ctx, w, email, mobileUIDUndrawn)
 		return
 	}
-	device := MobileDevice{
+	// The node is the pairing route's own shape and carries what it carries: the
+	// address the roster knows, the roster's role (O14), the device's public key
+	// (O6) and the moment. The provider and the subject are NOT here — they are
+	// the member record's, which the pairing writes and the policy reads back
+	// (D2791 as amended), so this route neither writes them nor keeps a second
+	// copy of them.
+	device := MobileDeviceNode{
 		Email:     email,
-		Provider:  claims.Provider,
-		Sub:       claims.Subject,
-		Role:      verdict.Role,
+		Role:      string(verdict.Role),
 		PublicKey: req.DevicePublicKey,
+		At:        time.Now().UTC().Format(time.RFC3339),
 	}
-	if err := m.Devices.Create(ctx, m.Project.ProjectID, uid, device); err != nil {
+	if err := m.Devices.Write(ctx, uid, device); err != nil {
 		m.unavailable(ctx, w, email, mobileDeviceUnwritable)
 		return
 	}
@@ -593,7 +553,7 @@ func (m *MobileRestore) ServeRestore(w http.ResponseWriter, r *http.Request) {
 		m.unavailable(ctx, w, email, mobileTokenUnminted)
 		return
 	}
-	body, err := json.Marshal(m.session(node, verdict.Role, grant, token))
+	body, err := json.Marshal(m.session(node, verdict.Role, consumerKey, crashReports, grant, token))
 	if err != nil {
 		// Unreachable for the same reason the challenge answer's marshal is:
 		// every field is a string, a role or a number.
@@ -608,7 +568,7 @@ func (m *MobileRestore) ServeRestore(w http.ResponseWriter, r *http.Request) {
 		// happened.
 		m.Log.Error("credsvc: a mobile restore could not be audited, so it was not answered", "error", err)
 		m.undo(ctx, uid, grant.Family)
-		WriteWireError(w, StatusUnavailable, WireError{Error: ErrorStateUnavailable, Message: mobileUnaudited})
+		WriteWireError(w, StatusUnavailable, WireError{Error: ErrorStateUnavailable, Message: mobileRestoreUnaudited})
 		return
 	}
 	writeReadAnswer(w, body)
@@ -620,43 +580,32 @@ func (m *MobileRestore) ServeRestore(w http.ResponseWriter, r *http.Request) {
 // assertion was bound to: the two are the same URL, the phone stores this one
 // and calls it for every later refresh and restore, and re-spelling the
 // deployment's own endpoint here would be a second statement of it. The role is
-// the roster's, from the verdict the policy allowed with (O14), and the policy
-// values are the published node's, which is where P6 puts them.
-func (m *MobileRestore) session(node *projectpolicy.Policy, role access.Role, grant mobilesession.RefreshGrant, token mobilesession.CustomToken) mobilesession.SessionResponse {
+// the roster's, from the verdict the policy allowed with (O14), the consumer key
+// is the published node's and the policy values are the published node's —
+// mobileSessionPolicy is the pairing route's own function, so the two routes
+// cannot answer a phone two different pictures of one project.
+//
+// The custom token's life is the CONTRACT's (C1's CustomTokenLifetime) and not
+// the minter's own answer, so a minter that returned a longer-lived token would
+// still be advertised at the life the phone and the contract agree on.
+func (m *MobileRestore) session(node *projectpolicy.Policy, role access.Role, consumerKey string, crashReports bool, grant mobilesession.RefreshGrant, token mobilesession.CustomToken) mobilesession.SessionResponse {
+	// The crash-report switch is the policy's own answer and not a field of the
+	// published node, so it is set on the assembled value rather than read out of
+	// the node the shared assembler takes.
+	policy := mobileSessionPolicy(node)
+	policy.CrashReports = crashReports
 	return mobilesession.SessionResponse{
 		ProjectID:         m.Project.ProjectID,
 		Endpoint:          m.Project.Endpoint,
 		DatabaseURL:       m.Project.DatabaseURL,
 		APIKey:            m.Project.APIKey,
 		Role:              role,
-		Policy:            mobileSessionPolicy(node),
-		ConsumerPublicKey: m.Project.ConsumerPublicKey,
+		Policy:            policy,
+		ConsumerPublicKey: consumerKey,
 		RefreshToken:      grant.Token,
 		CustomToken:       token.Token,
 		ExpiresIn:         int(mobilesession.CustomTokenLifetime / time.Second),
 	}
-}
-
-// mobileSessionPolicy is the project's mobile policy as the phone needs it
-// (C1's SessionPolicy): the costly modes and the biometric switch from the
-// published node, and the compaction threshold, which no project field carries
-// yet — Z2 is the task that adds one — and which is therefore 0. That is the
-// value the contract gives "the project set no automatic compaction at all",
-// which is the reading a phone can act on; a threshold invented here would be
-// one no admin chose.
-func mobileSessionPolicy(node *projectpolicy.Policy) mobilesession.SessionPolicy {
-	modes := node.MobileCostlyModes()
-	out := mobilesession.SessionPolicy{
-		CostlyModes:       make([]string, 0, len(modes)),
-		BiometricOnCostly: node.MobileBiometricOnCostly(),
-	}
-	for _, mode := range modes {
-		// The mode's spelling is internal/rigor's, and the contract's
-		// SessionPolicy carries strings: the conversion is the one place the
-		// two meet, and it is a spelling and not a second vocabulary.
-		out.CostlyModes = append(out.CostlyModes, string(mode))
-	}
-	return out
 }
 
 // refuseAssertion answers an assertion this route will not act on, with the
@@ -709,13 +658,11 @@ func (m *MobileRestore) undo(ctx context.Context, uid, family string) {
 			m.Log.Error("credsvc: a failed restore's refresh family could not be revoked", "family", family, "error", err)
 		}
 	}
-	if err := m.Devices.Remove(ctx, m.Project.ProjectID, uid); err != nil {
+	if err := m.Devices.Retire(ctx, uid); err != nil {
 		m.Log.Error("credsvc: a failed restore's device node could not be removed", "device", uid, "error", err)
 	}
 }
 
-// mobilePolicyNode is the half of the published policy these routes read: the
-// mobile block's strict switch and the values a session answer carries.
 // mobilePolicyRefusal renders a refused verdict as the contract's Error, and
 // reports whether it is a refusal this route renders at all.
 //
@@ -792,8 +739,14 @@ func readMobileRestoreRequest(r *http.Request, challengeKey []byte) (mobilesessi
 	if !ok {
 		return mobilesession.RestoreRequest{}, time.Time{}, fmt.Errorf("%w: %s", errMobileRestoreBadRequest, mobileChallengeUnissued)
 	}
-	if err := validMobileDeviceKey(req.DevicePublicKey); err != nil {
-		return mobilesession.RestoreRequest{}, time.Time{}, err
+	if err := mobileDevicePublicKey(req.DevicePublicKey); err != nil {
+		// The key is held to the wire's own rule by the pairing route's checker
+		// (mobileDevicePublicKey): 32 bytes of Ed25519 key in unpadded base64url,
+		// which is the one spelling this contract has for a key. Its own sentence
+		// is NOT repeated to the caller — it names the byte the decoder choked on
+		// — because the body is the caller's text (readWorkflowSecretsRequest's
+		// rule, which every reader of this service keeps).
+		return mobilesession.RestoreRequest{}, time.Time{}, fmt.Errorf("%w: the device's public key is not %d bytes of unpadded base64url, which is the one spelling this contract has for a key", errMobileRestoreBadRequest, mobilesession.DevicePublicKeySize)
 	}
 	return req, issuedAt, nil
 }
@@ -832,20 +785,6 @@ func readMobileBody(r *http.Request) ([]byte, error) {
 // the sentinel the readers wrap, so a test can tell this refusal from another
 // without reading a sentence.
 var errMobileRestoreBadRequest = errors.New("credsvc: the mobile call is not one this service reads")
-
-// validMobileDeviceKey holds the device's public key to the wire's own rule
-// (C1's DevicePublicKeySize): 32 bytes of Ed25519 key, unpadded base64url. It
-// is decoded strictly, so a padded or standard-alphabet spelling is refused
-// rather than leniently read as the key it would decode to — and the key is
-// checked here rather than at the store, because a node carrying a key no
-// signature can ever verify is a device whose every later message is refused.
-func validMobileDeviceKey(key string) error {
-	raw, err := base64.RawURLEncoding.Strict().DecodeString(key)
-	if err != nil || len(raw) != mobilesession.DevicePublicKeySize {
-		return fmt.Errorf("%w: the device's public key is not %d bytes of unpadded base64url, which is the one spelling this contract has for a key", errMobileRestoreBadRequest, mobilesession.DevicePublicKeySize)
-	}
-	return nil
-}
 
 // validMobileChallenge holds the challenge a restore spends to the shape the
 // challenge route issues: mobileChallengeLen bytes — the nonce, the issue time
@@ -913,37 +852,13 @@ func mobileChallengeMAC(key, signed []byte) []byte {
 	return mac.Sum(nil)
 }
 
-// mobileRandom is the source of both values these routes draw — the challenge
-// and a device's uid. It is a variable so that a test can make a draw fail,
-// which is the one failure a route may never fall back from: a value that is
-// not random is a challenge an attacker can predict and a device name another
-// device could collide with.
+// mobileRandom is the source of the challenge's nonce. It is a variable so that
+// a test can make the draw fail, which is the one failure this route may never
+// fall back from: a challenge that is not random is one an attacker binds their
+// own assertion to and spends before the phone does. A device's uid is drawn by
+// the pairing route's own helper (mobileDeviceUID), which reads crypto/rand
+// itself.
 var mobileRandom io.Reader = rand.Reader
-
-// mobileDraw returns n random bytes in unpadded base64url, or an error. There
-// is no fallback and no shorter value: the caller refuses the call instead.
-func mobileDraw(n int) (string, error) {
-	raw := make([]byte, n)
-	if _, err := io.ReadFull(mobileRandom, raw); err != nil {
-		return "", fmt.Errorf("credsvc: drawing a random value failed: %w", err)
-	}
-	return base64.RawURLEncoding.EncodeToString(raw), nil
-}
-
-// mobileDeviceUID draws one device's uid: mobileDevicePrefix and
-// mobileDeviceUIDBytes random bytes, which is the shape internal/budget/token
-// mints a device under (deviceNewUID) and the shape internal/voicesvc/auth.go
-// admits. The route draws it here rather than letting the minter choose,
-// because two things before the mint need it: the device node is written under
-// it and the refresh family is started for it (C1's RefreshStore.Issue takes
-// the uid).
-func mobileDeviceUID() (string, error) {
-	body, err := mobileDraw(mobileDeviceUIDBytes)
-	if err != nil {
-		return "", err
-	}
-	return mobileDevicePrefix + body, nil
-}
 
 // writeMobileError writes one refusal in the contract's shape: the code the app
 // renders a screen from, the accepted-provider list when the code carries one,

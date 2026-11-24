@@ -318,7 +318,7 @@ func accountsAddRunStages(ctx context.Context, cmd *cobra.Command, run *stepRun,
 	// not stop it (init_policy_migrate.go's heldDefaultProfiles answers every
 	// door). A refusal here would leave the operator unable to add or remove an
 	// account of a project their own `fugaro update` converges.
-	spec, err := installSpec(o, lc, r.warn)
+	spec, err := installSpec(o, lc, r.withheld)
 	if err != nil {
 		return nil, err
 	}
