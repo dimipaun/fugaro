@@ -5092,6 +5092,7 @@
         "internal/managed/**",
         "internal/mirror/**",
         "internal/mobileauth/**",
+        "internal/mobilesession/**",
         "internal/orchestrator/**",
         "internal/orchestrator/decide/**",
         "internal/orchestrator/endpoint/**",
