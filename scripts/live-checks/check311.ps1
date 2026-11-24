@@ -445,7 +445,7 @@ function Invoke-LookPhase {
     } else {
         $newest = Get-NewestLog 'update'
         if ($newest -eq '') {
-            Set-Fact 'log-dir' 'FAIL' ($script:LogDir + ' holds no update-*.log after five converges: the log is what a failure''s ''full output:'' line names, and there is none')
+            Set-Fact 'log-dir' 'FAIL' ($script:LogDir + ' holds no update-*.log after five converges: the log is what a failure''s ''Log:'' line names, and there is none')
         } else {
             Set-Fact 'log-dir' 'PASS' ('the runs above filed their logs in ' + $script:LogDir + ' (the newest is ' + (Split-Path -Leaf $newest) + '), which is where a failure''s path points')
             # The newest update run's own closing line, read from the log it
@@ -508,9 +508,9 @@ function Invoke-FailurePhase {
     foreach ($line in ($cap -split "`n")) {
         $flat = $line.TrimEnd("`r")
         if ($flat -match '^' + [char]0x2716 + ' ' -and $step -eq '') { $step = $flat }
-        elseif ($flat -match '^    [^ ]' -and $flat -notmatch '^    full output: ' -and $flat -notmatch '^    Something went wrong\.') { $context += $flat }
-        if ($flat -match '^    full output: (.+)$') { $path = $Matches[1].Trim() }
-        if ($flat -match 'fugaro troubleshoot ([A-Za-z0-9._-]+)') { $id = $Matches[1] }
+        elseif ($flat -match '^  [^ ]' -and $flat -notmatch '^  Log:  ' -and $flat -notmatch '^  Help: fugaro troubleshoot ') { $context += $flat }
+        if ($flat -match '^  Log:  (.+)$') { $path = $Matches[1].Trim() }
+        if ($flat -match '^  Help: fugaro troubleshoot ([A-Za-z0-9._-]+)') { $id = $Matches[1] }
     }
     if ($step -eq '' -and $path -eq '') {
         Set-Fact 'fail-step' 'FAIL' ('the forced failure printed no failed step line and no log path: the run refused before it reached a stage. First line: ' + (($cap -split "`n")[0]))
@@ -522,7 +522,7 @@ function Invoke-FailurePhase {
         Set-Fact 'fail-step' 'FAIL' ('no line carries the failed step''s mark (' + [char]0x2716 + '): the run failed without saying which step it failed in')
     }
     if ($context.Count -gt 0) {
-        Set-Fact 'fail-context' 'PASS' ('the error''s context is printed under the step''s line, four spaces in: ''' + $context[0].Substring(0, [Math]::Min(200, $context[0].Length)) + '''')
+        Set-Fact 'fail-context' 'PASS' ('the error''s context is printed in the block under the step''s line, two spaces in: ''' + $context[0].Substring(0, [Math]::Min(200, $context[0].Length)) + '''')
     } else {
         Set-Fact 'fail-context' 'FAIL' ('nothing is printed under the failed step''s line: the error''s own context is what a reader needs to act on it, and one line with no context is a line that says only that something went wrong')
     }
@@ -536,7 +536,7 @@ function Invoke-FailurePhase {
     } elseif ($path -ne '') {
         Set-Fact 'fail-log-path' 'FAIL' ('the failure names its log (' + $path + ') and prints no ''fugaro troubleshoot'' id: the id is the one word a person can retype from a screenshot')
     } else {
-        Set-Fact 'fail-log-path' 'FAIL' ('the failure prints no ''full output:'' line at all, so there is no path to the run''s own output and nothing to read afterwards (CL3, D1352)')
+        Set-Fact 'fail-log-path' 'FAIL' ('the failure prints no ''Log:'' line at all, so there is no path to the run''s own output and nothing to read afterwards (CL3, D1352)')
     }
     if ($path -ne '' -and (Test-Path -LiteralPath $path)) {
         $acl = Get-AclFinding $path

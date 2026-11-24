@@ -231,11 +231,23 @@ What it prints after that is the count's own line: how many runs are in flight,
 that the update waits for none of them and changes nothing they hold. Then one
 short line per step that can still reach one, indented under it, or a single line
 saying no step does (`inFlightSteps`). The note is exactly as long as that count
-and no longer — plus R5's own line, printed where this machine's config still
-says the word (`budgetOffRunFinishes`): a run that started with the budget off
-has no session for the mode to bound and holds its key already, so the count's
-line cannot carry it, and what the note owes the person is that such a run
-finishes. Beyond that line the note is as short as the count: the same feedback
+and no longer — plus the two lines that are not steps and carry the two facts the
+count's line cannot. R5's is printed where this machine's config still says the
+word (`budgetOffRunFinishes`): a run that started with the budget off has no
+session for the mode to bound and holds its key already, so what the note owes
+the person is that such a run finishes. MG3's says that this release keeps
+writing the repository's old access record beside the routing table, which is
+what a run whose image predates the table resolves from (`repoAuthSources`,
+`internal/cli/update_repoauth.go`; `legacy_auth.go`, `internal/credsvc`) — and it
+counts those runs, because the image a run is running is a fact this machine
+does hold: the run's own record carries it (`ImageInfo`, written at bootstrap out
+of the statement the image makes about itself), so the line reads each run of the
+registry against the moment the table reached the branch (`chainIntroduced`,
+`runsOnTheOldRecord`) and says how many of the count above are its readers. A
+record that names no build time, and one that cannot be read at all, count —
+the direction the image-age gate takes for an image it cannot place — and the
+line is printed only when the number is not zero.
+Beyond those lines the note is as short as the count: the same feedback
 could not find what it was after in the paragraph this used to be, and what each
 line stands for — the question its step is gated on — is written where that
 step's own code and gate are. It never

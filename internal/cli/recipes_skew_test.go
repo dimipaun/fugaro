@@ -36,7 +36,15 @@ func TestCheckRecipeImage(t *testing.T) {
 		Recipe: &task.Recipe{Name: "mine", Source: "repo"}}
 	check := func(baseRef string) (string, error) {
 		var warn bytes.Buffer
-		if baseRef != "-" {
+		if baseRef == "-" {
+			// The harness's fixture gives the job image a build record (AB4,
+			// F7: every launch of an installation with a database mints and is
+			// judged for it by the seal's image gate), and this case is the one
+			// with none.
+			if err := removeBuildRecord(f); err != nil {
+				t.Fatal(err)
+			}
+		} else {
 			writeBuildRecord(t, f, appSlug, "web", baseRef)
 		}
 		err := checkRecipeImage(context.Background(), env, appSlug, spec, "base", &warn)
@@ -1380,6 +1388,12 @@ func TestRecipesSkewRefusesReviewLevelsOnACloneWorkflow(t *testing.T) {
 func TestRecipesSkewRefusesReviewLevelsWithoutABuildRecord(t *testing.T) {
 	f := newCloudFixture(t)
 	checkoutWorkflows(t, "", "  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+	// No record at all is the case this test opens with, and the fixture's own
+	// build record is one (AB4, F7: a launch that mints needs the seal's image
+	// gate to find a record it can read).
+	if err := removeBuildRecord(f); err != nil {
+		t.Fatal(err)
+	}
 	levels := filepath.Join(t.TempDir(), "levels.yaml")
 	if err := os.WriteFile(levels, []byte("l2:\n  none: true\n"), 0o600); err != nil {
 		t.Fatal(err)

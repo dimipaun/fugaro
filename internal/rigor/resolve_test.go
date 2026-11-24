@@ -173,10 +173,10 @@ func TestResolveLayerPrecedence(t *testing.T) {
 }
 
 // resolveRanks is the order Resolve states once, weakest first (LD3) — the
-// same order docs/project-layer.md §2 states for a reader — with the way a
-// test sets that one rank's level. The two area ranks match different paths
-// and carry different names, so a test that sets several ranks at once reads
-// each of them.
+// same order docs/project-layer.md §2 states for a reader, as D3294 amends it
+// — with the way a test sets that one rank's level. The three area ranks match
+// different paths and carry different names, so a test that sets several ranks
+// at once reads each of them.
 var resolveRanks = []struct {
 	name string
 	set  func(*Config, *Request, Rigor)
@@ -184,7 +184,7 @@ var resolveRanks = []struct {
 }{
 	{"Fugaro's own default", func(*Config, *Request, Rigor) {}, FromDefault},
 	{"the project layer's default", func(c *Config, _ *Request, l Rigor) { c.Project = l }, FromProject},
-	{"a project area the repo and paths match", func(c *Config, r *Request, l Rigor) {
+	{"a project-wide area the repo and paths match", func(c *Config, r *Request, l Rigor) {
 		c.ProjectAreas = append(c.ProjectAreas, Area{Name: "payments", Match: "payments/**", Level: l})
 		r.Paths = append(r.Paths, "payments/x.go")
 	}, FromArea},
@@ -192,6 +192,15 @@ var resolveRanks = []struct {
 		c.ProjectRepos = map[string]Rigor{"acme/app": l}
 		r.Repo = "acme/app"
 	}, FromProject},
+	{"a project area naming the run's repository (D3294)", func(c *Config, r *Request, l Rigor) {
+		c.ProjectAreas = append(c.ProjectAreas, Area{
+			Name:    "member",
+			Members: []Member{{Repo: "acme/app", Paths: []string{"member/**"}}},
+			Level:   l,
+		})
+		r.Repo = "acme/app"
+		r.Paths = append(r.Paths, "member/x.go")
+	}, FromArea},
 	{"the repository's own default", func(c *Config, _ *Request, l Rigor) { c.Repo = l }, FromRepo},
 	{"a rule of the repository's own areas", func(c *Config, r *Request, l Rigor) {
 		c.RepoAreas = append(c.RepoAreas, Area{Name: "own", Match: "own/**", Level: l})
@@ -281,10 +290,16 @@ func TestResolveReadsTheProjectsPerRepoLevel(t *testing.T) {
 	if got := Resolve(Config{ProjectRepos: map[string]Rigor{"acme/app": ""}}, Request{Repo: "acme/app"}); got.Level != Default {
 		t.Errorf("Resolve over an unknown per-repo level = %q; want %q", got.Level, Default)
 	}
-	// And the field opts a Config in on its own: a project that states nothing
-	// but this map is configured.
-	if !cfg.Configured() {
-		t.Error("a Config carrying only ProjectRepos reports itself unconfigured, so a run would skip the resolver")
+	// And the field opts a Config in on its own, for the repository it names:
+	// a project that states nothing but this map is configured for the
+	// repository the map names, and for no other (Configured is per
+	// repository, D3294).
+	only := Config{ProjectRepos: map[string]Rigor{"acme/payments-core": Critical}}
+	if !only.Configured("acme/payments-core") {
+		t.Error("a Config carrying only ProjectRepos reports itself unconfigured for the repository it names, so a run would skip the resolver")
+	}
+	if only.Configured("acme/console-web") {
+		t.Error("a Config carrying one repository's entry reports another repository configured")
 	}
 }
 
@@ -580,7 +595,7 @@ func TestLayersIsTheSetResolveNames(t *testing.T) {
 // TestConfiguredIsAnyLayerSettingAnything: a zero Config is the unconfigured
 // repository, and any one of the five fields opts it in.
 func TestConfiguredIsAnyLayerSettingAnything(t *testing.T) {
-	if (Config{}).Configured() {
+	if (Config{}).Configured("") {
 		t.Error("a zero Config reports itself configured")
 	}
 	area := []Area{{Name: "docs", Match: "docs/**", Level: POC}}
@@ -591,8 +606,8 @@ func TestConfiguredIsAnyLayerSettingAnything(t *testing.T) {
 		"project level": {Project: Critical},
 		"project areas": {ProjectAreas: area},
 	} {
-		if !c.Configured() {
-			t.Errorf("%s: Configured() = false", name)
+		if !c.Configured("") {
+			t.Errorf("%s: Configured(\"\") = false", name)
 		}
 	}
 }

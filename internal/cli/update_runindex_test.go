@@ -192,6 +192,40 @@ func TestUpdateReindexesAnIncompleteIndex(t *testing.T) {
 	}
 }
 
+// TestUpdateStandsWhenTheReindexJobStartIsRefused is O7's other caller: the
+// update's step writes the mark first and only then attempts the start, and
+// only the installation's scheduler account holds run.invoker on the history
+// job, so a caller without it is refused by the platform. The refusal must not
+// fail the update: the mark already landed, the walk is owed, and the step says
+// so in a warning rather than insisting on the start it may not make.
+func TestUpdateStandsWhenTheReindexJobStartIsRefused(t *testing.T) {
+	r, fs := reindexConvergeRig(t)
+	r.run.FailRunWith = 403
+
+	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	if !strings.Contains(out, "but no reindex execution was started") || !strings.Contains(out, "The walk is owed all the same") {
+		t.Fatalf("the update does not report the refused start and the mark that stands:\n%s", out)
+	}
+	// The mark landed before the start was tried, which is what makes the
+	// refusal harmless: the summary is incomplete and the lease names a holder
+	// with no cursor, so the next sweep of the history job walks the index.
+	sum, ok := fs.Value(runindex.SummaryCollection, runindex.SummaryDocument)
+	if !ok {
+		t.Fatal("the step left no summary, so no sweep would walk")
+	}
+	if done, ok := sum["complete"].(bool); !ok || done {
+		t.Fatalf("summary = %v", sum)
+	}
+	l, ok := r.db.Value(runindex.PathLease).(map[string]any)
+	if !ok {
+		t.Fatalf("the step left no lease node: %#v", r.db.Value(runindex.PathLease))
+	}
+	if c, ok := l["cursor"]; ok && c != nil && c != "" {
+		t.Fatalf("the step left a cursor behind: %#v", l)
+	}
+}
+
 // TestUpdateReindexWritesNothingOutsideTheUpdateDoor: the step is `fugaro
 // update`'s, and it keeps the fences the steps beside it keep (update.go's
 // writeAdminList, update_prindex.go's backfillPRIndex): `fugaro setup`
