@@ -41,9 +41,9 @@ func publishedSeam(t *testing.T, ok bool) {
 	t.Cleanup(func() { publishedRelease = was })
 }
 
-// seedStamp puts a stamp on the node, as a previous release's update or a hand
+// seedUpdateStamp puts a stamp on the node, as a previous release's update or a hand
 // edit would have left it.
-func seedStamp(t *testing.T, db *gcpfake.RTDB, min string) {
+func seedUpdateStamp(t *testing.T, db *gcpfake.RTDB, min string) {
 	t.Helper()
 	db.Set(versionstamp.Path, map[string]any{
 		"schema": versionstamp.SchemaVersion, "min": min, "set_at": "2026-11-01T00:00:00Z",
@@ -203,7 +203,7 @@ func TestUpdateRaisesTheStampToItsRelease(t *testing.T) {
 func TestOlderUpdateNeverLowersTheStamp(t *testing.T) {
 	r, db := stampRig(t)
 	publishedSeam(t, true)
-	seedStamp(t, db, "9.9.9")
+	seedUpdateStamp(t, db, "9.9.9")
 	res, out, err := runStampStage(t, r, &initOptions{door: updateDoor.name, yes: true})
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -227,7 +227,7 @@ func TestOlderUpdateNeverLowersTheStamp(t *testing.T) {
 func TestStampLineSaysCurrent(t *testing.T) {
 	r, db := stampRig(t)
 	publishedSeam(t, true)
-	seedStamp(t, db, "0.2.0")
+	seedUpdateStamp(t, db, "0.2.0")
 	e := stampEngine(t, r, &initOptions{door: updateDoor.name, yes: true})
 	st, err := checkStamp(t, e)
 	if err != nil {
@@ -273,7 +273,7 @@ func TestLostRaceWritesNothingAndSaysSo(t *testing.T) {
 	<-stampedRead
 	releaseRead()
 	<-stampedWrite
-	seedStamp(t, db, "9.9.9")
+	seedUpdateStamp(t, db, "9.9.9")
 	releaseWrite()
 	<-done
 
