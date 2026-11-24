@@ -154,6 +154,28 @@ ALLOWED = {
     ("run", "services", "add-iam-policy-binding"): ("--project", "--region", "--member", "--role", "--quiet"),
 }
 
+# The modes whose build wrote NO log Cloud Logging can hand back: the empty body
+# the owner's run of 2026-11-24 came back with, on a roles/logging.logWriter
+# binding granted seconds before the build. Every one of them is a build whose
+# reading has to come from its own record's step exit code, and every other mode
+# is the ordinary build whose line did arrive.
+NO_LOG = {
+    "log-missing",
+    "build-fails",
+    "step-exit-0",
+    "step-exit-11",
+    "step-exit-12",
+    "step-exit-13",
+    "step-exit-14",
+    "step-exit-15",
+    "step-exit-unknown",
+    "step-exit-missing",
+    "account-delete-fails-once",
+    # No roles/logging.logWriter in the project policy at all, which is why
+    # there is no log: the build's step still ends with a code.
+    "logwriter-ignored",
+}
+
 positionals = [a for a in args if not a.startswith("-")]
 sub = None
 for n in (4, 3, 2):
@@ -269,6 +291,12 @@ elif sub == ("iam", "service-accounts", "create"):
 elif sub == ("iam", "service-accounts", "delete"):
     if mode == "account-delete-fails":
         die("iam.serviceAccounts.delete failed")
+    if mode == "account-delete-fails-once" and state_get("delete_tries") != "1":
+        # The refusal a real project answers with when the account's own policy
+        # binding has not finished going away: IAM is eventually consistent, and
+        # the delete reads a policy the removal has not reached yet.
+        state_set("delete_tries", "1")
+        die("FAILED_PRECONDITION: Service account %s is still referenced by a policy binding" % CALLER)
     state_set("account", "0")
 elif sub == ("projects", "get-iam-policy"):
     if mode == "project-policy-unreadable":
@@ -315,10 +343,35 @@ elif sub == ("builds", "submit"):
         die("this check's build runs as its own throwaway account")
     if mode == "build-submit-fails":
         die("the submit was refused")
-    if mode in ("build-fails", "call-refused"):
-        state_set("build", "FAILURE\tStep #0: the step exited with non-zero status: 1")
+    BUILD_FAILS = {
+        "build-fails": "1",
+        "call-refused": "12",
+        "call-refused-401": "11",
+        "step-exit-11": "11",
+        "step-exit-12": "12",
+        "step-exit-13": "13",
+        "step-exit-14": "14",
+        "step-exit-15": "15",
+        "step-exit-unknown": "1",
+        # The owner's own run of 2026-11-24: a build that ended FAILURE, an empty
+        # `gcloud builds log`, and a Restore whose account delete was refused once
+        # and left the account behind. Here the delete lands on the retry.
+        "account-delete-fails-once": "13",
+    }
+    # The exit code the build's own record carries for its step, per the mode.
+    # The check's step ends with one code per outcome (0 = the service answered
+    # 200 and the token's claim is the account, 11 = 401, 12 = 403, 13 = any
+    # other status, 14 = no token from the metadata server, 15 = the claim is
+    # another identity), and Cloud Build writes that code into the build the step
+    # ran in. `step-exit-missing` is the build whose step never ran at all: its
+    # record has no exit code, which is not the number 0.
+    if mode in BUILD_FAILS:
+        code = BUILD_FAILS[mode]
+        state_set("build", "FAILURE\tStep #0: the step exited with non-zero status: %s" % code)
+        state_set("buildexit", code)
     else:
         state_set("build", "SUCCESS\t")
+        state_set("buildexit", "" if mode == "step-exit-missing" else "0")
     # The account the build ran as, recorded the way the real API reports it: the
     # RESOURCE NAME the build was submitted with, "projects/<project>/
     # serviceAccounts/<account>", not the bare address -- and, where the API
@@ -328,7 +381,12 @@ elif sub == ("builds", "submit"):
     if has("--async"):
         emit("fake-build-1")
 elif sub == ("builds", "describe"):
-    if "serviceAccount" in flag("--format"):
+    if "steps[0].exitCode" in flag("--format"):
+        # The step's own exit code, out of the build's record and not out of
+        # Cloud Logging. A build with no step record at all emits nothing for the
+        # column -- which the check must read as "no code", never as 0.
+        emit(state_get("buildexit"))
+    elif "serviceAccount" in flag("--format"):
         emit("somebody-else@fugaro-dev.iam.gserviceaccount.com" if mode == "build-as-another-account"
              else state_get("buildsa"))
     else:
@@ -341,15 +399,21 @@ elif sub == ("logging", "read"):
     # email claim -- and never the token; the second line here is one no step of
     # this check's writes, there so the test can see the check's excerpt redacts
     # a credential whatever its source.
-    if mode == "log-missing":
-        pass
-    elif mode == "call-refused":
-        tsv("Step #0: CHK195 status=403 email=%s" % CALLER,
-            "Step #0: Authorization: Bearer FAKE-BUILD-LOG-TOKEN")
-    elif mode == "wrong-email":
-        tsv("Step #0: CHK195 status=200 email=somebody-else@fugaro-dev.iam.gserviceaccount.com")
-    else:
-        tsv("Step #0: CHK195 status=200 email=%s" % CALLER)
+    #
+    # Every mode NOT in NO_LOG answers with a line. A mode in NO_LOG is a build
+    # whose log Cloud Logging never handed back -- an empty body, which is what
+    # the owner's run of 2026-11-24 got -- and the reading then comes from the
+    # build's own record instead.
+    if mode not in NO_LOG:
+        if mode == "call-refused":
+            tsv("Step #0: CHK195 status=403 email=%s" % CALLER,
+                "Step #0: Authorization: Bearer FAKE-BUILD-LOG-TOKEN")
+        elif mode == "call-refused-401":
+            tsv("Step #0: CHK195 status=401 email=%s" % CALLER)
+        elif mode == "wrong-email":
+            tsv("Step #0: CHK195 status=200 email=somebody-else@fugaro-dev.iam.gserviceaccount.com")
+        else:
+            tsv("Step #0: CHK195 status=200 email=%s" % CALLER)
 GCLOUD_EOF
   chmod +x "$1/bin/gcloud"
 }
@@ -515,6 +579,8 @@ run195() { # dir extra-env...
     PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
     FAKE_LOG_DIR="$dir/logs" FAKE_GCLOUD_STATE="$dir/state" \
     CHECK195_GRANT_SECONDS=0 CHECK195_BUILD_WAIT_SECONDS=0 CHECK195_LOG_WAIT_SECONDS=0 \
+    CHECK195_LOGWRITER_WAIT_SECONDS=0 CHECK195_LOGWRITER_SETTLE_SECONDS=0 \
+    CHECK195_ACCOUNT_DELETE_RETRY_SECONDS=0 \
     ${1+"$@"} \
     "${runner[@]}" "$script" >"$dir/out" 2>"$dir/err" || status=$?
   out=$(cat "$dir/out")
@@ -534,6 +600,8 @@ run_copy() { # dir script extra-env...: the same run against a mutated copy
     PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
     FAKE_LOG_DIR="$dir/logs" FAKE_GCLOUD_STATE="$dir/state" \
     CHECK195_GRANT_SECONDS=0 CHECK195_BUILD_WAIT_SECONDS=0 CHECK195_LOG_WAIT_SECONDS=0 \
+    CHECK195_LOGWRITER_WAIT_SECONDS=0 CHECK195_LOGWRITER_SETTLE_SECONDS=0 \
+    CHECK195_ACCOUNT_DELETE_RETRY_SECONDS=0 \
     ${1+"$@"} \
     bash "$copy" >"$dir/out" 2>"$dir/err" || status=$?
   out=$(cat "$dir/out")
@@ -745,6 +813,11 @@ test_happy_path() {
   expect_contains "$out" "FACT iam-policy: PASS" "happy path: the service's own policy"
   expect_contains "$out" "FACT unauthenticated-request: PASS — an unauthenticated GET on the service's own URL was refused with 401" "happy path: the probe"
   expect_contains "$out" "FACT invoker-grant: PASS" "happy path: the grant, read back"
+  # The logWriter binding is what lets the build write the line the email claim
+  # is read out of, and the row says how long it was waited for and that the wait
+  # is bounded.
+  expect_contains "$out" "FACT logwriter-wait: PASS" "happy path: the logWriter grant was read back"
+  expect_contains "$out" "bounded at 0 s by CHECK195_LOGWRITER_WAIT_SECONDS" "happy path: the wait is bounded and the row says so"
   expect_contains "$out" "FACT build: PASS" "happy path: the build"
   # The build's own record reports the account it ran as as a resource name; the
   # row says which one, so a reader can check the reading by hand.
@@ -967,17 +1040,141 @@ test_a_build_read_back_by_its_unique_id_is_a_pass() {
   expect_absent "$out" "FACT build: FAIL" "uniqueId read-back: not reported as another identity"
 }
 
-# The build's own line is where the email claim is read from. If it cannot be
-# read, nothing about the grant was measured, and a row that said PASS would be
-# the worst outcome of this check.
-test_a_build_whose_line_was_not_read_is_a_failure() {
-  local dir=$work/nolog
+# THE POINT OF THE EXIT CODES. The owner's run of 2026-11-24 came back with a
+# FAILURE build, an empty `gcloud builds log`, and no reading at all: the log was
+# the only place the answer was read from, and Cloud Logging had not caught up
+# (the roles/logging.logWriter binding had been granted seconds earlier). The
+# step now ends with one exit code per outcome, Cloud Build writes that code into
+# the build the step ran in, and that record is not Cloud Logging — so a build
+# whose line never arrives is still a measured call. Code 0 is the pass, and it
+# is only written when the service answered 200 AND the token's email claim is
+# the throwaway account.
+test_a_build_whose_step_exited_zero_is_a_pass_without_the_log() {
+  local dir=$work/exit0
   prepare "$dir"
-  run195 "$dir" FAKE_GCLOUD_MODE=log-missing
-  expect_status "$status" 1 "no log: the verdict"
-  expect_contains "$out" "FACT call: FAIL" "no log: the row"
-  expect_contains "$out" "the build's own line was not read" "no log: the reason"
-  expect_absent "$out" "FACT call: PASS" "no log: the row is not a pass"
+  run195 "$dir" FAKE_GCLOUD_MODE=step-exit-0
+  expect_status "$status" 0 "exit 0 with no log: the verdict"
+  expect_contains "$out" "FACT call: PASS" "exit 0 with no log: the row"
+  expect_contains "$out" "the build's own record says its step exited 0" "exit 0 with no log: the reading is the record's own code"
+  expect_contains "$out" "the token's email claim is fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "exit 0 with no log: what code 0 asserts about the claim"
+  expect_contains "$out" "it did not arrive in Cloud Logging within 0 s" "exit 0 with no log: the row says the line was not read"
+  # The reading came out of the build's own record: the check asks for the step's
+  # exit code, which is not a Cloud Logging read at all.
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "builds describe fake-build-1 --project=fugaro-dev --format=value(steps[0].exitCode)" "exit 0 with no log: the exit code is read from the build's record"
+  expect_contains "$out" "FACT account-deleted: PASS" "exit 0 with no log: the account is deleted"
+  expect_contains "$out" "FACT restore: PASS" "exit 0 with no log: the Restore"
+}
+
+# Every other code the step can end with, with no log at all: the block NAMES the
+# cause out of the build's own record, and the Restore still deletes everything.
+# A build that FAILED is no reason to leave the account behind.
+test_each_step_exit_code_names_the_cause_without_the_log() {
+  local spec mode want dir
+  for spec in \
+    "11|the service answered 401" \
+    "12|the service answered 403" \
+    "13|a status that is neither 200, 401 nor 403" \
+    "14|minted it no ID token" \
+    "15|the token's email claim is NOT fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com"; do
+    mode=${spec%%|*}
+    want=${spec#*|}
+    dir=$work/exit$mode
+    prepare "$dir"
+    run195 "$dir" "FAKE_GCLOUD_MODE=step-exit-$mode"
+    expect_status "$status" 1 "step exit $mode: the verdict"
+    expect_contains "$out" "FACT call: FAIL" "step exit $mode: the row"
+    expect_contains "$out" "the build's own record says its step exited $mode" "step exit $mode: the code the record gave"
+    expect_contains "$out" "$want" "step exit $mode: the cause the row names"
+    expect_contains "$out" "gcloud builds log fake-build-1 --project=fugaro-dev" "step exit $mode: how to read the line by hand"
+    expect_contains "$out" "FACT build: FAIL" "step exit $mode: the build ended FAILURE"
+    expect_contains "$out" "FACT service-deleted: PASS" "step exit $mode: the service is deleted"
+    expect_contains "$out" "FACT account-deleted: PASS" "step exit $mode: the account is deleted"
+    expect_contains "$out" "FACT binding-removed: PASS" "step exit $mode: the project binding is removed"
+    expect_contains "$out" "FACT restore: PASS" "step exit $mode: the Restore"
+    [ -d "$dir/state" ] || fail "step exit $mode: the fake gcloud never ran"
+  done
+}
+
+# A code this check's step never writes: the step has one `exit` per outcome and
+# nothing else in it exits, so a 1 is a step that died before it decided anything
+# — and the row says the cause is NOT named rather than guessing at one.
+test_a_step_exit_code_this_check_never_writes_is_a_failure() {
+  local dir=$work/exitudd
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=step-exit-unknown
+  expect_status "$status" 1 "an unknown code: the verdict"
+  expect_contains "$out" "FACT call: FAIL" "an unknown code: the row"
+  expect_contains "$out" "says its step exited 1, which is not a code this check's step writes" "an unknown code: the row refuses to name a cause"
+  expect_contains "$out" "the step exited with non-zero status: 1" "an unknown code: the failure detail is carried too"
+  expect_absent "$out" "FACT call: PASS" "an unknown code: the row is not a pass"
+}
+
+# And the build with no step record at all — a container that never started. Its
+# record has no steps[0].exitCode, which is NOT the number 0: read as 0 the block
+# would report a call that was never made as the reading S4 rests on.
+test_a_build_with_no_step_exit_code_and_no_log_is_a_failure() {
+  local dir=$work/exitmissing
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=step-exit-missing
+  expect_status "$status" 1 "no exit code: the verdict"
+  expect_contains "$out" "FACT call: FAIL" "no exit code: the row"
+  expect_contains "$out" "carries no steps[0].exitCode either" "no exit code: the reason"
+  expect_absent "$out" "FACT call: PASS" "no exit code: the row is not a pass"
+  expect_contains "$out" "FACT account-deleted: PASS" "no exit code: the account is still deleted"
+}
+
+# The other half of the same rule: when the line DOES arrive it is the reading,
+# unchanged — it carries the status and the claim as text, and the exit code is
+# not consulted for the row. The step's record says 11 here; the row is the
+# log's.
+test_a_call_the_service_refuses_with_the_log_present_reads_the_log() {
+  local dir=$work/refused401
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=call-refused-401
+  expect_status "$status" 1 "401 with the log: the verdict"
+  expect_contains "$out" "FACT call: FAIL" "401 with the log: the row"
+  expect_contains "$out" "was answered 401" "401 with the log: the status the step got"
+  expect_contains "$out" "the token's email claim: fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "401 with the log: the claim the line printed"
+  expect_absent "$out" "the build's own record says its step exited" "401 with the log: the row is the log's reading, not the exit code's"
+  expect_contains "$out" "Its step's exit code, read out of the build's own record, is 11" "401 with the log: the build row still carries the code"
+}
+
+# The owner's run of 2026-11-24, end to end: a build that FAILED, no log, and a
+# deletion refused the first time because the project binding's removal had not
+# reached the policy the delete reads. The account is this check's and goes
+# either way — so the delete is attempted again, and the block says the account
+# is gone.
+test_a_delete_that_fails_once_is_retried() {
+  local dir=$work/acretry
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=account-delete-fails-once
+  expect_status "$status" 1 "the retry: the verdict"
+  expect_contains "$out" "the build's own record says its step exited 13" "the retry: the failed build is still named from its record"
+  expect_contains "$out" "FACT service-deleted: PASS" "the retry: the service is gone"
+  expect_contains "$out" "FACT binding-removed: PASS" "the retry: the project binding is gone"
+  expect_contains "$out" "FACT account-deleted: PASS" "the retry: the account is gone"
+  expect_contains "$out" "FACT restore: PASS" "the retry: the Restore"
+  local deletes
+  deletes=$(grep -c 'iam service-accounts delete fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com' "$dir/logs/gcloud.calls" || true)
+  [ "$deletes" = 2 ] || fail "the retry: the account delete was attempted $deletes time(s), expected 2 (the refusal, then the retry that landed)"
+}
+
+# The wait the log needs, and what happens when the grant it waits for never
+# lands. The row has to say the wait is bounded — a wait with no bound is a run
+# that hangs — and the build goes on anyway: the reading no longer rests on the
+# log the roles/logging.logWriter grant buys.
+test_a_logwriter_grant_that_does_not_land_is_reported() {
+  local dir=$work/nologwriter
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=logwriter-ignored
+  expect_status "$status" 1 "no logWriter: the verdict"
+  expect_contains "$out" "FACT logwriter-wait: FAIL" "no logWriter: the row"
+  expect_contains "$out" "names fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com in no binding" "no logWriter: what the policy read said"
+  expect_contains "$out" "bounded at 0 s by CHECK195_LOGWRITER_WAIT_SECONDS" "no logWriter: the wait is bounded and the row says so"
+  expect_contains "$out" "FACT build: PASS" "no logWriter: the build still ran"
+  expect_contains "$out" "FACT call: PASS" "no logWriter: the call is still measured, out of the exit code"
+  expect_contains "$out" "the build's own record says its step exited 0" "no logWriter: the reading came from the record"
+  expect_contains "$out" "FACT restore: PASS" "no logWriter: everything is still restored"
 }
 
 # A service account created a moment ago is not visible to every IAM front end:
@@ -1119,7 +1316,13 @@ t test_a_call_the_service_refuses_is_a_failure
 t test_a_token_for_another_account_is_a_failure
 t test_a_build_that_ran_as_another_account_is_a_failure
 t test_a_build_read_back_by_its_unique_id_is_a_pass
-t test_a_build_whose_line_was_not_read_is_a_failure
+t test_a_build_whose_step_exited_zero_is_a_pass_without_the_log
+t test_each_step_exit_code_names_the_cause_without_the_log
+t test_a_step_exit_code_this_check_never_writes_is_a_failure
+t test_a_build_with_no_step_exit_code_and_no_log_is_a_failure
+t test_a_call_the_service_refuses_with_the_log_present_reads_the_log
+t test_a_delete_that_fails_once_is_retried
+t test_a_logwriter_grant_that_does_not_land_is_reported
 t test_a_grant_for_a_not_yet_visible_account_is_retried
 t test_a_grant_that_fails_stops_before_the_build
 t test_a_service_that_cannot_be_deleted_is_a_failure
