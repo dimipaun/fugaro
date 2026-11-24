@@ -1009,11 +1009,17 @@ func TestAnArtifactLaunchRefusesACapSetThatCannotFitMemory(t *testing.T) {
 	yaml := "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\n" +
 		"workflows:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh, render: sh render.sh }\n" +
 		"    resources: { memory: 2Gi }\n"
+	const sizzle = "version: 1\nname: sizzle\nmode: artifact\noutputs: { globs: [out/*.mp4] }\nsteps:\n  - render: {}\n"
 	testutil.WriteFiles(t, dir, map[string]string{
 		"fugaro.yaml":                 yaml,
-		".fugaro/recipes/sizzle.yaml": "version: 1\nname: sizzle\nmode: artifact\noutputs: { globs: [out/*.mp4] }\nsteps:\n  - render: {}\n",
+		".fugaro/recipes/sizzle.yaml": sizzle,
 	})
 	t.Chdir(dir)
+	// The sizzle the launch resolves is the project's copy of the repository's
+	// own recipe (D3303, R7): a launch reads the store, and the file the
+	// checkout still holds is the leftover no launch reads (D3237).
+	projectRecipesFixture(t, f, nil)
+	publishCopy(t, f, "acme/other", "sizzle", sizzle)
 	_, _, err := execute(t, "run", "--recipe", "sizzle", "--run-id", "20261015-100000-a1b2", "Render the sizzle reel")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "resources.memory 2Gi") ||
 		!strings.Contains(err.Error(), "5 GiB") {

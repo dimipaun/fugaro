@@ -143,23 +143,20 @@ func TestAModeArtifactLaunchRefusesWhenTheRecipeCannotBeRead(t *testing.T) {
 // with DisallowUnknownFields), so an artifact launch must not reach such a job
 // at all. It fires for an artifact recipe launched with nothing attached just
 // as much as for one launched with --attach (Task 6's launch of the same
-// recipe). Two gates can carry it, and both are asserted because which one
-// fires depends on what the launcher could embed:
+// recipe). Both subtests are judged by checkRecipeImage, on the text the task
+// carries — against artifactsSince, since a mode: artifact recipe is a 0.8.0
+// construct — and differ in the name that text reached the task under: a
+// project recipe by its own name, a repository's own recipe as the copy the
+// project store holds for it (D3303, R7).
 //
-//   - a recipe the launcher resolves itself (a project or catalog one) is
-//     embedded in the task, so checkRecipeImage judges it — against
-//     artifactsSince, since a mode: artifact recipe is a 0.8.0 construct;
-//   - a repository recipe is NOT embedded (the runner re-reads the file at
-//     the ref), so checkRecipeImage judges it at the plain recipesSince and
-//     the spec.Mode gate beside the project layer's and the named token's is
-//     what refuses the launch.
+// The spec.Mode gate beside the project layer's and the named token's refuses a
+// task whose mode the launcher wrote but whose recipe it could not embed, which
+// no launch of this release writes; its evaluate arm has its own test
+// (recipes_skew_test.go).
 //
-// Mutation (drop the spec.Mode == ModeArtifact block from finishLaunch's
-// gates): the repository-recipe subtest is not refused and a job starts on an
-// image whose runner cannot parse its task; mutation (revert recipeSinceFor's
-// UsesV08 arm to recipesV07Since): the project-recipe subtest is refused by
-// the spec.Mode gate instead, whose message names mode: artifact rather than
-// recipes, and it fails on the message.
+// Mutation (revert recipeSinceFor's UsesV08 arm to recipesV07Since): both
+// subtests have their image gate pass and fail on the message, which then names
+// another refusal's sentence.
 func TestAnArtifactLaunchGatesOnTheImageThatKnowsMode(t *testing.T) {
 	t.Run("a recipe the launcher embeds", func(t *testing.T) {
 		f := newCloudFixture(t)
@@ -168,11 +165,13 @@ func TestAnArtifactLaunchGatesOnTheImageThatKnowsMode(t *testing.T) {
 		wantRefused(t, f, "recipe sizzle needs a job image whose runner knows recipes (fugaro "+artifactsSince+" or later)",
 			"run", "--repo", "acme/app", "--recipe", "sizzle", "x")
 	})
-	t.Run("a repository recipe", func(t *testing.T) {
+	t.Run("a repository's own recipe, as its copy", func(t *testing.T) {
 		f := newCloudFixture(t)
+		projectRecipesFixture(t, f, nil)
+		copied := publishCopy(t, f, "acme/other", "sizzle", projectSizzle)
 		recipeCheckout(t, f, "  recipe: sizzle\n", map[string]string{recipe.RepoPath("sizzle"): projectSizzle})
 		writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", release070)
-		wantRefused(t, f, "needs a job image whose runner knows mode: artifact (fugaro "+artifactsSince+" or later)",
+		wantRefused(t, f, "recipe "+copied+" needs a job image whose runner knows recipes (fugaro "+artifactsSince+" or later)",
 			"run", "--run-id", "20261015-100000-abcd", "x")
 	})
 }
@@ -204,29 +203,18 @@ func cloneCheckout(t *testing.T, f *cloudFixture, base, agentLines string, extra
 }
 
 // TestAnArtifactRecipeOnACloneWorkflowGatesOnTheCloneImage is the clone half
-// of TestAnArtifactLaunchGatesOnTheImageThatKnowsMode, and each subtest pins
-// one of the two ways a clone launch of an artifact recipe is judged (a
-// clone workflow has no build record: checkCloneImageSince reads the
-// installation's own base image instead):
+// of TestAnArtifactLaunchGatesOnTheImageThatKnowsMode: a clone workflow has no
+// build record, so checkCloneImageSince reads the installation's own base image
+// instead. Both subtests reach checkCloneRecipeImage and recipeSinceFor, whose
+// UsesV08 arm raises the threshold to artifactsSince — without it the 0.7.5
+// image passes and the spec.Mode gate below refuses instead, with the other
+// gate's message — and differ in the name the task carries the recipe under: a
+// project recipe by its own name, a repository's own recipe as the project's
+// copy of it (D3303, R7).
 //
-//   - a recipe the launcher embeds (here a project one, the same as in the
-//     baked test) reaches checkCloneRecipeImage and recipeSinceFor, whose
-//     UsesV08 arm raises the threshold to artifactsSince — without it the
-//     0.7.5 image passes and the spec.Mode gate below refuses instead, with
-//     the other gate's message;
-//   - a repository recipe is NOT embedded (the runner re-reads the file at
-//     the ref), so the recipe gate judges it at the plain recipesSince and
-//     the spec.Mode gate's clone arm is what refuses the launch.
-//
-// Mutation (drop the `UsesV08` arm of recipeSinceFor): the first
-// subtest is refused by spec.Mode's clone arm instead, whose message names
-// mode: artifact rather than recipes, and it fails on the message; mutation
-// (drop the `clone` arm of finishLaunch's spec.Mode block): the second subtest
-// is refused by the read path's own checkImageSince — a clone workflow has no
-// build record, so that refusal says so — and it fails on the message just
-// as well. Both are message failures, not exit codes: the two gates overlap
-// on the sentence above them, so each subtest wants the sentence only its
-// own gate writes.
+// Mutation (drop the `UsesV08` arm of recipeSinceFor): both subtests are
+// refused by spec.Mode's clone arm instead, whose message names mode: artifact
+// rather than recipes, and they fail on the message.
 func TestAnArtifactRecipeOnACloneWorkflowGatesOnTheCloneImage(t *testing.T) {
 	t.Run("a recipe the launcher embeds", func(t *testing.T) {
 		f := newCloudFixture(t)
@@ -235,16 +223,17 @@ func TestAnArtifactRecipeOnACloneWorkflowGatesOnTheCloneImage(t *testing.T) {
 		wantRefused(t, f, "recipe sizzle needs a job image whose runner knows recipes (fugaro "+artifactsSince+" or later)",
 			"run", "--run-id", "20261015-100000-abcd", "Render the nightly bundle")
 	})
-	t.Run("a repository recipe", func(t *testing.T) {
+	t.Run("a repository's own recipe, as its copy", func(t *testing.T) {
 		f := newCloudFixture(t)
+		projectRecipesFixture(t, f, nil)
+		copied := publishCopy(t, f, "acme/other", "sizzle", projectSizzle)
 		cloneCheckout(t, f, release075, "", map[string]string{recipe.RepoPath("sizzle"): projectSizzle})
-		// The whole read-path sentence, not only its "needs a job image"
-		// half: the read path judges a BUILD RECORD, and for a clone
-		// workflow there is none, so its own refusal says "has no build
-		// record" — the shared prefix alone would let this subtest pass
-		// against the wrong gate (which is exactly the mutation above).
-		wantRefused(t, f, "a mode: artifact recipe needs a job image whose runner knows mode: artifact (fugaro "+artifactsSince+" or later), "+
-			"but the checkout: clone job image of acme/other workflow svc is "+release075+", release 0.7.5",
+		// The clone gate's own sentence, not another refusal's: the read
+		// path judges a BUILD RECORD, and for a clone workflow there is
+		// none, so its own refusal says "has no build record" — the shared
+		// prefix alone would let this subtest pass against the wrong gate.
+		wantRefused(t, f, "recipe "+copied+" needs a job image whose runner knows recipes (fugaro "+artifactsSince+" or later), "+
+			"but the checkout: clone job image of acme/other workflow svc is "+release075,
 			"run", "--run-id", "20261015-100000-abcd", "--recipe", "sizzle", "Render the nightly bundle")
 	})
 }
