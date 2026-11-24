@@ -26,8 +26,18 @@ func (b *Backend) location() string {
 	return "projects/" + b.o.GCPProject + "/locations/" + b.o.Region
 }
 
+// ErrStartedUnnamed is StartJob's answer when the platform accepted the start
+// -- the execution is running -- but the operation reported no name the backend
+// can read. It is not a failed start: a caller that only prints the execution
+// has no name to print, and one that needs the name has none, but nothing may
+// read it as "nothing was started" and start a second one.
+var ErrStartedUnnamed = errors.New("the execution started but the platform reported no name for it")
+
 // StartJob starts one execution of one of the installation's own jobs with a
-// container-args override, and returns the execution's name.
+// container-args override, and returns the execution's name -- or
+// ErrStartedUnnamed, when the platform started the execution but the operation
+// reported no name the backend can read, which is not the same as a start that
+// did not happen.
 //
 // It is not Launch: a launch is a run, built from a backend.LaunchSpec, with
 // FUGARO_RUN and the run's environment in the override and its own bookkeeping
@@ -56,11 +66,12 @@ func (b *Backend) StartJob(ctx context.Context, job string, args []string) (stri
 	}
 	if err := json.Unmarshal(op.Metadata, &meta); err != nil || meta.Name == "" {
 		// The execution is running; only its name could not be read.
-		return "", nil
+		return "", fmt.Errorf("%w (operation %s)", ErrStartedUnnamed, op.Name)
 	}
 	id, err := b.canonical(meta.Name)
 	if err != nil {
-		return "", nil
+		// The execution is running; only its name could not be read.
+		return "", fmt.Errorf("%w (operation %s): %w", ErrStartedUnnamed, op.Name, err)
 	}
 	return id.String(), nil
 }
