@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // intp is a task override's review_rounds, which is a pointer because a task
@@ -357,6 +359,85 @@ func TestPlanRoundsOfEveryStep(t *testing.T) {
 	if got := planRecordOf(nil); got != nil {
 		t.Fatalf("a plan of no steps recorded %+v, want the key absent", got)
 	}
+}
+
+// TestPlanRoundsFollowTheModeARaiseLifts: the plan block is written once, at
+// bootstrap (setPlan), but a senior or an adversarial round is spent under the
+// number the mode the run has reached supplies *then* (reviewRounds,
+// adversarialRounds, D22), so a round-moment raise has to rewrite the block
+// with it. Pro's row is three senior rounds and Critical's is five: a run whose
+// diff reaches a critical area in its first fix runs up to five senior rounds,
+// and a block left at three would have `fugaro diagnose` print "level l2: 5 of
+// 3 rounds" and the Run screen draw 166.7% against a mark nobody set (V1.3).
+//
+// The recipe's own `max_rounds` on the adversarial step is the other half: the
+// number a layer, the recipe or the task set is not the mode's to move, so that
+// step's recorded cap stays where the recipe put it.
+func TestPlanRoundsFollowTheModeARaiseLifts(t *testing.T) {
+	base := `version: 1
+project: aurora
+git: { provider: github }
+rigor:
+  default: pro
+  areas:
+    - { name: payments, match: "internal/payments/**", level: critical }
+` + workflowsYAML
+	r, repo := rigorRun(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": base}, nil,
+		&task.Spec{ReviewLevels: &config.ReviewLevels{L3: &config.LevelSetting{Model: "opus"}}})
+	r.rcp = parseRecipe(t, "version: 1\nname: levels\nsteps:\n  - review: {}\n  - adversarial: { max_rounds: 4 }\n")
+	r.bootstrapRigor(context.Background())
+	if err := r.resolveLevels(); err != nil {
+		t.Fatalf("resolving the levels: %v", err)
+	}
+	if err := r.buildPlan(); err != nil {
+		t.Fatalf("building the plan: %v", err)
+	}
+	if got := r.reachedRigor(); got != rigor.Pro {
+		t.Fatalf("the mode at bootstrap = %q, want pro: the case needs a mode the run can still raise", got)
+	}
+	if got := recordedRounds(t, r.rec.Plan, recipe.StepReview); got != 3 {
+		t.Fatalf("the recorded senior cap = %d at pro, want 3", got)
+	}
+	if got := recordedRounds(t, r.rec.Plan, recipe.StepAdversarial); got != 4 {
+		t.Fatalf("the recorded adversarial cap = %d, want the recipe's 4", got)
+	}
+
+	change(t, repo, map[string]string{"internal/payments/pay.go": "package payments\n"}, "work on the payments tree")
+	r.roundRigor(context.Background())
+
+	if got := r.reachedRigor(); got != rigor.Critical {
+		t.Fatalf("the mode after the round = %q, want critical: the area rule did not raise it, so the test proves nothing", got)
+	}
+	if got := recordedRounds(t, r.rec.Plan, recipe.StepReview); got != 5 {
+		t.Fatalf("the recorded senior cap = %d after the raise, want critical's 5: the loop spends five and the block says %d", got, got)
+	}
+	if got := recordedRounds(t, r.rec.Plan, recipe.StepAdversarial); got != 4 {
+		t.Fatalf("the recorded adversarial cap = %d after the raise, want the recipe's 4 kept: a number the recipe set is not the mode's to move", got)
+	}
+	// The run's own plan and the block a reader sees are one plan: the step the
+	// loop reads its rounds from carries the number the block reports.
+	for _, st := range r.plan {
+		if st.Kind == recipe.StepReview && st.Rounds != 5 {
+			t.Fatalf("the run's own review step = %d rounds, want 5: the plan and the block disagree", st.Rounds)
+		}
+	}
+}
+
+// recordedRounds is one step's rounds in the record's plan block, failing the
+// test for a block that carries no such step: a step missing from the block is
+// a level a reader is shown with no cap at all.
+func recordedRounds(t *testing.T, rec *runstore.PlanRecord, kind recipe.StepKind) int {
+	t.Helper()
+	if rec == nil {
+		t.Fatalf("the record carries no plan block, so it has no %s step", kind)
+	}
+	for _, st := range rec.Steps {
+		if st.Kind == string(kind) {
+			return st.Rounds
+		}
+	}
+	t.Fatalf("the record's plan block carries no %s step: %+v", kind, rec.Steps)
+	return 0
 }
 
 // TestCheckPlanLevelSteps is planRecipe's own contract, which checkPlan has to

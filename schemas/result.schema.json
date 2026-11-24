@@ -272,7 +272,7 @@
             "required": ["kind", "rounds"],
             "properties": {
               "kind": { "type": "string", "minLength": 1, "maxLength": 40, "description": "The step's kind (internal/recipe's StepKind: first_line, review, adversarial, rebase). Not an enum here, deliberately: a release can register a step kind this schema has never heard of (recipe.RegisterStepKind), and a record it writes is valid — the field's whole meaning is one kind per step, whatever the kind is spelled." },
-              "rounds": { "type": "integer", "minimum": 1, "description": "The rounds the plan resolved for this step, which is the cap its loop is held inside (planOf's number: the task's own override, the recipe's max_rounds, the agent's key or the rigor mode's row, inside the recipe's bound). It is a cap and never a figure the run spent: what a run spent is the rounds its reviews carry." }
+              "rounds": { "type": "integer", "minimum": 1, "description": "The rounds the plan resolved for this step, which is the cap its loop is held inside (planOf's number: the task's own override, the recipe's max_rounds, the agent's key or the rigor mode's row, inside the recipe's bound). Where the mode's row supplies it, it is re-resolved at every moment a raise moved the mode (refreshPlanRounds, V1.3), so the number is the cap the step's loop is held inside and never the one bootstrap resolved. It is a cap and never a figure the run spent: what a run spent is the rounds its reviews carry." }
             }
           }
         }

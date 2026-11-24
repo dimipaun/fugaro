@@ -1846,11 +1846,14 @@ type Record struct {
 	// recipe's text, the run's own configuration and the rigor mode, none of
 	// which the record keeps, so nothing else can replay it — the recipe member
 	// above names the recipe and never its steps. Written by the runner with the
-	// plan it runs, and rebuilt with it when the security escalation turns level
-	// 3 on. Absent — never an empty list — for a run that built no plan (a
-	// mode: review or artifact run, which planOf is never called for) and in
-	// records from before this field existed, so a reader from before it sees
-	// the record it always saw.
+	// plan it runs, rebuilt with it when the security escalation turns level 3
+	// on, and rewritten where a raise moves the mode's own number for the senior
+	// or the adversarial step (refreshPlanRounds), so a level's cap here is the
+	// one its loop is held inside and never the one bootstrap resolved. Absent —
+	// never an empty list — for a run that built no plan (a mode: review or
+	// artifact run, which planOf is never called for) and in records from before
+	// this field existed, so a reader from before it sees the record it always
+	// saw.
 	Plan *PlanRecord `json:"plan,omitempty"`
 	// Security is the security escalation the run took: its own diff matched a
 	// row of the list in force, so the runner turned review level 3 on for it

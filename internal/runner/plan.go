@@ -237,6 +237,37 @@ func planRecordOf(plan []planStep) *runstore.PlanRecord {
 	return &runstore.PlanRecord{Steps: steps}
 }
 
+// refreshPlanRounds rewrites the plan block's level 2 and level 3 rounds where
+// the mode supplies them. setPlan writes the block once, at bootstrap, but a
+// senior or an adversarial round is spent under the number the mode the run has
+// reached supplies *then* (reviewRounds, adversarialRounds, D22), so a mode a
+// round raises leaves the block behind: the loop would run up to five senior
+// rounds at Critical while the record said Pro's three, and a reader would be
+// shown a cap nobody ran under — `fugaro diagnose` printing "level l2: 5 of 3
+// rounds" and the Run screen's bar drawn at 166.7% against a mark the level was
+// never given (V1.3).
+//
+// It is called at every moment that raised the level (recordRigor) and nowhere
+// else: a moment that resolves the level the run has already reached moves
+// nothing. The step's own precedence is kept — a number a layer, the recipe or
+// the task set is not the mode's to move — and level 1's step is left alone,
+// because the first-line loop spends the plan's own st.Rounds and never re-reads
+// the mode (runner.go, firstLine).
+func (r *run) refreshPlanRounds() {
+	if len(r.plan) == 0 {
+		return
+	}
+	for i, st := range r.plan {
+		switch st.Kind {
+		case recipe.StepReview:
+			r.plan[i].Rounds = r.reviewRounds(st)
+		case recipe.StepAdversarial:
+			r.plan[i].Rounds = r.adversarialRounds(st)
+		}
+	}
+	r.rec.Plan = planRecordOf(r.plan)
+}
+
 // planFor is the plan the run's levels make of its recipe, checked. levels is
 // a parameter rather than r.levels because the escalation builds a candidate
 // plan from levels it has not committed to yet: a plan that does not hold them
