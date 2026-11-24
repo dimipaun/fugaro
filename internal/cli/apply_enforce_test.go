@@ -8,11 +8,12 @@ package cli
 // The first is the census of the commands themselves. management_commands.golden
 // holds every command D1566 calls a management command, with the change it
 // makes, the steps the table declares for that change, and what a run of the
-// command without --no-apply ends on in this package's own fakes — and the
-// commands D1566 leaves out, with the cloud write that is why. The test runs
-// each of them: the steps the change owes run in process, the run files nothing
-// for `fugaro apply`, and the state the command's own report claims is read off
-// the cloud fake the step wrote into and never off the absence of a line.
+// command without --no-apply ends on in this package's own fakes. The commands
+// D1566 leaves out are not here, and the golden's header names them with the
+// cloud write that is why. The test runs each row: the steps the change owes
+// run in process, the run files nothing for `fugaro apply`, and the state the
+// command's own report claims is read off the cloud fake the step wrote into
+// and never off the absence of a line.
 //
 // The second is the text lint. No message of this package hands one of the
 // commands F11's audit names — `fugaro update`, `fugaro config publish`,
@@ -80,22 +81,31 @@ var updateNextStepAllow = flag.Bool("update-next-step-allow", false, "rewrite te
 // build|image refresh)"`). The commands are matched as they are spelled.
 const nextStepFollowedAlt = `fugaro (?:update|config publish|project policy publish|image build|image refresh)`
 
-// nextStepShapes are the two ways a message hands one of them over.
+// nextStepShapes are the three ways a message hands one of them over.
 //
 // The directive shape is a word that makes the command the reader's next move
 // ("next: fugaro update", "then run `fugaro update`", "re-run `fugaro config
 // publish`") within one sentence of the command's own name. The claim shape is
 // the command named as what carries the change the message is about ("`fugaro
 // update` publishes it", "fugaro update writes this"), which is a next step
-// said as a fact about the change rather than as an instruction.
+// said as a fact about the change rather than as an instruction. The hand-off
+// shape is the audit's own fourth word, `with`: the command named as the means
+// by which the reader gets what the sentence is about ("Start a rebuild with
+// fugaro image build", "publish it again yourself, from a copy, with fugaro
+// config publish"), which is an instruction spelled as the instrument of the
+// act rather than as a verb of its own.
 //
-// Both are narrower than "mentions the command", which is the whole of F11's
+// All three are narrower than "mentions the command", which is the whole of F11's
 // grep and would flag every description of what a stage does ("the stages
 // `fugaro update` runs"): the audit's question is whether a user-facing message
 // sends the reader to run one of these by hand.
 var nextStepShapes = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\b(?:next|then|now|run|rerun|re-run)\b[^\n]{0,60}?` + nextStepFollowedAlt),
 	regexp.MustCompile(`(?i)` + nextStepFollowedAlt + `[^\n]{0,20}?\b(?:publishes|writes|applies|deploys)\s+(?:it|this|that|them|these|your)\b`),
+	// `with` introduces the command directly rather than within a sentence of
+	// it: the instrument is the command itself, and a wider window would catch
+	// every text that merely mentions two things in one sentence.
+	regexp.MustCompile(`(?i)\bwith\s+` + nextStepFollowedAlt),
 }
 
 // nextStepSite is one message that phrases one of them: the file it is in and
@@ -235,6 +245,8 @@ func TestThePatternCatchesTheShapesTheAuditNames(t *testing.T) {
 		{"then run 'fugaro project policy publish'", true, "a directive inside a sentence"},
 		{"your next fugaro update applies them", true, "a statement about the installation's next run, which the audit read as the same shape"},
 		{"`fugaro update` re-deploys this", true, "the claim with a prefixed verb"},
+		{"it always does). Start a rebuild with fugaro image build.", true, "the hand-off the audit spells as \"with ... fugaro image build\": an instrument rather than a directive verb"},
+		{"Publish it again yourself, from a copy, with fugaro config publish", true, "the same shape at the end of a longer sentence"},
 		{"the stages `fugaro update` runs are the stage list", false, "a description of what the command does"},
 		{"the image map is published by `fugaro update`", false, "the command as the agent of a passive sentence about the state"},
 		{"fugaro update is the whole upgrade", false, "the CLAUDE.md rule, quoted in a help text"},
@@ -574,8 +586,6 @@ var managementWorlds = map[string]func(*testing.T) managementRun{
 	"fugaro models rm":              managementWorldModelsRm,
 	"fugaro workspace add":          managementWorldWorkspaceAdd,
 	"fugaro workspace rm":           managementWorldWorkspaceRm,
-	"fugaro workspace member add":   managementWorldWorkspaceMemberAdd,
-	"fugaro workspace member rm":    managementWorldWorkspaceMemberRm,
 	"fugaro workspace cap set":      managementWorldWorkspaceCapSet,
 	"fugaro project policy publish": managementWorldPolicyPublish,
 }
@@ -929,47 +939,6 @@ func managementWorldWorkspaceRm(t *testing.T) managementRun {
 			if strings.Contains(readFileString(t, path), "workspace: workspace-alpha\n") {
 				t.Errorf("the membership is still in the file:\n%s", readFileString(t, path))
 			}
-		},
-	}
-}
-
-// managementWorldWorkspaceMemberAdd is the owner's half, which owes the
-// workspace's own project and the record its service reads (D1292). Neither can
-// finish here: the project's own stage is confirmed by a name typed at that
-// project's terminal, and this fixture has no Firebase backend to publish the
-// record into — so the change is saved and both steps stay owed, which is what
-// the row records.
-func managementWorldWorkspaceMemberAdd(t *testing.T) managementRun {
-	workspaceOwnerHome(t)
-	return managementRun{
-		args:    workspaceMemberAddArgsNoYes(),
-		pending: func(t *testing.T) []string { return workspaceOwedFor(t, "workspace-alpha", "ws-gcp") },
-		check: func(t *testing.T, out, errOut string, err error) {
-			workspaceAssertSavedNotLive(t, "workspace member add", out+errOut, err)
-		},
-	}
-}
-
-// managementWorldWorkspaceMemberRm is the owner's half removing its last
-// member: the table is empty afterwards, so both stages have nothing to do and
-// nothing is asked (D1540) — the one write of this family that ends live.
-func managementWorldWorkspaceMemberRm(t *testing.T) managementRun {
-	workspaceOwnerHome(t)
-	// The member has to be in the table to be taken out, and adding it leaves
-	// the change saved and not live — the workspace's own project is not applied
-	// here — so this run exits non-zero on D1563's sentence and the file carries
-	// the entry either way (TestWorkspaceMemberRmAsksNothing's own first step).
-	if out, _, err := execute(t, workspaceMemberAddArgsNoYes()...); err == nil {
-		t.Fatalf("workspace member add reported the member live in this fixture:\n%s", out)
-	}
-	return managementRun{
-		args:    []string{"workspace", "member", "rm", "workspace-alpha", "aurora"},
-		pending: func(t *testing.T) []string { return workspaceOwedFor(t, "workspace-alpha", "ws-gcp") },
-		check: func(t *testing.T, out, _ string, err error) {
-			if err != nil {
-				return
-			}
-			workspaceAssertNoSecondCommand(t, "workspace member rm", out, "workspace-alpha", "ws-gcp")
 		},
 	}
 }

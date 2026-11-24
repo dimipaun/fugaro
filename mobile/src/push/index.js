@@ -9,6 +9,15 @@
 // `pushScreen` for the two facts it shows (registered or not, and what the
 // switches are), and the state and code lists those answers are made of.
 //
+// **The other half of the feature is here too: `createPushReceipt`** -- what a
+// push the app did not expect may do, which is one alert and nothing else (the
+// plan's Task P5.2.9). It reads the category out of a message and nothing else,
+// resolves it against the app's own MAC-verified mailbox through a port, and
+// answers a decision: post the app's own phrase for the category, or post
+// nothing. No action, no route and no write -- `receipt.js`'s header is the
+// whole of it -- and `ALERT_PHRASES`, `PUSH_CHANNEL` and the rest of the names
+// beside it are the closed set of words that alert is allowed to use.
+//
 // **The token reaches the registration through `relayTokenSource`, and that is
 // Q7's answer in one line.** The owner ruled that the app registers with a
 // relay the publisher holds, which owns the delivery credentials (§3.3), so the
@@ -59,6 +68,18 @@ export {
   REGISTRATION_TEXT,
   judgeField,
 } from './message.js';
+
+export {
+  ALERT_CATEGORIES,
+  ALERT_PHRASES,
+  ALERT_PUBLIC,
+  ALERT_VISIBILITY,
+  CATEGORY_FIELD,
+  MemoryMailboxChange,
+  PUSH_CHANNEL,
+  RECEIPT_CODES,
+  createPushReceipt,
+} from './receipt.js';
 
 export { PUSH_STATES, createPushRegistration } from './registration.js';
 

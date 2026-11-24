@@ -369,11 +369,17 @@ func pathOf(agentID, node string) (string, error) {
 }
 
 // checkAgentID refuses an id a path could not carry. The escaped key is what
-// the rules grant and what a reader looks up, so an id that is not a name is
+// the rules grant and what a reader looks up, so an id the rule refuses is
 // refused here rather than escaped into a node nobody grants.
+//
+// The rule is the orchestrator id's own (naming.go, D3207): a project's name
+// for its default orchestrator, and `<project>~<name>` for a named one. It is
+// deliberately not idRE widened (F36) — an orchestrator id and a work item's
+// id share one keyspace, and an id carrying `~` must never be an item's.
 func checkAgentID(agentID string) error {
-	if !agentRE.MatchString(agentID) {
-		return fmt.Errorf("%w: the agent id %q is not a name", ErrInvalid, safetext.OneLine(agentID))
+	if !ValidOrchestratorID(agentID) {
+		return fmt.Errorf("%w: the agent id %q is not an orchestrator id: an id is a project's name, or a project's name, a %s and a slug (naming.go)",
+			ErrInvalid, safetext.OneLine(agentID), NameSeparator)
 	}
 	return nil
 }

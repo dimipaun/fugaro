@@ -18,8 +18,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/firestore"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/runindex"
 )
 
 // fugaro budget history is the history job's hidden entry point (design
@@ -51,6 +53,12 @@ const (
 	// rolloverMaxSkew is how far the job's clock may differ from the
 	// database's before the rollover refuses to finalize days.
 	rolloverMaxSkew = 10 * time.Minute
+	// reindexReserve is what a reindex pass leaves itself out of the
+	// execution's deadline to write the position the next pass resumes from
+	// and give the lease up (RI5, F39): a walk stopped by the platform's kill
+	// with nothing left to write it has no cursor, and the sweep behind it
+	// starts the walk over rather than continuing it.
+	reindexReserve = 45 * time.Second
 )
 
 // historyWiring points the history command at fakes; tests only.
@@ -76,18 +84,18 @@ type historyWiring struct {
 var historyTest *historyWiring
 
 func newBudgetHistoryCmd() *cobra.Command {
-	var sweep, rollover, force bool
+	var sweep, rollover, reindex, force bool
 	var day string
 	cmd := &cobra.Command{
-		Use:    "history (--sweep | --rollover)",
+		Use:    "history (--sweep | --rollover | --reindex)",
 		Short:  "The history job: sweep the run registry (internal)",
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch {
-			case sweep == rollover:
-				return userErr("history needs exactly one of --sweep and --rollover")
-			case sweep && (force || day != ""):
+			case exactlyOne(sweep, rollover, reindex) != 1:
+				return userErr("history needs exactly one of --sweep, --rollover and --reindex")
+			case !rollover && (force || day != ""):
 				return userErr("--day and --force belong to --rollover")
 			case rollover:
 				ctx, cancel := context.WithTimeout(cmd.Context(), rolloverTimeout)
@@ -96,17 +104,31 @@ func newBudgetHistoryCmd() *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), historyTimeout)
 			defer cancel()
-			return runHistorySweep(ctx, cmd, os.Getenv)
+			return runHistorySweep(ctx, cmd, os.Getenv, reindex)
 		},
 	}
 	cmd.Flags().BoolVar(&sweep, "sweep", false, "remove the registry entries of runs that ended, record them crashed, delete old run users")
 	cmd.Flags().BoolVar(&rollover, "rollover", false, "move finished days to Firestore and prune old day nodes")
+	cmd.Flags().BoolVar(&reindex, "reindex", false, "walk every run in the bucket into the run index and recompute the summary (RI5)")
 	cmd.Flags().StringVar(&day, "day", "", "with --rollover: only this UTC day (YYYY-MM-DD), any age still in the database")
 	cmd.Flags().BoolVar(&force, "force", false, "with --rollover --day: rewrite a final document (a backfill)")
 	return cmd
 }
 
-func runHistorySweep(ctx context.Context, cmd *cobra.Command, getenv func(string) string) error {
+// exactlyOne counts how many of the job's modes were asked for. A mode is a
+// flag's own truth, and the job refuses anything but one: two modes at once
+// would run one of them silently.
+func exactlyOne(flags ...bool) int {
+	n := 0
+	for _, f := range flags {
+		if f {
+			n++
+		}
+	}
+	return n
+}
+
+func runHistorySweep(ctx context.Context, cmd *cobra.Command, getenv func(string) string, reindex bool) error {
 	if err := refuseHTTP2Debug(getenv); err != nil {
 		return err
 	}
@@ -182,6 +204,16 @@ func runHistorySweep(ctx context.Context, cmd *cobra.Command, getenv func(string
 		return userErr("%v", oneLine(why))
 	}
 
+	// --reindex is a mode of its own (RI5): the walk over every run in the
+	// bucket, with none of the registry sweep's work. It asks the same
+	// ownership question above, because it writes the same installation's
+	// index, and it is the whole job when it is asked for -- an index that
+	// cannot be walked is the reason the execution was started, so its failure
+	// is the job's exit code rather than a warning.
+	if reindex {
+		return remote(indexSweep(ctx, cmd, db, env, getenv, now, test, true))
+	}
+
 	// This client is the Cloud Run arm of the sweep's liveness rule, and the
 	// rule's load-bearing half is the run's own heartbeat: budget.Sweeper
 	// keeps a registry entry whose heartbeat is inside its staleness window
@@ -242,7 +274,140 @@ func runHistorySweep(ctx context.Context, cmd *cobra.Command, getenv func(string
 	if perr != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "push: "+oneLine(perr.Error()))
 	}
+
+	// The fold (RI4, D3201): the runs that changed since the index's stamp,
+	// read out of the runs bucket and written into the run index. It is the
+	// index's only incremental writer, and it runs after the registry sweep so
+	// that a run the sweep has just removed -- a crashed one, whose outcome
+	// node the sweep writes -- is folded rather than missed.
+	//
+	// Every failure it has is a warning rather than the job's exit code, as the
+	// push's are: the sweep's own work is the registry, and a fold that cannot
+	// run must not stop the sweep that removes crashed runs and deletes their
+	// users (D12). What a failed fold leaves is the stamp where it was, so the
+	// next sweep reads the same window again.
+	if ferr := indexSweep(ctx, cmd, db, env, getenv, now, test, false); ferr != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "index: "+oneLine(ferr.Error()))
+	}
 	return remote(err)
+}
+
+// indexSweep is the sweep's last step: the fold of what changed into the run
+// index (RI4, D3201), or -- for --reindex and for a sweep that finds an
+// unfinished walk -- the reindex pass over the runs bucket (RI5, D3215).
+//
+// The job's environment is Terraform's and carries the runs bucket and the
+// Firestore database name for the rollover's sake; a sweep without them is not
+// an error but a warning, because the sweep itself does not need them (its own
+// work is the registry) and the deployment that carries them is the same job.
+//
+// The writer lease's holder is the execution's name, so a lease a person reads
+// names a job run rather than a process. An invocation outside Cloud Run (a
+// test, a person running the job's command by hand) has no execution name and
+// takes the lease under the job's own name.
+//
+// Either pass is bounded by the execution's own deadline rather than by a
+// timeout of its own: a walk that reaches the bound stops at the run it is on
+// and leaves its position behind, so the next sweep continues it, with no
+// second execution started and no override anywhere (F9, F39, RI5).
+func indexSweep(ctx context.Context, cmd *cobra.Command, db *rtdb.Client, env map[string]string, getenv func(string) string, now func() time.Time, test *historyWiring, reindex bool) error {
+	bucketName, fsDB := getenv(envRunsBucket), getenv(envFirestoreDB)
+	if bucketName == "" || fsDB == "" {
+		return fmt.Errorf("not folded: the job's environment carries no %s and %s", envRunsBucket, envFirestoreDB)
+	}
+	if fsDB != "(default)" {
+		return fmt.Errorf("not folded: %s must be (default): Fugaro uses the project's default database", envFirestoreDB)
+	}
+	if strings.ContainsAny(bucketName, "/: ") {
+		return fmt.Errorf("not folded: %s must be a bucket name", envRunsBucket)
+	}
+	noAuth := test != nil && test.noAuth
+	fsURL := ""
+	openBkt := func(ctx context.Context, name string) (*blobx.Bucket, error) { return blobx.Open(ctx, "gs://"+name) }
+	if test != nil {
+		fsURL = test.firestore
+		if test.bucket != nil {
+			openBkt = test.bucket
+		}
+	}
+	var fsSrc oauth2.TokenSource
+	if noAuth {
+		if fsURL == "" {
+			return fmt.Errorf("not folded: no-auth wiring without a Firestore endpoint")
+		}
+		fsSrc = oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "test"})
+	} else {
+		ts, err := google.DefaultTokenSource(ctx, cloudPlatform)
+		if err != nil {
+			return fmt.Errorf("no credentials for Firestore: %w", err)
+		}
+		fsSrc = ts
+	}
+	fs, err := firestore.New(fsURL, env[envFirebaseFP], fsSrc)
+	if err != nil {
+		return err
+	}
+	bucket, err := openBkt(ctx, bucketName)
+	if err != nil {
+		return err
+	}
+	defer bucket.Close()
+
+	holder := getenv("CLOUD_RUN_EXECUTION")
+	if holder == "" {
+		holder = "fugaro-history"
+	}
+	f := &runindex.Fold{
+		DB: db, FS: fs, Bucket: bucket.Bucket, Holder: holder, Now: now,
+		Warn: func(s string) { fmt.Fprintln(cmd.ErrOrStderr(), "index: "+oneLine(s)) },
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		f.StartLimit = deadline.Add(-reindexReserve)
+	}
+	if reindex {
+		rep, err := f.Walk(ctx)
+		if err != nil {
+			return err
+		}
+		return printWalk(cmd, rep)
+	}
+	rep, err := f.Sweep(ctx)
+	if err != nil {
+		return err
+	}
+	if rep.Walk != nil {
+		return printWalk(cmd, *rep.Walk)
+	}
+	if rep.Held {
+		fmt.Fprintf(cmd.OutOrStdout(), "index: not folded: %s holds the writer lease\n", oneLine(rep.Holder))
+		return nil
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "index: %d folded, %d unreadable, through %s\n",
+		rep.Folded, rep.Unreadable, rep.Through.UTC().Format(time.RFC3339))
+	return nil
+}
+
+// printWalk says what a reindex pass did, in one line. A pass that reached a
+// writer -- its own lease taken by another execution -- says who, because an
+// operator who started a reindex and read nothing about it has no way to tell
+// a walk that found nothing from one that never ran.
+func printWalk(cmd *cobra.Command, rep runindex.WalkReport) error {
+	if rep.Held {
+		fmt.Fprintf(cmd.OutOrStdout(), "index: not walked: %s holds the writer lease\n", oneLine(rep.Holder))
+		return nil
+	}
+	out := fmt.Sprintf("index: %d walked, %d unreadable, through %s",
+		rep.Walked, rep.Unreadable, rep.Through.UTC().Format(time.RFC3339))
+	if rep.Restarted {
+		out += " (the cursor could not be read: the walk began again)"
+	}
+	if rep.Done {
+		out += " (complete)"
+	} else {
+		out += " (unfinished: the next sweep continues from there)"
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), out)
+	return nil
 }
 
 // checkDatabaseHost refuses a database URL that is not the Firebase project's

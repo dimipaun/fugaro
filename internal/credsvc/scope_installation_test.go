@@ -337,6 +337,38 @@ func TestAScopeThatAcceptsNoSlipRefusesOne(t *testing.T) {
 	if resp2.StatusCode != http.StatusOK {
 		t.Fatalf("a slip-less call is answered %d: %s", resp2.StatusCode, body2)
 	}
+
+	// And the fence covers the WORKSPACE's own two headers (F13): a call that
+	// presents the slip of the other deployment — the one a person's run holds
+	// — is refused here for the same reason and with the same sentence, so a
+	// run can never have one service read a slip the other granted and serve
+	// the credential it names.
+	saw := len(s.up.Seen())
+	for _, tc := range []struct {
+		name  string
+		value string
+	}{
+		{"a workspace slip id", creds.PersonSlipHeader},
+		{"a workspace claim secret", creds.PersonSlipClaimHeader},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, body := s.callPath(t, MessagesPath, callBody("ws1-person-slip"), func(r *http.Request) {
+				r.Header.Set(tc.value, "a-workspace-slip-this-service-did-not-grant")
+			})
+			if resp.StatusCode != StatusUnverified {
+				t.Fatalf("a call presenting %s to an installation's service = %d, want %d: %s", tc.name, resp.StatusCode, StatusUnverified, body)
+			}
+			e := refusal(t, resp.StatusCode, body)
+			if e.Error != ErrorUnverifiedRunIdentity {
+				t.Errorf("the refusal is %q, want %q", e.Error, ErrorUnverifiedRunIdentity)
+			} else if !strings.Contains(e.Message, "carries no slip") {
+				t.Errorf("the refusal's sentence is %q, want the one that says a call to this service carries no slip", e.Message)
+			}
+			if got := len(s.up.Seen()); got != saw {
+				t.Errorf("the upstream saw %d calls, want the %d it had seen: the call was refused before any handler", got, saw)
+			}
+		})
+	}
 }
 
 // TestAScopeThatCannotBeBuiltIsTheServicesOwnFailure pins C1's third answer
@@ -572,7 +604,7 @@ func TestTheCraftsNeverWidenTheScopesPool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the resolver refused a call of its own run: %v", err)
 	}
-	cands, _, skipped, err := s.server.candidates(withScope(ctx, sc), sc.Caller(), testRepo, s.policy.shared, b)
+	cands, _, _, skipped, err := s.server.candidates(withScope(ctx, sc), sc.Caller(), testRepo, s.policy.shared, b)
 	if err != nil {
 		t.Fatalf("candidates: %v", err)
 	}

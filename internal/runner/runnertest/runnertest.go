@@ -51,6 +51,7 @@ import (
 	"time"
 
 	"gocloud.dev/blob/memblob"
+	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -251,6 +252,47 @@ func Layer(text string) *task.ProjectLayer {
 	return &task.ProjectLayer{SHA256: config.LayerSum([]byte(text)), Generation: 3, YAML: text}
 }
 
+// fixturePins is the models line pinnedConfig puts under agent:, the same line
+// internal/runner's own harness inserts (its fixturePins): the two harnesses
+// duplicate each other by design, and this is what they share newest.
+const fixturePins = "models: { coder: claude-sonnet-5-5, reviewer: claude-opus-5, background: claude-haiku-4-5 }"
+
+// pinnedConfig returns cfg with the pins a run must name to be priced. The
+// price rule (the runner's checkPins) judges every run an api-key, vertex or
+// cascade credential serves, and since the gateway runs in every mode (AB1b,
+// D3009) that is every run of this configuration whatever its mode, unset
+// included — so a repository's file that names no model of its own is refused
+// at bootstrap, before any stage. A real installation's pins arrive from the
+// project layer's defaults (config.ProjectLayer); this harness puts them in
+// the file, because a test's file is the one thing a run here reads.
+//
+// It leaves alone exactly what internal/runner's withFixturePins leaves alone:
+// a config that names a model or a models block at all — an empty block is how
+// a test about the pin rules itself asks for a run that pins nothing — a
+// config with no agent block, which is a layer or a fragment rather than a
+// repository's own file, an oauth one, whose runs are the only ones the
+// gateway does not carry, and a config that does not parse, which is the
+// config under test in tests of their own.
+func pinnedConfig(cfg string) string {
+	var doc struct {
+		Agent *struct {
+			Model  string         `yaml:"model"`
+			Models map[string]any `yaml:"models"`
+			Auth   string         `yaml:"auth"`
+		} `yaml:"agent"`
+	}
+	if err := yaml.Unmarshal([]byte(cfg), &doc); err != nil || doc.Agent == nil {
+		return cfg
+	}
+	if doc.Agent.Model != "" || doc.Agent.Models != nil || doc.Agent.Auth == config.AuthOAuth {
+		return cfg
+	}
+	if strings.Contains(cfg, "agent: {") {
+		return strings.Replace(cfg, "agent: {", "agent: { "+fixturePins+",", 1)
+	}
+	return strings.Replace(cfg, "agent:\n", "agent:\n  "+fixturePins+"\n", 1)
+}
+
 // New seeds a remote with the fixture repository — cfg replaces its
 // fugaro.yaml when non-empty — and stores spec, which is the harness's own
 // default when nil.
@@ -261,6 +303,7 @@ func New(t *testing.T, cfg string, spec *task.Spec) *Harness {
 	if cfg != "" {
 		files["fugaro.yaml"] = cfg
 	}
+	files["fugaro.yaml"] = pinnedConfig(files["fugaro.yaml"])
 	remote := testutil.NewRemote(t, files)
 	bucket := memblob.OpenBucket(nil)
 	t.Cleanup(func() { bucket.Close() })

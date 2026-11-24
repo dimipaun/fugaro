@@ -39,6 +39,18 @@
           ".read": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now)",
           ".write": false
         },
+        "launch": {
+          "recipe": {
+            ".read": "(auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists())",
+            ".write": false
+          },
+          "devices": {
+            "$uid": {
+              ".read": "(auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists()) && $uid == auth.uid",
+              ".write": false
+            }
+          }
+        },
         "repos": {
           "$slug": {
             ".read": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && auth.token.fs == $slug",
@@ -417,7 +429,7 @@
               ".validate": "(newData.isString() && newData.val().length > 0 && newData.val().length <= 64 && newData.val().matches(/^[A-Za-z0-9._:-]+$/))"
             },
             "kind": {
-              ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action' || newData.val() == 'registration')"
+              ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action' || newData.val() == 'registration' || newData.val() == 'stop')"
             },
             "options": {
               ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'prompt' && newData.hasChildren()",
@@ -541,7 +553,7 @@
               ".validate": "(newData.isString() && newData.val().length > 0 && newData.val().length <= 64 && newData.val().matches(/^[A-Za-z0-9._:-]+$/))"
             },
             "kind": {
-              ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action' || newData.val() == 'registration')"
+              ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action' || newData.val() == 'registration' || newData.val() == 'stop')"
             },
             "options": {
               ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'prompt' && newData.hasChildren()",

@@ -391,10 +391,11 @@ func initStages(e *initEngine) []initflow.Stage {
 		stages = append(stages, newComputeStage(e))
 	}
 	// The project stage, which is the one stage that may create the GCP
-	// project. `setup` registers it on every first run: Fugaro only starts
-	// fresh, so a first run creates its project (settleCreation sets the
-	// field the flag sets), and the stage refuses an ID that already exists
-	// unless an earlier run of setup created it. `update` never registers it,
+	// project. `setup` registers it on every first run: a first run makes its
+	// project Fugaro's (settleCreation sets the field the flag sets), and the
+	// stage creates it, adopts one that is already there and holds nothing of
+	// Fugaro's, and refuses one that holds anything of Fugaro's unless an
+	// earlier run of setup made it Fugaro's. `update` never registers it,
 	// and neither does a `setup` whose installation is already there: e.old is
 	// the project config's file, and a run that has one converges as update
 	// does (D11, reconciliation F24).
@@ -668,6 +669,14 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// one step here that reads the checkout this run was started in, and the one
 	// that does nothing at all outside one.
 	e.foldBacklog(ctx)
+	// And RI5's: the run index an installation of an earlier release has never
+	// built, marked for a rebuild and started once (update_runindex.go). It is
+	// here for the reason the six above are -- the converge has applied
+	// everything it had, so the installation this run leaves behind is the one
+	// whose index is walked -- and it returns no error either: the index is a
+	// derived object, the mark it leaves is what every later sweep continues on
+	// its own, and failing an upgrade over one is what the HARD RULE forbids.
+	e.reindexRunIndex(ctx)
 	// And T-RU5's, the sixth and last: what this release fixes about the
 	// project's filed issues, which is a step of the run and not of the door
 	// (update_resolved.go) because --json's document carries it and is printed
@@ -952,9 +961,9 @@ func (e *initEngine) ensureCredentialsService(ctx context.Context) error {
 }
 
 // writeCarriedCredentials writes the carried block back into the installation
-// root's tfvars, with its two job tables — the coding one and the review-only
-// one — brought up to date with this machine's config, and returns the document
-// it wrote.
+// root's tfvars, with the members this side composes out of the local config —
+// the two job tables, and the identity half's three names — brought up to date,
+// and returns the document it wrote.
 //
 // The document goes back on disk BEFORE anything that can fail and return.
 // prepare (init.go) is what rewrites the installation's tfvars from this run's
@@ -1002,6 +1011,21 @@ func (e *initEngine) writeCarriedCredentials(ctx context.Context, doc []byte) ([
 			fmt.Fprintf(e.r.w, "the credentials service's job table was not refreshed: %v\n", err)
 		} else {
 			next = refreshed
+		}
+		// And the identity half's three names, which no release before this one
+		// wrote: the deploy is their only other writer, and every installation
+		// that has the block carries one without them — byte for byte, so
+		// nothing else ever adds them. Without this refresh the roster's
+		// service accounts and the implicit admins never reach the service at
+		// exactly the installations that have it, and the runs' signer never
+		// reaches it either, which is the name LM14's probe reads to decide
+		// whether the minter grant can move. Refreshed from `next` rather than
+		// from the document the job-table refresh was handed, so a refusal
+		// there does not also cost this one.
+		if named, err := infra.RefreshCredentialsServiceIdentity(next, e.lc); err != nil {
+			fmt.Fprintf(e.r.w, "the credentials service's identity names were not refreshed: %v\n", err)
+		} else {
+			next = named
 		}
 	}
 	// And the intake, which the same apply deploys and which no earlier release
@@ -1347,8 +1371,8 @@ func credentialsImageStale(ver, image string) bool {
 // It is wider than credentialsImageStale on purpose, and the two blocks the run
 // does not write on every apply are why. The hop's block is the installation's
 // own opt-in, hand-written into the installation root's tfvars, and the
-// orchestrator's is the one the writer writes once (internal/cli's
-// ensureOrchestratorBlock): either may name the release that wrote it while the
+// orchestrator's is the one the writer writes once (update_orchestrator.go's ensureOrchestratorBlock): either may name the
+// release that wrote it while the
 // credentials service's own image is already this release's. The hop's revision
 // would then run a binary that may have no `voice serve` at all and whose reader
 // is a release behind the policy node this run's policy stage has just raised —
@@ -1507,131 +1531,6 @@ func (e *initEngine) deployCredentialsService(ctx context.Context) error {
 	// and what every later stage of the run plans the root from.
 	e.specReviewJobsOfTheService()
 	return nil
-}
-
-// ensureOrchestratorBlock is `--orchestrator`'s write: the installation root's
-// orchestrator block, composed from state this run already holds (mobile plan
-// tasks P5.1b and P5.1c; docs/mobile/design/always-on-orchestrator.md sections
-// 4.1 and 4.3). It is the only writer of that key in the tree, and it runs at
-// the stage that has the Firebase outputs — newInstallation2Stage, on the
-// --firebase-project path — because of the ordering the module states: the
-// block's token-minter row is bound on the FIREBASE root's signer account, in
-// that root's project, and a run applies the installation root BEFORE it
-// applies Firebase (init_firebase.go's initFirebase, steps 1 and 2). An
-// installation whose very first apply carried the block would fail that
-// binding; by this stage the Firebase root is applied (r.fb) and the outputs it
-// just produced are in the local config, which is what makes every member of
-// the block derivable off this run's own state (infra.Orchestrator).
-//
-// It writes ONCE. The block is the installation's record of having opted in —
-// the account, its five bindings, the pairing container and the service are
-// state — so a run that finds the key already recorded writes nothing here: on
-// later releases what moves is the image inside the block
-// (moveCredentialsImage), and a run that recomposed the block would be
-// re-deciding the grants and planning the replacement of two names that are
-// force-new. That is also why the flag is idempotent: `--orchestrator` on an
-// installation that has the block is a no-op, not a second opt-in.
-//
-// The three refusals are named, each with the fix, because the run is one the
-// owner asked for: a block this installation cannot carry is a failure rather
-// than the tolerance the credentials service's own deploy gets (a service that
-// cannot exist in a project is not a run to stop). The orchestrator is the
-// credentials service's own caller class, so an installation with no service
-// has no route for the account to reach; its process reads the installation's
-// Firebase database, so an installation whose config names none has nothing to
-// configure it with; and it runs the released image, so a run that cannot
-// resolve this release's pin — a development build, or a registry read that
-// failed — must not write a block whose image would have to be invented.
-//
-// The write is the PLAN's input and not yet a fact: it lands in the workdir
-// before the apply the block needs, so the run in between can still end with
-// nothing created — the plan refused, the owner's answer a no, --plan-only's
-// stop. What comes back is therefore the spec it composed and whether it wrote
-// anything, and the caller is what decides which of the two the run's outcome
-// makes true: the block stays where the apply carried it or where the plan
-// found the installation already holding it, and is taken back out of the
-// document everywhere else (unsetOrchestratorBlock). An installation that
-// already holds the block wrote nothing here and is the caller's to leave
-// alone — this is a no-op, not a second opt-in.
-func (e *initEngine) ensureOrchestratorBlock(ctx context.Context) (infra.OrchestratorSpec, bool, error) {
-	if !e.r.o.orchestrator {
-		return infra.OrchestratorSpec{}, false, nil
-	}
-	base, err := e.wd.Vars()
-	if err != nil {
-		return infra.OrchestratorSpec{}, false, userErr("reading the installation's tfvars: %v", err)
-	}
-	if len(base) == 0 {
-		base = e.wd.PrevVars
-	}
-	if len(base) == 0 {
-		base = []byte("{}")
-	}
-	recorded, err := infra.OrchestratorRecorded(base)
-	if err != nil {
-		return infra.OrchestratorSpec{}, false, userErr("reading the installation's %s: %v", infra.VarsFile, err)
-	}
-	if recorded {
-		return infra.OrchestratorSpec{}, false, nil
-	}
-	if _, have, err := infra.CredentialsServiceImageOf(base); err != nil {
-		return infra.OrchestratorSpec{}, false, userErr("reading the installation's %s: %v", infra.VarsFile, err)
-	} else if !have {
-		return infra.OrchestratorSpec{}, false, userErr("--orchestrator turns on the resident orchestrator, which is the credentials service's own caller class — the label route and the gated merge mint admit its account by name, and the module binds roles/run.invoker on the service for it — and this installation's %s carries no credentials_service block: run 'fugaro update --firebase-project <gcp-project-id>' without --orchestrator first, which deploys the service, then run 'fugaro update --firebase-project <gcp-project-id> --orchestrator'", infra.VarsFile)
-	}
-	pinned, err := e.credentialsResolve(ctx)
-	if err != nil {
-		return infra.OrchestratorSpec{}, false, userErr("the resident orchestrator runs this release's image, resolved exactly as the credentials service's and the intake's are, and this run cannot resolve it: %v", err)
-	}
-	spec, err := infra.Orchestrator(e.lc, pinned)
-	if err != nil {
-		return infra.OrchestratorSpec{}, false, err
-	}
-	doc, err := infra.SetOrchestrator(base, spec)
-	if err != nil {
-		return infra.OrchestratorSpec{}, false, userErr("setting the resident orchestrator in the installation's %s: %v", infra.VarsFile, err)
-	}
-	if err := e.wd.WriteVars(doc); err != nil {
-		return infra.OrchestratorSpec{}, false, userErr("writing the installation's %s: %v", infra.VarsFile, err)
-	}
-	return spec, true, nil
-}
-
-// unsetOrchestratorBlock takes the block ensureOrchestratorBlock wrote back out
-// of the installation's tfvars, for the run that never applied it.
-//
-// Nothing is created and nothing is promised then: the document is the one the
-// run's own writers left, minus the key, so a later plain `fugaro update` — or
-// a managed project's, which asks nobody — plans no orchestrator at all, which
-// is the state the owner's silence has to leave behind (the opt-in's refusal of
-// --yes and of a run with no terminal is worth nothing if the block outlives
-// the run that failed to get an answer). A tfvars the run cannot read back, or
-// one this program cannot write, is a failure of its own rather than a silent
-// leave-behind: the caller joins it with whatever ended the run.
-func (e *initEngine) unsetOrchestratorBlock() error {
-	vars, err := e.wd.Vars()
-	if err != nil {
-		return userErr("reading the installation's tfvars: %v", err)
-	}
-	if len(vars) == 0 {
-		return nil
-	}
-	doc, err := infra.UnsetOrchestrator(vars)
-	if err != nil {
-		return userErr("removing the resident orchestrator from the installation's %s: %v", infra.VarsFile, err)
-	}
-	if err := e.wd.WriteVars(doc); err != nil {
-		return userErr("writing the installation's %s: %v", infra.VarsFile, err)
-	}
-	fmt.Fprintf(e.r.w, "the resident orchestrator was not applied: this run created nothing for it, so the installation's %s carries no orchestrator block and a later run plans none. Run 'fugaro %s --firebase-project %s --orchestrator' again to opt in.\n", infra.VarsFile, e.r.o.doorName(), e.lc.GCPProject)
-	return nil
-}
-
-// announceOrchestrator is what the opt-in's run says once the block it wrote is
-// a fact about the installation: the apply carried it, or the plan found the
-// installation already holding every resource the block names.
-func (e *initEngine) announceOrchestrator(spec infra.OrchestratorSpec) {
-	fmt.Fprintf(e.r.w, "the installation is opted in to the resident orchestrator: %s will run the service %s in %s, woken every minute by the Scheduler job %s, holding the design's section 4.3 table and nothing else. The next fugaro update carries the block and moves only the image in it.\n", infra.OrchestratorAccountID+"@"+e.lc.GCPProject+".iam.gserviceaccount.com", spec.Service, e.lc.Region, spec.SchedulerJob)
 }
 
 // specReviewJobsOfTheService replaces this run's review set with the one the
@@ -1915,7 +1814,7 @@ func (e *initEngine) fillCredentialsAudience(ctx context.Context) (bool, error) 
 	// because this plan has none — every resource in it is in the state already,
 	// and the cover consults that list only for a change that carries an import
 	// (tf.Cover.NotCovered).
-	gated, err := r.gateStep(ctx, e.t, nil, r.coverOf(r.coverReasons), nil)
+	gated, err := r.gateStep(ctx, e.t, nil, r.coverOf(r.coverReasons), nil, nil)
 	if err != nil {
 		return false, err
 	}
@@ -2190,50 +2089,7 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			// the Firebase root's outputs, whether the flag asked for them or
 			// the no-flag arm adopted or created the database.
 			if e.historyJobOfThisRun() {
-				// The resident orchestrator's block, before the apply that
-				// carries it: this is the stage that has the Firebase outputs
-				// (the module's token-minter row is bound on that root's
-				// signer), and the write is a no-op for a run that was not
-				// asked for one and for an installation that already holds the
-				// block (ensureOrchestratorBlock).
-				spec, wrote, err := e.ensureOrchestratorBlock(ctx)
-				if err != nil {
-					return err
-				}
-				// The two answers below are THIS call's and no other's: every
-				// stage before this one planned the same root, and a plan of
-				// theirs that changed nothing says nothing about the block
-				// this run has just written.
-				e.r.rootPlanEmpty, e.r.rootApplied = false, false
-				err = e.r.firebaseHistory(ctx, e.c, e.t, e.wd, e.lc, e.spec)
-				switch {
-				case !wrote:
-					return err
-				case e.r.rootApplied, e.r.rootPlanEmpty:
-					// The block is a fact about the installation: the apply
-					// carried it, or the plan found every resource it names
-					// already there (an empty plan is Terraform's statement
-					// that the state holds them, and a document that dropped
-					// the key would be the plan of their removal, which D1551
-					// refuses rather than applies).
-					e.announceOrchestrator(spec)
-					return err
-				}
-				// The run ended between the write and its apply — the plan
-				// refused, the confirmation declined, --plan-only's stop — so
-				// nothing of the opt-in exists and the block goes back out of
-				// the document. Left behind, it would be the whole of the gate
-				// gone: the next run that asks nobody (a plain `fugaro update
-				// --yes`, a managed project's) would bring the account, its
-				// bindings and the service up for an installation whose owner
-				// never answered.
-				if undoErr := e.unsetOrchestratorBlock(); undoErr != nil {
-					if err == nil {
-						return undoErr
-					}
-					return errors.Join(err, undoErr)
-				}
-				return err
+				return e.r.firebaseHistory(ctx, e.c, e.t, e.wd, e.lc, e.spec)
 			}
 			return e.r.installCatalogCheck(ctx, e.c, e.t, e.wd, e.lc, e.spec)
 		},
@@ -2288,7 +2144,7 @@ func newCredentialsStage(e *initEngine) *engineStage {
 			if ver == "" {
 				return credentialsDevBuildHeld
 			}
-			doc, _, err := e.recordedCredentialsImage()
+			doc, image, err := e.recordedCredentialsImage()
 			switch {
 			case err != nil:
 				// The run reports the read's own failure: a stage that could not
@@ -2318,7 +2174,13 @@ func newCredentialsStage(e *initEngine) *engineStage {
 				// here or on a second `fugaro update`.
 				return ""
 			}
-			return "the recorded image is already this release's"
+			if write, _ := e.orchestratorVerdict(doc, image); write {
+				// The block is this run's to write: the resident orchestrator
+				// (update_orchestrator.go), which every installation that can carry
+				// one gets from this one command.
+				return ""
+			}
+			return "the recorded image is already this release's" + e.orchestratorLeftOff(doc, image)
 		},
 		run: func(ctx context.Context) error {
 			if err := e.setup(ctx); err != nil {
@@ -2327,12 +2189,14 @@ func newCredentialsStage(e *initEngine) *engineStage {
 			if err := e.moveCredentialsImage(ctx); err != nil {
 				return err
 			}
-			e.r.installLabel = " (this release's credentials service)"
-			_, stop, err := e.r.installRoot(ctx, e.c, e.t, e.wd, e.lc, e.spec)
-			if err != nil || stop {
+			_, wrote, err := e.ensureOrchestratorBlock()
+			if err != nil {
 				return err
 			}
-			return nil
+			e.r.rootPlanEmpty, e.r.rootApplied = false, false
+			e.r.installLabel = orchestratorInstallLabel(wrote)
+			_, _, err = e.r.installRoot(ctx, e.c, e.t, e.wd, e.lc, e.spec)
+			return e.orchestratorApplied(wrote, err)
 		},
 		left: promptLeft(initflow.CredentialsService, "run the command below: it asks you nothing and moves the credentials service onto this release's image", e.r.o.doorName()),
 	}

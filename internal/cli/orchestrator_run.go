@@ -141,7 +141,16 @@ func runOrchestratorRun(cmd *cobra.Command, o *orchestratorRunOptions) error {
 	if err != nil {
 		return userErr("naming this daemon: %v", err)
 	}
-	lease, err := orchestrator.NewLease(db, id, holder, db.ServerNow)
+	// Who drives the id is the person whose credential takes this lease (D3218,
+	// F18): the driver node names a principal, and the console's Coordinator tab
+	// draws it. A machine that cannot say who it is — no user in the local
+	// config and no git identity — writes no driver node rather than a wrong
+	// one, which the map reads as unknown, exactly as it is.
+	driver, meErr := lc.Me(ctx)
+	if meErr != nil {
+		driver = ""
+	}
+	lease, err := orchestrator.NewLease(db, id, holder, driver, db.ServerNow)
 	if err != nil {
 		return userErr("%v", err)
 	}
@@ -680,21 +689,24 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		// imported plan (D2735), which refreshNodes has built before this tick
 		// was and rebuilds after it.
 		Nodes:    d.nodes,
-		Runs:     &orchestratorRunView{bucket: d.env.bucket.Bucket, env: d.env, warn: d.warn},
+		Runs:     &orchestratorRunView{bucket: d.env.bucket.Bucket, env: d.env, db: d.db, warn: d.warn},
 		Launcher: d.launcher,
 		Mint:     func(now time.Time) (string, error) { return task.NewRunID(now, crand.Reader) },
 		Caps:     caps,
 		Breaker:  &orchestrator.Breaker{},
-		// A tick has four things to say — a run it folded ended, it committed
+		// A tick has six things to say — a run it folded ended, it committed
 		// a question (O7), it merged under a ceiling that tells somebody
-		// (D2030), and it blocked an item on a cycle across orchestrators
-		// (D3220) — and the log sink is the channel slice 1 ships, one cleaned
+		// (D2030), it blocked an item on a cycle across orchestrators (D3220),
+		// and the two readings of a chain that ran out of models, a run that
+		// suspended itself until a time and one that halted for want of one
+		// (C3) — and the log sink is the channel slice 1 ships, one cleaned
 		// line on this daemon's own output, which is where the person running it
 		// in the foreground reads what it did (and where the login unit collects
 		// it). Left unset, every say() in a cycle returns at its nil check: the
 		// daemon would stop a run nobody hears about, pause on a spend question
-		// nobody sees, land a merge nobody is told to read, and block an item on
-		// a deadlock nobody can break.
+		// nobody sees, land a merge nobody is told to read, block an item on
+		// a deadlock nobody can break, and leave a run that stopped on an
+		// exhausted chain with nobody told whether anything resumes it.
 		Notifier: orchestrator.LogSink{W: d.out},
 		Triage:   orchestratorTriageSeams(d),
 		// The labels of the pull requests the runs it launched opened (F25, T7):
@@ -1463,7 +1475,11 @@ func (f *launchInFlight) busy() bool {
 type orchestratorRunView struct {
 	bucket *blob.Bucket
 	env    *cloudEnv
-	warn   io.Writer
+	// db is the installation's budget database, which is where the credentials
+	// service records a run that suspended itself (pauseNode, C3): the runs
+	// bucket carries the run's own words and the pause mark is not one of them.
+	db   *rtdb.Client
+	warn io.Writer
 }
 
 func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orchestrator.RunReport, error) {
@@ -1504,6 +1520,14 @@ func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orch
 			// pass.
 			rep.Discovered = rec.Discovered
 			rep.ConflictPaths = rec.ConflictPaths
+		}
+		if rec != nil && rec.Status == runstore.StatusPaused {
+			// A run that suspended itself is reported with the pause holding it
+			// (C3), which is what the fold tells a person instead of the
+			// ending it would otherwise read: the run neither finished the work
+			// nor failed at it, and which outcome a record saying `paused`
+			// means is the fold's own work (PR11, PR12) and not this reader's.
+			rep.Pause = v.pauseNode(ctx, slug, run)
 		}
 		if rec != nil && rec.PR != nil && rec.PR.Number > 0 {
 			// The pull request the run left, which is the record's own answer
@@ -1566,6 +1590,50 @@ func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orch
 		reports = append(reports, rep)
 	}
 	return reports, nil
+}
+
+// pauseNode reads the node the credentials service recorded for a run that
+// suspended itself (C3, D3189): paused/<slug>/<run>, the one place the instant a
+// run comes back is written, and whether its launcher cancelled the pause before
+// then. Neither is on the run's own record, and a job that could name its own
+// resume time would be an agent choosing when to spend (R8).
+//
+// It is asked about the runs whose own record ended `paused` and no others: the
+// service records a node for exactly those — the order the contract fixes ends a
+// run paused only after the ask that writes it — so a read per open attempt
+// would be a database read per run for a mark at most one of them carries.
+//
+// A node that is absent, one this release cannot place, and a read that did not
+// happen are all reported as no pause and named on the daemon's own output. The
+// record behind them says the run ended, and a line promising a run comes back
+// when nothing will resume it is the one lie this reader could tell; what none
+// of them may be is a pause, and what none of them may do is stop the cycle —
+// the daemon's own output is where a broken pause is reported, and a stopped
+// daemon resumes nobody.
+func (v *orchestratorRunView) pauseNode(ctx context.Context, slug, runID string) *runstore.PauseNode {
+	var raw json.RawMessage
+	found, err := v.db.Get(ctx, runstore.PauseNodePath(slug, runID), &raw)
+	switch {
+	case err != nil:
+		fmt.Fprintf(v.warn, "run %s/%s: it ended paused and its pause node could not be read: %s\n",
+			slug, task.ShortRun(oneLine(runID)), safetext.OneLine(err.Error()))
+		return nil
+	case !found:
+		fmt.Fprintf(v.warn, "run %s/%s: it ended paused and the credentials service recorded no pause for it, so nothing will resume it\n",
+			slug, task.ShortRun(oneLine(runID)))
+		return nil
+	}
+	node, err := runstore.ParsePauseNode(raw)
+	if err != nil {
+		// A node carrying a member this release does not know, or one naming no
+		// usable pause: half a node is not a pause the orchestrator may act on
+		// (R18, R25's own rule), and what a person is told is that there is
+		// none rather than an instant nothing backs.
+		fmt.Fprintf(v.warn, "run %s/%s: it ended paused and its pause node is not one this release can read: %s\n",
+			slug, task.ShortRun(oneLine(runID)), safetext.OneLine(err.Error()))
+		return nil
+	}
+	return node
 }
 
 // executionOver reports whether the platform has ended the run's execution,

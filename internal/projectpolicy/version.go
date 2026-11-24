@@ -536,7 +536,65 @@ const PolicyRulesVersion = 1
 // grant on a leaf no run writes, so a run that bootstrapped under the release
 // behind keeps its records, its ledger and its counters, and every write it
 // makes still lands (docs/design/update-in-flight.md).
-const RulesVersion = 9
+// Generation 10 is the phone's stop request and the launch envelope (mobile
+// plan task P5.1g, the owner's answers Q9, Q10(c) and Q11, the design's §4.5
+// E1, §4.7 and §4.8). It carries two changes, and each is one of the reasons a
+// generation exists.
+//
+// The first is a *write* the phone holds and did not before: `stop`, the sixth
+// member of the mailbox's kind vocabulary (`shared/mailbox-schema`'s KINDS),
+// which is the phone asking a human to stop what it is looking at. It bumps for
+// generation 6's reason — the registration kind's — because a phone under the
+// older document has every stop request refused at the database with no error,
+// and the record is the whole of what the owner's Q10 answer (c) built: a
+// request to a human, never a phone-writable kill switch. Nothing
+// else about the mailbox moves: the kind carries the five shared fields and no
+// others, so no field node, no tag rule and no required-field clause changes.
+//
+// The second is a *read grant*, and it bumps for generation 4's, 5's and 8's
+// reason: the launch envelope (`internal/budget/rules`.PathLaunchEnvelope,
+// `config/policy/launch`) is one node under the policy subtree the operator
+// already publishes — a sibling of `shared`, `repos/$slug` and `voice`, one
+// node for the installation and one entry per device under it, which is Q11's
+// ruling against a node *per device* — and the deployed document now grants a
+// paired device the installation's named safe recipe (`launch/recipe`) and
+// **its own entry** under `launch/devices/$uid` and nothing else: `USER` holds
+// the device node's existence as a conjunct already, so a revoked pairing
+// reads no envelope entry, and the rules compare `$uid` with `auth.uid`, so one
+// device reads no other device's allow-list. A device under the older document
+// is refused both reads outright rather than shown a degraded envelope — which
+// matters more here than for a leaf a run reads, because the app refuses an
+// utterance outside its allow-list *before* it signs anything, and an unreadable
+// envelope is an app that refuses every launch rather than one that launches
+// unbounded.
+//
+// It is a sibling of `shared` and not a member of it because
+// `config/policy/shared` *is* the published policy document, and that document
+// decodes strictly: a `launch` member inside it would be a policy *version*
+// bump and a migration for a value the policy's own reader never reads.
+//
+// What the grant does NOT do is enforce the envelope. A phone's launch is a
+// `message`, whose free text the rules cannot resolve a repository out of, so
+// the decision is the consumer's (`internal/orchestrator`'s envelope: the
+// per-device allow-list narrowed from `allow_repos`, the per-device rate and
+// cost ceiling, and the named safe recipe an unconfirmed launch may run) and
+// the app's. That is where Q9's answer puts it, and it is the honest shape of
+// the fence: the rules hand the phone its own values and refuse it everything
+// else; they do not promise that a value was obeyed.
+//
+// What the bump does to an existing installation is what every bump does, and
+// it is met the same way: `fugaro doctor` reports policy-rules-skew until the
+// owner runs `fugaro update`, whose rules stage deploys this document and
+// records generation 10 in the marker, so an installation at generation 9
+// converges in one run and no second command. The deploy still refuses to write
+// this binary's document under a marker *above* it, so an older CLI cannot take
+// the grant away behind a newer one's back. And the update is safe while runs
+// are in flight, which the marker's own write path carries: one half is a read
+// grant on a leaf no run writes and the other admits one more kind of message
+// into a mailbox, so a run that bootstrapped under the release behind keeps its
+// records, its ledger and its counters, and every write it makes still lands
+// (docs/design/update-in-flight.md).
+const RulesVersion = 10
 
 // VersionError is the refusal of a node written in a version this Fugaro does
 // not understand. It carries both versions, so each side prints its own

@@ -582,11 +582,12 @@ var mobileAuthProviderSymbols = map[string][]string{
 	"internal/budget/token/exchange.go": {"func Exchange(", "accounts:signInWithCustomToken"},
 	// The generation a first rule reading a provider claim would have to bump,
 	// and the two things the fields would move. The number moves with every
-	// generation the document adds (it is 9 since the credential route's leaf, a
-	// read a run's own token is granted, workspace-service task WS22), which is
+	// generation the document adds (it is 10 since the phone's launch envelope
+	// and its stop request, a read grant and one more kind a client writes,
+	// mobile plan task P5.1g), which is
 	// the point of citing the constant rather than a number: the sentence this
 	// holds is about the *bump*, not about which generation it currently is.
-	"internal/projectpolicy/version.go": {"const RulesVersion = 9"},
+	"internal/projectpolicy/version.go": {"const RulesVersion = 10"},
 	// The proof vehicles of section 6: the denial table, the synthetic token
 	// builder it drives, and the node's own gate.
 	"internal/budget/rules/emulator_test.go":         {"func TestDenialTable("},

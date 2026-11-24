@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/runindex"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/userstats"
@@ -39,9 +40,21 @@ import (
 //     resolved for and the view itself are printed, so a table never leaves a
 //     reader guessing whose numbers they are looking at.
 //   - The read is bounded. A window can hold every run of every repository in
-//     the bucket, so at most --max-runs records are read per call, newest
-//     first, and a truncated read says so in the output rather than quietly
+//     the bucket, so at most --max-runs runs are read per call, newest first,
+//     and a truncated read says so in the output rather than quietly
 //     publishing figures over a subtree of the window.
+//
+// The rows come from the run index (F32): one page of its entries carries the
+// launcher, the outcome and the settled cost of every run in the window, so the
+// figures cost one query and no object read whatever the history behind them.
+// While the index has never finished a walk it cannot answer for a window at
+// all -- a page cut out of a history nobody has walked yet is a partial sum,
+// which is a wrong one rather than a smaller truth -- and the records are read
+// instead, exactly as they were before the index existed, one object read per
+// run. The document's own `index_complete` says which of the two reads produced
+// the figures. The two are not interchangeable, and readUserStatsRuns spells
+// out where they part: the window each applies, and a run the index has not
+// folded yet.
 
 // userStatsDefaultSince is runs stats' default window: the same seven days
 // runs ls lists by default.
@@ -50,8 +63,19 @@ const userStatsDefaultSince = "7d"
 // userStatsMaxRuns is how many runs one call reads. It bounds the read rather
 // than the window: a window holding more is truncated to its newest
 // userStatsMaxRuns runs, and the output says so. Raising it is the caller's
-// choice (--max-runs) and costs one object read per run.
+// choice (--max-runs) and costs one index entry per run -- or, while the index
+// cannot answer the window, one object read per run (readUserStatsRuns).
 const userStatsMaxRuns = 5000
+
+// runIndexReader opens the run index `runs stats` reads its window from. It is
+// the package's stub until I-INDEX wires the real Reader in
+// (internal/cli/runindex_wire.go), and tests replace it. The stub answers an
+// empty page and says the index has never finished a walk, which is what sends
+// the command to the run records (readUserStatsRuns) rather than printing an
+// empty window as the truth.
+var runIndexReader = func(context.Context, *cloudEnv) (runindex.Reader, error) {
+	return runindex.NewStub(), nil
+}
 
 // userStatsByUser is the only breakdown this command publishes. --by names
 // it, so that the day a second one exists it is a value here and not a
@@ -105,6 +129,17 @@ type userStatsDoc struct {
 	// newest MaxRuns were read.
 	MaxRuns   int  `json:"max_runs"`
 	Truncated bool `json:"truncated"`
+	// IndexComplete is whether the rows came from the run index: true when the
+	// figures are its own page, read with no run object at all (F32), and false
+	// when the index has never finished a walk and the run records were read
+	// instead, one object read per run (readUserStatsRuns). It is the one field
+	// this document gained for the index, and it says which of the two reads a
+	// consumer is looking at. The two answer the same question and are not the
+	// same read: the index windows a run by its entry's own last change where
+	// the records window it by the day its run id places its start, and a run
+	// the index has not folded reaches it with no launcher, so it lands under
+	// "unknown" here and under the launcher its own launch recorded there.
+	IndexComplete bool `json:"index_complete"`
 	// Rows are the groups, one per (user, currency); Totals one per currency
 	// with an empty user. Dollars are never added across currencies.
 	Rows   []userstats.Row `json:"rows"`
@@ -141,8 +176,11 @@ func newRunsStatsCmd() *cobra.Command {
 			"  - Dollars are never added across currencies: a row is one user and one currency,\n" +
 			"    and a total covers one currency. Every cost recorded today is in USD.\n" +
 			"  - The window is UTC days like the rest of the CLI. A run is counted on the day\n" +
-			"    the bucket's run IDs place its start, so the window and the runs in it agree\n" +
-			"    with runs ls.\n\n" +
+			"    the read places it: the day its own run id places its start when the records\n" +
+			"    are read -- which is runs ls's window -- and its entry's own last change when\n" +
+			"    the index answers, which is a settled run's finish. The two reads can therefore\n" +
+			"    put the same run inside the window or outside it (see the index paragraph\n" +
+			"    below).\n\n" +
 			"The money is model dollars, counted the way the budget screens count them. COUNTED\n" +
 			"$ is the model spend that counts toward the caps: the money part of a run's model\n" +
 			"figure (model_usd minus model_notional_usd, C1.16/P12). NOTIONAL $ is the part of\n" +
@@ -169,8 +207,9 @@ func newRunsStatsCmd() *cobra.Command {
 			"identity with no key of its own because nothing printable is left of it (a pasted\n" +
 			"zero-width character, say) is shown no row instead: the table is empty, and its\n" +
 			"view line says the CLI cannot tell who you are. A row keyed 'unknown' is every run\n" +
-			"of the window that recorded no launcher -- never one person's -- so it is not shown\n" +
-			"as the caller's own either, and a note says so.\n\n" +
+			"of the window that recorded no launcher, and -- when the index answers -- the runs\n" +
+			"it has not folded yet, whose launcher its page cannot show (below). It is never one\n" +
+			"person's, so it is not shown as the caller's own either, and a note says so.\n\n" +
 			"The launcher text is what a launcher wrote and is read for nothing else: it is\n" +
 			"sanitised and size-capped before it is printed, and it authorises and admits\n" +
 			"nothing. Two identities that differ only in what the sanitising drops -- an\n" +
@@ -182,19 +221,33 @@ func newRunsStatsCmd() *cobra.Command {
 			"sanitises to the same text is never counted in it and your own row can be\n" +
 			"smaller than that key's row in the full table.\n\n" +
 			"A window can hold every run of every repository in the bucket, so the read is\n" +
-			"bounded: at most --max-runs records are read per call, newest first, and a window\n" +
+			"bounded: at most --max-runs runs are read per call, newest first, and a window\n" +
 			"holding more says so in the output rather than publishing figures over a part of\n" +
 			"itself silently. The bound is on the read, not on a person: the newest --max-runs\n" +
 			"runs are taken before any view is applied, so a private view can be over fewer of\n" +
 			"the caller's own runs than --max-runs suggests. A run with neither a launch nor a\n" +
-			"record -- never launched, cancelled before launch, or a stale claim -- never\n" +
-			"started and is counted in no figure. The count of those is the window's, over\n" +
-			"everyone's runs, and is no more the caller's own than the truncation is.\n\n" +
+			"record, and no status settled for it -- never launched, cancelled before launch,\n" +
+			"or a stale claim -- never started and is counted in no figure. The count of those\n" +
+			"is the window's, over everyone's runs, and is no more the caller's own than the\n" +
+			"truncation is. The rows come from the run index -- one page of entries for the\n" +
+			"window, and no run object read at all -- which index_complete reports: it is false\n" +
+			"while the index has not finished a walk, when the run records are read instead,\n" +
+			"one object read per run.\n\n" +
+			"The two reads answer the same question and do not always answer it alike. The\n" +
+			"index windows a run by its entry's own last change where the record read windows\n" +
+			"it by the day its run id places its start, so a run that started and settled on\n" +
+			"opposite sides of an edge is in one read's window and not the other's. And a run\n" +
+			"the index has not folded yet arrives as its id, its repository and its status\n" +
+			"alone -- no launcher and no record to read -- so the index read counts it under\n" +
+			"'unknown' with no record, where the record read would name the launcher its own\n" +
+			"launch recorded. A folded run both windows hold reads the same either way, and\n" +
+			"index_complete says which of the two reads a caller is looking at.\n\n" +
 			"--json prints {version, project, by, view, you, admin, since, until, max_runs,\n" +
-			"truncated, rows[], totals[], unlaunched, notes}; rows and totals carry {user,\n" +
-			"currency, runs, succeeded, failed, halted, infra_error, other, no_record,\n" +
-			"counted_usd, notional_usd, counted_runs, avg_counted_usd}, and the counts add up:\n" +
-			"runs == succeeded + failed + halted + infra_error + other + no_record.",
+			"truncated, index_complete, rows[], totals[], unlaunched, notes}; rows and totals\n" +
+			"carry {user, currency, runs, succeeded, failed, halted, infra_error, other,\n" +
+			"no_record, counted_usd, notional_usd, counted_runs, avg_counted_usd}, and the\n" +
+			"counts add up: runs == succeeded + failed + halted + infra_error + other +\n" +
+			"no_record.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runRunsStats(cmd, &o) },
 	}
@@ -202,7 +255,7 @@ func newRunsStatsCmd() *cobra.Command {
 	f.StringVar(&o.by, "by", userStatsByUser, "what to break the figures down by (user)")
 	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name, or a path inside its checkout)")
 	f.BoolVar(&o.all, "all", false, "every repository in the runs bucket")
-	f.StringVar(&o.since, "since", userStatsDefaultSince, "only runs started within this long (7d, 36h, 90m; 0 for all)")
+	f.StringVar(&o.since, "since", userStatsDefaultSince, "only runs the read places within this long (7d, 36h, 90m; 0 for all)")
 	f.IntVar(&o.maxRuns, "max-runs", userStatsMaxRuns, "read at most this many runs, newest first (a bigger window is truncated and says so)")
 	f.BoolVar(&o.allUsers, "all-users", false, "show every user's row, not only your own (the table names whose numbers it shows)")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
@@ -302,19 +355,22 @@ func runRunsStats(cmd *cobra.Command, o *userStatsOptions) error {
 	}
 	res := userstats.Aggregate(userStatsRuns(read.runs))
 	return writeUserStats(cmd.OutOrStdout(), userStatsDoc{
-		Version:    userStatsDocVersion,
-		Project:    env.lc.Name,
-		By:         userStatsByUser,
-		View:       view,
-		You:        you,
-		Admin:      admin,
-		Since:      dateOrEmpty(from),
-		Until:      until.Format("2006-01-02"),
-		MaxRuns:    o.maxRuns,
-		Truncated:  read.truncated,
-		Rows:       res.Rows,
-		Totals:     res.Totals,
-		Unlaunched: read.unlaunched,
+		Version:   userStatsDocVersion,
+		Project:   env.lc.Name,
+		By:        userStatsByUser,
+		View:      view,
+		You:       you,
+		Admin:     admin,
+		Since:     dateOrEmpty(from),
+		Until:     until.Format("2006-01-02"),
+		MaxRuns:   o.maxRuns,
+		Truncated: read.truncated,
+		// The index's own answer, so a consumer knows which read these figures
+		// are (readUserStatsRuns).
+		IndexComplete: read.indexComplete,
+		Rows:          res.Rows,
+		Totals:        res.Totals,
+		Unlaunched:    read.unlaunched,
 	}, o.since, o.asJSON)
 }
 
@@ -350,12 +406,19 @@ type userStatsRead struct {
 	// runs are the records the window held, mapped to the aggregation's own
 	// view of a run.
 	runs []userStatsRecorded
-	// unlaunched counts the runs of the window that were neither launched
-	// nor recorded: they never started and no figure counts them.
+	// unlaunched counts the runs of the window that never started: neither
+	// launched nor recorded, and -- on a page from the index, where the
+	// overlay lists a live run with neither and the fold writes a run with a
+	// launch nobody could read -- no status settled for them and no object
+	// there to be unreadable either (readUserStatsRuns).
 	unlaunched int
 	// truncated means the window held more runs than the read was allowed, so
 	// only its newest max were read.
 	truncated bool
+	// indexComplete is whether the rows came from the run index, which is the
+	// document's `index_complete`: false means the index has never finished a
+	// walk and the records were read instead (readUserStatsRuns).
+	indexComplete bool
 }
 
 // runObject is one run's two objects as a bucket read found them, and the run
@@ -504,9 +567,80 @@ func readRunObjects(ctx context.Context, env *cloudEnv, slugs []string, since, u
 	return objs, unlaunched, truncated, nil
 }
 
-// readUserStatsRuns maps the window's run objects to the narrow view
-// internal/userstats aggregates.
+// readUserStatsRuns reads the window's rows: one page of the run index, and the
+// run records while the index cannot answer for the window.
+//
+// The index is the read (F32). One page carries everything this command
+// aggregates -- the launcher each run's own launch recorded, its settled
+// outcome and its settled cost -- so the figures cost one query and no object
+// read at all, whatever the history behind the window.
+//
+// It cannot answer while it has never finished a walk, and the summary says so
+// itself (Page.IndexComplete). A page cut out of a history nobody has walked
+// yet is a partial sum, which is a wrong answer rather than a smaller truth:
+// the runs of the window the walk has not reached would be missing from every
+// figure, and nothing in the document would say which. That is the state every
+// installation is in until the reindex `fugaro update` starts reaches the end of
+// history (RI5), and the state a caller that has wired nothing is in
+// (runindex.NewStub) -- so the command then reads the records exactly as it did
+// before the index existed, one object read per run. `index_complete` in the
+// document says which of the two reads produced the figures.
+//
+// The two reads answer the same question and are not the same read, which is a
+// fact the output must not hide rather than a defect to paper over. The index
+// windows a run by its entry's own last change -- a settled run's finish -- and
+// the record read windows it by the day its run id places its start, so a run
+// that started and settled on opposite sides of an edge is in one read's window
+// and not the other's. And an overlay row -- a run the index has not folded yet
+// -- carries no launch and no record, so the index read counts it under the
+// unknown launcher with no record, where the record read would name the launcher
+// its own launch recorded. A folded run both windows hold reads the same either
+// way.
 func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since time.Time, max int) (userStatsRead, error) {
+	idx, err := runIndexReader(ctx, env)
+	if err != nil {
+		return userStatsRead{}, err
+	}
+	page, err := idx.List(ctx, runindex.Filter{Slugs: slugs, Since: since, Limit: max})
+	if err != nil {
+		return userStatsRead{}, remote(err)
+	}
+	if !page.IndexComplete {
+		return readUserStatsObjects(ctx, env, slugs, since, max)
+	}
+	// The page's own continuation is this command's truncation: the reader cut
+	// the page at --max-runs and says there is more, which is exactly "the
+	// window holds more runs than the read was allowed".
+	read := userStatsRead{indexComplete: true, truncated: page.Next != nil}
+	for _, e := range page.Entries {
+		// An entry with neither record is not on its own a run that never
+		// started. The overlay lists a run the index has not folded yet -- in
+		// flight, or finished inside the fold gap -- with its run id, its slug
+		// and its status alone (contract-index.md, "The overlay"), so such a
+		// run arrives here with no launch and no record and still did start.
+		// And the fold writes an entry with neither record for a run whose
+		// launch.json the bucket holds and the fold could not read: it carries
+		// LaunchUnreadable, and it too did start. What says a run never started
+		// is that nothing settled a status for it, no object was there to be
+		// unreadable, and there is no record: the overlay always supplies a
+		// status, and a run that never launched has no record to settle one.
+		// Counting either of the other two as unlaunched would drop a started
+		// run from every figure and tell the reader it never started, which is
+		// the mistake the record read's own corrupt-launch guard makes
+		// impossible (TestRunsStatsUnreadableLaunchIsUnknownNotUnlaunched).
+		if e.Launch == nil && e.Record == nil && !e.LaunchUnreadable && !e.RecordUnreadable && e.Status == "" {
+			read.unlaunched++
+			continue
+		}
+		read.runs = append(read.runs, userStatsRun(e.Launch, e.Record))
+	}
+	return read, nil
+}
+
+// readUserStatsObjects is the window read the command makes while the index
+// cannot answer it, and it is the read the command made before the index
+// existed: the run objects themselves, mapped to the same rows.
+func readUserStatsObjects(ctx context.Context, env *cloudEnv, slugs []string, since time.Time, max int) (userStatsRead, error) {
 	// runs stats has no window end: its --since is the whole window, so the
 	// read is bounded by the cap alone.
 	objs, unlaunched, truncated, err := readRunObjects(ctx, env, slugs, since, time.Time{}, max)
@@ -689,7 +823,7 @@ func userStatsNotes(doc userStatsDoc) []string {
 		notes = append(notes, fmt.Sprintf("read:    the window holds more runs than the %d this call reads: no figure below is over more than its newest %d, and none is over the whole window", doc.MaxRuns, doc.MaxRuns))
 	}
 	if doc.Unlaunched > 0 {
-		notes = append(notes, fmt.Sprintf("read:    %d %s in the window %s never launched (no launch and no record) and %s counted in no figure",
+		notes = append(notes, fmt.Sprintf("read:    %d %s in the window %s never launched (no launch, no record and no status settled for it) and %s counted in no figure",
 			doc.Unlaunched, plural(doc.Unlaunched, "run", "runs"), wasWere(doc.Unlaunched), wasWere(doc.Unlaunched)))
 	}
 	return notes

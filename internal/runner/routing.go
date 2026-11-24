@@ -58,9 +58,9 @@ import (
 // path is the service's and whose class is spelled cascade (modelAuth) — is
 // judged here for more things, all of them facts about the credentials service
 // rather than about routing, and all refused in bootstrap before anything is
-// opened: the class's own two refusals (a repository whose own auth is a
-// credential the variant does not mount, and a budget mode that leaves the
-// class no gateway), the switch the operator publishes (O2, which the class
+// opened: the class's own refusal (a repository whose own auth is a
+// credential the variant does not mount), the switch the operator publishes
+// (O2, which the class
 // does not need) and the model allow-list that service holds every call it
 // carries to (the owner's ruling of 2026-10-22, C1.11, which the class is held
 // to exactly as a cascade run is). A local run is answered first and separately
@@ -133,16 +133,6 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 			}
 			return fmt.Errorf("agent.auth is %s and this project's policy (%s) publishes no budget.allowed_models: the credentials service, which carries every call of a cascade run, refuses a project that publishes none, so this run could make no call — add the allow-list to the project policy and publish it (fugaro project policy publish)", config.AuthCascade, projectpolicy.PathShared())
 		}
-	}
-	if r.serviceSwitched() && !r.spend.On() {
-		// D2071: an api-key or oauth repository on the switch is held off it
-		// where the installation's budget mode is off, and the run stops here.
-		// The service is reached through the gateway, which only observe and
-		// enforce start, so this run has no way to the credential the
-		// installation decided serves it — and the one thing that must not
-		// happen in its place is a quiet fall back to a mount the installation
-		// has stopped provisioning for this repository (D2072, D143).
-		return r.serviceSwitchModeRefusal()
 	}
 	if !found || pp == nil || pp.Routing == nil || pp.Routing.Claude == nil {
 		return nil // absent means direct (D1b)
@@ -387,16 +377,10 @@ func (r *run) applyVision(prices *pricing.Table) error {
 //     it. A repository's own api-key configuration therefore cannot produce a
 //     review served by a key of its own, and nothing reads as though it can.
 //
-//   - a budget mode that leaves the class no gateway. The class's calls are the
-//     service's, and the service is reached through the gateway — the only
-//     thing that holds a credential and attaches it per call — so a run whose
-//     mode is off reaches nothing at all. It refuses here rather than falling
-//     through to agent.BuildEnv's cascade arm, whose sentence ("agent.auth
-//     cascade needs ...", internal/agent/env.go) is written for a coding run
-//     and names a fix a review job cannot apply: the repository's file is the
-//     review job's own, and the setting that is wrong is the installation's.
-//     The class does not force the gateway on: a mode the installation set to
-//     off keeps its one meaning (Open item 6's answer of 2026-11-05/06).
+// The class's second refusal — a budget mode that left the class no gateway —
+// is gone with the mode it was about (AB1b, F15): the class's model path is
+// spelled cascade, GatewayOn carries cascade in every mode, and so the service
+// its calls reach is behind a gateway this run always has.
 func (r *run) checkReviewClassModelPath() error {
 	// The class's credential is the pairing's, and the pairing is the job the
 	// platform put this run in: an OAuth account's review variant, whose class
@@ -413,13 +397,6 @@ func (r *run) checkReviewClassModelPath() error {
 	case r.cfg.Agent.Auth == "api-key" && r.pairingNamesAProjectKey():
 	default:
 		return fmt.Errorf("this run is a review, and its repository's fugaro.yaml writes agent.auth: %s: the independent review's model calls are served by the credentials service's review class, and the class's one credential is the pairing's — the Claude OAuth account the review job is the variant of, or, where that job's account segment is %s, the project's own Anthropic API key, or, where it is %s, the project's provider key, which the service sends to the provider's own endpoint with the provider's auth shape: one of those two is the pairing an api-key repository's review is served from. This run's pairing is not one of them, and a review carries no credential of its own, so no key of this repository's can serve it: agent.auth oauth (or cascade) is the OAuth path the class is served from", r.cfg.Agent.Auth, config.AnthropicKeyAccount, config.ProviderKeyAccount)
-	}
-	if !r.gatewayOn() {
-		mode := r.spend.Mode
-		if mode == "" {
-			mode = policy.ModeOff
-		}
-		return fmt.Errorf("this run is a review, and this installation's budget mode is %s: the review class's model calls are carried by the gateway, which only budget.mode %s or %s starts, and a review does not run with the installation's budget off — set budget.mode to %s or %s in the project policy and publish it (fugaro project policy publish), and the review reaches the credentials service's review class. The class does not force the gateway on: a mode the installation set to %s keeps its one meaning", mode, policy.ModeObserve, policy.ModeEnforce, policy.ModeObserve, policy.ModeEnforce, policy.ModeOff)
 	}
 	return nil
 }
@@ -469,21 +446,24 @@ func (r *run) pairingNamesTheProjectsProviderKey() bool {
 }
 
 // GatewayOn reports whether a configuration routes its calls through the
-// gateway: the budget is on (observe or enforce; "" and off are off) and the
-// credential is one the gateway can carry — api-key or vertex, and the cascade
-// too, whose calls the gateway forwards to the credentials service (C1.19).
-// An oauth run's own token never goes through it. It is run.gatewayOn, the
-// run's own predicate,
-// spelled for the readers that hold a mode and an auth rather than a run
-// (validate, doctor): the gateway is what decides whether the switch has
-// anything to act on at all (design §6.2, D11).
+// gateway: the credential is one the gateway can carry — api-key or vertex, and
+// the cascade too, whose calls the gateway forwards to the credentials service
+// (C1.19). An oauth run's own token never goes through it. It is run.gatewayOn,
+// the run's own predicate, spelled for the readers that hold an auth rather
+// than a run (validate, doctor): the gateway is what decides whether the switch
+// has anything to act on at all (design §6.2, D11).
+//
+// The mode is no longer one of the facts (AB1b, D3009): the budget mode is
+// observe or enforce and there is always a gateway, so every credential the
+// gateway can carry has one in every mode. The argument stays until I1 drops it
+// with its callers in the CLI, and it is ignored rather than removed for that
+// one reason.
 func GatewayOn(auth, mode string) bool {
 	switch auth {
 	case "api-key", "vertex", config.AuthCascade:
-	default:
-		return false
+		return true
 	}
-	return mode == policy.ModeObserve || mode == policy.ModeEnforce
+	return false
 }
 
 // ServiceSwitchedAuth reports whether an auth is one the credentials service

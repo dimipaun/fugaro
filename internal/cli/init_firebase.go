@@ -54,8 +54,8 @@ func databaseRegionNote(region string) string {
 // a printed document that dropped the key would disagree with the installation
 // it stands for — the reading of it an owner cannot trust. The pin is in the
 // local config, so it needs no cloud call (what --print-vars by design makes
-// none of), unlike the history and coordinator accounts, which come from an
-// apply's outputs and are therefore absent here.
+// none of), unlike the accounts that come from an apply's outputs — the
+// history, coordinator and issuer accounts — which are therefore absent here.
 func (r *initRun) firebaseVars(inst []byte, spec infra.InstallationSpec, lc *localcfg.Config) ([]byte, error) {
 	fs, err := infra.Firebase(spec, infra.FirebaseInputs{
 		FP:                      r.o.firebaseProject(),
@@ -203,7 +203,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 		counts := infra.CountPlan(plan)
 		// The managed gate first, and the guard and the confirmation only when it
 		// does not admit this plan (D1016, update_managed.go).
-		gated, err := r.gateStep(ctx, t, imports, r.coverOfFirebase(), nil)
+		gated, err := r.gateStep(ctx, t, imports, r.coverOfFirebase(), nil, nil)
 		if err != nil {
 			return plan, err
 		}
@@ -349,10 +349,15 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	}
 	// Refused here, before the first apply, whatever the installation module
 	// accepts.
-	// Every input the apply below passes is passed here too, the workspace pin's
-	// account included: this call is the gate that runs before the installation
-	// root is applied, so a value the Firebase root would refuse has to be
-	// refused here rather than after an apply has already touched the state.
+	// Every input the apply below passes and this point can know is passed here
+	// too, the workspace pin's account included: this call is the gate that runs
+	// before the installation root is applied, so a value the Firebase root
+	// would refuse has to be refused here rather than after an apply has already
+	// touched the state. The accounts that apply's own outputs carry — the
+	// history, coordinator and issuer accounts — are the ones it cannot pass:
+	// none of them exists until that root has been applied, which is the apply
+	// below, and the issuer's member is read back from it rather than composed
+	// here for the same reason (U9).
 	if _, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount}); err != nil {
 		return initErr(err)
 	}
@@ -427,6 +432,21 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if spec.Coordinator != nil && outs.CoordinatorServiceAccount == "" {
 		return remote(errors.New("the installation has no coordinator account in its outputs; the first apply did not create it"))
 	}
+	// The credentials service's own account, handed to the Firebase root so
+	// that it plans the issuer's row on the runs' signer (LM13, D3121). It
+	// comes from that same apply's outputs and never from a name composed
+	// here, which is the whole of U9: the row's member has to be an account
+	// that EXISTS, and the installation root creates it only where its tfvars
+	// carry the service's block — a fresh setup's first apply carries none
+	// (the credentials stage writes it later in the run), so the root
+	// publishes no account and this root is handed none, and the plan names
+	// nobody. An installation that does carry the service has the account by
+	// this point: the installation root is applied above, and the block's
+	// services and accounts are that apply's own resources.
+	issuer := ""
+	if cs := outs.CredentialsService; cs != nil {
+		issuer = cs.Account
+	}
 
 	// 2. The Firebase root.
 	fdir, err := infra.FirebaseWorkdir(os.Getenv, lc.GCPProject)
@@ -437,7 +457,7 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if err != nil {
 		return err
 	}
-	fspec, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), HistoryAccount: outs.HistoryServiceAccount, CoordinatorAccount: outs.CoordinatorServiceAccount, WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount, FirestoreDatabaseExists: dbExists})
+	fspec, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), HistoryAccount: outs.HistoryServiceAccount, CoordinatorAccount: outs.CoordinatorServiceAccount, WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount, IssuerAccount: issuer, FirestoreDatabaseExists: dbExists})
 	if err != nil {
 		return initErr(err)
 	}

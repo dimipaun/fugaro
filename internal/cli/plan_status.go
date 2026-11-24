@@ -22,8 +22,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/plan"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runindex"
 	"github.com/dimipaun/fugaro/internal/runstore"
-	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/streams"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -34,11 +34,13 @@ import (
 // to the runs that are working on it.
 //
 // Unlike `plan graph`, which is a local read of one artifact, this is a cloud
-// read: the state of a task is a run's state, and a run lives in the runs bucket
-// of the selected project. So it takes the cloud flags `runs ls` takes, and it
-// reads the runs of the checkout's own repository — the plans it prints are the
-// checkout's, and a run of another repository is not theirs to claim (GV1.6's
-// rule ii; the plan's constraint C3).
+// read: the state of a task is a run's state, and a run is carried by the run
+// index of the selected project — the documents the history job folds, which
+// the run's own record and launch are copied into whole (D3201, D3205). So it
+// takes the cloud flags `runs ls` takes, and it reads the runs of the
+// checkout's own repository — the plans it prints are the checkout's, and a run
+// of another repository is not theirs to claim (GV1.6's rule ii; the plan's
+// constraint C3).
 //
 // Two things about it are security-relevant, and both are stated here rather
 // than left to the code to imply:
@@ -63,7 +65,7 @@ func newPlanStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Print every plan's tasks, joined to the runs working on them",
 		Long: "Print every plan's graph under docs/, with each task's state from the runs.\n\n" +
-			"A task's state joins the graph to the runs bucket of the selected project:\n" +
+			"A task's state joins the graph to the runs the project's index holds:\n" +
 			"running with the stage of the run working on it, done when the run's pull\n" +
 			"request is merged, cancelled when the task's only run was, blocked while a\n" +
 			"task it needs is not done, ready when the work can start (the task a launch\n" +
@@ -72,17 +74,20 @@ func newPlanStatusCmd() *cobra.Command {
 			"is a run of this checkout's own repository: a run of another repository\n" +
 			"naming the same task is ignored. The join is display-only — nothing here\n" +
 			"makes another plan's task ready.\n\n" +
-			"Every run the bucket still holds (ninety days) is listed. Only the runs that\n" +
-			"join a task of a plan here have their pull requests looked up, so the\n" +
-			"lookups cost what the plans hold rather than what the repository's history\n" +
-			"holds, and one read asks about at most 32 pull requests, the newest runs'\n" +
-			"first.\n\n" +
+			"The runs come from the run index, one query per task of the plans here, so\n" +
+			"the read costs what the plans hold rather than what the repository's history\n" +
+			"holds, and a task's runs are listed however old they are. Only the runs that\n" +
+			"join a task of a plan here have their pull requests looked up, and one read\n" +
+			"asks about at most 32 pull requests, the newest runs' first.\n\n" +
 			"Whether a pull request is merged is asked of your own gh, when it is\n" +
 			"installed, and only about a pull request of this checkout's own\n" +
 			"repository: a run that recorded another repository's pull request is not\n" +
 			"merged here. Where gh cannot answer (a Bitbucket repository, no gh, a\n" +
 			"lookup that failed, one past the 32) a task whose run recorded a ready pull\n" +
 			"request shows done with the mark \"merge unknown\" rather than nothing.\n\n" +
+			"--no-merges does not ask your gh at all: every task whose run recorded a\n" +
+			"ready pull request reads the same way, and the document says merges_read is\n" +
+			"false. It is the read a screen paints before merge state.\n\n" +
 			"Two artifacts that would be one plan id — docs/plans/foo.graph.json and\n" +
 			"docs/plans/foo/bar.graph.json both give plans/foo — cannot be joined apart,\n" +
 			"so the second is not listed and a warning names both.\n\n" +
@@ -93,15 +98,21 @@ func newPlanStatusCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.BoolVar(&o.all, "all", false, "list the closed tasks too (merged and cancelled) instead of counting them per release")
+	f.BoolVar(&o.noMerges, "no-merges", false, "spawn no gh: every task whose run recorded a ready pull request reads merge unknown")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
 
 type planStatusOptions struct {
-	cloud  cloudOptions
-	all    bool
-	asJSON bool
+	cloud cloudOptions
+	all   bool
+	// noMerges is --no-merges (D3217 as amended): the read spawns no gh, which
+	// is the first paint a console draws before it decorates the graph with
+	// merge state. The default keeps the lookups, because `closed`, `mark` and
+	// `--all` already mean what a lookup answers to every console installed.
+	noMerges bool
+	asJSON   bool
 }
 
 // The read's own names. planDocsDir is the checkout's docs directory and is the
@@ -147,6 +158,20 @@ type planStatusDoc struct {
 	// artifact this build refuses, and a catalogue it could not read. Each is a
 	// sentence of ours with the path it is about, never a word a run wrote.
 	Warnings []string `json:"warnings"`
+	// IndexComplete is whether the run index has ever finished a walk, and
+	// FoldedThrough how far it has been folded — absent before the first fold.
+	// They are the summary's own two fields and are always read (D3215): every
+	// run of every task here comes from the index, so a read whose index is
+	// still building lists the runs it has and says so, rather than letting a
+	// short list pass for the whole truth.
+	IndexComplete bool       `json:"index_complete"`
+	FoldedThrough *time.Time `json:"folded_through,omitempty"`
+	// MergesRead is present, and false, only under --no-merges (D3217 as
+	// amended), and it is a field rather than an absence because a screen has
+	// to tell "no merges were read" from "there was no merge to read": with it
+	// false every merge state is unknown, `closed` counts no merge and a task
+	// whose run recorded a ready pull request carries the "merge unknown" mark.
+	MergesRead *bool `json:"merges_read,omitempty"`
 }
 
 // planStatusPlan is one plan as this document carries it: the state the join
@@ -253,10 +278,10 @@ func runPlanStatus(cmd *cobra.Command, o *planStatusOptions) error {
 	// this machine runs at when the checkout has no repository to read.
 	maxRunning := localcfg.DefaultMaxParallel
 	var (
-		rows   []runview.Row
-		table  *estimate.Table
-		recs   map[string]*runstore.Record
-		joined []plan.RunFact
+		table   *estimate.Table
+		costs   map[string]*runstore.Record
+		elapsed map[string]time.Duration
+		joined  []plan.RunFact
 	)
 	if repo, err := originRepo(ctx); err != nil {
 		doc.Warnings = append(doc.Warnings, "this checkout's repository could not be read: no run is joined")
@@ -272,19 +297,24 @@ func runPlanStatus(cmd *cobra.Command, o *planStatusOptions) error {
 			return err
 		}
 		maxRunning = env.lc.MaxParallel
-		// The listing is bounded by the runs bucket's own age, the window
-		// `run --pr` reads with (followUpLookback is that lifecycle): a join
-		// wants every run the bucket still holds — an older one has been
-		// deleted with its run and can never join a task — and nothing beyond
-		// it, so the read costs what the bucket holds rather than everything
-		// the repository has ever launched.
-		rows, err = loadRows(ctx, env, lsFilter{
-			slugs: []string{slug}, since: now.Add(-followUpLookback), warn: errw,
-		}, now)
+		// The runs come from the index: one query per task of the plans this
+		// checkout holds, plus one per pull request the runs of those tasks
+		// carry, which is how a follow-up that was given no plan task of its
+		// own is joined (plan/state.go's rule iii). No listing of the runs
+		// bucket is made at all, so the read costs what the plans hold rather
+		// than what the repository's history holds (D3205, F1).
+		reader := planIndexReader(env)
+		sum, err := reader.Summary(ctx)
 		if err != nil {
 			return err
 		}
-		facts = planRunFacts(rows)
+		doc.IndexComplete, doc.FoldedThrough = sum.Complete, sum.FoldedThrough
+		entries, err := planIndexRuns(ctx, reader, plans, slug)
+		if err != nil {
+			return err
+		}
+		facts = planRunFacts(entries)
+		costs, elapsed = planRunCosts(entries, now)
 		// The join reads the runs that claim one of these plans and no others, and
 		// everything spent per run is spent on those — the merge lookup above all,
 		// which spawns a process per distinct pull request. Scoping it to the runs
@@ -292,17 +322,27 @@ func runPlanStatus(cmd *cobra.Command, o *planStatusOptions) error {
 		// from costing what the plans hold rather than what the repository's whole
 		// history holds.
 		joined = plan.JoinedRuns(plans, facts, doc.Repo)
-		table = planEstimateTable(ctx, env, slug, now, warn)
-		recs = planRunRecords(ctx, env, slug, joined, warn)
+		table = planIndexTable(sum, warn)
 	}
 
-	merge := planMerges(ctx, joined, doc.Repo, warn)
+	// The merge lookups are the default read and stay the default read (F37):
+	// every console already installed draws `closed`, `mark` and `--all` from
+	// them. --no-merges is the first paint of the one that follows, and it is
+	// the absence of the lookup rather than a different answer to it.
+	var merge plan.MergeCheck
+	if o.noMerges {
+		unread := false
+		doc.MergesRead = &unread
+	} else {
+		merge = planMerges(ctx, joined, doc.Repo, warn)
+	}
 
 	// What every plan's estimate is computed from, gathered once: the history
-	// the runs bucket just answered with, the rows the join read, and the cap
+	// the index's summary answered with, the runs the join read, and the cap
 	// and the clock the formula takes.
 	in := planEstimateInputs{
-		table: table, rows: rows, recs: recs, repo: doc.Repo, maxRunning: maxRunning, now: now,
+		table: table, runs: facts, costs: costs, elapsed: elapsed,
+		repo: doc.Repo, maxRunning: maxRunning, now: now,
 	}
 
 	for _, p := range plans {
@@ -404,20 +444,139 @@ func planArtifacts(dir string) ([]string, error) {
 	return out, nil
 }
 
-// planRunFacts turns the rows the runs read produced into the facts the join
-// reads. It is the whole seam between the two: everything a job wrote is either
-// already sanitised by the reader (plan_task) or sanitised here (the stage), and
+// planIndexRuns asks the index for the runs of the plans this checkout holds:
+// one query per plan task, and then one per pull request the runs of those
+// tasks carry.
+//
+// The second pass is the join's rule for a follow-up (plan/state.go's rule
+// iii): a follow-up records no plan task of its own, so the only thing that
+// places it on a task is the pull request it was opened on, which is the
+// number the run it follows recorded. It is a second pass rather than a
+// query-per-PR-of-history because the pull requests asked about are the ones
+// the plans' own runs name, so the read still costs what the plans hold.
+//
+// Every query is scoped to the checkout's own repository, and the runs two
+// queries both answer with are read once: an entry is one run, and joining it
+// twice would count its cost twice.
+func planIndexRuns(ctx context.Context, reader runindex.Reader, plans []plan.PlanRef, slug string) ([]runindex.Entry, error) {
+	keys := []string{}
+	for _, p := range plans {
+		for _, n := range p.Doc.Nodes {
+			// A node whose id cannot be the half of a plan task a launcher
+			// writes was never launched under one, so no entry carries it and
+			// the query is not worth making (task.PlanTaskProblem is the one
+			// shape rule, applied by the launcher on write).
+			if key := p.ID + "/" + n.ID; task.PlanTaskProblem(key) == "" {
+				keys = append(keys, key)
+			}
+		}
+	}
+	entries, err := planIndexList(ctx, reader, keys, func(key string) runindex.Filter {
+		return runindex.Filter{Slugs: []string{slug}, PlanTask: key}
+	})
+	if err != nil {
+		return nil, err
+	}
+	prs, seen := []int{}, map[int]bool{}
+	for _, e := range entries {
+		if n := planEntryPR(e); n != 0 && !seen[n] {
+			seen[n] = true
+			prs = append(prs, n)
+		}
+	}
+	following, err := planIndexList(ctx, reader, prs, func(n int) runindex.Filter {
+		return runindex.Filter{Slugs: []string{slug}, PR: n}
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]runindex.Entry, 0, len(entries)+len(following))
+	byID := map[string]bool{}
+	for _, e := range append(entries, following...) {
+		if !byID[e.RunID] {
+			byID[e.RunID] = true
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+// planIndexList makes the queries one at a time and answers them in the order
+// the keys were given, so the join reads the same runs in the same order
+// whatever order the index answers in. One query is one page of the index (the
+// reader pages internally: Filter.Limit is 0, every match), and the queries are
+// made at planIndexWorkers at once, because each is a network round trip and
+// there are as many of them as the plans hold tasks.
+//
+// An error is returned as it is read: a join built from the queries that
+// happened to succeed would print a short list, which is the one thing a
+// reader of the index may not do.
+func planIndexList[K any](ctx context.Context, reader runindex.Reader, keys []K, filter func(K) runindex.Filter) ([]runindex.Entry, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	type answer struct {
+		page runindex.Page
+		err  error
+	}
+	answers := make([]answer, len(keys))
+	parallelN(len(keys), planIndexWorkers, func(i int) {
+		answers[i].page, answers[i].err = reader.List(ctx, filter(keys[i]))
+	})
+	out := []runindex.Entry{}
+	for i, a := range answers {
+		if a.err != nil {
+			return nil, fmt.Errorf("reading the run index for %v: %w", keys[i], a.err)
+		}
+		out = append(out, a.page.Entries...)
+	}
+	return out, nil
+}
+
+// planEntryPR is the pull request number a run's entry carries, the way the
+// join reads it (plan/prOf): the record's own number when it recorded one, the
+// run's otherwise.
+func planEntryPR(e runindex.Entry) int {
+	if e.Record != nil && e.Record.PR != nil && e.Record.PR.Number > 0 {
+		return e.Record.PR.Number
+	}
+	return e.PR
+}
+
+// planRunFacts turns the entries the index answered with into the facts the
+// join reads. It is the whole seam between the two: everything a job wrote is
+// either already sanitised by the index's own reader (the plan task, which is
+// shape-checked where it is folded in) or sanitised here (the stage), and
 // nothing else crosses.
-func planRunFacts(rows []runview.Row) []plan.RunFact {
-	out := make([]plan.RunFact, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, plan.RunFact{
-			RunID: r.RunID, Repo: r.Repo, PlanTask: r.PlanTask,
-			Status: r.Status, Stage: safetext.Field(r.Stage), Outcome: string(r.Outcome),
-			PR: r.PR, RecordPR: r.RecordPR, PRURL: r.PRURL,
-		})
+func planRunFacts(entries []runindex.Entry) []plan.RunFact {
+	out := make([]plan.RunFact, 0, len(entries))
+	for _, e := range entries {
+		f := plan.RunFact{
+			RunID: e.RunID, Repo: e.Repo, Status: string(e.Status), PR: e.PR,
+			PlanTask: planEntryTask(e),
+		}
+		if e.Record != nil {
+			f.Stage = safetext.Field(e.Record.Stage)
+			f.Outcome = string(e.Record.Outcome)
+			if e.Record.PR != nil {
+				f.RecordPR, f.PRURL = e.Record.PR.Number, e.Record.PR.URL
+			}
+		}
+		out = append(out, f)
 	}
 	return out
+}
+
+// planEntryTask is the plan task an entry may be joined by, and "" for one the
+// launcher could never have written. The id is display text a job wrote into
+// its own launch record (runview's plan_task rule, D4): it is shape-checked
+// here exactly as the row reader checks it, so a claim of another shape — one
+// carrying a line break, one that is not a plan task at all — joins nothing.
+func planEntryTask(e runindex.Entry) string {
+	if task.PlanTaskProblem(e.PlanTask) != "" {
+		return ""
+	}
+	return safetext.Field(e.PlanTask)
 }
 
 // planMerges asks gh about every pull request the joined runs carry, once each,
@@ -508,6 +667,12 @@ func printPlanStatus(w io.Writer, doc planStatusDoc, asJSON bool) error {
 		}
 		fmt.Fprintf(w, "streams: %s\n", strings.Join(parts, ", "))
 	}
+	// The one line a short list has to carry (D3215): the index has never
+	// finished a walk, so the runs behind these tasks are the ones it holds and
+	// a task it has not reached reads as unjoined rather than as the truth.
+	if !doc.IndexComplete {
+		fmt.Fprintln(w, "index: still building; the runs joined here are the ones folded so far")
+	}
 	if len(doc.Plans) == 0 {
 		fmt.Fprintf(w, "no plan found under %s\n", planDocsDir)
 		return nil
@@ -584,118 +749,88 @@ func releaseLabel(r plan.StateRelease) string {
 	return label
 }
 
-// planEstimateRuns bounds the history the estimate is drawn from. A plan's
-// figures are per tier and per rigor, so the sample is the runs behind those
-// groups rather than the runs behind one plan, and the window is the runs
-// bucket's own (followUpLookback, as the join's listing is). It is the same
-// bound `runs stats` reads its window with, for the same reason: past it a read
-// is one nobody asked for.
-const planEstimateRuns = 5000
+// planIndexWorkers is how many index queries one read makes at once. Each is a
+// network round trip of its own and there are as many of them as the plans hold
+// tasks, so they are made together; the width is this command's own rather than
+// a listing's, because it is one graph's join and not a scan.
+const planIndexWorkers = 8
 
-// planEstimateRefresh is how old the cached history may be before this read
-// pays for the window's records again. It is what keeps a command the console
-// polls about once a minute from re-reading the window's objects on every poll:
-// the table is a distribution over tiers and modes, which moves as runs finish
-// rather than as a reader looks, while everything else this estimate prints —
-// which task is done or going, how long its run has been going, and what that
-// run has cost — is as fresh as the join beside it.
-const planEstimateRefresh = 6 * time.Hour
-
-// planEstimateTable is the history the estimate is drawn from: the table an
-// earlier read of this machine cached, while it is younger than
-// planEstimateRefresh, and the window's records read and cached again when it
-// is not (D2714 as amended).
+// planIndexTable is the history the estimate is drawn from: the table the
+// index's summary carries, which the history job's fold keeps over every run of
+// the installation (F15, D3201). It is read rather than built here, and that is
+// the whole of what changed about this read's history — it used to be the
+// window's records, up to planEstimateRuns of them, read and cached on this
+// machine.
 //
-// The window is the runs bucket's own (followUpLookback, as the join's listing
-// is) and the read is bounded (planEstimateRuns), because a plan's figures are
-// per tier and per rigor: the sample is the runs behind those groups rather
-// than the runs behind one plan, and past the bound it is a read nobody asked
-// for. The records are read here as records (readRunObjects, the one reader
-// behind runs stats and report) rather than off the listing's rows, which
-// carry neither the tier nor the finish time a sample is grouped by —
-// runview.Row is deliberately narrower than a record.
+// The summary's table is also left in this machine's cache, while the file
+// there is older, and that is not a courtesy: `plan graph` and the
+// orchestrator's brief read that file offline (planCachedTable,
+// orchestratorBriefTable) and this command is its only writer, so a copy that
+// stopped being refreshed here would leave both of them estimating from the day
+// this read stopped folding history. It is written when the file is missing or
+// older than the fold that produced the summary, so a console polling this read
+// once a minute does not rewrite it once a minute.
 //
-// A history that cannot be read is a warning and not the end of the read: the
-// estimate then answers every tier its seed minutes with no cost at all
-// (D2712), and the line says which sample answered each task. A cache that
-// cannot be read is the same window read again, which is what heals it; one
-// that cannot be written costs the offline reads the seeds, which is what they
-// fall back to on a machine that has never run this command.
-func planEstimateTable(ctx context.Context, env *cloudEnv, slug string, now time.Time, warn func(string)) *estimate.Table {
+// A summary no walk has folded yet carries no table, and then this machine's
+// cache answers, and the seeds answer a machine that holds none: the fallback
+// `plan graph` makes, for the same reason (D2714 as amended). The cache is not
+// held to a freshness bound here as it was while this command filled it itself:
+// it is only reached before the index's first fold, and a figure the machine
+// already holds beats the seeds it would otherwise fall to.
+func planIndexTable(sum runindex.Summary, warn func(string)) *estimate.Table {
 	path, err := estimate.CachePath(os.Getenv, runtime.GOOS)
 	if err != nil {
 		warn("this machine's cache directory could not be placed: " + oneLine(err.Error()))
-		path = ""
-	} else if cached, err := estimate.ReadCache(path); err == nil && now.Sub(cached.WrittenAt) < planEstimateRefresh {
+		return sum.Estimate
+	}
+	if sum.Estimate == nil {
+		cached, err := estimate.ReadCache(path)
+		if err != nil {
+			return nil
+		}
 		return cached
 	}
-	objs, _, _, err := readRunObjects(ctx, env, []string{slug}, now.Add(-followUpLookback), time.Time{}, planEstimateRuns)
-	if err != nil {
-		warn("this repository's run history could not be read: the estimate is its tiers' seed minutes alone")
-		return nil
+	if cached, err := estimate.ReadCache(path); err == nil && !cached.WrittenAt.Before(sum.Estimate.WrittenAt) {
+		return sum.Estimate
 	}
-	records := make([]runstore.Record, 0, len(objs))
-	for _, o := range objs {
-		if o.record != nil {
-			records = append(records, *o.record)
-		}
+	if err := sum.Estimate.WriteCache(path); err != nil {
+		warn("the estimate's cached history could not be written: " + oneLine(err.Error()))
 	}
-	table := estimate.Build(records, now)
-	if path != "" {
-		if err := table.WriteCache(path); err != nil {
-			warn("the estimate's cached history could not be written: " + oneLine(err.Error()))
-		}
-	}
-	return table
+	return sum.Estimate
 }
 
-// planRunRecords reads the record of every run the join is about — the runs
-// that claim a task of one of this checkout's plans, and no others. It is what
-// tells a done or running task what its work has actually cost (D2723), and
-// without it the plan's total could not be a figure at all.
+// planRunCosts is what each run the index answered with has cost so far and how
+// long it has been going: the two figures a task of a plan is answered with
+// beyond its state (D2723). Both come off the entry, which carries the run's
+// own record and window whole, so neither costs a second read of the runs
+// bucket — the read this command used to make for them (F1).
 //
-// They are read through the run cache the listing reads its own rows with
-// (lsReaders, readRunVia): the join has just read these runs' objects, so a
-// poll of this command reads them off this machine rather than out of the
-// bucket again — and the set is the runs the plans claim, not the window's. A
-// record that cannot be read is one task's cost unknown, which the estimate
-// counts and the line prints; the read says so once rather than dropping it in
-// silence.
-func planRunRecords(ctx context.Context, env *cloudEnv, slug string, joined []plan.RunFact, warn func(string)) map[string]*runstore.Record {
-	refs := make([]lsRef, 0, len(joined))
-	for _, f := range joined {
-		refs = append(refs, lsRef{slug: slug, id: f.RunID})
-	}
-	if len(refs) == 0 {
-		return nil
-	}
-	readers := lsReaders(ctx, env, true, refs)
-	recs := make(map[string]*runstore.Record, len(refs))
-	var unread int
-	for _, r := range refs {
-		run, err := readRunVia(ctx, env, readers[r], r.slug, r.id, 0)
-		switch {
-		case err != nil:
-			unread++
-		case run.in.Record != nil:
-			recs[r.id] = run.in.Record
+// A record with no cost block and a run that never started are the same absence
+// here as they were on the row: the estimate counts that task's cost as unknown
+// rather than as free, and measures no minutes for it.
+func planRunCosts(entries []runindex.Entry, now time.Time) (map[string]*runstore.Record, map[string]time.Duration) {
+	costs := make(map[string]*runstore.Record, len(entries))
+	elapsed := make(map[string]time.Duration, len(entries))
+	for _, e := range entries {
+		if e.Record != nil {
+			costs[e.RunID] = e.Record
+		}
+		if e.StartedAt != nil {
+			elapsed[e.RunID] = now.Sub(*e.StartedAt)
 		}
 	}
-	if unread > 0 {
-		warn(fmt.Sprintf("the runs this plan's tasks carry could not all be read, %d of %d: a task of them the estimate found no cost for counts as unknown",
-			unread, len(refs)))
-	}
-	return recs
+	return costs, elapsed
 }
 
 // planEstimateInputs is what one plan's estimate needs beyond the plan itself:
-// the history, the runs the join read and what their records cost, the
-// repository the join is scoped to, and the cap and the clock the formula
-// takes.
+// the history, the runs the join read and what each of them cost and has been
+// going, the repository the join is scoped to, and the cap and the clock the
+// formula takes.
 type planEstimateInputs struct {
 	table      *estimate.Table
-	rows       []runview.Row
-	recs       map[string]*runstore.Record
+	runs       []plan.RunFact
+	costs      map[string]*runstore.Record
+	elapsed    map[string]time.Duration
 	repo       string
 	maxRunning int
 	now        time.Time
@@ -749,8 +884,8 @@ func (in planEstimateInputs) progress(planID string, doc plan.Document, nodes []
 	for _, n := range doc.Nodes {
 		ids[n.ID] = true
 	}
-	latest := map[string]runview.Row{}
-	for _, r := range in.rows {
+	latest := map[string]plan.RunFact{}
+	for _, r := range in.runs {
 		if !planSameRepo(r.Repo, in.repo) {
 			continue
 		}
@@ -770,13 +905,13 @@ func (in planEstimateInputs) progress(planID string, doc plan.Document, nodes []
 		}
 		p := plan.NodeProgress{Done: done, Running: running}
 		if r, ok := latest[n.ID]; ok {
-			if elapsed, started := r.Elapsed(in.now); started {
+			if elapsed, started := in.elapsed[r.RunID]; started {
 				p.ElapsedMinutes = elapsed.Minutes()
 			}
 			// A record with no cost block is no figure (a result.json from
 			// before the breakdown existed), and the plan's total then reads
 			// unknown rather than counting that task as free (D2723).
-			if rec := in.recs[r.RunID]; rec != nil && rec.Cost != nil {
+			if rec := in.costs[r.RunID]; rec != nil && rec.Cost != nil {
 				cost := rec.Cost.TotalUSD
 				p.CostUSD = &cost
 			}

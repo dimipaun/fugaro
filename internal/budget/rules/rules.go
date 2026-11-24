@@ -918,6 +918,65 @@ const PathOrchestrator = "orchestrator"
 // this file to resolve a pinned citation.
 const PathVoice = "config/policy/voice"
 
+// PathLaunchEnvelope is the launch envelope of Q9's answer (mobile plan task
+// P5.1g, the design's section 4.5 E1 and section 4.8): the values the owner
+// publishes from the operator's local config — **the named safe recipe an
+// unconfirmed launch may run** at `recipe`, and, under `devices`, **one entry
+// per paired device** carrying that device's repository allow-list (narrowed
+// from the project's own `allow_repos`), its launch rate and its daily cost
+// ceiling.
+//
+// **One node for the installation, and one entry per device under it**, which
+// is P5.1-Q11's own ruling: the alternative the owner refused is a node *per
+// device* ("a second place the same policy lives"), not a node at all — the
+// values belong to the policy subtree, so the operator publishes them where
+// they publish every other policy and no device gets a node of its own.
+//
+// **It is a sibling of `shared` and not a member of it**, and that is not a
+// style choice: `config/policy/shared` (projectpolicy.PathShared) *is* the
+// published policy document, which decodes strictly — an unknown member is an
+// error — so a launch block inside it would be a policy *version* bump and a
+// migration for a value the policy's own reader never reads. A child of the
+// policy subtree carries the grant with no change to that document, which is
+// what the voice policy node (PathVoice, generation 5) does one sibling over.
+//
+// **The entry is keyed by the device's Firebase Auth uid**, exactly as
+// `config/admin/devices/$uid` (PathDevices) is, and the two are read together
+// on purpose: `USER` already holds the device node's *existence* as a
+// conjunct, so a revoked pairing reads no envelope entry — deleting one node
+// takes the allow-list away with the identity, and the allow-list cannot be
+// read by an account that is not paired at all.
+//
+// **The grant is the device's own entry and the recipe, and nothing else.** A
+// device reads `devices/<its own uid>` — the rules compare `$uid` with
+// `auth.uid`, so one device cannot read another's allow-list — and the
+// installation's one `recipe`. It reads no sibling of the envelope and no
+// other part of the policy, which is the state `USER` is in for
+// `config/policy/**` generally (PathVoice's own note): a read granted on
+// `devices` itself would cascade to every paired device's entry, and one on
+// `config/policy/launch` to the recipe and every entry at once.
+//
+// **What the rules do NOT do here is enforce the envelope.** They hand the
+// phone its own values and nothing more; the launch a phone asks for is a
+// message, and a message's free text is not a shape the rules can resolve a
+// repository out of. The decision is the consumer's and the app's, which is
+// where Q9's answer puts it ("real work in the consumer"), and the app refuses
+// an utterance outside its allow-list before it signs anything — so an
+// unreadable envelope is an app that refuses every launch rather than one that
+// launches unbounded.
+//
+// It is what the document's generation 10 adds (internal/projectpolicy's
+// RulesVersion), and it bumps for generation 4's, 5's and 8's reason: it is a
+// *read grant*, so a device under the older document is refused a read rather
+// than shown a degraded one. Generation 10 carries P5.1g's other half in the
+// same document — the stop request's `kind`, a write the phone holds and the
+// older document refuses — which bumps for generation 6's reason.
+//
+// It sits below the macro table for PathMCPAuth's reason: a constant added
+// above it would move the lines internal/cli's voice-switch test reads out of
+// this file to resolve a pinned citation.
+const PathLaunchEnvelope = "config/policy/launch"
+
 // boundedMatch is a non-empty string of at most max characters, every one of
 // them in the pattern's set.
 func boundedMatch(max int, pattern string) string {

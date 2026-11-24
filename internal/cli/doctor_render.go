@@ -311,6 +311,12 @@ var doctorActionableInfoIDs = map[string]bool{
 	// and one `fugaro update` moves them, so the reader has to see the line —
 	// but nothing is broken, which is why it is info and never a failure.
 	"repo-bound-jobs": true,
+	// The run index not keeping up (RI6, F9): an index still building or one
+	// whose fold stopped is the ordinary state of a young installation and never
+	// a failure, but the one thing to do about it is `fugaro runs reindex`, and
+	// the pointer line alone would hide a command the reader has to run before a
+	// listing means anything.
+	"run-index-incomplete": true,
 }
 
 // doctorClassOf is the classification, and it is the only place a class is

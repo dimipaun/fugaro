@@ -335,7 +335,7 @@ func TestValidateRefusesVertexEnforce(t *testing.T) {
 	pinned := "  auth: vertex\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }"
 	path := budgetProject(t, "budget: { mode: enforce, per_run_usd: 5 }\n", pinned)
 	out, err := validateProblems(t, path)
-	if ExitCode(err) != ExitUserError || !strings.Contains(out, "Vertex budgets are not supported yet: use budget.mode observe or off") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "Vertex budgets are not supported yet: use budget.mode observe for this repository") {
 		t.Fatalf("enforce: exit %d, out %q", ExitCode(err), out)
 	}
 	path = budgetProject(t, "budget: { mode: observe }\n", pinned)
@@ -1374,10 +1374,23 @@ func TestValidatePrintsUnresolvedOffline(t *testing.T) {
 	// resolution is over the routes *this repository's* run carries
 	// (allow_data_to; routedProjectBlock names acme/sandbox): the same pin
 	// resolves, and the line is the resolution.
+	//
+	// This file names the pins a run behind the gateway must carry (AB1b,
+	// D3009, D3020): every api-key run has a gateway now, so validate judges a
+	// routed pin with the run's own provider rules and price rule for the first
+	// time here, and a routed config that leaves the mode unset is refused for
+	// the gateway a provider-served pin needs ("agent.models.coder is served by
+	// a provider, which needs the budget gateway: set budget.mode to enforce")
+	// or that names no background model at all — before the resolution line
+	// this test reads is printed. The state is the one the whole switch is
+	// read in, and TestValidateResolvesOverTheRoutesThisCheckoutCarries builds
+	// its files the same way.
+	const routed = "budget: { mode: enforce, per_run_usd: 5 }\n" +
+		"agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
 	isolateProjects(t, t.TempDir())
 	projectRouting(t, routedProjectBlock+routedSwitchBlock)
 	inCheckoutOf(t, "acme/sandbox")
-	path = writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
+	path = writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", routed, 1))
 	_, errOut, err = execute(t, "validate", path)
 	if err != nil {
 		t.Fatalf("validate: %v\n%s", err, errOut)
@@ -1460,10 +1473,12 @@ func TestValidateResolvesOverTheRoutesThisCheckoutCarries(t *testing.T) {
 // when its gateway is on. internal/runner's applyRouting returns before
 // CheckRouting when !gatewayOn() (the mutation
 // TestRoutingDoesNothingWithTheGatewayOff exists to catch), and gatewayOn is
-// the budget being on (observe or enforce) and the credential's being a model
-// API's (api-key or vertex). The sibling refusal in the same function is gated
-// on the mode, so the two halves of one function disagreed about whether
-// routing exists without a gateway (D11, design §6.2).
+// the credential's being one the gateway carries — api-key, vertex or cascade,
+// in every mode (AB1b, D3009) — so the state a run of this configuration has no
+// gateway in is the credential's own now, and no longer the budget's. The
+// sibling refusal in the same function is gated on the mode, so the two halves
+// of one function disagreed about whether routing exists without a gateway
+// (D11, design §6.2).
 //
 // A configuration whose runs have no gateway is not a failing one: the switch
 // is inert, the pins keep their Claude IDs, and the line is a note that says
@@ -1474,8 +1489,8 @@ func TestValidateResolvesOverTheRoutesThisCheckoutCarries(t *testing.T) {
 // certain halt in was read off gatewayOn alone, and applyRouting returns before
 // CheckRouting for two more states of its own — via: auto under a Vertex
 // credential (TestAutoDoesNotRouteAVertexRun), and via: auto with an Anthropic
-// API key stored in the job. The four states are one table here, and the
-// difference between them is why the switch reaches no run.
+// API key stored in the job. The states are one table here, and the difference
+// between them is why the switch reaches no run.
 func TestValidateDoesNotClaimAHaltWithoutAGateway(t *testing.T) {
 	const budget = "budget: { mode: enforce, per_run_usd: 5 }\n"
 	const observe = "budget: { mode: observe }\n"
@@ -1487,14 +1502,17 @@ func TestValidateDoesNotClaimAHaltWithoutAGateway(t *testing.T) {
 	}
 	// routedProjectBlock admits acme/sandbox only and the switch names the
 	// model, so a run of acme/other carries no route for it: the state the rule
-	// is about, in each of the four ways a run of this configuration does not
-	// reach the switch. Two of them are the gateway's (D11) and two are via:
-	// auto's own — the Vertex credential, which auto never routes, and the
-	// key-presence question, whose answer is a secret version in the cloud and
-	// no line in this file. validate read the second as a certain halt and the
-	// third as a route it could print (review finding on this rule).
+	// is about, in each of the ways a run of this configuration does not reach
+	// the switch. One is the gateway's (D11) and two are via: auto's own — the
+	// Vertex credential, which auto never routes, and the key-presence
+	// question, whose answer is a secret version in the cloud and no line in
+	// this file. validate read the second as a certain halt and the third as a
+	// route it could print (review finding on this rule).
 	for _, tc := range []struct{ name, budget, auth, switchBlock, want string }{
-		{"the budget is off", "", "api-key", routedSwitchBlock, "no run of this configuration has a gateway"},
+		// The mode is not one of the states any more (AB1b, D3009): an
+		// api-key run has a gateway whatever the mode says, so the state this
+		// table used to carry for "no budget named" — an api-key run with no
+		// gateway — is not a run that exists. The credential is what is left.
 		{"the credential is not a model API's", budget, "oauth", routedSwitchBlock, "no run of this configuration has a gateway"},
 		{"the credential is a Vertex one", observe, "vertex", autoSwitch, "via: auto does not route a Vertex run"},
 		{"via: auto under a model API's credential", budget, "api-key", autoSwitch, "key-presence driven"},
@@ -1652,9 +1670,13 @@ func TestValidateJudgesTheSwitchOverTheModelsItNames(t *testing.T) {
 			want:    "via: auto is key-presence driven",
 		},
 		{
+			// The gateway-less state is the credential's now (AB1b, D3009):
+			// an api-key run has a gateway whatever the mode says, so an
+			// oauth one is what a run of this configuration with no gateway
+			// for the switch is.
 			name:    "a switch no run of this configuration has a gateway for",
 			project: otherRoute + namesSonnet,
-			agent:   claudePin("api-key", "claude-opus-5-5"),
+			agent:   claudePin("oauth", "claude-opus-5-5"),
 			want:    "no run of this configuration has a gateway",
 		},
 	} {

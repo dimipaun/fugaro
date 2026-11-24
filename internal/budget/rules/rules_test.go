@@ -631,6 +631,62 @@ func TestVoicePolicyNodesAreReadPerChild(t *testing.T) {
 	}
 }
 
+// TestLaunchEnvelopeNodesAreReadPerChild: the launch envelope's grants, read out
+// of the generated document rather than argued about (mobile plan task P5.1g,
+// Q9's answer, the design's section 4.5 E1 and section 4.8). The emulator test
+// beside this one (emulator_orchestrator_test.go) proves the same claims against
+// a real rules engine; this is the half that runs in the job with no emulator,
+// and it is the half a reviewer reads.
+//
+// Three claims, and each is a fence rather than a description: the two parents
+// carry no grant at all (an RTDB read grant cascades, so one on `launch` would
+// hand every device's entry to every paired phone and one on `config/policy`
+// the published policy beside it); the recipe is read on `USER` and nothing else
+// (the installation's named safe recipe is the same value for every paired
+// device); and a device's entry is read on `USER` narrowed by `$uid ==
+// auth.uid`, which is the whole of what keeps one phone's repository allow-list,
+// launch rate and cost ceiling out of another phone's hands. Both children are
+// `.write: false`: the values are the owner's, published over IAM.
+//
+// Hand mutation this fails on: widening the entry's read to `USER` alone,
+// putting a grant on either parent, giving either child a `.write`, or dropping
+// the `$uid == auth.uid` conjunct.
+func TestLaunchEnvelopeNodesAreReadPerChild(t *testing.T) {
+	paths := generatedPaths(t)
+	recipe := PathLaunchEnvelope + "/recipe"
+	devices := PathLaunchEnvelope + "/devices"
+	entry := devices + "/$uid"
+	for _, p := range []string{PathLaunchEnvelope, recipe, devices, entry} {
+		if _, ok := paths[p]; !ok {
+			t.Fatalf("the template does not generate /%s, which this package names and the app reads", p)
+		}
+	}
+	for _, p := range []string{PathLaunchEnvelope, devices} {
+		for _, a := range []string{".read", ".write"} {
+			if v, ok := paths[p][a]; ok {
+				t.Errorf("/%s has %s = %v: an RTDB read grant on a parent cascades to the recipe and to every device's entry", p, a, v)
+			}
+		}
+	}
+	read, _ := paths[recipe][".read"].(string)
+	if !strings.Contains(read, "auth.token.mu") {
+		t.Errorf("/%s .read = %q, want the USER claim: every paired device reads the installation's named safe recipe", recipe, read)
+	}
+	if strings.Contains(read, "$uid") {
+		t.Errorf("/%s .read = %q is narrowed by a $uid the recipe is not keyed by", recipe, read)
+	}
+	if w, ok := paths[recipe][".write"]; !ok || w != false {
+		t.Errorf("/%s .write = %v, want false: the operator publishes the recipe over IAM", recipe, w)
+	}
+	entryRead, _ := paths[entry][".read"].(string)
+	if !strings.Contains(entryRead, "auth.token.mu") || !strings.Contains(entryRead, "$uid == auth.uid") {
+		t.Errorf("/%s .read = %q, want the USER claim narrowed by $uid == auth.uid: without the narrowing one device reads every other device's allow-list", entry, entryRead)
+	}
+	if w, ok := paths[entry][".write"]; !ok || w != false {
+		t.Errorf("/%s .write = %v, want false: a phone that could write its own entry would bound nothing", entry, w)
+	}
+}
+
 // TestRunTokenWritesSurviveThePolicyEdit: the §5 edit is additive and confined
 // to the config block, and a run token is not only a reader (design §4.3, §12a
 // item 12). One row per location a run writes — the list below, checked to be
@@ -1558,6 +1614,14 @@ func TestUserReadGrantsAreExactlyTheNamedFamilies(t *testing.T) {
 	// orchestrator's (O2, D1220), granted on the root for the same reason and
 	// with a `.write: false` beside it: the person reads the state over the
 	// claim, and writes it over IAM, which no rule here binds.
+	//
+	// The launch envelope's two nodes are the last pair (mobile plan task
+	// P5.1g, Q9 and Q11): the installation's named safe recipe, which every
+	// paired device reads, and the device's own entry, which is the same claim
+	// narrowed by `$uid == auth.uid` so that one phone reads no other phone's
+	// allow-list. They are here rather than among the mailbox's two because
+	// they are not mailbox-scoped: the entry is keyed by the Firebase Auth uid
+	// the device node already is (P6.4), not by a mailbox.
 	want := map[string]bool{
 		"config/caps/global":                       true,
 		"config/caps/defaults":                     true,
@@ -1572,6 +1636,8 @@ func TestUserReadGrantsAreExactlyTheNamedFamilies(t *testing.T) {
 		"mailbox/$mb/heartbeat":                    true,
 		"coordinator":                              true,
 		PathOrchestrator:                           true,
+		PathLaunchEnvelope + "/recipe":             true,
+		PathLaunchEnvelope + "/devices/$uid":       true,
 	}
 	got := map[string]string{}
 	for p, attrs := range paths {
@@ -2212,6 +2278,13 @@ const unreviewedClause = " || newData.val() == 'unreviewed'"
 // both messages, with the spacing the template writes it in.
 const registeredKindClause = " || newData.val() == 'registration'"
 
+// stopKindClause is the disjunct P5.1g adds to the same enumeration, on both
+// messages, with the spacing the template writes it in: the phone's stop
+// request, the sixth member of the schema's KINDS. The kind gate on the field
+// validators is built from kindOf, which reads the schema's vocabulary, so it
+// carries `stop` on its own and the change here is the enumeration alone.
+const stopKindClause = " || newData.val() == 'stop'"
+
 // registrationRequiredClause is the conjunct P5.2.2 adds to the message's own
 // validator — KINDREQ's registration arm, which is what makes a registration
 // carry its token and its platform. Built from kindOf rather than written out,
@@ -2232,8 +2305,8 @@ var namedRuleChanges = map[string]string{
 	// the word in the enumeration, and the required fields on the message.
 	"mailbox/$mb/inbox/$msg":       registrationRequiredClause,
 	"mailbox/$mb/outbox/$msg":      registrationRequiredClause,
-	"mailbox/$mb/inbox/$msg/kind":  registeredKindClause,
-	"mailbox/$mb/outbox/$msg/kind": registeredKindClause,
+	"mailbox/$mb/inbox/$msg/kind":  registeredKindClause + stopKindClause,
+	"mailbox/$mb/outbox/$msg/kind": registeredKindClause + stopKindClause,
 }
 
 // TestOutcomeRuleAcceptsEveryRunStatus: the outcome's status validator accepts
@@ -2411,7 +2484,27 @@ func isNamedAddition(p string) bool {
 	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth ||
 		p == PathBuildLeases || p == PathOrchestrator || isNewWorkspacePath(p) || isNewVoicePath(p) ||
 		isNewRegistrationPath(p) || isNewEscalationReadPath(p) || isNewSpendAccuracyPath(p) ||
-		isNewRoutePath(p)
+		isNewRoutePath(p) || isNewLaunchPath(p)
+}
+
+// isNewLaunchPath reports whether p is one of the four nodes the launch
+// envelope adds under the policy node (mobile plan task P5.1g, the owner's
+// answers Q9 and Q11): the envelope's own node, the installation's named safe
+// recipe, the devices node, and one paired device's entry.
+//
+// All four are equalities and not prefixes, for isNewCredsPath's reason: a path
+// *under* a device's entry is a change to what that entry contains — the
+// repository allow-list, the rate and the cost ceiling — which is the shape a
+// grant hidden one level down takes, and it belongs here as a diff a reviewer
+// reads rather than as a match this function waves through.
+//
+// `launch` and `devices` carry no grant of their own and are in the list
+// because the template spells them, for isNewVoicePath's reason: a read on
+// either would cascade to every device's entry, and naming them here is what
+// makes an edit that puts one there a diff this test shows.
+func isNewLaunchPath(p string) bool {
+	return p == PathLaunchEnvelope || p == PathLaunchEnvelope+"/recipe" ||
+		p == PathLaunchEnvelope+"/devices" || p == PathLaunchEnvelope+"/devices/$uid"
 }
 
 // escalationLedgerPath is the ladder's ledger node as the rules spell it (E7,
@@ -2748,6 +2841,18 @@ func isNewCredsPath(p string) bool {
 //     holds this document to) is a **grant** to a run token too — the run reads
 //     its route before its first call, and did not read this leaf before — so a
 //     run under the document behind is refused a read the routing depends on.
+//     P5.1g moves it to 10 for two of those reasons at once, because the launch
+//     envelope is both a reach a client holds and a kind a client writes: the
+//     phone's **stop request** is the schema's sixth kind (P5.2.2's reason, one
+//     word along — under the document behind, every stop request is refused at
+//     the database with no error), and `config/policy/shared/launch/{recipe,
+//     devices/$uid}` is a **grant** to `USER` the paired device did not hold
+//     (P3's and J1's reason — the app refuses an utterance outside its own
+//     allow-list before it signs anything, so a device that cannot read its
+//     entry refuses every launch rather than launching unbounded). The rules do
+//     not enforce the envelope; the values are the consumer's and the app's
+//     (Q9's consequence), and what the generation records is the read and the
+//     write the phone needs to take part at all.
 //   - projectpolicy.PolicyRulesVersion gates the policy nodes, which neither
 //     change touches. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
@@ -2766,8 +2871,8 @@ func isNewCredsPath(p string) bool {
 // Hand mutation this fails on: bumping any of the four (or lowering one of the
 // family versions), which is what a reviewer must see argued for.
 func TestRulesVersionUnchanged(t *testing.T) {
-	if projectpolicy.RulesVersion != 9 {
-		t.Errorf("projectpolicy.RulesVersion = %d, want 9: the generation that carries the credential-route leaf config/policy/route/$slug and the run token's read of it (workspace-service WS22, D2982, R3, R4)", projectpolicy.RulesVersion)
+	if projectpolicy.RulesVersion != 10 {
+		t.Errorf("projectpolicy.RulesVersion = %d, want 10: the generation that carries the phone's stop request (the schema's sixth kind) and the launch envelope's read at config/policy/shared/launch (mobile plan task P5.1g, Q9, Q10(c), Q11)", projectpolicy.RulesVersion)
 	}
 	if projectpolicy.PolicyRulesVersion != 1 {
 		t.Errorf("projectpolicy.PolicyRulesVersion = %d, want 1: this change does not touch the policy nodes", projectpolicy.PolicyRulesVersion)

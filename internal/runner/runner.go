@@ -48,6 +48,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -373,7 +374,12 @@ type run struct {
 	// returns, and says what the gateway saw: violations of the stage's
 	// rules (the first fails the stage) and its token count.
 	wroteManaged bool // this run wrote the managed settings file (guarded by mu)
-	warnedKnob   bool // the routing-settings knob's Cloud Run warning was logged
+	// warnedManagedWrite is whether the one line about a local run's managed
+	// settings that could not be written has been logged: every stage writes
+	// the file, and the machine either holds the directory or does not
+	// (guarded by mu).
+	warnedManagedWrite bool
+	warnedKnob         bool // the routing-settings knob's Cloud Run warning was logged
 	// ignoredGovernanceSaid is whether the untagged build's one line about the
 	// governance block it ignores has been written: the line is about the
 	// build, so a run says it once however many stages it has (guarded by mu).
@@ -437,6 +443,23 @@ type run struct {
 	gwClosed       bool
 	gwUsed         pricing.Micros
 	gwNotional     pricing.Micros
+	// gwFallback is the part of gwUsed that bought a fallback: the calls the
+	// credentials service served from a source that is not its chain's first
+	// and a metered source paid for (C1, CS8, D140). It is the ledger's
+	// figure and not a sum of the stages' (recordLedgerCost), and it is a
+	// part of the run's model money -- cost.fallback_usd -- where a fallback
+	// a subscription served is notional and counted nowhere.
+	gwFallback pricing.Micros
+	// chainSource and chainFallback are what the credentials service's
+	// answers have said about the stage running now (C1's ChainAnswer, CS8):
+	// the source of the last call it answered -- nil when it answered none of
+	// them -- and whether any call of the stage came from a source that is
+	// not the chain's first. The gateway calls the hook once per answered
+	// call, from its own goroutines, so both are guarded by mu; a stage's row
+	// takes them and clears them (cost.go's stageTiming, stephook.go's
+	// stepTiming), which is what makes them the stage's own.
+	chainSource   *routing.SourceName
+	chainFallback bool
 	// direct is the model spend of the stages a stage-scoped Claude OAuth
 	// account served -- a mixed run's review and adversarial stages
 	// (docs/mixed-credentials/spec.md §11). The gateway saw none of their
@@ -3849,14 +3872,29 @@ func (r *run) bootstrap(ctx context.Context) error {
 		Reserve: wf.Timeouts.FinalizeReserve.Duration, Stage: wf.Timeouts.Stage.Duration,
 		StopFraction: r.cfg.Agent.ReviewStopFraction, Now: r.d.Now}
 	if r.follow != nil {
-		if err := r.prepareFollowUp(ctx); err != nil {
-			return err
+		if r.spec.Resumes != "" {
+			// A resumed run's task is a follow-up's too (task.Spec.Resumes):
+			// it works on the paused run's pull request and continues its
+			// chain. What it starts from is the pause and not the pull
+			// request's comments: it reads none. What it does inherit is what
+			// the paused run worked from — its rulings and the questions they
+			// answer — read off that run's record with the pause
+			// (prepareResume, inheritRulings): suspending a run does not end
+			// the answers the owner has given it.
+			if err := r.prepareResume(ctx); err != nil {
+				return err
+			}
+		} else {
+			if err := r.prepareFollowUp(ctx); err != nil {
+				return err
+			}
+			// The ruling this run works from, with the decisions it answers
+			// (OD1): its launch's own, or the pair the run before it worked
+			// from, which it inherits. Written here and not with the task's
+			// other text above because only now has the previous record been
+			// read.
+			r.recordRuling()
 		}
-		// The ruling this run works from, with the decisions it answers (OD1):
-		// its launch's own, or the pair the run before it worked from, which it
-		// inherits. Written here and not with the task's other text above
-		// because only now has the previous record been read.
-		r.recordRuling()
 	}
 	// The backing services this job's image provides, started now that the
 	// checkout and the agent's environment exist and before any stage runs
@@ -4156,9 +4194,21 @@ func (r *run) agentLoop(ctx context.Context) {
 		req.Prompt = followup.ImplementPrompt(r.promptData(), f.sel)
 		if f.restored.Resumed {
 			req.SessionID, req.Resume = f.restored.ID, true
-			// Claude Code may still not find the session it was given:
-			// that is a reason to start fresh, not a failed stage.
-			opts.Recoverable = func(err error) bool { return errors.Is(err, agent.ErrNoSession) }
+			// Claude Code may still not find the session it was given: for a
+			// follow-up that is a reason to start fresh, not a failed stage.
+			// A resumed run may not: the session it was given is the one its
+			// pause names, and a run that started a fresh one instead would be
+			// the start-afresh R18 refuses.
+			if f.resumedStage == "" {
+				opts.Recoverable = func(err error) bool { return errors.Is(err, agent.ErrNoSession) }
+			} else {
+				// The work chain of a resumed run is the session its pause
+				// named: a fix a review round asks for, and the writeback's own
+				// save, continue that conversation rather than starting one of
+				// their own (fix prefers r.sessionID over the session it was
+				// handed).
+				r.sessionID = f.restored.ID
+			}
 		}
 	}
 	skipImplement := false
@@ -4290,10 +4340,25 @@ func (r *run) agentLoop(ctx context.Context) {
 		}
 		skipImplement = true
 	}
+	// A resumed run enters the stage the paused run was in and not the first
+	// one (R18, D3185): a pause taken in the review loop skips implement
+	// altogether — the work is on the branch and in the restored session —
+	// and one taken in a fix round enters that stage, in the session that
+	// round was in, before the loop reviews what the branch carries.
+	resumedFix := r.follow != nil && r.follow.resumedStage == "fix"
+	if f := r.follow; f != nil && config.IsReviewStage(f.resumedStage) {
+		skipImplement = true
+	}
 	// "" until implement actually runs and starts one: a Fixed gate skips
 	// implement, so there is no session yet for fix (below) to resume.
 	var sessionID string
-	if !skipImplement {
+	switch {
+	case resumedFix:
+		var ok bool
+		if sessionID, ok = r.resumeFix(ctx, req, opts); !ok {
+			return
+		}
+	case !skipImplement:
 		// Rule 1's first call site. The block is taken once and rides in both
 		// this request and the fresh one a recovered stage is retried with:
 		// the retry is the same stage, and a second take would find the queue
@@ -4951,6 +5016,36 @@ func (r *run) seniorRound(ctx context.Context, round int, reviewPrompt string) (
 		r.d.Log.Warn("the review round produced no parseable verdict", "round", round, "attempt", attempt)
 	}
 	return Verdict{}, false, true
+}
+
+// resumeFix runs the fix stage a resumed run enters when the paused run
+// suspended in one (R18, D3185), in the session that round was in and with the
+// resuming prompt rather than FixPrompt: the findings that round was working
+// from are in the restored conversation, and this run has read no review of its
+// own. It reports the session to go on with and whether the loop may continue,
+// exactly as fix does, whose seams it keeps — the mode and the security
+// escalation are resolved again from the diff the work in progress carries.
+func (r *run) resumeFix(ctx context.Context, req agent.Request, opts stageOpts) (string, bool) {
+	const stage = "fix"
+	// Rule 1's third call site, as implement's is above: a message may stop
+	// this stage where it stands and resume it with the brief it was given
+	// and the message.
+	mb := r.messageBlock(ctx, stage)
+	brief := req.Prompt
+	if mb != "" {
+		req.Prompt += "\n\n" + mb
+	}
+	opts.Yield = &yieldOpts{Resume: func(block string) string { return brief + "\n\n" + block }}
+	res, ok, _ := r.stage(ctx, stage, req, opts)
+	r.noteSession(req, res)
+	r.countTokens(res)
+	if !ok || r.capReached() {
+		return req.SessionID, false
+	}
+	r.afterStage(ctx, stage)
+	r.roundRigor(ctx)
+	r.escalateSecurity(ctx, runstore.SecurityAtFix)
+	return req.SessionID, !r.pr.gone
 }
 
 // fix runs a fix stage for the findings a review round still blocks on, in the
