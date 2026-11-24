@@ -265,6 +265,19 @@ type FirebaseSpec struct {
 	BudgetAdmins       []string `json:"budget_admins"`
 	HistoryAccount     string   `json:"history_account"`
 	CoordinatorAccount string   `json:"coordinator_account"`
+	// IssuerAccount is the credentials service's own account, which this
+	// root grants iam.serviceAccounts.signJwt on the runs' signer
+	// (launcher-does-not-mint plan task LM13; D3121, F7): the ONE row that
+	// moves a run's identity off every launcher and onto the service. It is
+	// an output of the installation root's own apply
+	// (InstallationOutputs.CredentialsService.Account), never a derived
+	// name, so it is passed only once that apply has created the account —
+	// IAM refuses a member it cannot find, and a fresh setup's first apply
+	// is an installation whose root creates no credentials service yet
+	// (U9). Empty — the state of every installation with no service — plans
+	// no row at all, and is left out of the tfvars, which is exactly what
+	// this root planned before the variable existed.
+	IssuerAccount string `json:"issuer_account,omitempty"`
 	// WorkspaceServiceAccount is the workspace service account the member's
 	// own workspace_pin names, and the ONLY principal this root grants a
 	// read of this project's database to (docs/workspaces/spec.md §5, W7):
@@ -319,6 +332,16 @@ type FirebaseInputs struct {
 	// the workspace's: the record a workspace publishes names no service
 	// account, so nothing the workspace says can widen its reach here.
 	WorkspaceServiceAccount string
+	// IssuerAccount is the credentials service's own account, read back from
+	// the installation root's output (CredentialsService.Account), and empty
+	// on an installation whose root created no such account — a fresh
+	// setup's first apply, and every installation that carries no service
+	// (U9). It is passed rather than derived from the credentials account's
+	// name: a name this package could compose is an account nothing has
+	// created yet, and this root's row is the one grant of the file that
+	// names its member as a literal plan string (issuerMinterGrant is what
+	// holds it to that account of a run whose plans name it at all).
+	IssuerAccount string
 }
 
 // Firebase is the Firebase root's spec for the installation spec, which
@@ -380,6 +403,19 @@ func Firebase(inst InstallationSpec, in FirebaseInputs) (FirebaseSpec, error) {
 			return FirebaseSpec{}, userErr("the workspace service account %q is not a service account email (<id>@<project>.iam.gserviceaccount.com); the workspace's read of this project's database is bound to it and IAM refuses a member it cannot find", in.WorkspaceServiceAccount)
 		}
 		s.WorkspaceServiceAccount = in.WorkspaceServiceAccount
+	}
+	// The issuer's account is checked for its shape for the workspace's
+	// reason: the module's own validation is reached at that root's plan,
+	// which this run makes AFTER it has applied the installation root, so a
+	// value the module refuses is refused here instead — the member is the
+	// one identity that mints every run's token through this root's signer,
+	// and a refusal that waited for the plan would come with an apply
+	// already behind it.
+	if in.IssuerAccount != "" {
+		if !saEmailRE.MatchString(in.IssuerAccount) {
+			return FirebaseSpec{}, userErr("the issuer account %q is not a service account email (<id>@<project>.iam.gserviceaccount.com): the credentials service's account mints every run's identity through this root's signer, and a member IAM cannot resolve is a row the apply that plans it fails on", in.IssuerAccount)
+		}
+		s.IssuerAccount = in.IssuerAccount
 	}
 	if in.FP == inst.Project {
 		// One project holds the installation and the Firebase backend (design

@@ -950,9 +950,9 @@ func (e *initEngine) ensureCredentialsService(ctx context.Context) error {
 }
 
 // writeCarriedCredentials writes the carried block back into the installation
-// root's tfvars, with its two job tables — the coding one and the review-only
-// one — brought up to date with this machine's config, and returns the document
-// it wrote.
+// root's tfvars, with the members this side composes out of the local config —
+// the two job tables, and the identity half's three names — brought up to date,
+// and returns the document it wrote.
 //
 // The document goes back on disk BEFORE anything that can fail and return.
 // prepare (init.go) is what rewrites the installation's tfvars from this run's
@@ -1000,6 +1000,21 @@ func (e *initEngine) writeCarriedCredentials(ctx context.Context, doc []byte) ([
 			fmt.Fprintf(e.r.w, "the credentials service's job table was not refreshed: %v\n", err)
 		} else {
 			next = refreshed
+		}
+		// And the identity half's three names, which no release before this one
+		// wrote: the deploy is their only other writer, and every installation
+		// that has the block carries one without them — byte for byte, so
+		// nothing else ever adds them. Without this refresh the roster's
+		// service accounts and the implicit admins never reach the service at
+		// exactly the installations that have it, and the runs' signer never
+		// reaches it either, which is the name LM14's probe reads to decide
+		// whether the minter grant can move. Refreshed from `next` rather than
+		// from the document the job-table refresh was handed, so a refusal
+		// there does not also cost this one.
+		if named, err := infra.RefreshCredentialsServiceIdentity(next, e.lc); err != nil {
+			fmt.Fprintf(e.r.w, "the credentials service's identity names were not refreshed: %v\n", err)
+		} else {
+			next = named
 		}
 	}
 	// And the intake, which the same apply deploys and which no earlier release

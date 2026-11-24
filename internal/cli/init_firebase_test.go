@@ -2978,3 +2978,71 @@ func TestTheFirebasePrintVarsCarryTheWorkspacePin(t *testing.T) {
 		t.Errorf("--print-vars made calls: terraform %q", r.calls(t))
 	}
 }
+
+// TestFreshSetupPlansNoRowForAMissingAccount is LM13's U9 read at the two ends
+// it has (launcher-does-not-mint plan task LM13; D3121, F7). The Firebase
+// root's issuer_minter row is the one grant of the tree whose member is a
+// literal of ANOTHER root's apply — the credentials account the installation
+// root creates — and IAM refuses a member it cannot find, so a plan that named
+// the account on an installation that has none would fail its apply with the
+// installation root already behind it.
+//
+// Arm one is the fresh setup, and it is the whole of U9: the credentials
+// service is deployed LATER in a run whose config carries no Firebase backend
+// (the credentials stage is what writes the block, and this stage is what
+// gives the run its database), so the installation root's first apply creates
+// no such account and publishes none — and the Firebase tfvars this stage
+// writes must name no issuer at all. An installation that names an account it
+// has not created is a first `fugaro setup` that ends with a failed apply.
+//
+// Arm two is the same stage on a run whose installation root DID publish the
+// account (a converged installation, whose block and account the apply that
+// turned the service on created): the tfvars must name exactly that account —
+// read back from the outputs and never composed here, since a name this
+// package could spell is an account nothing has created.
+//
+// Mutation (run, restore): compose the account from the installation's project
+// (infra.CredentialsAccountID + "@" + lc.GCPProject) and arm one's assertion
+// fails with a tfvars that names an account no apply has created; drop the
+// hand-off and arm two's fails with the row unplanned on every installation
+// that has the service.
+func TestFreshSetupPlansNoRowForAMissingAccount(t *testing.T) {
+	fakeTerminal(t)
+
+	// Arm one: a fresh setup. The rig's installation outputs carry no
+	// credentials service, which is the state the first apply leaves.
+	fresh := newFBRig(t)
+	out, errOut, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "observe")
+	if err != nil {
+		t.Fatalf("a fresh setup failed: %v\n%s", err, out+errOut)
+	}
+	if v, ok := fresh.fbVars(t)["issuer_account"]; ok {
+		t.Errorf("a fresh setup's Firebase tfvars carry issuer_account = %v, want no key at all: that apply's installation root creates no credentials service, so the member the row would name is an account nothing has created and the Firebase apply fails on it (U9)", v)
+	}
+
+	// Arm two: a run whose installation root publishes the account the service
+	// runs as (the module's own output member, outputs.tf). The account is
+	// spelled here because the fixture has to name something, and because the
+	// shared credentialsServiceOutput models the installation that predates the
+	// member (infra.CredentialsService.Account's own comment: empty there, and
+	// inert, since nothing grants anything to an account the outputs do not
+	// name) — this test is about the end where the member is there.
+	const account = "fugaro-credentials@proj-1234.iam.gserviceaccount.com"
+	deployed := newFBRig(t)
+	svc := credentialsServiceOutput()
+	svc["account"] = account
+	deployed.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service":     svc,
+		"history_service_account": historyAccount,
+		"history_job":             nil,
+	})}
+	deployed.save(t)
+	out, errOut, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "observe")
+	if err != nil {
+		t.Fatalf("setup of an installation that has the service failed: %v\n%s", err, out+errOut)
+	}
+	want := any(account)
+	if got := deployed.fbVars(t)["issuer_account"]; got != want {
+		t.Errorf("issuer_account = %v, want %v: the account comes from the installation root's own output, and a run that passed anything else — a name composed here, or none at all — plans the issuer's row on a member no apply created (LM13, D3121)", got, want)
+	}
+}
