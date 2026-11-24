@@ -161,6 +161,72 @@ func TestRepoCannotReorderOrChangeStrategy(t *testing.T) {
 	}
 }
 
+// TestRepoMayTightenAPoolRule: the rule and the strategy are one scale of
+// tightness (poolStrategyRank, R5, R21) and a pool is served by whichever of
+// the two it names (ruleInForce, config.Pool.RuleOrDefault), so a later layer's
+// value is judged against what serves the pool and not against the member it
+// was written under. `ordered` is the tightest of the three, which is what lets
+// a repository pin a pool's order (PL1).
+func TestRepoMayTightenAPoolRule(t *testing.T) {
+	rule := func(r string, members ...string) CraftPool {
+		return CraftPool{Rule: r, Members: members}
+	}
+
+	// The project round-robins and names no rule; the repository pins the order.
+	rr := craftLayer(nil, map[string]CraftPool{"claude": pool(PoolStrategyRoundRobin, "c1", "c2")}, nil)
+	e := repo(rr, craftLayer(nil, map[string]CraftPool{"claude": rule(PoolRuleOrdered)}, nil))
+	if got := e.Craft.Pools["claude"].Rule; got != PoolRuleOrdered {
+		t.Fatalf("rule = %q, want %q: `ordered` is the tightest rule and the repository may pin it over the project's round-robin", got, PoolRuleOrdered)
+	}
+	if e.Sources[CraftPoolRuleKey("claude")] != SourceBranch || len(e.Ignored) != 0 {
+		t.Fatalf("sources = %v ignored = %+v", e.Sources, e.Ignored)
+	}
+
+	// The rule is judged against the value in force: the project's round-robin
+	// is what this pool is served by, so the repository's failover tightens it
+	// and takes — ranking it against the project's unset `rule` instead made it
+	// equal to failover's own default and dropped it silently.
+	e = repo(rr, craftLayer(nil, map[string]CraftPool{"claude": rule(PoolStrategyFailover)}, nil))
+	if got := e.Craft.Pools["claude"].Rule; got != PoolStrategyFailover {
+		t.Fatalf("rule = %q, want %q: failover is tighter than the project's round-robin", got, PoolStrategyFailover)
+	}
+	if e.Sources[CraftPoolRuleKey("claude")] != SourceBranch || len(e.Ignored) != 0 {
+		t.Fatalf("sources = %v ignored = %+v", e.Sources, e.Ignored)
+	}
+
+	// A repository that names the rule already in force moves nothing and is
+	// not recorded, the way an equal strategy is not.
+	e = repo(rr, craftLayer(nil, map[string]CraftPool{"claude": rule(PoolStrategyRoundRobin)}, nil))
+	if e.Craft.Pools["claude"].Rule != "" || len(e.Ignored) != 0 {
+		t.Fatalf("pools = %+v ignored = %+v", e.Craft.Pools, e.Ignored)
+	}
+
+	// A project that pinned the order may not be widened to round-robin, and
+	// the entry renders the effective `ordered` rather than a failover the pool
+	// is not served by.
+	ordered := craftLayer(nil, map[string]CraftPool{"claude": rule(PoolRuleOrdered, "c1", "c2")}, nil)
+	e = repo(ordered, craftLayer(nil, map[string]CraftPool{"claude": rule(PoolStrategyRoundRobin)}, nil))
+	if got := e.Craft.Pools["claude"].Rule; got != PoolRuleOrdered {
+		t.Fatalf("rule = %q, want %q", got, PoolRuleOrdered)
+	}
+	want := []Ignored{{CraftPoolRuleKey("claude"), PoolStrategyRoundRobin, PoolRuleOrdered, SourceCeiling}}
+	if !reflect.DeepEqual(e.Ignored, want) {
+		t.Fatalf("ignored = %+v, want %+v", e.Ignored, want)
+	}
+
+	// The strategy half of the same reading: a repository's strategy is judged
+	// against the rule that serves the pool, so it is dropped and rendered as
+	// the `ordered` in force rather than as failover.
+	e = repo(ordered, craftLayer(nil, map[string]CraftPool{"claude": pool(PoolStrategyRoundRobin)}, nil))
+	if got := e.Craft.Pools["claude"].Strategy; got != "" {
+		t.Fatalf("strategy = %q, want the project's ordered rule to stand", got)
+	}
+	want = []Ignored{{CraftPoolStrategyKey("claude"), PoolStrategyRoundRobin, PoolRuleOrdered, SourceCeiling}}
+	if !reflect.DeepEqual(e.Ignored, want) {
+		t.Fatalf("ignored = %+v, want %+v", e.Ignored, want)
+	}
+}
+
 // TestCraftAccessSelectsWhatTheProjectMakesAvailable: a later layer selects a
 // craft's credential or pool from what the project's layers created, and a
 // name outside that set — a credential, a pool, whatever it is called — is
