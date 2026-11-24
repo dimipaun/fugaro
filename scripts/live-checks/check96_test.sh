@@ -1832,10 +1832,10 @@ test_a_deletion_that_keeps_failing_is_said_with_its_uid() {
   RUN96_ENV=(FAKE96_DELETE_FAIL=always FAKE96_SURVIVOR=yes)
   run96
   expect_status "$status" 1 "a deletion that keeps failing"
-  # The uid and the verdict are two needles and not one: the run id follows the
-  # uid in the line ("… r~<slug>~<run> was NOT deleted"), so a needle that glued
-  # a space to the uid would match nothing at all.
-  expect_contains "$(cat "$dir/err")" "was NOT deleted" \
+  # The uid and the verdict are two needles and not one: the verdict follows the
+  # uid in the line ("… r~<slug>~<run> NOT deleted (status 500, twice)"), so a
+  # needle that glued one to the other would match nothing at all.
+  expect_contains "$(cat "$dir/err")" "NOT deleted" \
     "a deletion that keeps failing: the line that says so"
   expect_contains "$(cat "$dir/err")" "r~$SANDBOX_SLUG~" \
     "a deletion that keeps failing: the line names the user"

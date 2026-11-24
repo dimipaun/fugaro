@@ -724,7 +724,7 @@ step_job() {
     # line, because a pick this check makes on the owner's behalf is a pick the
     # block has to name.
     if [ -z "$chosen" ]; then
-      stop "the sandbox repository $REPO has $found jobs of its own in $P/$REGION, one per workflow of its fugaro.yaml ($(printf '%s\n' "$answer" | sed -n 's/^own=//p' | tr '\n' ' ')), and this check reads the job a run lands on: a run on a repository with several workflows is told which one with --workflow (internal/cli/run.go's resolveWorkflow) and this check is not told, and the labels those jobs wear are several of the repository's own workflows or none of them, so no single job of them is the one a run lands on. Re-run with --workflow <one of: $wfs>"
+      stop "$REPO has $found jobs of its own, none of them the job of a workflow of its own: $(printf '%s\n' "$answer" | sed -n 's/^own=//p' | tr '\n' ' '). Re-run with --workflow <one of: $wfs>"
     fi
     if [ "$chosen" = derived ]; then
       derived=yes
@@ -1303,7 +1303,7 @@ delete_users() { # delete_users [TOKEN]
   if [ -z "$at" ]; then
     at=$(gcloud auth print-access-token 2>"$SCRATCH/at.err") || at=""
     if [ -z "$at" ]; then
-      say "no access token for the project's own Identity Toolkit API, so the user(s) ${left[*]} this check created could not be deleted: delete them yourself with the call the restore line names"
+      say "no access token: ${left[*]} not deleted; see the restore line"
       return 0
     fi
   fi
@@ -1320,7 +1320,7 @@ delete_users() { # delete_users [TOKEN]
       DELETED_N=$((DELETED_N + 1))
       say "deleted the run identity user $uid: status 200"
     else
-      say "the run identity user $uid was NOT deleted: the answer was ${code:-no answer} twice — delete it yourself with the call the restore line names"
+      say "$uid NOT deleted (status ${code:-none}, twice): see the restore line"
     fi
   done
   return 0
