@@ -177,6 +177,22 @@ func mobileEmailTrusted(claims mobilesession.Claims) bool {
 // domain in it would be a second kind of entry in a list that holds one.
 const mobileAppleRelayDomain = "@privaterelay.appleid.com"
 
+// CrashReports is the project's published crash-report switch: on only when the
+// published policy states it on, and off for a policy node that is not there or
+// does not carry the key (D734, G7). A node that could not be read answers off
+// with the error, and the route fills the session with that off rather than
+// refusing it (D738).
+func (p mobilePolicy) CrashReports(ctx context.Context, _ string) (bool, error) {
+	pol, found, err := p.cfg.Policy.Shared(ctx)
+	if err != nil {
+		return false, fmt.Errorf("credsvc: the published policy could not be read for the crash-report switch: %w", err)
+	}
+	if !found {
+		return false, nil
+	}
+	return pol.MobileCrashReportsOn(), nil
+}
+
 // role resolves the roster's role for an address at project scope, which is the
 // role a device node carries (a node records a role and no scope, so a grant at
 // one repository is not one a phone can hold).
