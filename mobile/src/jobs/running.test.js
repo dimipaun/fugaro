@@ -116,6 +116,40 @@ test('a run with no repository timeout is judged by the day alone', () => {
   assert.equal(stale.state, 'stale');
 });
 
+test('a missing timeout never refuses the view, and an unusable one still does', () => {
+  // The finding's own case: no node a paired device may read carries a
+  // repository's `timeouts.total`, so a reader that is ever wired hands every
+  // run entry none -- the key absent, or null, and nothing else. Such a run is
+  // drawn, and `BAD_TIMEOUT` is not this view's answer to it: a list that
+  // refused one missing value would be a list no phone ever shows.
+  const absent = runningJobs({ projects: [project({ runs: [run({ timeoutMs: undefined })] })], nowMs: NOW });
+  assert.equal(absent.ok, true, absent.ok === false ? `${absent.code} at ${absent.field}` : '');
+  assert.equal(absent.rows[0].state, 'running');
+  // ... and the row carries nothing the bound would have been read for: the
+  // project, the run, the state, the age and the spend -- no remaining-time
+  // figure, which is the one thing a bound would have bought.
+  assert.deepEqual(Object.keys(absent.rows[0]).sort(), ['ageMs', 'project', 'run', 'spend', 'state']);
+  assert.deepEqual(rowsOf([project({ runs: [run({ timeoutMs: null })] })]).map((row) => row.state), ['running']);
+  // A value that is present and unusable is a different reading and is still
+  // refused: "not known here" is absence, and not a zero.
+  assert.equal(refusalOf([project({ runs: [run({ timeoutMs: 0 })] })]).code, RUNNING_CODES.BAD_TIMEOUT);
+});
+
+test('a bounded run and an unbounded one in one reading are each judged by their own bounds', () => {
+  // The mixed list the task names: one project, two runs. `aaaa`'s repository
+  // bound is known and already passed, so it is stale; `bbbb`'s caller has no
+  // source for it, so the day bound alone decides and it is still running. The
+  // reading is not refused for the second -- one run's absence is not the
+  // list's defect -- and the first is judged exactly as it would be alone.
+  const bounded = run({ run: runId(NOW - TIMEOUT - 60_000, 'aaaa'), timeoutMs: TIMEOUT });
+  const unbounded = run({ run: runId(NOW - 3_600_000, 'bbbb'), timeoutMs: null });
+  const rows = rowsOf([project({ project: 'p-1', runs: [bounded, unbounded] })]);
+  assert.equal(rows.length, 2, 'both runs draw');
+  const states = Object.fromEntries(rows.map((row) => [row.run, row.state]));
+  assert.equal(states[bounded.run], 'stale', 'past its own repository’s total timeout');
+  assert.equal(states[unbounded.run], 'running', 'an hour old, today, with no repository bound');
+});
+
 test('the bound is the run’s own repository’s, and not the project’s', () => {
   // A project serves many repositories and `timeouts.total` is set in each
   // repository's own `fugaro.yaml`, so one bound for the whole reading would
