@@ -59,7 +59,7 @@
 import { putText } from '../app'
 import { buildCopyCommand, commandValue, commandWord, copyCommandText } from '../manage/command'
 import type { CopyCommandAnswer } from '../manage/command'
-import { renderRetry } from '../section'
+import { BUSY_BUSY_ATTRIBUTE, renderRetry } from '../section'
 import { NODE_PAINT, STREAM_INTERRUPTED_WORD } from '../stream'
 import type { StreamPaint } from '../stream'
 import { RIGOR_MODE_WORDS } from '../../shared/rigor'
@@ -91,12 +91,16 @@ import type {
  * `DomElement` is the shape it was written for, and the entry's own factory is
  * what a caller hands in.
  *
- * **There is no `replaceChildren` and no `disabled`.** The entry's wrapper has
- * neither, and a screen that cleared its own tree would own a rewrite of what a
- * section may do to a panel. So an attempt is drawn **beside** the attempt before
- * it rather than over it (`send`), and a control is never disabled: the
- * submit's own rule -- an unanswered required question sends nothing -- is the
- * refusal the operator reads, drawn in the same place wherever it happens.
+ * **There is no `replaceChildren`.** The entry's wrapper has none, and a screen
+ * that cleared its own tree would own a rewrite of what a section may do to a
+ * panel. So an attempt is drawn **beside** the attempt before it rather than over
+ * it (`send`), and the submit's own rule -- an unanswered required question sends
+ * nothing -- is the refusal the operator reads, drawn in the same place wherever
+ * it happens. The two controls that **start** a read are the ones `send` holds
+ * (`disabled`) while its answer is outstanding, which is what a press whose child
+ * main holds for up to an hour needs; the Retry a finished attempt drew is not
+ * one of them, because a second attempt beside the first is what this screen
+ * draws for a read that stopped.
  */
 export interface WizardElement {
   textContent: string | null
@@ -224,6 +228,11 @@ export const WIZARD_COPY_REFUSAL_CLASS = 'console-wizard-copy-refusal'
 /** WIZARD_FOLLOW_CLASS is the press that asks main for the apply's own feed. */
 export const WIZARD_FOLLOW_CLASS = 'console-wizard-follow'
 
+/** WIZARD_BUSY_CLASS is the one line that says a press is being answered. The
+ * screen has a single one rather than a line per attempt -- it is the state of
+ * the screen and not of an attempt -- and `send` writes it and clears it. */
+export const WIZARD_BUSY_CLASS = 'console-wizard-busy'
+
 /** WIZARD_LEAD and WIZARD_FOLLOW_LEAD are the console's own words for this
  * screen. They are not the CLI's sentences and not the onboarding copy's:
  * `installations.ts`'s `ONBOARDING_COPY` is the picker's too, and the sentence
@@ -238,6 +247,16 @@ export const WIZARD_FOLLOW_LABEL = 'Follow the run'
  * (send the answers and plan) rather than what the run will do, because the plan
  * applies nothing. */
 export const WIZARD_SUBMIT_LABEL = 'Plan the setup'
+
+/** WIZARD_PLAN_BUSY and WIZARD_APPLY_BUSY are the busy line's two labels, one per
+ * press, in the register every other label of this console's reads in
+ * (`'Reading the project’s budget…'` and its neighbours). They name what the
+ * press is waiting for rather than repeating the button, and they are two words
+ * because the two presses wait for different things: the plan for a child that
+ * answers with the whole feed at once, the apply for a run main holds for up to
+ * its own hour. */
+export const WIZARD_PLAN_BUSY = 'Planning the setup…'
+export const WIZARD_APPLY_BUSY = 'Following the run…'
 
 /** WIZARD_RIGOR_REQUIRED is the rigor row's own note: the one question whose
  * emptiness is the CLI's refusal rather than a default it takes. */
@@ -505,6 +524,11 @@ export function drawWizard(deps: WizardDeps): WizardElement {
   // beside the last one rather than over it: the surface this screen draws into
   // has no `replaceChildren`.
   const answer = make(factory, 'p', WIZARD_ANSWER_CLASS)
+  // The busy line is the screen's, not an attempt's: it says what the press that
+  // is outstanding is waiting for, and `send` writes and clears it. It is drawn
+  // empty from the start rather than added on the press, so the state it carries
+  // has one writer and one place in the tree.
+  const busy = make(factory, 'p', WIZARD_BUSY_CLASS)
   const attempts = make(factory, 'div', WIZARD_ATTEMPTS_CLASS)
 
   /** say writes the console's own sentence about the form; the empty string
@@ -514,50 +538,81 @@ export function drawWizard(deps: WizardDeps): WizardElement {
   }
 
   /** send asks the operation and draws its answer as one attempt: the lines as
-   * they are read, and the console's own sentence for the outcome. */
-  const send = async (ask: () => Promise<NewOpsReply<SetupFeed>>): Promise<void> => {
+   * they are read, and the console's own sentence for the outcome.
+   *
+   * **The press is answered in the frame it happened in**, which is the console's
+   * rule for a control change and matters most here: the child behind
+   * `setup.plan` and `setup.apply` is main's, and it runs for as long as a setup
+   * takes (up to the hour main holds it for), while this screen's answer is one
+   * document that arrives in a single reply. So the label naming what is being
+   * read goes up before the await, the whole attempt is marked `aria-busy`, and
+   * the two controls that start a read are held until it lands -- the `finally`
+   * takes all three down on every path, including a bridge that throws. The
+   * earlier attempt's own drawing is left exactly as it was: dimming it would be
+   * dimming an outcome that has stopped changing (`base.css` dims what a
+   * `data-busy` section still holds). */
+  const send = async (
+    word: string,
+    ask: () => Promise<NewOpsReply<SetupFeed>>,
+  ): Promise<void> => {
     const block = make(factory, 'div', WIZARD_ATTEMPT_CLASS)
+    block.setAttribute(BUSY_BUSY_ATTRIBUTE, 'true')
     attempts.append(block)
     const lines = make(factory, 'div', WIZARD_LINES_CLASS)
     block.append(lines)
-    const reply = await ask()
-    if (!reply.ok) {
-      // A gap is the console's or the CLI's sentence and nothing else: an
-      // attempt that cannot be read is never drawn as an empty run.
-      block.append(
-        text(factory, 'p', WIZARD_ANSWER_CLASS, reply.gap.sentence, 'sentence', 'the setup’s own refusal'),
-      )
-      return
-    }
-    const feed = reply.value
-    let left = 0
-    for (const event of feed.events) {
-      if (event.type === 'left_for_you') left += 1
-      lines.append(drawEvent(factory, event, deps.copy))
-      await painted(paint)
-    }
-    if (feed.done) {
-      block.append(literal(make(factory, 'p', WIZARD_ANSWER_CLASS), WIZARD_DONE))
-      if (left > 0) {
-        block.append(literal(make(factory, 'p', WIZARD_ANSWER_CLASS), WIZARD_HAND_OFF))
+    literal(busy, word)
+    root.setAttribute(BUSY_BUSY_ATTRIBUTE, 'true')
+    submit.setAttribute('disabled', '')
+    follow.setAttribute('disabled', '')
+    try {
+      const reply = await ask()
+      if (!reply.ok) {
+        // A gap is the console's or the CLI's sentence and nothing else: an
+        // attempt that cannot be read is never drawn as an empty run.
+        block.append(
+          text(factory, 'p', WIZARD_ANSWER_CLASS, reply.gap.sentence, 'sentence', 'the setup’s own refusal'),
+        )
+        return
       }
-      return
+      const feed = reply.value
+      let left = 0
+      for (const event of feed.events) {
+        if (event.type === 'left_for_you') left += 1
+        lines.append(drawEvent(factory, event, deps.copy))
+        await painted(paint)
+      }
+      if (feed.done) {
+        block.append(literal(make(factory, 'p', WIZARD_ANSWER_CLASS), WIZARD_DONE))
+        if (left > 0) {
+          block.append(literal(make(factory, 'p', WIZARD_ANSWER_CLASS), WIZARD_HAND_OFF))
+        }
+        return
+      }
+      if (feed.failure !== null) {
+        // The feed's own `error` line is drawn above, with the stage it stopped at
+        // and the fix; nothing is added here. A failure that reached this branch
+        // with no `error` line in the feed is a shape the contract cannot produce
+        // (`setupFeedAt` sets both together), and drawing nothing twice is what
+        // keeps one failure from being two sentences.
+        return
+      }
+      // No last line and no failure: an interrupted read, drawn as one.
+      block.append(literal(make(factory, 'p', WIZARD_ANSWER_CLASS), STREAM_INTERRUPTED_WORD))
+      const retry = renderRetry<WizardElement>(factory)
+      block.append(retry)
+      retry.addEventListener('click', () => {
+        void send(word, ask)
+      })
+    } finally {
+      literal(busy, '')
+      root.removeAttribute(BUSY_BUSY_ATTRIBUTE)
+      // The attempt is the one whose read this was, so its own mark goes with
+      // the line: a block left marked busy would be a screen reader saying
+      // "busy" about an answer already drawn.
+      block.removeAttribute(BUSY_BUSY_ATTRIBUTE)
+      submit.removeAttribute('disabled')
+      follow.removeAttribute('disabled')
     }
-    if (feed.failure !== null) {
-      // The feed's own `error` line is drawn above, with the stage it stopped at
-      // and the fix; nothing is added here. A failure that reached this branch
-      // with no `error` line in the feed is a shape the contract cannot produce
-      // (`setupFeedAt` sets both together), and drawing nothing twice is what
-      // keeps one failure from being two sentences.
-      return
-    }
-    // No last line and no failure: an interrupted read, drawn as one.
-    block.append(literal(make(factory, 'p', WIZARD_ANSWER_CLASS), STREAM_INTERRUPTED_WORD))
-    const retry = renderRetry<WizardElement>(factory)
-    block.append(retry)
-    retry.addEventListener('click', () => {
-      void send(ask)
-    })
   }
 
   const submit = literal(make(factory, 'button', WIZARD_SUBMIT_CLASS), WIZARD_SUBMIT_LABEL)
@@ -572,7 +627,7 @@ export function drawWizard(deps: WizardDeps): WizardElement {
       return
     }
     say('')
-    void send(() => deps.plan({ answers: assembled.answers }))
+    void send(WIZARD_PLAN_BUSY, () => deps.plan({ answers: assembled.answers }))
   })
   root.append(submit)
 
@@ -584,11 +639,12 @@ export function drawWizard(deps: WizardDeps): WizardElement {
   const follow = literal(make(factory, 'button', WIZARD_FOLLOW_CLASS), WIZARD_FOLLOW_LABEL)
   follow.setAttribute('type', 'button')
   follow.addEventListener('click', () => {
-    void send(() => deps.apply({}))
+    void send(WIZARD_APPLY_BUSY, () => deps.apply({}))
   })
   root.append(followLead)
   root.append(follow)
 
+  root.append(busy)
   root.append(answer)
   root.append(attempts)
   return root

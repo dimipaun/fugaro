@@ -43,7 +43,7 @@ import { describe, expect, it } from 'vitest'
 
 import { everyNode, FakeDocument, textOf } from '../support/fakeDom'
 import type { FakeNode } from '../support/fakeDom'
-import { RETRY_CLASS, RETRY_LABEL } from '../../src/renderer/section'
+import { BUSY_BUSY_ATTRIBUTE, RETRY_CLASS, RETRY_LABEL } from '../../src/renderer/section'
 import { STREAM_INTERRUPTED_WORD } from '../../src/renderer/stream'
 import {
   domSurface,
@@ -56,6 +56,9 @@ import { ONBOARDING_CLASS, ONBOARDING_COMMAND_CLASS, ONBOARDING_TITLE_CLASS } fr
 import { newOpsFrom } from '../../src/renderer/new-bridge'
 import {
   WIZARD_ANSWER_CLASS,
+  WIZARD_APPLY_BUSY,
+  WIZARD_ATTEMPT_CLASS,
+  WIZARD_BUSY_CLASS,
   WIZARD_CLASS,
   WIZARD_COMMANDS_LEAD,
   WIZARD_COPY_CLASS,
@@ -71,6 +74,7 @@ import {
   WIZARD_LEAD_CLASS,
   WIZARD_NO,
   WIZARD_OPTION_CLASS,
+  WIZARD_PLAN_BUSY,
   WIZARD_QUESTION_ATTRIBUTE,
   WIZARD_QUESTION_CLASS,
   WIZARD_QUESTIONS,
@@ -228,6 +232,20 @@ function followOf(root: FakeNode): FakeNode {
   const follow = classed(root, WIZARD_FOLLOW_CLASS)[0]
   if (follow === undefined) throw new Error('the wizard drew no follow control')
   return follow
+}
+
+/** busyOf is the screen's one line naming the press in flight. */
+function busyOf(root: FakeNode): FakeNode {
+  const busy = classed(root, WIZARD_BUSY_CLASS)[0]
+  if (busy === undefined) throw new Error('the wizard drew no busy line')
+  return busy
+}
+
+/** attemptOf is one press's whole block, in the order the presses were made. */
+function attemptOf(root: FakeNode, index = 0): FakeNode {
+  const block = classed(root, WIZARD_ATTEMPT_CLASS)[index]
+  if (block === undefined) throw new Error(`the wizard drew no attempt block at ${index}`)
+  return block
 }
 
 /** flush lets the awaited reads settle: every step of a press is a promise. */
@@ -542,6 +560,107 @@ describe('the setup wizard’s feed', () => {
     expect(calls[1]?.payload).toEqual({})
     expect(answersOf(root).join(' ')).toContain('no setup plan is waiting: nothing is applied')
     expect(kindsOf(root)).toEqual(['done'])
+  })
+})
+
+describe('the wizard’s in-flight state', () => {
+  /** Deferred is one read the case answers by hand: the promise the bridge
+   * returns, and the two ways to settle it. */
+  interface Deferred {
+    readonly answer: Promise<Record<string, unknown>>
+    release(value: Record<string, unknown>): void
+    fail(reason: Error): void
+  }
+
+  /** deferred builds one read the case settles when it chooses. */
+  function deferred(): Deferred {
+    let release: (value: Record<string, unknown>) => void = () => {}
+    let fail: (reason: Error) => void = () => {}
+    const answer = new Promise<Record<string, unknown>>((resolve, reject) => {
+      release = resolve
+      fail = reject
+    })
+    return { answer, release, fail }
+  }
+
+  /** held draws the wizard over a bridge whose two reads answer only when the
+   * case lets them: the frame between the press and its answer is the state
+   * under test, and an answer that lands at once would never draw it. */
+  function held(): {
+    readonly root: FakeNode
+    readonly plan: Deferred
+    readonly apply: Deferred
+  } {
+    const plan = deferred()
+    const apply = deferred()
+    const document = new FakeDocument()
+    const surface = domSurface(document as unknown as Document)
+    const ops = newOpsFrom({
+      planSetup: () => plan.answer,
+      applySetup: () => apply.answer,
+    })
+    const root = surface.nodeOf(
+      drawWizard({
+        factory: surface.factory,
+        plan: (request) => ops.planSetup(request),
+        apply: (request) => ops.applySetup(request),
+        copy: () => {},
+        paint: (step) => step(),
+      }),
+    ) as unknown as FakeNode
+    document.body.appendChild(root)
+    return { root, plan, apply }
+  }
+
+  it('names the press in flight, marks the screen busy and holds the two controls that start one', async () => {
+    const { root, plan } = held()
+    fill(root, ANSWERED)
+    // The line is drawn from the start and empty: the state has one writer and
+    // one place in the tree.
+    expect(busyOf(root).textContent ?? '').toBe('')
+    expect(root.getAttribute(BUSY_BUSY_ATTRIBUTE)).toBeNull()
+    submitOf(root).click()
+    await flush()
+    // Nothing has answered yet, so the press is named, the screen is marked busy
+    // and the two controls that start a read are held: a second press here would
+    // be a second child for one answer, and main's runs for up to an hour.
+    expect(busyOf(root).textContent).toBe(WIZARD_PLAN_BUSY)
+    expect(root.getAttribute(BUSY_BUSY_ATTRIBUTE)).toBe('true')
+    expect(attemptOf(root).getAttribute(BUSY_BUSY_ATTRIBUTE)).toBe('true')
+    expect(submitOf(root).getAttribute('disabled')).toBe('')
+    expect(followOf(root).getAttribute('disabled')).toBe('')
+    // The attempt is drawn empty in the same frame, which is why the busy line
+    // is the screen's: a blank block with no line above it is the endless
+    // spinner the console's rules refuse.
+    expect(attemptOf(root).textContent ?? '').toBe('')
+    plan.release(feedOf(DONE))
+    await flush()
+    // And the answer clears every bit of it: the line, the two marks and the two
+    // held controls.
+    expect(busyOf(root).textContent ?? '').toBe('')
+    expect(root.getAttribute(BUSY_BUSY_ATTRIBUTE)).toBeNull()
+    expect(attemptOf(root).getAttribute(BUSY_BUSY_ATTRIBUTE)).toBeNull()
+    expect(submitOf(root).getAttribute('disabled')).toBeNull()
+    expect(followOf(root).getAttribute('disabled')).toBeNull()
+    expect(answersOf(root)).toEqual([WIZARD_DONE])
+  })
+
+  it('names the follow press in its own words, and clears the state when the read throws', async () => {
+    const { root, apply } = held()
+    fill(root, ANSWERED)
+    followOf(root).click()
+    await flush()
+    expect(busyOf(root).textContent).toBe(WIZARD_APPLY_BUSY)
+    expect(submitOf(root).getAttribute('disabled')).toBe('')
+    expect(followOf(root).getAttribute('disabled')).toBe('')
+    // A bridge that throws is not an answer, and the screen may not be left
+    // marked busy for it: the mark is cleared on every path out of the send.
+    apply.fail(new Error('the bridge is gone'))
+    await flush()
+    expect(busyOf(root).textContent ?? '').toBe('')
+    expect(root.getAttribute(BUSY_BUSY_ATTRIBUTE)).toBeNull()
+    expect(submitOf(root).getAttribute('disabled')).toBeNull()
+    expect(followOf(root).getAttribute('disabled')).toBeNull()
   })
 })
 
