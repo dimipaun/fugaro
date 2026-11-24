@@ -399,7 +399,8 @@ func TestStageClonesWithTheBuildsOwnCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"--mount=type=secret,id=git-credentials,uid=1000,required=false",
+		"--mount=type=secret,id=git-credentials,uid=1000,required=true",
+		credentialGuard,
 		"credential.helper='store --file=/run/secrets/git-credentials'",
 		"case \"$repo\" in 'https://github.com/acme/app') ;;",
 		"clone --quiet --branch \"$BASE_BRANCH\" --single-branch -- \"$REPO_URL\" /work/baked/app-1234abcd",
@@ -482,6 +483,10 @@ func TestStageRefusesAnotherRepositorysURL(t *testing.T) {
 // whether the step ran at all.
 const stageFinalize = "/usr/local/lib/fugaro/finalize-checkout"
 
+// stageCredential is where the BuildKit secret of the generated stage's mount
+// lands in the container, which a test running the stage's shell writes itself.
+const stageCredential = "/run/secrets/git-credentials"
+
 // stageShell is the shell the builder runs for a generated stage: the RUN
 // instruction's own text with the BuildKit flags off the first line and the line
 // continuations joined, which is what the instruction is to /bin/sh. A test
@@ -534,7 +539,14 @@ func TestStageFailsWhenTheResetDoes(t *testing.T) {
 	stub("install", "#!/bin/sh\nexit 0\n")
 	stub("finalize-checkout", "#!/bin/sh\n: > "+finalized+"\n")
 
-	shell := stageShell(t, stage)
+	// The credential the mount carries in a real build: the stage refuses an
+	// empty one before it clones (credentialGuard), so a run of the shell needs
+	// the file the BuildKit secret would have put there.
+	creds := filepath.Join(t.TempDir(), "git-credentials")
+	if err := os.WriteFile(creds, []byte("https://x-access-token:tok3n@github.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	shell := strings.ReplaceAll(stageShell(t, stage), stageCredential, creds)
 	pointed := strings.ReplaceAll(shell, stageFinalize, filepath.Join(bin, "finalize-checkout"))
 	if pointed == shell {
 		t.Fatalf("the stage does not run %s, so this test would observe nothing:\n%s", stageFinalize, stage)
@@ -577,6 +589,79 @@ func TestStageFailsWhenTheResetDoes(t *testing.T) {
 	}
 }
 
+// TestStageRefusesACredentialThatIsNotThere: the mount is required, so a build
+// that hands the stage no secret fails at the mount; a build that hands it an
+// empty one — the state a catalog build was in while the entry's build step was
+// handed no credential and the clone step removed the file — has to fail the
+// same way and say which credential is missing. What it must never do is clone
+// with nothing and answer `could not read Username for 'https://github.com'`,
+// which names neither the credential nor the build that owed it.
+func TestStageRefusesACredentialThatIsNotThere(t *testing.T) {
+	p := Decide(reqApp())
+	stage, err := Stage(p.Baked[len(p.Baked)-1], p.Baked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	for name, body := range map[string]string{
+		"git":     "#!/bin/sh\nexit 0\n",
+		"install": "#!/bin/sh\nexit 0\n",
+		// The base image's own last step, which is on no test's PATH at the
+		// absolute path the definition spells.
+		"finalize-checkout": "#!/bin/sh\nexit 0\n",
+	} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	shell := strings.ReplaceAll(stageShell(t, stage), stageFinalize, filepath.Join(bin, "finalize-checkout"))
+	run := func(t *testing.T, creds string) (string, error) {
+		t.Helper()
+		pointed := strings.ReplaceAll(shell, stageCredential, creds)
+		if pointed == shell {
+			t.Fatalf("the stage names no credential at %s:\n%s", stageCredential, stage)
+		}
+		cmd := exec.Command("sh", "-c", pointed)
+		cmd.Dir = t.TempDir()
+		cmd.Env = []string{
+			"PATH=" + bin + ":" + os.Getenv("PATH"),
+			"HOME=" + t.TempDir(),
+			"REPO_URL=https://github.com/acme/app.git",
+			"BASE_BRANCH=main",
+			"FUGARO_COMMIT=",
+		}
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	empty := filepath.Join(t.TempDir(), "git-credentials")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, creds := range map[string]string{
+		"a mount that arrived empty":        filepath.Join(t.TempDir(), "git-credentials"),
+		"a credential file with no content": empty,
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, err := run(t, creds)
+			if err == nil {
+				t.Fatalf("the stage cloned with %s:\n%s", name, out)
+			}
+			if !strings.Contains(out, "the git credential is missing or empty") {
+				t.Errorf("the stage does not name the credential it refused to clone without:\n%s", out)
+			}
+		})
+	}
+	// The control: the same stage with a credential that holds something runs,
+	// so what fails above is the credential and not the stubs.
+	creds := filepath.Join(t.TempDir(), "git-credentials")
+	if err := os.WriteFile(creds, []byte("https://x-access-token:tok3n@github.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(t, creds); err != nil {
+		t.Fatalf("the stage failed with a credential the build wrote: %v\n%s", err, out)
+	}
+}
+
 // TestOtherStageSpellsTheURLAndBranch: the stage of one of the entry's other
 // repositories carries that repository's URL and branch in the definition
 // itself, because the arguments a catalog build passes name the repository the
@@ -592,7 +677,8 @@ func TestOtherStageSpellsTheURLAndBranch(t *testing.T) {
 	for _, want := range []string{
 		markerPrefix + "/work/baked/web-2222bbbb\n",
 		"# acme/web, one of the repositories",
-		"--mount=type=secret,id=git-credentials,uid=1000,required=false",
+		"--mount=type=secret,id=git-credentials,uid=1000,required=true",
+		credentialGuard,
 		"clone --quiet --branch 'main' --single-branch -- 'https://github.com/acme/web.git' /work/baked/web-2222bbbb",
 		submoduleGuard("/work/baked/web-2222bbbb", covered),
 		"/usr/local/lib/fugaro/finalize-checkout /work/baked/web-2222bbbb",

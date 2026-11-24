@@ -27,9 +27,12 @@
 // --entry`). It is what makes a second repository's checkout bakeable at all,
 // and it is F19's single point of compromise: the clone runs in a build step
 // Fugaro generates entirely, whose Dockerfile the entry cannot alter, so no
-// entry RUN can read the credential (B8 — the stages this package composes into
-// the entry's own definition carry the credential until B8 moves the clone out
-// of it).
+// entry RUN can read the credential (B8). A stage this package composes into the
+// entry's own definition does mount the credential — it is the one step of the
+// entry's build that clones — and the build hands it to that step for exactly
+// the definitions that bake one (gcp.CatalogBuildSpec.Baked): an entry that
+// bakes nothing is built with no secret and no volume at all, and an entry that
+// mounts the credential itself is refused by name (B9, D2311).
 //
 // What that leaves is F23: a job whose image carries several checkouts can read
 // the others' source, which is the exposure F18 named. Its answer is not a
@@ -415,6 +418,18 @@ func Path(slug string) (string, error) {
 	return Root + "/" + slug, nil
 }
 
+// credentialGuard is what every generated stage runs before it clones: the
+// credential the catalog build hands the entry's build step
+// (gcp.CatalogBuildSpec.Baked) has to be there and hold something. The mount is
+// required, so a build that hands the stage no secret at all fails at the mount,
+// naming it; this is the same refusal for the file a build wrote nothing into,
+// which is the state the failure this guard answers was in — a mount that
+// arrived empty and a git that answered `could not read Username for
+// 'https://github.com'`, a sentence naming neither the credential nor the build
+// that owed it.
+const credentialGuard = " && { [ -s /run/secrets/git-credentials ] \\\n" +
+	"      || { echo \"the git credential is missing or empty: a definition that bakes is built with the credential the catalog build hands its build step\" >&2; exit 1; }; } \\\n"
+
 // Stage is the Dockerfile stage a build appends to bake r: the marker, the
 // three build arguments the catalog build already passes, and one RUN that
 // clones, pins the commit, and hands the checkout to the rest of the image
@@ -463,8 +478,9 @@ func Stage(r Repo, covered []Repo) (string, error) {
 	b.WriteString("# the repository this build runs for, at the commit the build recorded, for that repository's\n")
 	b.WriteString("# own jobs. The entry's other repositories are baked by the stages beside this one.\n")
 	b.WriteString("ARG REPO_URL\nARG BASE_BRANCH\nARG FUGARO_COMMIT=\"\"\n")
-	fmt.Fprintf(&b, "RUN --mount=type=secret,id=git-credentials,uid=1000,required=false \\\n"+
+	fmt.Fprintf(&b, "RUN --mount=type=secret,id=git-credentials,uid=1000,required=true \\\n"+
 		"    case \"$FUGARO_COMMIT\" in *[!0-9a-f]*) echo \"FUGARO_COMMIT is not a commit ID\" >&2; exit 1 ;; esac \\\n"+
+		credentialGuard+
 		" && %s \\\n"+
 		" && install -d -m 0755 %s \\\n"+
 		" && GIT_TERMINAL_PROMPT=0 git -c credential.helper= \\\n"+
@@ -523,8 +539,9 @@ func OtherStage(r Repo, covered []Repo) (string, error) {
 	fmt.Fprintf(&b, "# %s, one of the repositories the catalog entry's image serves, at the head of %s when this\n",
 		r.Repo, r.Branch)
 	b.WriteString("# build ran. The repository this build runs for is baked by the last stage of this definition.\n")
-	fmt.Fprintf(&b, "RUN --mount=type=secret,id=git-credentials,uid=1000,required=false \\\n"+
-		"    install -d -m 0755 %s \\\n"+
+	fmt.Fprintf(&b, "RUN --mount=type=secret,id=git-credentials,uid=1000,required=true \\\n"+
+		credentialGuard+
+		" && install -d -m 0755 %s \\\n"+
 		" && GIT_TERMINAL_PROMPT=0 git -c credential.helper= \\\n"+
 		"      -c credential.helper='store --file=/run/secrets/git-credentials' \\\n"+
 		"      clone --quiet --branch '%s' --single-branch -- '%s' %s \\\n"+

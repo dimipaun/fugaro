@@ -566,6 +566,11 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			spec.GitSecretID, spec.GitUser, spec.GitHubAppID = gitID, rs.GitUser, rs.GitHubAppID
 			spec.Base, spec.Image = base, imageRef
 			spec.Definition = gcp.CatalogDefinition{SourceCommit: commit, Generation: gen, SHA256: hex.EncodeToString(sum[:])}
+			// The copy is the definition the build runs, so what it bakes is
+			// read from the copy's own bytes and not from the plan above: a
+			// definition that bakes clones with the credential the build hands
+			// its build step (gcp.CatalogBuildSpec.Baked).
+			_, spec.Baked = imagebake.BakedDir(data)
 			// An entry that names a context carries the identity the copy
 			// staged beside the Dockerfile: the commit both were read at, and
 			// the digest of the tree the build runs on. The two are read back

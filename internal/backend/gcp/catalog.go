@@ -252,6 +252,17 @@ type CatalogBuildSpec struct {
 	Prebuilt string
 	// Definition is the copy the build reads and pins.
 	Definition CatalogDefinition
+	// Baked is whether the copied definition bakes a checkout of its own
+	// repository: imagebake appended a stage to it that clones at
+	// FUGARO_COMMIT and writes the tree the entry's Dockerfile copies from
+	// (imagebake.BakedDir). Such a definition is the one entry whose own
+	// build step mounts the git credential — the bake stage is a RUN of that
+	// definition, and the clone step's checkout cannot stand in for it (B8,
+	// B9, D2311) — so the request keeps the credential and the volume on the
+	// entry's build step and moves the provider revoke there with them
+	// (catalogEntryBuildStep). It is false for every definition the entry's
+	// own text holds, which is every entry that names its own checkout.
+	Baked bool
 	// Context is the directory of the entry's repository the build runs on —
 	// config.Source.Context, the entry's own value — and "" when the entry
 	// names none, which is the shape every entry had before the key existed.
@@ -437,8 +448,10 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 	// the spec is checked, so the variables the request reserves are the ones
 	// that step really carries: the checkout reaches it as an image of the
 	// worker's own instead, and the secret and the volume that held it stay in
-	// the clone step's build (B8, F19).
-	if err := catalogEntryBuildStep(build); err != nil {
+	// the clone step's build (B8, F19) — unless the definition bakes, which is
+	// the one definition whose own build step is the last to read the
+	// credential and keeps both (Baked).
+	if err := catalogEntryBuildStep(build, s); err != nil {
 		return nil, err
 	}
 	if err := s.check(project); err != nil {

@@ -511,7 +511,11 @@ func (t *catalogCheckTarget) submit(ctx context.Context, e config.Entry, r catal
 		GitProvider: r.Provider, RepoURL: r.RepoURL, BaseBranch: r.BaseBranch,
 		GitSecretID: r.GitSecretID, GitUser: r.GitUser, GitHubAppID: r.GitHubAppID,
 		Base: t.base, Image: imageRef,
-		Definition:     gcp.CatalogDefinition{SourceCommit: commit, Generation: ev.definitionGeneration, SHA256: ev.definitionSHA256},
+		Definition: gcp.CatalogDefinition{SourceCommit: commit, Generation: ev.definitionGeneration, SHA256: ev.definitionSHA256},
+		// A definition that bakes clones with the credential the build hands
+		// its build step, and this job is the one that rebuilds it
+		// (gcp.CatalogBuildSpec.Baked).
+		Baked:          ev.baked,
 		ServiceAccount: gcp.BuildIdentityEmail(t.gcpProject), MachineType: t.spec.MachineType,
 		Bucket: "gs://" + t.bucket.GCSName,
 		// The entry's credential step asks the installation's credentials

@@ -276,8 +276,11 @@ gitx -C /out reset --quiet --hard "$COMMIT"
 fetch_tree /out
 `
 
-// catalogCloneRevoke is what the script ends with where the provider can revoke:
-// the credential ends with this step (rule 7).
+// catalogCloneRevoke is what the step that last reads the credential ends with
+// where the provider can revoke: the credential ends with that step (rule 7).
+// Which step that is depends on the definition — the clone step for one that
+// bakes nothing, the entry's own build step for one that bakes a checkout
+// (Baked), which is the last of them to read the file.
 //
 // GitHub's endpoint revokes the token that carries it and needs no other
 // identity, so the token itself is the call: it is read back out of the
@@ -286,12 +289,17 @@ fetch_tree /out
 // shape scripts/live-checks/check190.sh uses for the same reason: the value is
 // never an argument, an environment value or a line of output, and curl reads it
 // from a file and prints nothing of it. A revoke that fails does not fail the
-// clone: the token expires inside the build's timeout either way, which is where
+// build: the token expires inside the build's timeout either way, which is where
 // a Bitbucket build starts — it is answered a proxy grant and no token at all
 // (R6), so this is not appended for one.
+//
+// The token it cannot read back is said and not passed over: an empty read is a
+// credential file this step cannot see (a git that is not on the worker, a file
+// a step removed) and a build whose token is then left to expire, which is a
+// thing an operator reading the log has to be able to see.
 const catalogCloneRevoke = `
 tok=$(printf 'protocol=https\nhost=%s\n\n' "$REPO_HOST" | git credential-store --file="$CRED" get | sed -n 's/^password=//p') || tok=
-[ -n "$tok" ] || exit 0
+[ -n "$tok" ] || { echo "the installation token could not be read back for revocation; it expires inside this build's timeout" >&2; exit 0; }
 conf=$(mktemp)
 (umask 077 && printf 'header = "Authorization: Bearer %s"\n' "$tok" > "$conf")
 curl --silent --show-error --fail --request DELETE \
@@ -304,9 +312,12 @@ rm -f "$conf"
 `
 
 // catalogTemplateCredentialArg is the git credential the derived template's
-// build step hands the Dockerfile it builds, and the one thing a catalog build
-// must not pass it: the entry's own RUN steps may ask for that secret by id
-// (F19, review round 2), so the credential reaches the clone step's build and no
+// build step hands the Dockerfile it builds. A catalog build keeps it for an
+// entry whose definition bakes a checkout — the bake stage is a RUN of that
+// definition and clones with this credential, which no other step can hand it
+// (Baked) — and takes it out for every other one: the entry's own RUN steps may
+// ask for that secret by id (F19, review round 2), so where nothing in the
+// definition mounts it the credential reaches the clone step's build and no
 // build of the entry's own.
 const catalogTemplateCredentialArg = `--secret "id=git-credentials,src=` + catalogCloneCredential + `"`
 
@@ -350,7 +361,7 @@ func catalogCloneStep(s CatalogBuildSpec, buildCwd string) (*cloudbuild.BuildSte
 		return nil, fmt.Errorf("the repository URL %s does not parse", RedactURL(s.RepoURL))
 	}
 	script := catalogCloneScriptText
-	if s.GitProvider == gitprov.KindGitHub {
+	if s.GitProvider == gitprov.KindGitHub && !s.Baked {
 		script += catalogCloneRevoke
 	}
 	env := []string{
@@ -369,7 +380,7 @@ func catalogCloneStep(s CatalogBuildSpec, buildCwd string) (*cloudbuild.BuildSte
 		Name:       "gcr.io/cloud-builders/docker",
 		Entrypoint: "bash",
 		Env:        env,
-		Args:       []string{"-c", cloudBuildEscape(catalogCloneStepScript(script, s.Context != ""))},
+		Args:       []string{"-c", cloudBuildEscape(catalogCloneStepScript(script, s.Context != "", s.Baked))},
 		Volumes:    []*cloudbuild.Volume{{Name: "fugaro-creds", Path: "/creds"}},
 	}, nil
 }
@@ -394,7 +405,11 @@ func (s CatalogBuildSpec) cloneCommit() string {
 // The credential file is removed however this step ends, the build failing and
 // the guard refusing included — an exit trap, the shape the template's own build
 // step uses for the same file. The step is the last that mounts the volume it
-// lives in, and the entry's build step no longer mounts it at all.
+// lives in, and for an entry whose build mounts no secret the entry's build step
+// no longer mounts it at all. A definition that bakes is the exception
+// (keepCredential): its own build step mounts the file and is the last to read
+// it, so the file has to outlive this step, and the template's build step
+// removes it at its own exit instead.
 //
 // The generated Dockerfile is built twice, and the two builds differ in their
 // last flag alone: once tagged catalogCloneImage, which is the image the entry's
@@ -403,10 +418,12 @@ func (s CatalogBuildSpec) cloneCommit() string {
 // by. The second build is the first one's own cache — the same Dockerfile at the
 // same arguments — so the clone itself runs once, and what the export writes is
 // the tree the scratch stage carries out and nothing else.
-func catalogCloneStepScript(script string, context bool) string {
+func catalogCloneStepScript(script string, context, keepCredential bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "set -eu\nexport LC_ALL=C\ninstall -d -m 0700 %s\n", catalogCloneWork)
-	fmt.Fprintf(&b, "trap 'rm -f %s' EXIT\n", catalogCloneCredential)
+	if !keepCredential {
+		fmt.Fprintf(&b, "trap 'rm -f %s' EXIT\n", catalogCloneCredential)
+	}
 	fmt.Fprintf(&b, "cat > %s <<'FUGARO_DOCKERFILE'\n%sFUGARO_DOCKERFILE\n", catalogCloneDockerfile, catalogCloneDockerfileText)
 	fmt.Fprintf(&b, "cat > %s <<'FUGARO_SCRIPT'\n%sFUGARO_SCRIPT\n", catalogCloneScript, script)
 	b.WriteString(`base=$(docker image inspect --format '{{index .RepoDigests 0}}' "$FUGARO_BASE") \
@@ -454,9 +471,19 @@ esac
 // catalogEntryBuildStep makes the entry's own build step the one a catalog build
 // runs: the checkout the clone step tagged reaches it as the image
 // catalogCloneImage, which the worker holds by the time this step runs and no
-// flag of this step names, and the git credential the derived template hands its
-// build step is not in this request's build step at all — nor is the volume that
-// holds it, which no step after the clone mounts.
+// flag of this step names. The git credential the derived template hands its
+// build step is taken out of the request — with the volume that holds it, which
+// no step after the clone mounts — for every definition whose own text mounts no
+// secret (B9, D2311).
+//
+// A definition that bakes keeps both (Baked): the bake stage this package
+// appends is a RUN of that definition and clones the entry's repository itself,
+// with the secret mount this same argument satisfies, and the clone step's own
+// checkout cannot stand in for it — the stage clones at the definition's
+// FUGARO_COMMIT into the path the entry's Dockerfile copies from, and the
+// marker, the guards and the submodules are that stage's own text. It is the
+// last step of the build to read the credential, so the revoke moves here with
+// the file (catalogCloneRevoke), and the template's own exit trap removes it.
 //
 // Only the credential is taken out here, and no other secret is left to take
 // out: the repository's workflow secrets, declared in its fugaro.yaml, reached a
@@ -465,17 +492,34 @@ esac
 // refuses an entry whose own bytes ask for a secret when it reads them. A
 // dependency behind a private registry is served by an `--image` entry instead,
 // which the catalog runs and never builds.
-func catalogEntryBuildStep(build *cloudbuild.BuildStep) error {
+func catalogEntryBuildStep(build *cloudbuild.BuildStep, s CatalogBuildSpec) error {
 	for i, arg := range build.Args {
 		if !strings.Contains(arg, catalogTemplateCredentialArg) {
 			continue
 		}
-		script, err := dropCredentialLine(arg)
-		if err != nil {
-			return err
+		if !s.Baked {
+			script, err := dropCredentialLine(arg)
+			if err != nil {
+				return err
+			}
+			build.Args[i] = script
+			build.Volumes = nil
+			return nil
 		}
-		build.Args[i] = script
-		build.Volumes = nil
+		revoke := ""
+		if s.GitProvider == gitprov.KindGitHub {
+			u, err := url.Parse(s.RepoURL)
+			if err != nil || u.Host == "" {
+				return fmt.Errorf("the repository URL %s does not parse", RedactURL(s.RepoURL))
+			}
+			build.Env = append(build.Env,
+				"CRED="+catalogCloneCredential,
+				"REPO_HOST="+u.Host,
+				"GITHUB_API="+github.DefaultBaseURL,
+			)
+			revoke = cloudBuildEscape(catalogCloneRevoke)
+		}
+		build.Args[i] = arg + revoke
 		return nil
 	}
 	return errTemplateCredentialMoved
