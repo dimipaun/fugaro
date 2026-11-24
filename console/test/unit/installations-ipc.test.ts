@@ -512,11 +512,13 @@ describe('the picker’s Add project row', () => {
   it('hands the request to the entry point and spawns no child', async () => {
     const asked: string[] = []
     const logged: unknown[] = []
-    // **No `fugaro` anywhere**: the machine has no CLI in the searched
-    // directories at all, which is the strongest form of "it spawns nothing" --
-    // a row that ran anything would have to answer a discovery failure.
+    // **The machine has a `fugaro`**, and the same log writer records the child
+    // the picker's own list spawns. That is what makes the empty log below a
+    // fact about the door: with no discoverable binary (or no live writer) the
+    // assertion would hold for a row that spawned anything at all.
+    const stub = listableStub()
     const { ipcMain } = pickerOver({
-      prefixes: [],
+      prefixes: [stub.directory],
       onAddProject: () => asked.push('asked'),
       spawnLog: {
         enabled: true,
@@ -527,6 +529,13 @@ describe('the picker’s Add project row', () => {
         close: () => undefined,
       },
     })
+    expect(await answer(ipcMain, 'list')).toMatchObject({ ok: true })
+    expect(
+      logged.length,
+      'the fixture recorded no spawn, so nothing here proves the door spawns nothing',
+    ).toBeGreaterThan(0)
+    logged.length = 0
+
     expect(await answer(ipcMain, 'addProject')).toEqual({ ok: true, data: null })
     expect(asked).toEqual(['asked'])
     expect(logged).toEqual([])
