@@ -19,6 +19,10 @@ import (
 
 // unembeddedSpec is a task that carries no recipe at all: the shape a launch
 // before B16 wrote, whose name then comes from agent.recipe or from default.
+//
+// The tests below store it AFTER the harness is built (setSpec), because
+// newHarnessFiles fills a task with no recipe of its own with the one the
+// fixture commits — the shape those tests need is the one it must not fill.
 func unembeddedSpec() *task.Spec {
 	return &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature"}
 }
@@ -103,8 +107,9 @@ func TestRepoSourcedTaskIsRefused(t *testing.T) {
 // — nothing at the ref contradicts it.
 func TestUnembeddedTaskWithTheFileStillThereIsRefused(t *testing.T) {
 	t.Run("a first run whose ref holds the file", func(t *testing.T) {
-		h := newHarnessFiles(t, firstLineCfg(t, 2, "  recipe: two-rounds\n"), unembeddedSpec(),
+		h := newHarnessFiles(t, firstLineCfg(t, 2, "  recipe: two-rounds\n"), nil,
 			map[string]string{".fugaro/recipes/two-rounds.yaml": twoRounds})
+		h.setSpec(t, unembeddedSpec())
 		rec, err := h.run(t, implement("feature"))
 		if err == nil || rec.Status != runstore.StatusInfraError || rec.FailureClass != failure.ConfigInvalid {
 			t.Fatalf("rec = %+v, err = %v, want a config_invalid infra_error", rec, err)
@@ -137,7 +142,8 @@ func TestUnembeddedTaskWithTheFileStillThereIsRefused(t *testing.T) {
 	})
 
 	t.Run("a ref whose folder is gone, for a catalog name", func(t *testing.T) {
-		h := newHarnessFiles(t, firstLineCfg(t, 2, "  recipe: solo\n"), unembeddedSpec(), nil)
+		h := newHarnessFiles(t, firstLineCfg(t, 2, "  recipe: solo\n"), nil, nil)
+		h.setSpec(t, unembeddedSpec())
 		rec, err := h.run(t, implement("feature"), review("ship", 0))
 		if err != nil {
 			t.Fatal(err)
