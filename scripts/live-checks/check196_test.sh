@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Tests for scripts/live-checks/check196.sh, with fake `gcloud` and `fugaro` on
 # PATH: NOTHING here reaches a cloud, a project or the network. The fake gcloud
-# answers the four reads the check makes — the project's recent builds, the
-# installation's Cloud Run jobs and one execution, the service's own log lines
-# and the service's own IAM policy — out of a small project built from the mode
-# it is given, and it records every argument it is handed, so the tests can
-# assert that the check asked for the sandbox installation's project and nothing
-# else, that a row it could not measure is never read as a pass, and that
-# nothing secret-shaped ever reaches the block.
+# answers the reads the check makes — the INSTALLATION'S REGION'S recent builds
+# (a global `builds list` returns nothing, so a check that dropped --region
+# measures no build at all), the installation's Cloud Run jobs and one execution,
+# the service's own log lines and the service's own IAM policy — out of a small
+# project built from the mode it is given, and the fake fugaro answers the
+# published policy node the check reads for its image_map. Both record every
+# argument they are handed, so the tests can assert that the check asked for the
+# sandbox installation's project and nothing else, that a repository's builds are
+# the ones the catalog entry its image_map names gives, that a row it could not
+# measure is never read as a pass, and that nothing secret-shaped ever reaches
+# the block.
 #
 # Usage: bash scripts/live-checks/check196_test.sh
 set -euo pipefail
@@ -73,6 +77,29 @@ doctor)
   *) echo "project: fugaro (GCP fugaro-dev, us-east5)" ;;
   esac
   ;;
+project)
+  # `fugaro project policy show --json --project <name>`: the published policy
+  # node, which the check reads for its image_map (D1906) — the map's PUBLISHED
+  # half, since this machine's project config wins where it states one. The
+  # scenario is FAKE_FUGARO_MODE, so a test can pair a published map with the
+  # builds the gcloud fake serves; the default map is the one the default
+  # project's builds carry, because a map naming an entry no build carries
+  # describes a project that cannot exist.
+  case "$*" in
+  *"policy show"*) ;;
+  *) exit 1 ;;
+  esac
+  case "${FAKE_FUGARO_MODE:-ok}" in
+  map-unreadable)
+    echo "error: the published policy could not be read (no such object)" >&2
+    exit 1
+    ;;
+  map-no-repo) printf '{"policy":{"image_map":{"acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
+  map-empty) printf '{"policy":{}}\n' ;;
+  map-source-elsewhere) printf '{"policy":{"image_map":{"acme/sandbox":"shared-web","acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
+  *) printf '{"policy":{"image_map":{"acme/sandbox":"sandbox-web","acme/bb-sandbox":"sandbox-bb"}}}\n' ;;
+  esac
+  ;;
 *) exit 1 ;;
 esac
 FUGARO_EOF
@@ -133,7 +160,7 @@ def flag(name, default=""):
 # subcommand this check calls is listed with the flags it may pass, so a
 # misspelled or invented flag cannot hide in any call.
 ALLOWED = {
-    ("builds", "list"): ("--project", "--limit", "--format"),
+    ("builds", "list"): ("--project", "--region", "--limit", "--format"),
     ("run", "jobs", "list"): ("--project", "--region", "--format"),
     ("run", "jobs", "executions", "list"): ("--project", "--region", "--job", "--limit", "--format"),
     ("logging", "read"): ("--project", "--freshness", "--limit", "--format"),
@@ -196,7 +223,21 @@ def build(repo, provider):
     service). No `_SLUG`, no `_WORKFLOW`, no `_SECRET_ENVS` -- a catalog request
     carries none of them."""
     entry = CATALOG_ENTRY[provider]
-    subm = {"_REPO_URL": clone_url(repo, provider), "_IMAGE": CATALOG_IMAGE % entry,
+    source_repo, source_provider = repo, provider
+    if mode == "map-source-elsewhere" and provider == "github":
+        # The served repository is a GitHub one and the entry its image_map names
+        # is SOURCED from a Bitbucket repository: the build's own `_REPO_URL` is
+        # that repository's clone URL, so a match on `_REPO_URL` finds nothing
+        # and only the entry the map names can select this build.
+        entry = "shared-web"
+        source_repo, source_provider = BB_REPO, "bitbucket"
+    if mode == "map-local" and provider == "github":
+        # This machine's project config states a map (local-web) and the
+        # published policy node states another (sandbox-web): the build carries
+        # the LOCAL one, so a check that read the published map alone would find
+        # no build at all.
+        entry = "local-web"
+    subm = {"_REPO_URL": clone_url(source_repo, source_provider), "_IMAGE": CATALOG_IMAGE % entry,
             "_CATALOG_TAG": "9f2c" + provider, "_WORKFLOW": "", "_SECRET_ENVS": "",
             "_CREDENTIALS_SERVICE_URL": ""}
     b = {"id": "b-" + repo.split("/")[-1], "status": "SUCCESS",
@@ -327,7 +368,14 @@ def service_policy():
 if sub == ("builds", "list"):
     if mode == "builds-list-fails":
         die("cloudbuild.builds.list was refused: the session has expired")
-    emit(builds())
+    if REGION != "us-east5":
+        # The builds this check reads are the INSTALLATION'S REGION'S, and a
+        # listing with no --region reads the GLOBAL region, which holds none of
+        # them: the defect of 2026-11-24, and the reason every row of every test
+        # below fails the moment the check drops --region.
+        emit([])
+    else:
+        emit(builds())
 elif sub == ("run", "jobs", "list"):
     if mode == "jobs-list-fails":
         die("run.jobs.list was refused: the session has expired")
@@ -407,6 +455,23 @@ prepare() { # dir
   write_fake_gcloud "$1"
 }
 
+# write_local_project_config DIR — this machine's own project config for the
+# installation, whose `image_map` block is the map's LOCAL half and wins over the
+# published node's where it states one (localcfg's ImageMapEffective, D1906). The
+# path is the one localcfg's selector reads, under the HOME the harness gives the
+# check. Its map DISAGREES with the fake fugaro's published one on purpose, so a
+# check that read the published map alone would find no build at all.
+write_local_project_config() { # dir
+  mkdir -p "$1/home/.config/fugaro/projects"
+  cat >"$1/home/.config/fugaro/projects/fugaro.yaml" <<'CFG_EOF'
+project: fugaro
+gcp_project: fugaro-dev
+image_map:
+  acme/sandbox: local-web
+  acme/bb-sandbox: sandbox-bb
+CFG_EOF
+}
+
 # --------------------------------------------------------------- the tests
 # --dry-run is the mode the checklist has the owner try FIRST, on a machine that
 # may have no credentials at all: it must print the plan and call NOTHING.
@@ -476,8 +541,9 @@ test_a_project_with_no_build_at_all() {
   expect_contains "$out" "FACT build-github: FAIL — no CATALOG-ENTRY build of acme/sandbox" "no builds: the row"
   expect_contains "$out" "FACT mounts-github: FAIL" "no builds: the mount row is not a pass"
   # The remedy names a command that works: 'fugaro image refresh' is refused
-  # (repo-level images are disabled), so the row must not send the owner there.
-  expect_contains "$out" "fugaro image build <entry>" "no builds: the remedy"
+  # (repo-level images are disabled), so the row must not send the owner there,
+  # and it names the entry the repository's image_map gives.
+  expect_contains "$out" "fugaro image build sandbox-web" "no builds: the remedy"
   expect_absent "$out" "Submit one with 'fugaro image refresh'" "no builds: the refused command is not the remedy"
   # The daily check is found by the repository itself, so it is measured too.
   expect_contains "$out" "FACT check-github: PASS" "no builds: the daily check"
@@ -494,7 +560,92 @@ test_a_project_whose_builds_are_derived_only() {
   expect_status "$status" 2 "derived only: the verdict"
   expect_contains "$out" "FACT build-github: FAIL — no CATALOG-ENTRY build of acme/sandbox" "derived only: the row"
   expect_contains "$out" "FACT service: PASS" "derived only: the service is still measured"
-  expect_contains "$out" "fugaro image build <entry>" "derived only: the remedy"
+  expect_contains "$out" "fugaro image build sandbox-web" "derived only: the remedy names the entry the map gives"
+}
+
+# A repository's builds are the newest whose `_IMAGE` names the CATALOG ENTRY its
+# image_map gives, and the build's own `_REPO_URL` is the ENTRY's source
+# repository — not the served repository when one entry serves several. Here a
+# GitHub repository is mapped to an entry sourced from a BITBUCKET repository:
+# only the map can select this build, and the row names the source repository it
+# was baked from.
+test_a_build_is_found_through_the_map_when_the_source_repository_differs() {
+  local dir=$work/mapsource
+  prepare "$dir"
+  run_env=(FAKE_FUGARO_MODE=map-source-elsewhere)
+  run196 "$dir" map-source-elsewhere
+  expect_status "$status" 0 "map source: the verdict"
+  expect_contains "$out" "FACT build-github: PASS" "map source: the row"
+  expect_contains "$out" "CATALOG ENTRY shared-web" "map source: the entry the map names"
+  expect_contains "$out" "found by the catalog entry shared-web its image_map names" "map source: how it was found"
+  expect_contains "$out" "bitbucket.org/acme/bb-sandbox.git" "map source: the entry's source repository"
+  expect_absent "$out" "FAIL" "map source: no row failed"
+}
+
+# A repository the map does not mention keeps the `_REPO_URL` match this check
+# read before the map existed, and the row says that is how it was found.
+test_a_repository_the_map_does_not_name_keeps_the_repourl_match() {
+  local dir=$work/mapnorepo
+  prepare "$dir"
+  run_env=(FAKE_FUGARO_MODE=map-no-repo)
+  run196 "$dir" ok
+  expect_status "$status" 0 "not in the map: the verdict"
+  expect_contains "$out" "FACT build-github: PASS" "not in the map: the row"
+  expect_contains "$out" "found by the builds whose _REPO_URL is its own clone URL" "not in the map: how it was found"
+  expect_contains "$out" "does not name an entry for acme/sandbox" "not in the map: the reason"
+  expect_contains "$out" "FACT build-bitbucket: PASS" "not in the map: the mapped repository"
+}
+
+# And a repository the map does not name AND that has no build: the remedy is the
+# two commands that map it and build the entry, never an entry the project never
+# chose.
+test_a_repository_the_map_does_not_name_and_has_no_build_says_how_to_map_it() {
+  local dir=$work/mapnoreponobuild
+  prepare "$dir"
+  run_env=(FAKE_FUGARO_MODE=map-no-repo)
+  run196 "$dir" no-gh-build
+  expect_status "$status" 2 "not in the map, no build: the verdict"
+  expect_contains "$out" "FACT build-github: FAIL — no CATALOG-ENTRY build of acme/sandbox" "not in the map, no build: the row"
+  expect_contains "$out" "fugaro image map set acme/sandbox <entry>" "not in the map, no build: the remedy maps it first"
+  expect_contains "$out" "fugaro image build <entry>" "not in the map, no build: the remedy builds the entry"
+}
+
+# The local project config's image_map is the map's LOCAL half and wins over the
+# published node's where it states one (localcfg's ImageMapEffective, D1906): the
+# two disagree here and the build carries the local answer, so a check that read
+# the published map alone would find no build at all.
+test_the_local_project_configs_map_wins_over_the_published_one() {
+  local dir=$work/maplocal
+  prepare "$dir"
+  write_local_project_config "$dir"
+  run196 "$dir" map-local
+  expect_status "$status" 0 "local map: the verdict"
+  expect_contains "$out" "FACT build-github: PASS" "local map: the row"
+  expect_contains "$out" "CATALOG ENTRY local-web" "local map: the entry the local config names"
+}
+
+# A published policy that cannot be read is not a failure of this check: the
+# local half answers alone, a repository it does not name keeps the `_REPO_URL`
+# match, and the row names the read that failed rather than hiding it.
+test_a_published_map_that_cannot_be_read_still_measures_the_builds() {
+  local dir=$work/mapunreadable
+  prepare "$dir"
+  run_env=(FAKE_FUGARO_MODE=map-unreadable)
+  run196 "$dir" ok
+  expect_status "$status" 0 "unreadable map: the verdict"
+  expect_contains "$out" "FACT build-github: PASS" "unreadable map: the row"
+  expect_contains "$out" "fugaro project policy show --json failed with" "unreadable map: the read that failed is named"
+}
+
+# And the builds are read from the INSTALLATION'S REGION: the fake answers a
+# global `builds list` with nothing, so a check that dropped --region would
+# measure no build at all — every build row of every test above would fail.
+test_the_builds_list_names_the_installation_region() {
+  local dir=$work/region
+  prepare "$dir"
+  run196 "$dir" ok
+  expect_status "$status" 0 "region: the verdict"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "builds list --project=fugaro-dev --region=us-east5" "region: the listing names the installation's region"
 }
 
 test_a_service_that_cannot_be_read_is_unmeasured() {
@@ -692,12 +843,19 @@ test_a_refusal_line_is_reported_redacted() {
   expect_contains "$out" "<redacted>" "refusal: it is redacted instead"
 }
 
-test_a_missing_check_job_is_unmeasured() {
+# A repository the installation deploys no check job for is not a failure: a
+# repository-level image check is disabled with the repository-level images
+# (D1900, internal/infra's IS2), so the installation emits none for a repository
+# that has none, and the row reads that shape as INFO rather than as a row that
+# could not be measured — the same absence the flip mode's noaccessor row reads.
+test_a_missing_check_job_reads_info() {
   local dir=$work/nojob
   prepare "$dir"
   run196 "$dir" no-check-job
-  expect_status "$status" 2 "no check job: the verdict"
-  expect_contains "$out" "FACT check-github: FAIL — this installation deploys no daily check job" "no check job: the row"
+  expect_status "$status" 0 "no check job: the verdict"
+  expect_contains "$out" "FACT check-github: INFO" "no check job: the row"
+  expect_contains "$out" "D1900" "no check job: the ruling the row reads"
+  expect_absent "$out" "FACT check-github: FAIL" "no check job: not a failure"
   expect_contains "$out" "FACT check-bitbucket: PASS" "no check job: the other repository"
 }
 
@@ -915,6 +1073,12 @@ t test_dry_run
 t test_happy_path
 t test_a_project_with_no_build_at_all
 t test_a_project_whose_builds_are_derived_only
+t test_a_build_is_found_through_the_map_when_the_source_repository_differs
+t test_a_repository_the_map_does_not_name_keeps_the_repourl_match
+t test_a_repository_the_map_does_not_name_and_has_no_build_says_how_to_map_it
+t test_the_local_project_configs_map_wins_over_the_published_one
+t test_a_published_map_that_cannot_be_read_still_measures_the_builds
+t test_the_builds_list_names_the_installation_region
 t test_a_service_that_cannot_be_read_is_unmeasured
 t test_a_service_with_no_url_is_a_failure
 t test_the_check_job_is_found_by_its_label
@@ -934,7 +1098,7 @@ t test_a_catalog_build_with_no_service_line_reads_info
 t test_an_audit_line_for_another_caller_is_a_failure
 t test_the_other_providers_credential_is_a_failure
 t test_a_refusal_line_is_reported_redacted
-t test_a_missing_check_job_is_unmeasured
+t test_a_missing_check_job_reads_info
 t test_a_check_job_that_holds_no_credential_is_a_failure
 t test_a_check_job_that_already_names_the_service_reads_info
 t test_a_check_job_that_mounts_beside_the_address_is_a_failure
