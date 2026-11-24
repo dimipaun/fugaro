@@ -111,14 +111,17 @@ func TestAModeArtifactLaunchRefusesWhenTheRecipeCannotBeRead(t *testing.T) {
 	// A stale cache entry of this project's bucket, as a successful read two
 	// days ago would have left: the entry is too old to answer on its own
 	// (decision D9), so a readable bucket would be read strictly — and this
-	// env's bucket is down, so the entry stands in with a note.
+	// env's bucket is down, so the entry stands in with a note. It is the
+	// repository's own copy that is cached, because that is the name a launch of
+	// acme/app reads first (recipe.LookupOrder).
+	copied := recipe.CopyName("sizzle", "github", "acme/app")
 	stale := localcfg.SharedCacheEntry{GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234",
-		CheckedAt: time.Now().Add(-48 * time.Hour), YAML: projectSizzle}
-	if err := localcfg.SaveRecipeCache(os.Getenv, "aurora", "sizzle", stale); err != nil {
+		CheckedAt: time.Now().Add(-48 * time.Hour), YAML: strings.Replace(projectSizzle, "name: sizzle", "name: "+copied, 1)}
+	if err := localcfg.SaveRecipeCache(os.Getenv, "aurora", copied, stale); err != nil {
 		t.Fatal(err)
 	}
 	down := unreachableEnv(t, env)
-	_, _, err := chooseRecipe(ctx, down, "sizzle", noCheckoutConfig, "", io.Discard, false)
+	_, _, err := chooseRecipe(ctx, down, "acme/app", "main", "sizzle", noCheckoutConfig, io.Discard, false)
 	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "cached project recipe sizzle") ||
 		!strings.Contains(err.Error(), "the launch is refused") {
 		t.Fatalf("err = %v", err)
@@ -126,10 +129,10 @@ func TestAModeArtifactLaunchRefusesWhenTheRecipeCannotBeRead(t *testing.T) {
 	// The same resolution with a readable bucket carries no note and launches
 	// with its mode, so the refusal is about the unread recipe and not about
 	// the recipe being mode: artifact.
-	if err := localcfg.DropRecipeCache(os.Getenv, "aurora", "sizzle"); err != nil {
+	if err := localcfg.DropRecipeCache(os.Getenv, "aurora", copied); err != nil {
 		t.Fatal(err)
 	}
-	_, mode, err := chooseRecipe(ctx, env, "sizzle", noCheckoutConfig, "", io.Discard, false)
+	_, mode, err := chooseRecipe(ctx, env, "acme/app", "main", "sizzle", noCheckoutConfig, io.Discard, false)
 	if err != nil || mode != recipe.ModeArtifact {
 		t.Fatalf("mode = %q, err = %v", mode, err)
 	}

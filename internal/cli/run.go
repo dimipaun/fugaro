@@ -3212,7 +3212,7 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	// the plan's own pair, which is one account for all of them.
 	o.account = launchAccount{Name: account, Alias: alias}
 	root := checkoutRoot(ctx, repo)
-	rcp, mode, err := chooseRecipe(ctx, env, o.recipe, checkout, root, warn, forAttempts)
+	rcp, mode, err := chooseRecipe(ctx, env, repo, ref, o.recipe, checkout, warn, forAttempts)
 	if err != nil {
 		return nil, err
 	}
@@ -4615,27 +4615,43 @@ func claudeAccountMembership(env *cloudEnv, repo, name string) error {
 	return nil
 }
 
-// chooseRecipe is the recipe of a new first run: --recipe, else the
-// checkout's agent.recipe, else default, resolved over the checkout at root,
-// the project and the catalog. With no flag and no checkout it resolves
-// default (a project default included), and a catalog default leaves the
-// choice to the runner, which reads agent.recipe at the task's ref.
+// chooseRecipe is the recipe of a new first run: --recipe, else the launch
+// document's agent.recipe, else default, resolved over the project and the
+// catalog (resolveLaunchRecipe). With no flag and no document it resolves
+// default (the repository's own copy of it included), and a catalog default
+// leaves the choice to the runner, which reads agent.recipe at the task's ref.
 // forAttempts gives a mode: review refusal that fits runAttempts's caller
 // (--attempts refuses --pr, so the plain launch's "add --pr" advice would be
 // wrong there).
-func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func() *config.Config, root string, warn io.Writer, forAttempts bool) (*task.Recipe, string, error) {
+//
+// The document is the checkout's, or — for a launch from a machine that holds
+// no checkout of the repository — the ref's own fugaro.yaml, read at the forge
+// by the ordered decision the job and the gates are decided from
+// (launchConfigWhereTheTreeGivesNone, source 3, spec.md §2). It is asked here
+// rather than read a second way so that the recipe, the job and the gates are
+// judged by one file and the launch costs one read (D901, D909): a launch that
+// decision refuses is refused by it, in its own words, and one whose project
+// published no profile is left to the runner, which reads the same key at the
+// ref exactly as it does today.
+func chooseRecipe(ctx context.Context, env *cloudEnv, repo, ref, flag string, checkout func() *config.Config, warn io.Writer, forAttempts bool) (*task.Recipe, string, error) {
 	name, explicit := flag, flag != ""
+	root := checkoutRoot(ctx, repo)
 	var cfg *config.Config
 	if c := checkout(); c != nil {
 		cfg = c
-		if name == "" && c.Agent.Recipe != "" {
-			name, explicit = c.Agent.Recipe, true
+	} else if name == "" && root == "" {
+		if c, err := env.launchConfigWhereTheTreeGivesNone(ctx, &task.Spec{Repo: repo, Ref: ref}); err == nil {
+			cfg = c
 		}
+	}
+	if name == "" && cfg != nil && cfg.Agent.Recipe != "" {
+		name, explicit = cfg.Agent.Recipe, true
 	}
 	if name == "" {
 		name = recipe.DefaultName
 	}
-	rr, err := resolveRecipe(ctx, env, root, name, time.Now(), false)
+	provider := env.repoProvider(repo, cfg)
+	rr, err := resolveLaunchRecipe(ctx, env, provider, repo, name, time.Now())
 	if err != nil {
 		return nil, "", err
 	}
@@ -4648,7 +4664,7 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func
 	// A mode: artifact launch carries its mode in the task, and the runner
 	// selects the run's shape from that field before it resolves the recipe
 	// itself. So the launcher may only write it when it is sure of the
-	// recipe the run will get: resolveRecipe has paths where what it
+	// recipe the run will get: the resolution has paths where what it
 	// returned is NOT that recipe (a project layer this launcher may not
 	// read, a stale cached project recipe standing in for an unreachable
 	// bucket), and on those the mode would stay empty for a recipe that is
@@ -4681,9 +4697,17 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func
 		return nil, "", userErr("recipe %s writes this repository's run reports, and a repository has one report run at a time; --attempts launches a batch of runs at once and cannot use it", rr.Name)
 	}
 	printRecipeNote(warn, rr, explicit)
+	// The leftover folder's removal, the diff validate prints (D3296), offered
+	// on the launch too and to the same channel the other launch notes go to:
+	// nothing is deleted and nothing is asked, and a launch with no checkout
+	// (or none whose store can be read) is offered nothing rather than a line
+	// about a folder that is not there.
+	for _, p := range launchRecipeCleanupLines(ctx, env, provider, repo, root) {
+		io.WriteString(warn, noteLine(p))
+	}
 	// An explicit --recipe default overrides agent.recipe, which applies when
-	// the checkout sets it, or when there is no checkout and the runner reads
-	// it at the ref: then the default is carried in the task.
+	// the launch document sets it, or when there is no document and the runner
+	// reads it at the ref: then the default is carried in the task.
 	override := flag == recipe.DefaultName && (cfg == nil || cfg.Agent.Recipe != "")
 	mode := ""
 	// The two modes whose shape the runner selects from the spec: mode:
@@ -4694,6 +4718,61 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func
 		mode = rr.Recipe.Mode
 	}
 	return rr.taskRecipeEmbedding(override), mode, nil
+}
+
+// resolveLaunchRecipe is the recipe a launch of repository repo runs under
+// name, whichever path named it: --recipe, the launch document's agent.recipe,
+// a follow-up's inherited recipe, or the default fallback. The name resolves
+// where a name resolves now (D3303) — recipe.LookupOrder: this repository's own
+// copy in the project store first, then the name itself — and the catalog after
+// both.
+//
+// The checkout's .fugaro/recipes/ is read on no path (D3237, B16): a
+// repository's recipe lives in the project, the folder is a leftover the launch
+// offers to delete, and the release-A runner refuses a task that leaves its
+// recipe to it. So what this returns is always embedded — the project's copy or
+// the catalog's text — which is what makes no task this launcher writes name a
+// repository recipe (R7).
+func resolveLaunchRecipe(ctx context.Context, env *cloudEnv, provider, repo, name string, now time.Time) (*resolvedRecipe, error) {
+	if !recipe.NameRE.MatchString(name) && !recipe.IsCopyName(name) {
+		return nil, userErr("%q is not a recipe name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit", pluginwire.Printable(name))
+	}
+	for _, n := range recipe.LookupOrder(name, provider, repo) {
+		rr, err := projectRecipeOrCatalog(ctx, env, n, now, false)
+		if err != nil {
+			return nil, err
+		}
+		if rr != nil {
+			return rr, nil
+		}
+	}
+	msg := fmt.Sprintf("recipe %s is not in project %s (fugaro recipes ls) and not in the catalog (%s)",
+		pluginwire.Printable(name), env.lc.Name, strings.Join(recipe.CatalogNames(), ", "))
+	if note := projectRecipesNote(env.lc); note != "" {
+		msg += "; note: " + note
+	}
+	return nil, userErr("%s", msg)
+}
+
+// launchRecipeCleanupLines is recipesCleanupLines for a launch: the lines
+// validate prints for a checkout that still holds .fugaro/recipes/, as the
+// plain sentences noteLine escapes.
+//
+// It reads nothing for a launch with no checkout of the repository (root ==
+// "", where the folder of whatever directory the command runs in is not this
+// repository's), and nothing for an installation whose runs bucket is not the
+// one project recipes live in (projectRecipesNote: the store would be read
+// from a bucket that does not hold it, and every file would be told it has no
+// copy).
+func launchRecipeCleanupLines(ctx context.Context, env *cloudEnv, provider, repo, root string) []string {
+	if root == "" || projectRecipesNote(env.lc) != "" {
+		return nil
+	}
+	var out []string
+	for _, p := range recipesCleanupLines(root, recipesStoreOf(ctx, env, provider, repo, root)) {
+		out = append(out, p.Path+" "+p.Message)
+	}
+	return out
 }
 
 // printRecipeNote prints rr's note when the user chose the recipe by name

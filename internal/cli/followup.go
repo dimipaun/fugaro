@@ -274,7 +274,13 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 		}
 		// The runner chose this run's recipe (agent.recipe at the ref); a
 		// follow-up keeps it, as the runner ignores agent.recipe on follow-ups.
-		if c.Recipe == nil && rec.Recipe != nil && rec.Recipe.Name != recipe.DefaultName && recipe.NameRE.MatchString(rec.Recipe.Name) {
+		// The name is one the run really ran, so it is a recipe name or the
+		// project's own copy of one (a copy name is what a run that ran the
+		// repository's recipe records, R19): a name neither grammar accepts is
+		// not a recipe this run could have run, and carrying it would have the
+		// launch resolve a name no store can hold.
+		if c.Recipe == nil && rec.Recipe != nil && rec.Recipe.Name != recipe.DefaultName &&
+			(recipe.NameRE.MatchString(rec.Recipe.Name) || recipe.IsCopyName(rec.Recipe.Name)) {
 			c.Chosen = rec.Recipe
 		}
 		// A bounded block that recorded hotfix imposes nothing either: hotfix
@@ -902,26 +908,44 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 			pluginwire.Printable(o.token), pluginwire.Printable(task.ShortRun(oneLineCLI(c.Previous.Run))),
 			pluginwire.Printable(cmp.Or(c.OAuthToken, config.DefaultClaudeAccount)), pluginwire.Printable(resolved))
 	}
+	// Every arm but the inherited-YAML one resolves its name the launch's own
+	// way (resolveLaunchRecipe): the repository's own copy in the project store
+	// first, then the name itself, then the catalog. A follow-up and a first run
+	// read the same store now, and neither reads the checkout's
+	// .fugaro/recipes/ (D3237, R7): an inherited repository recipe is embedded
+	// as the project's copy of it, which is what the release-A runner runs.
+	provider := env.repoProvider(repo, checkout())
 	rcp := c.Recipe
 	if o.recipe != "" {
-		rr, err := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), o.recipe, time.Now(), false)
+		rr, err := resolveLaunchRecipe(ctx, env, provider, repo, o.recipe, time.Now())
 		if err != nil {
 			return nil, err
 		}
-		if err := refuseFollowUpReviewMode(rr.Recipe, rr.Name); err != nil {
+		// Refused in the name the person wrote, not in the copy it resolved to:
+		// --recipe NAME is what they typed and what launches the run again.
+		if err := refuseFollowUpReviewMode(rr.Recipe, o.recipe); err != nil {
 			return nil, err
 		}
-		if err := refuseFollowUpArtifactMode(rr.Recipe, rr.Name); err != nil {
+		if err := refuseFollowUpArtifactMode(rr.Recipe, o.recipe); err != nil {
 			return nil, err
 		}
-		if err := refuseFollowUpReportMode(rr.Recipe, rr.Name); err != nil {
+		if err := refuseFollowUpReportMode(rr.Recipe, o.recipe); err != nil {
 			return nil, err
 		}
 		printRecipeNote(warn, rr, true)
 		rcp = rr.taskRecipe()
 	} else if rcp == nil && c.Chosen != nil {
 		var err error
-		if rcp, err = carryChosenRecipe(ctx, env, repo, c, warn); err != nil {
+		if rcp, err = carryChosenRecipe(ctx, env, provider, repo, c, warn); err != nil {
+			return nil, err
+		}
+	} else if rcp == nil {
+		// The default fallback: a follow-up that inherits no recipe at all runs
+		// the default (the runner never applies agent.recipe to one), and the
+		// repository's own copy of it in the project store is that default when
+		// it has one — the catalog's is left out of the task, as before.
+		var err error
+		if rcp, err = inheritDefaultRecipe(ctx, env, provider, repo); err != nil {
 			return nil, err
 		}
 	} else if rcp != nil && rcp.YAML != "" {
@@ -1118,52 +1142,71 @@ func recheckFollowUp(ctx context.Context, env *cloudEnv, slug string, spec *task
 }
 
 // carryChosenRecipe is the recipe a follow-up keeps when the runner chose the
-// previous run's: a repository recipe by name (the runner reads it at the
-// base), any other resolved now and embedded. A repository recipe is refused
-// for the mismatches a follow-up cannot carry (refuseFollowUpRepoRecipe),
-// from this checkout's copy of it; the runner refuses the file it reads at
-// the base when there is none here. A note says what is kept, and that the
-// text changed since when it did.
-func carryChosenRecipe(ctx context.Context, env *cloudEnv, repo string, c *prChain, warn io.Writer) (*task.Recipe, error) {
+// previous run's: resolved now, the way every launch resolves a name (the
+// repository's own copy of it in the project store first, then the name, then
+// the catalog), and embedded. A repository recipe the previous run ran is the
+// copy of it the project holds (D3237, R7) — the folder the runner read it from
+// is not read any more, by this launcher or by the run — and a name nothing
+// holds is refused rather than carried: a task that leaves its recipe to the
+// folder or to a name no store has is refused at bootstrap (D3304), after the
+// run was paid for. The refusals a follow-up cannot carry run on the resolved
+// recipe's own text, and the notes say what is kept and whether it changed.
+func carryChosenRecipe(ctx context.Context, env *cloudEnv, provider, repo string, c *prChain, warn io.Writer) (*task.Recipe, error) {
 	ch := c.Chosen
-	var rcp *task.Recipe
-	changed := false
-	if ch.Source == string(recipe.SourceRepo) {
-		if err := refuseFollowUpRepoRecipe(ctx, repo, ch.Name); err != nil {
-			return nil, err
-		}
-		rcp = &task.Recipe{Name: ch.Name, Source: ch.Source}
-	} else {
-		msg := func(cause error) error {
-			return fmt.Errorf("the recipe run %s ran (%s) cannot be used: %w; pass --recipe NAME to choose another", pluginwire.Printable(task.ShortRun(oneLineCLI(c.Previous.Run))), ch.Name, cause)
-		}
-		wrap := func(err error) error {
-			var ee *ExitError
-			if errors.As(err, &ee) {
-				return &ExitError{Code: ee.Code, Err: msg(ee.Err)}
-			}
-			return msg(err)
-		}
-		rr, err := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), ch.Name, time.Now(), false)
-		if err != nil {
-			return nil, wrap(err)
-		}
-		if err := refuseFollowUpReviewMode(rr.Recipe, rr.Name); err != nil {
-			return nil, wrap(err)
-		}
-		if err := refuseFollowUpArtifactMode(rr.Recipe, rr.Name); err != nil {
-			return nil, wrap(err)
-		}
-		if err := refuseFollowUpReportMode(rr.Recipe, rr.Name); err != nil {
-			return nil, wrap(err)
-		}
-		printRecipeNote(warn, rr, true)
-		rcp = rr.taskRecipe()
-		changed = ch.SHA256 != "" && recipe.Sum(rr.Text) != ch.SHA256
+	msg := func(cause error) error {
+		return fmt.Errorf("the recipe run %s ran (%s) cannot be used: %w; pass --recipe NAME to choose another", pluginwire.Printable(task.ShortRun(oneLineCLI(c.Previous.Run))), ch.Name, cause)
 	}
+	wrap := func(err error) error {
+		var ee *ExitError
+		if errors.As(err, &ee) {
+			return &ExitError{Code: ee.Code, Err: msg(ee.Err)}
+		}
+		return msg(err)
+	}
+	rr, err := resolveLaunchRecipe(ctx, env, provider, repo, ch.Name, time.Now())
+	if err != nil {
+		return nil, wrap(err)
+	}
+	if err := refuseFollowUpReviewMode(rr.Recipe, ch.Name); err != nil {
+		return nil, wrap(err)
+	}
+	if err := refuseFollowUpArtifactMode(rr.Recipe, ch.Name); err != nil {
+		return nil, wrap(err)
+	}
+	if err := refuseFollowUpReportMode(rr.Recipe, ch.Name); err != nil {
+		return nil, wrap(err)
+	}
+	printRecipeNote(warn, rr, true)
+	rcp := rr.taskRecipe()
 	fmt.Fprintf(warn, "note: keeping recipe %s, which the runner chose for run %s\n", pluginwire.Printable(ch.Name), pluginwire.Printable(task.ShortRun(oneLineCLI(c.Previous.Run))))
-	if changed {
+	if ch.SHA256 != "" && recipe.Sum(rr.Text) != ch.SHA256 {
 		fmt.Fprintf(warn, "note: recipe %s has changed since run %s\n", pluginwire.Printable(ch.Name), pluginwire.Printable(task.ShortRun(oneLineCLI(c.Previous.Run))))
 	}
 	return rcp, nil
+}
+
+// inheritDefaultRecipe is the default fallback of a follow-up that inherits no
+// recipe at all: this repository's own copy of `default` in the project store
+// when the project holds one, which is the run's default for this repository
+// (R22), and nothing when it does not — the catalog default is the runner's to
+// resolve and stays out of the task, exactly as a first run's does.
+//
+// The refusals a follow-up cannot carry judge what the store holds: a
+// repository whose own default is mode: artifact or a report recipe would
+// otherwise be run as one by a launch that asked for nothing.
+func inheritDefaultRecipe(ctx context.Context, env *cloudEnv, provider, repo string) (*task.Recipe, error) {
+	rr, err := resolveLaunchRecipe(ctx, env, provider, repo, recipe.DefaultName, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	if err := refuseFollowUpReviewMode(rr.Recipe, rr.Name); err != nil {
+		return nil, err
+	}
+	if err := refuseFollowUpArtifactMode(rr.Recipe, rr.Name); err != nil {
+		return nil, err
+	}
+	if err := refuseFollowUpReportMode(rr.Recipe, rr.Name); err != nil {
+		return nil, err
+	}
+	return rr.taskRecipe(), nil
 }

@@ -226,6 +226,28 @@ func resolveRecipe(ctx context.Context, env *cloudEnv, root, name string, now ti
 			return &resolvedRecipe{Name: name, Source: recipe.SourceRepo, Text: data, Recipe: rcp, Where: where}, nil
 		}
 	}
+	rr, err := projectRecipeOrCatalog(ctx, env, name, now, refresh)
+	if err != nil || rr != nil {
+		return rr, err
+	}
+	if to, ok := recipe.Renamed[name]; ok {
+		return nil, userErr("%s was renamed in 0.7.0: use %s", name, to)
+	}
+	msg := fmt.Sprintf("recipe %s is not in %s, not in project %s (fugaro recipes ls) and not in the catalog (%s)",
+		name, recipe.RepoDir, env.lc.Name, strings.Join(recipe.CatalogNames(), ", "))
+	if note := projectRecipesNote(env.lc); note != "" {
+		msg += "; note: " + note
+	}
+	return nil, userErr("%s", msg)
+}
+
+// projectRecipeOrCatalog reads one name from where a name is stored rather
+// than kept: the project's runs bucket first, the catalog second, and nil, nil
+// when neither holds it. The order is not this function's to decide — the
+// caller walks recipe.LookupOrder (D3303) over it, and a name that resolves
+// nowhere is refused in the caller's words, because only the caller knows what
+// the name means where it came from.
+func projectRecipeOrCatalog(ctx context.Context, env *cloudEnv, name string, now time.Time, refresh bool) (*resolvedRecipe, error) {
 	note := projectRecipesNote(env.lc)
 	if note == "" {
 		data, n, err := fetchProjectRecipe(ctx, env, now, name, refresh)
@@ -242,9 +264,6 @@ func resolveRecipe(ctx context.Context, env *cloudEnv, root, name string, now ti
 			return &resolvedRecipe{Name: name, Source: recipe.SourceProject, Text: data, Recipe: rcp, Where: where, Note: n}, nil
 		}
 	}
-	if to, ok := recipe.Renamed[name]; ok {
-		return nil, userErr("%s was renamed in 0.7.0: use %s", name, to)
-	}
 	if text, ok := recipe.CatalogText(name); ok {
 		rcp, err := parseRecipeAt(text, name, "catalog recipe "+name)
 		if err != nil {
@@ -252,10 +271,5 @@ func resolveRecipe(ctx context.Context, env *cloudEnv, root, name string, now ti
 		}
 		return &resolvedRecipe{Name: name, Source: recipe.SourceCatalog, Text: text, Recipe: rcp, Where: "the catalog", Note: note}, nil
 	}
-	msg := fmt.Sprintf("recipe %s is not in %s, not in project %s (fugaro recipes ls) and not in the catalog (%s)",
-		name, recipe.RepoDir, env.lc.Name, strings.Join(recipe.CatalogNames(), ", "))
-	if note != "" {
-		msg += "; note: " + note
-	}
-	return nil, userErr("%s", msg)
+	return nil, nil
 }
