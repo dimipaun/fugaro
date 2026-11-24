@@ -670,8 +670,9 @@ export const BUDGET_STREAM_CLI_FLOOR: string | null = null
  * binary's two argvs -- and no CLI answers either word before it.
  *
  * `null` until that release names itself, which is where the wizard stands
- * today: the two rows exist in the allow-list and the handlers behind them
- * answer 'not available in this build'.
+ * today: the two rows exist in the allow-list and the handler behind each
+ * refuses in the wizard's own words (`SETUP_FLOOR_UNSET`), so no child is
+ * spawned for either.
  */
 export const SETUP_CLI_FLOOR: string | null = null
 
@@ -691,6 +692,72 @@ export const SETUP_CLI_FLOOR: string | null = null
  */
 export const IMAGE_CATALOG_CLI_FLOOR: string | null = null
 export const RECIPES_CLI_FLOOR: string | null = null
+
+/**
+ * ORCHESTRATOR_MAP_CLI_FLOOR is the oldest CLI that carries **`orchestrator map
+ * --json`** -- the one document the Coordinator tab draws: the project's active
+ * orchestrators, the connections between them and the coordinator's own
+ * heartbeat (the console-fixes plan's CG7a; D3221, and the contract
+ * `docs/console-fixes/contract-orchestrators.md` for the shape).
+ *
+ * **No release carries the command yet, so the constant is `null`** and the tab
+ * spawns no map read at all. It is registered from `ee/`
+ * (`ee/orchestrator/cli/map.go`, the way `ee/graph/cli` registers `graph`), so
+ * only a build with the `ee` tag has the command, and it is on `main` and in no
+ * tag. A floor is a claim about a release that exists, and a version this
+ * console guessed at would be an `orchestrator map` handed to a CLI that answers
+ * `unknown command` and fails the whole read. Unset is the safe direction and
+ * the only honest one, and it is the same state the console-improvements floors
+ * above are in: below the floor the Coordinator tab names the CLI the read needs
+ * -- while the constant is unset, that no release carries the command yet --
+ * rather than drawing a document it cannot read.
+ *
+ * **It is one floor for two facts, deliberately** (F40). The first is the read
+ * above. The second is the graph scope grammar's **named orchestrator id**:
+ * `src/main/ipc.ts`'s `GRAPH_SCOPE_RE` admits
+ * `orchestrator:<project>~<name>`, C-ORCH's own id rule -- the one the CLI's
+ * `graph.ParseScope` reads (the plan's CG8) -- and `MAX_GRAPH_SCOPE_LENGTH` is
+ * the longest id that rule admits. Both sit behind this floor, because a console
+ * that admitted a named scope would spawn a child an older CLI refuses; and the
+ * two are one release's, since the release that first carries `orchestrator map
+ * --json` is the one that first names an orchestrator with a `~` at all.
+ *
+ * It is a floor and not a switch, so every older CLI keeps being answered what
+ * it can read -- the same patch-level comparison the floors above use -- and a
+ * release that ships the command sets this constant to its own version in a
+ * one-line pull request, which is a release step and not a task of the plan.
+ */
+export const ORCHESTRATOR_MAP_CLI_FLOOR: string | null = null
+
+/**
+ * orchestratorMapSupported answers whether one version line may be asked for
+ * `orchestrator map --json` -- and, with it, whether it may be handed a **named
+ * orchestrator scope** -- by comparing the line against
+ * `ORCHESTRATOR_MAP_CLI_FLOOR` at the patch level.
+ *
+ * **Its callers are the two places a named orchestrator enters this console.**
+ * The Coordinator tab (`src/renderer/entry.ts`, the plan's CG7b) asks it before
+ * the map read, and names the CLI it needs when the answer is no rather than
+ * spawning a child that cannot answer. `CliSource`'s bound-source scope guard
+ * (`src/source/cli.ts`) asks it for a scope whose id carries C-ORCH's separator,
+ * and refuses that scope with `NO_NAMED_SCOPE` below the floor -- before a
+ * binary is probed and before any word of an argv is built -- so F40's widening
+ * is behind the floor rather than merely beside it. The map read itself is
+ * refused at the source with `NO_ORCHESTRATOR_MAP`, `CliSource`'s
+ * `orchestratorMap` handler asking this floor before `resolve`.
+ *
+ * `floor` is the constant by default and an argument only so that the branch a
+ * release will take can be tested: with the constant unset, every version is
+ * refused, which is the state this console is in until a release carries the
+ * command (`version.test.ts` drives both).
+ */
+export function orchestratorMapSupported(
+  version: string,
+  floor: string | null = ORCHESTRATOR_MAP_CLI_FLOOR,
+): boolean {
+  if (floor === null) return false
+  return meetsCliFloor(version, floor)
+}
 
 /**
  * CONSOLE_CLI_UPGRADE_COMMAND is the fix line an *old* CLI's banner offers. It

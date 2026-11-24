@@ -311,9 +311,12 @@ not evaluated at all, because a runner has no Claude Code.
 
 --offline checks the update class and nothing else, and it makes no cloud call,
 no network call and no secret read: the plugin's wiring and the install on this
-machine, the login unit that runs the orchestrator daemon, and the base image
+machine, the login unit that runs the orchestrator daemon, the base image
 this checkout resolves to where a local installation is configured to answer
-it. Every check whose answer lives in the project's Realtime Database or the
+it, and whether this binary is below the release the project requires,
+answered from this machine's own stamp cache (with no cache entry there, the
+check is skipped like the others rather than read from the database). Every
+other check whose answer lives in the project's Realtime Database or the
 runs bucket — the published policy, the deployed rules, and whether a
 workflow's job was built from the image settings it resolves to now — and the
 one that asks whether a newer release is available, is skipped rather than
@@ -454,6 +457,14 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		return failed(err)
 	}
 	o.Checks = append(o.Checks, sharedConfigChecks(ctx, sel, lc, time.Now())...)
+	// The required-CLI stamp (T5, spec "Doctor"): doctor is exempt from the fence
+	// (T3) and reports the stamp instead, so the person learns before a project
+	// command refuses them. It is cli-version's pair in the update class, but it
+	// reads the selected project's own database, so it stands here with the
+	// checks that need the selection and not with cli-version's network lookup
+	// above (a member on the shared config has a selection and no local config,
+	// and is fenced like anyone else).
+	o.Checks = append(o.Checks, cliBelowRequiredCheck(ctx, lc, false, Version, budgetNow()))
 	// The workspace's own installation whose Firebase is another project's: the
 	// one state W3's root cannot converge, which `fugaro update` skips with the
 	// same reason and goes on (doctorWorkspaceSplitCheck). Read from the local
@@ -577,6 +588,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// this backend, and Task 10 is what turns these into the enable's gate.
 	o.Checks = append(o.Checks, doctorBatchChecks(ctx, lc, crmSvc)...)
 	o.Checks = append(o.Checks, doctorPolicyChecks(ctx, lc, doctorRoutingLayerOf(ctx, rf))...)
+	o.Checks = append(o.Checks, doctorRepoAccountChecks(lc)...)
 	// The pools the published policy serves (DS3.1, MC1): a legacy-open one is
 	// served to whoever asks and D1942 asks doctor to name it. It reads the
 	// published node for itself — the policy checks above read it through
@@ -589,6 +601,11 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// repositories publishes on the machine that takes from it (R3, R4). It
 	// reads the cloud and writes nothing, and it computes no alarm (D2991).
 	o.Checks = append(o.Checks, doctorWorkspaceChecks(ctx, lc)...)
+	// The run index's own completeness (RI6, F9): the summary document in the
+	// installation's Firebase project, which is what tells a reader of a short
+	// list that the index is why. It answers nothing for a project with no
+	// Firebase backend, like the checks above it.
+	o.Checks = append(o.Checks, doctorRunIndexChecks(ctx, lc)...)
 
 	if lc.Budget != nil && lc.Budget.FirebaseProject != "" {
 		iamSvc, err := iam.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.IAM)...)
@@ -718,6 +735,21 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	return emitDoctor(cmd, o, asJSON, view)
 }
 
+// doctorRepoAccountChecks warns, before `fugaro update` is run, of every
+// repository entry that names a Claude account whose own allow_data_to does not
+// name the repository: the publish refuses that config (projectpolicy), and
+// every `fugaro update` after it would fail until it is closed.
+func doctorRepoAccountChecks(lc *localcfg.Config) []doctorCheck {
+	var out []doctorCheck
+	for _, g := range repoAccountGaps(lc) {
+		out = append(out, doctorCheck{ID: "repo-account-covered", Severity: "warning",
+			Problem: fmt.Sprintf("repos.%s.claude_accounts names the account %s, and claude_accounts.%s.allow_data_to does not name the repository, so the next `fugaro update` refuses to publish the policy",
+				pluginwire.Printable(g.repo), pluginwire.Printable(g.account), pluginwire.Printable(g.account)),
+			Fix: g.fix()})
+	}
+	return out
+}
+
 // doctorBaseImage warns when the installation has no Fugaro base recorded
 // (design base-image.md section 10): every image build starts from it.
 func doctorBaseImage(lc *localcfg.Config) doctorCheck {
@@ -738,12 +770,17 @@ func doctorBaseImage(lc *localcfg.Config) doctorCheck {
 // computes, because it is the list of what `fugaro update` puts right: the
 // plugin's wiring and the plugin on this machine (both already in o.Checks
 // before this runs, which is why they are not here), the login unit, the base
-// image, each workflow's job image, and the three policy checks. Three kinds
-// are dropped and said to be dropped, because their answer is not a file here:
+// image, each workflow's job image, the three policy checks, and the required
+// CLI the project's stamp names. Three kinds are dropped and said to be
+// dropped, because their answer is not a file here:
 //
 //   - cli-version asks whether a newer release is available, which is a network
 //     call, and --offline makes none (D952: the network stays opt-in, and the
 //     skills never ask the user's permission to reach it on their behalf).
+//     cli-below-required is its pair and not its twin: the stamp is also a node
+//     in the project's database, but this machine's cache holds the last one
+//     read, and R9 answers from it — no call — and skips with its reason
+//     when the cache is empty (cliBelowRequiredCheck).
 //   - the three policy checks read the project's Realtime Database (the
 //     published node, the deployed rules generation) and, for policy-vs-jobs,
 //     what its jobs last ran: none of it is local, and reading it needs
@@ -759,7 +796,7 @@ func doctorBaseImage(lc *localcfg.Config) doctorCheck {
 // is made of: it never fails doctor, with or without --strict, and it is never
 // read as "checked and found fine".
 func doctorOfflineChecks(ctx context.Context, o cloudOptions, loc pluginwire.Location, inCheckout bool) []doctorCheck {
-	ask := "run `fugaro doctor` without `--offline` to ask it"
+	ask := doctorOfflineAsk
 	skip := func(id, problem string) doctorCheck {
 		return doctorCheck{ID: id, Skipped: true, Severity: "info", Problem: problem, Fix: ask}
 	}
@@ -782,6 +819,13 @@ func doctorOfflineChecks(ctx context.Context, o cloudOptions, loc pluginwire.Loc
 	} else {
 		out = append(out, doctorBaseImage(lc))
 	}
+	// cli-below-required answers from the stamp cache under --offline when there
+	// is one (R9): the cache is this machine's own file, so no cloud call is
+	// made — the reader is built with no client — and without one the check is
+	// skipped with its reason like the rest. That is what keeps the fence
+	// visible in the session-start check the skills run: the cache is the one
+	// place this machine already knows the project's required CLI from.
+	out = append(out, cliBelowRequiredCheck(ctx, lc, true, Version, budgetNow()))
 	for _, name := range doctorOfflineWorkflows(ctx, loc, inCheckout, lc) {
 		out = append(out, skip("image-config-"+name, "whether workflow "+name+"'s job image is the one this checkout resolves to now is recorded in the runs bucket, which --offline does not read"))
 	}
@@ -3206,11 +3250,20 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) 
 		// registration-generation marker already has those fields and only the
 		// four day-counter leaves a stage report writes per model are new to it,
 		// a spend-leaves-generation marker already has those leaves and only the
-		// paired device's read of a run's outcome is new to it, and an
+		// paired device's read of a run's outcome is new to it, an
 		// outcome-generation marker already has that read and only the credential
-		// route a run reads is new to it (workspace-service task WS22).
+		// route a run reads is new to it (workspace-service task WS22), and a
+		// route-generation marker already has that route and only the phone's
+		// stop request and the launch envelope are new to it (mobile plan task
+		// P5.1g), and a launch-generation marker already has those two and only
+		// the tag a signing device carries and the typed launch it sends are new
+		// to it (mobile identity-pairing task J5r).
 		adds := "the mailbox, the device binding and the coordinator's read grant"
 		switch {
+		case gen >= rulesLaunchGeneration:
+			adds = "the device's signature and the typed launch"
+		case gen >= rulesRouteGeneration:
+			adds = "the phone's stop request and the launch envelope"
 		case gen >= rulesOutcomeGeneration:
 			adds = "the credential route a run reads"
 		case gen >= rulesSpendLeavesGeneration:

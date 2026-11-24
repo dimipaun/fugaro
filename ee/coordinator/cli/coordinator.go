@@ -37,6 +37,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/runindex"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -902,6 +903,144 @@ func coordinatorRun(in runview.Input) coordinator.Run {
 		if cf := r.ChangedFiles.Bounded(); cf != nil {
 			run.Files, run.FilesTruncated = cf.Paths, cf.Truncated
 		}
+	}
+	return run
+}
+
+// bucketRuns is the runs half read from the runs bucket: coordinatorRuns, the
+// read `coordinator status --from-store`'s fallback has always answered with,
+// and the one the sweep makes for itself (coordinatorRunsSource).
+func bucketRuns(env *fcli.Cloud) RunsFallback {
+	return func(warn io.Writer) coordinator.RunsReader { return coordinatorRunsSource{env: env, warn: warn} }
+}
+
+// IndexRuns is the runs half of a repository's view read from the run index
+// (IR3, F3), as the fallback a stored-project read takes when the project's
+// database holds no view for the repository.
+//
+// The half it answers is the one the runs bucket answers, because the index is
+// folded from those same runs (RI4): a repository's runs in the read's window,
+// newest first, each reduced to what the view shows of it (indexRun). What
+// changes is what the read costs, and that is the whole point of the task. The
+// bucket read is a listing of the repository's runs plus about three object
+// reads for each of them and no cache (F3), while the index answers the same
+// window with one query over a constant number of documents, whatever the
+// history behind it. The coordinator's sweep is off on most installations, so
+// this fallback — and not the stored view — is what most repositories of most
+// projects are drawn from, and in `fugaro graph` it is the console's own read.
+//
+// It is the person's read and not a service account's: the index is reached
+// with the credential the person running the CLI holds
+// (roles/datastore.viewer), and no job holds a Firestore role at all (F8), so
+// the sweep keeps reading the runs bucket (coordinatorRunsSource). The reader
+// is passed in rather than opened here, so that this half is testable without
+// a database and the caller owns the one client it reads through.
+//
+// **A page short of the index's own completeness is never answered as a
+// repository with no runs.** IndexComplete is false until a walk has finished,
+// and on every installation until the first reindex does (RI4, RI5) — the
+// wired stub says so from the first read — so an empty runs half is the
+// ordinary state of a young index rather than a fact about the repository. The
+// read says which it is holding in the read's own warnings (indexBuildingLine),
+// which is the channel the plan's constraint asks every reader for: no reader
+// prints a silently short list while the index is incomplete.
+func IndexRuns(reader runindex.Reader) RunsFallback {
+	// One warning for the pass and not one per repository: whether the index
+	// has finished a walk is the installation's fact, and the read covers every
+	// repository the project lists, so a line each would be the same sentence
+	// twenty times. It is written into whichever repository's buffer reads
+	// first, which the caller flushes in the selection's own order.
+	var once sync.Once
+	return func(warn io.Writer) coordinator.RunsReader {
+		return indexRunsSource{reader: reader, warn: warn, building: &once}
+	}
+}
+
+// indexRunsSource is IndexRuns as the reader itself: the index, the window the
+// stored view is read over, and where a page that may be short says so.
+//
+// The bucket read warns about a run whose objects would not decode; this one
+// warns about the half being short. An entry the fold could not read is one the
+// index does not carry, and the page says nothing about it — what the page does
+// carry is the summary's own completeness, which is the warning this read owes
+// a reader and which the bucket read has no counterpart of, because a listing
+// of the bucket is never short.
+type indexRunsSource struct {
+	reader runindex.Reader
+	warn   io.Writer
+	// building is the pass's own guard on the one line (IndexRuns), shared by
+	// the readers the pass builds and nil for a reader built by hand.
+	building *sync.Once
+}
+
+func (s indexRunsSource) Runs(ctx context.Context, repo coordinator.Repo, since time.Time) ([]coordinator.Run, error) {
+	page, err := s.reader.List(ctx, runindex.Filter{Slugs: []string{repo.Slug}, Since: since})
+	if err != nil {
+		return nil, fcli.RemoteErr(err)
+	}
+	if !page.IndexComplete {
+		s.warnBuilding(page.FoldedThrough)
+	}
+	out := make([]coordinator.Run, 0, len(page.Entries))
+	for _, e := range page.Entries {
+		out = append(out, indexRun(e))
+	}
+	return out, nil
+}
+
+// warnBuilding writes the one line a pass owes for an index that has not
+// finished a walk.
+func (s indexRunsSource) warnBuilding(folded *time.Time) {
+	line := func() { fmt.Fprint(s.warn, indexBuildingLine(folded)) }
+	if s.building == nil {
+		line()
+		return
+	}
+	s.building.Do(line)
+}
+
+// indexBuildingLine is what an index that has not finished a walk says about
+// the runs half it answered with: the one sentence that keeps a short list
+// from reading as a repository with no runs.
+//
+// It names how fresh the folded rows are when the index has folded anything at
+// all, and says that it has folded nothing when it has not: FoldedThrough is
+// absent before the first fold (the contract's own shape), and "nothing folded
+// yet" is that absence said rather than a zero timestamp drawn.
+func indexBuildingLine(folded *time.Time) string {
+	freshness := "nothing is folded yet"
+	if folded != nil {
+		freshness = "folded through " + folded.UTC().Format(time.RFC3339)
+	}
+	return fmt.Sprintf("the run index is still building (%s): a repository with no stored view is drawn from the runs it has folded so far, which may be short of the read's window\n", freshness)
+}
+
+// indexRun is one run as the view holds it, out of the index's entry for it:
+// the same reduction coordinatorRun makes of a run's objects, from the two
+// records the entry carries whole.
+//
+// **Two facts come from the entry and not from those records**: the pull
+// request a run's *task* names, and the branch it names. A run that has opened
+// none of its own carries the number in its task and not in its record —
+// coordinatorRun's own fallback — and a task is not in the index, whose whole
+// reason for not carrying one is that its prompt is the largest thing about a
+// run. The fold writes the pair both of them agree on into the entry
+// (Entry.PR, Entry.Branch), which is what keeps such a run filed under its pull
+// request in the view rather than in the in-flight set; a run the entry names
+// neither for keeps the record's own reading.
+//
+// The branch is here for the same reason and one of its own: a run whose record
+// is absent or unreadable still runs on the branch its task named, and the view
+// derives a record's release from it (coordinator.finish), so a reader of the
+// index that took the branch from the record alone would draw that run on no
+// branch and under no release while the bucket read draws it on both.
+func indexRun(e runindex.Entry) coordinator.Run {
+	run := coordinatorRun(runview.Input{RunID: e.RunID, Launch: e.Launch, Record: e.Record})
+	if e.PR != 0 {
+		run.PR = e.PR
+	}
+	if e.Branch != "" {
+		run.Branch = e.Branch
 	}
 	return run
 }

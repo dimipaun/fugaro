@@ -33,11 +33,25 @@ type Plan struct {
 	// source — is declared there and not in resource_changes.
 	Configuration *Configuration `json:"configuration"`
 
+	// Variables are the plan's input variables as the plan was made with them,
+	// the roots' switches among them. A plan is the only place a switch this
+	// binary writes no key for exists (infra.PeopleMinter): the root's own
+	// default is terraform's, and the value the plan carries is the one the
+	// resources below were planned with.
+	Variables map[string]PlanVariable `json:"variables"`
+
 	// fields is every top-level key of the document, decoded or not: the
 	// managed cover refuses a key it does not know carries nothing that runs
 	// (action_invocations, deferred_changes, or one a later terraform adds),
 	// which a struct of the known fields alone would drop unseen.
 	fields map[string]json.RawMessage
+}
+
+// PlanVariable is one entry of a plan's variables: the value the root was
+// planned with. The block's other keys — sensitive, type — say nothing about
+// the value a reader of a switch asks for, so they are not decoded.
+type PlanVariable struct {
+	Value any `json:"value"`
 }
 
 // UnmarshalJSON decodes a plan and keeps its top-level keys (fields).

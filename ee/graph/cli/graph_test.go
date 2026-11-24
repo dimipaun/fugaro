@@ -583,6 +583,10 @@ func TestGraphAllIsTheCoordinatorToday(t *testing.T) {
 	t.Run("a project the coordinator has never reconciled", func(t *testing.T) {
 		f := newGraphFixture(t)
 		id := f.seedRun(t)
+		// The index is where the fallback reads the runs half from (IR3, F3):
+		// the fold has written the run's own row, and the bucket's copy of it is
+		// what this read no longer lists.
+		f.indexing(t, indexEntry(id, fcli.LsNow().UTC().Add(-time.Hour)))
 		doc := graphDocument(t, "graph", "--json")
 		if len(doc.Sources) != 1 || doc.Sources[0].State != graph.SourceDown {
 			t.Fatalf("a project with nothing stored is %+v, want the scope down: the read succeeded and answered with the runs half", doc.Sources)
@@ -709,52 +713,65 @@ func TestGraphReadsTheOrchestratorAndLocalScopes(t *testing.T) {
 	}
 }
 
-// TestGraphAllDrawsAnIdNoLocalScopeNames: `all` is the union of the database's
-// ids and this machine's cached briefs, and the brief is what makes an id a local
-// scope there whatever the database holds — which is why the id of a project
-// whose name H1's pattern cannot carry must not be refused by the local source.
-// `my_project` is exactly that id: the daemon's own rule admits `_` (agentRE), so
-// the database has a state node under it and a daemon on this machine caches a
-// brief for it, while H1's narrower pattern is what no `local:<id>` named on the
-// command line may carry. `all` draws it from its node — work items and their
-// dependencies with it — instead of leaving the console's default graph short of
-// an orchestrator `fugaro orchestrator ls` lists (D1358, H1, H3).
-func TestGraphAllDrawsAnIdNoLocalScopeNames(t *testing.T) {
+// TestGraphAllDrawsANamedOrchestrator: `all` is the union of the database's ids
+// and this machine's cached briefs, and the grammar that admits a `--source` value
+// is the rule the ids themselves are held to (F40, CG8: ParseScope holds the
+// value to naming.go's ValidOrchestratorID). A named orchestrator,
+// `my-project~night`, is therefore an id of both: the database has a state node
+// under it and a daemon on this machine caches a brief for it, `all` draws it
+// from that node — work items and their dependencies with it — and the same id
+// named on the command line is the same scope, so the console's default graph and
+// the scope a person types name the same orchestrators (D1358, F40, H1, H3).
+func TestGraphAllDrawsANamedOrchestrator(t *testing.T) {
 	f := newGraphFixture(t)
 	f.writeStoredView(t, storedView())
-	f.writeOrchestratorState(t, "my_project", "land the state migration", "move the sweep onto the daemon")
-	f.writeCachedBrief(t, "my_project", time.Date(2026, 11, 10, 9, 30, 0, 0, time.UTC))
+	f.writeOrchestratorState(t, "my-project~night", "land the state migration", "move the sweep onto the daemon")
+	f.writeCachedBrief(t, "my-project~night", time.Date(2026, 11, 10, 9, 30, 0, 0, time.UTC))
 
 	all := graphDocument(t, "graph", "--json")
 	if len(all.Warnings) != 0 {
 		t.Errorf("`all` warned %q, want none: the database and this machine's cache both name the id", all.Warnings)
 	}
-	if len(all.Sources) != 2 || all.Sources[1].Source != "local:my_project" || all.Sources[1].State != graph.SourceUp {
-		t.Fatalf("`all` covers %+v, want the coordinator and local:my_project up from its node", all.Sources)
+	if len(all.Sources) != 2 || all.Sources[1].Source != "local:my-project~night" || all.Sources[1].State != graph.SourceUp {
+		t.Fatalf("`all` covers %+v, want the coordinator and local:my-project~night up from its node", all.Sources)
 	}
 	if all.Sources[1].AsOf != nil {
 		t.Errorf("the scope claims as_of %v, want null: it was drawn from the node, which carries no time", all.Sources[1].AsOf)
 	}
-	key := graph.NodeKey("local:my_project", "wi-1")
+	key := graph.NodeKey("local:my-project~night", "wi-1")
 	seen := map[string]graph.Node{}
 	for _, n := range all.Nodes {
 		seen[n.Key] = n
 	}
 	if got, ok := seen[key]; !ok {
-		t.Fatalf("`all` drew %+v, want the node's work items keyed by local:my_project", all.Nodes)
+		t.Fatalf("`all` drew %+v, want the node's work items keyed by local:my-project~night", all.Nodes)
 	} else if got.State != "queued" {
 		t.Errorf("the work item is %+v, want its phase as its state", got)
 	}
-	want := graph.Edge{From: graph.NodeKey("local:my_project", "wi-2"), To: key, Kind: graph.DependsOnEdge}
+	want := graph.Edge{From: graph.NodeKey("local:my-project~night", "wi-2"), To: key, Kind: graph.DependsOnEdge}
 	if len(all.Edges) != 1 || all.Edges[0] != want {
 		t.Errorf("`all`'s edges are %+v, want the node's one dependency %+v", all.Edges, want)
 	}
 
-	// The pattern still governs the argument: the same id named on the command
-	// line is refused, so the scope above is the enumeration's and not a value the
-	// command line could carry.
-	if _, _, err := execute(t, "graph", "--source", "local:my_project", "--json"); err == nil {
-		t.Error("`local:my_project` was accepted on the command line, want the scope pattern's refusal")
+	// The same id named on the command line: the grammar admits it, so the scope
+	// a person types is the scope the enumeration drew, drawn from the same node
+	// — a named orchestrator is no longer a scope only `all` can name (F40).
+	named := graphDocument(t, "graph", "--source", "local:my-project~night", "--json")
+	if len(named.Sources) != 1 || named.Sources[0].Source != "local:my-project~night" || named.Sources[0].State != graph.SourceUp {
+		t.Fatalf("the named local scope is %+v, want local:my-project~night up from its node", named.Sources)
+	}
+	if named.Sources[0].AsOf != nil {
+		t.Errorf("the named scope claims as_of %v, want null: it was drawn from the node, which carries no time", named.Sources[0].AsOf)
+	}
+	seenNamed := map[string]graph.Node{}
+	for _, n := range named.Nodes {
+		seenNamed[n.Key] = n
+	}
+	if _, ok := seenNamed[key]; !ok || len(named.Nodes) != 2 {
+		t.Errorf("the named scope drew %+v, want the node's work items keyed by local:my-project~night", named.Nodes)
+	}
+	if len(named.Edges) != 1 || named.Edges[0] != want {
+		t.Errorf("the named scope's edges are %+v, want the node's one dependency %+v", named.Edges, want)
 	}
 }
 
@@ -1191,6 +1208,9 @@ func TestGraphTextTableNamesTheScopeAndGroupsByRelease(t *testing.T) {
 
 	f = newGraphFixture(t)
 	f.seedRun(t)
+	// A repository the sweep has never reconciled is the runs half, and it is
+	// read from the index (IR3, F3).
+	f.indexing(t, indexEntry(indexedRunID, fcli.LsNow().UTC().Add(-time.Hour)))
 	out, errOut, err = execute(t, "graph")
 	if err != nil {
 		t.Fatalf("%v (stderr: %s)", err, errOut)

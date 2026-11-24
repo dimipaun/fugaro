@@ -162,6 +162,31 @@ type Spec struct {
 	Branch      string `json:"branch,omitempty"`
 	PR          int    `json:"pr,omitempty"`
 	PreviousRun string `json:"previous_run,omitempty"`
+	// Resumes is the run whose pause this one picks up
+	// (runstore.PauseMemberResumes, docs/model-credentials-routing): the run
+	// that suspended itself on this pull request, whose pause.json names the
+	// stage it was in, the session it saved and the commit it pushed, and
+	// where this run enters rather than at the first stage (R18, D3185).
+	//
+	// A resumed run is also a follow-up of the run it continues — branch, pr
+	// and previous_run are the same run's — and Validate holds the two
+	// together: the chain link is what carries the chain's remaining budget
+	// into the resumed run (D1045 to D1047, internal/runner/policy.go), the
+	// pull request is the one whose branch holds the checkpoint, and a task
+	// whose two members named different runs would continue one chain and
+	// read another run's pause. The member itself is what says a run resumes
+	// rather than works: a follow-up carries none and starts its own work,
+	// exactly as it always has.
+	//
+	// The orchestrator's launcher is its only writer, and only for a run the
+	// credentials service recorded as paused: nothing else may ask to resume
+	// one (R19, D3189). Empty (the common case, and every spec written before
+	// this release) writes no key, so a spec without one is byte-identical to
+	// what the previous release wrote. A task that carries one needs a runner
+	// that reads it: Parse decodes with DisallowUnknownFields, so a runner
+	// older than the release that ships the member refuses the whole task at
+	// bootstrap.
+	Resumes string `json:"resumes,omitempty"`
 	// OwnerRuled is the repository owner's ruling this follow-up was launched
 	// with (OD1, fugaro run --owner-ruled): their answer to the findings a run
 	// on the pull request left for them, which no code change could settle.
@@ -1776,6 +1801,21 @@ func (s *Spec) Validate() error {
 	}
 	if s.PreviousRun != "" && !runIDRE.MatchString(s.PreviousRun) {
 		bad("task spec: previous_run %q is not a run ID", s.PreviousRun)
+	}
+	if s.Resumes != "" && !runIDRE.MatchString(s.Resumes) {
+		bad("task spec: resumes %q is not a run ID", s.Resumes)
+	}
+	// A resumed run is a follow-up of the run it continues (Spec.Resumes):
+	// the pull request it works on and the chain it is bounded by are that
+	// run's, so the members that name them are required beside it and must
+	// name the same run. A task that named one run for the chain and another
+	// for the pause would continue one run's budget while reading another
+	// run's work, which no launcher may write and no run may act on.
+	if s.Resumes != "" && !allFollowUp {
+		bad("task spec: resumes needs branch, pr and previous_run: a resumed run continues the paused run's chain on the pull request it paused on")
+	}
+	if s.Resumes != "" && s.Resumes != s.PreviousRun {
+		bad("task spec: resumes names %q and previous_run names %q; a resumed run picks up the pause of the run it continues", s.Resumes, s.PreviousRun)
 	}
 	if s.Batch != "" && !BatchRE.MatchString(s.Batch) {
 		bad("task spec: batch %q must be 1-63 lower-case letters, digits, '.', '_' or '-'", s.Batch)

@@ -382,4 +382,84 @@ excluded:
     reason: "Not mapped yet: its first user-facing step, choosing where an installation's data lives, has not shipped."
   - spec: credentials-belong-to-models
     reason: "Not mapped yet: a plan with no task merged, so no capability to read; the model access feature takes it when the first step ships."
+  - spec: console-fixes
+    reason: "Not mapped yet: a plan still being worked through, whose fixes land in the console features already listed; no capability of its own to read."
+  - spec: managed-flag-ergonomics
+    reason: "Not mapped yet: a plan with three of twelve tasks merged, and its user-facing change is the refusal of writes to an unmanaged project, which no row describes yet."
+  - spec: model-credentials-routing
+    reason: "Not mapped yet: a large plan still being worked through; the model access feature takes it when its credential routing ships."
+  - spec: design
+    reason: "Not a spec: a documentation folder holding the first design and the in-flight update design, with no plan of its own."
+  - spec: adopt-firebase-root
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: agent-env
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: artifact-runs
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: base-image
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: bucket-iam
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: budget-token-channel
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: checkpoint-pushes
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: config-transitions
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: console-styling
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: desktop-console
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: desktop-console-v2
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: generic-tool
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: headroom-compression
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: image-refresh
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: key-signing-service
+    reason: "Superseded: what remained of it moved to the licence key and portal work, mapped there."
+  - spec: lapse-read-only
+    reason: "Superseded: what remained of it moved to the licence key work and the console, mapped there."
+  - spec: layered-config
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: m10-multi-model
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: m11-setup-and-skills
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: m9-budget-and-dashboard
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: managed-deployer-fence
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: managed-projects
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: mixed-credentials
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: named-oauth-tokens
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: project-centric
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: project-named-oauth-tokens
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: project-secrets
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: provider-price-catalog
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: recipes
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: registry-remote-repository
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: retire-image-mirror
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: roles
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: shared-config
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: upgrade
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: voice
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
+  - spec: watch-queued
+    reason: "A spec from before the folder layout, carried into the status page with no task count: there is nothing to read a status from, so it is not a row of its own."
 retired: []

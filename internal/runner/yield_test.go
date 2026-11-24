@@ -253,7 +253,10 @@ func TestNowYieldIsNotAFailure(t *testing.T) {
 // ceiling reads it, so a message cannot buy the stage a second free run
 // (rule 2).
 func TestYieldSpendCounted(t *testing.T) {
-	h := newHarness(t, tokenCfg(t, "100"), nil)
+	// The oauth credential: the dollars a segment spent are its own report,
+	// which is the run's figure only where no gateway's ledger is (AB1b,
+	// D3009, C1.16).
+	h := oauthHarness(t, tokenCfg(t, "100"), nil)
 	h.messagesOn()
 	rec, err := h.run(t,
 		withUsage(h.stoppedAt(runID, "use the helper", agent.YieldAtQuietPoint, runmsg.FlagNow),
@@ -282,7 +285,9 @@ func TestYieldSpendCounted(t *testing.T) {
 // is left of the stage's model budget and not a second full one (rule 2).
 func TestResumedBudgetIsRemainder(t *testing.T) {
 	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "  review_rounds: 2\n", "  review_rounds: 2\n  max_budget_usd: 25\n", 1)
-	h := newHarness(t, cfg, nil)
+	// The remainder is read off what the run has spent, so the stages' own
+	// reports have to be the run's: oauth, as above.
+	h := oauthHarness(t, cfg, nil)
 	h.messagesOn()
 	var first, resumed float64
 	rec, err := h.run(t,
@@ -335,7 +340,10 @@ func TestSpentBudgetEndsTheStage(t *testing.T) {
 			budget := strconv.FormatFloat(tt.budget, 'f', -1, 64)
 			cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "  review_rounds: 2\n",
 				"  review_rounds: 2\n  max_budget_usd: "+budget+"\n  max_run_tokens: 100\n", 1)
-			h := newHarness(t, cfg, nil)
+			// What is left of the stage's budget is read off what the run has
+			// spent, so the segment's own figure must be the run's: oauth, as
+			// above.
+			h := oauthHarness(t, cfg, nil)
 			h.messagesOn()
 			var capped float64
 			rec, err := h.run(t,

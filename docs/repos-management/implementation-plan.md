@@ -1,8 +1,8 @@
 # Repository management: implementation plan
 
-**Status: a design. Nothing here is implemented yet; the owner approved all tasks on 2026-11-15, and RE6 (Check 620) stays the owner's own run, never launched by an agent.** The plan is [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md), and every task is written to the recommendation of each of D2400–D2417, and the owner answered all eighteen on 2026-11-15, each as recommended, so no task needs rewriting for an answer. The owner then approved every task, RE0–RE6. **Where this plan and the reconciliation disagree, the reconciliation wins; where a task and the reconciliation disagree, the reconciliation wins.**
+**Status: a design. Nothing here is implemented yet; the owner approved all tasks on 2026-11-15, and RE6 (Check 670) stays the owner's own run, never launched by an agent.** The plan is [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md), and every task is written to the recommendation of each of D2400–D2417, and the owner answered all eighteen on 2026-11-15, each as recommended, so no task needs rewriting for an answer. The owner then approved every task, RE0–RE6. **Where this plan and the reconciliation disagree, the reconciliation wins; where a task and the reconciliation disagree, the reconciliation wins.**
 
-Slot: the release after the one in flight (§7). Number block: **D2400–D2429** (D2400–D2417 written, D2418–D2429 reserved) and **Checks 620–629** (620 written, 621–629 reserved) — [reconciliation.md](reconciliation.md) §5.
+Slot: the release after the one in flight (§7). Number block: **D2400–D2429** (D2400–D2417 written, D2418–D2429 reserved) and **Checks 620–629** as this plan reserved them — with the one written check **renumbered to 670** by the owner's ruling of 2026-11-21, because **620 is the mobile-auth work's** (the register's own reading, and `docs/status.md`'s row for this spec), and **621–629 stay reserved and unused** — [reconciliation.md](reconciliation.md) §5.
 
 **The one thing this plan adopts rather than builds.** **RE3** is the draft another run left (`fugaro/20261114-183001-d201`, head `2bcda85d`, draft pull request **#2690**, task **RE1** of the brief): `fugaro project repos add` built as the full converge, ended at writeback with tests red. Its diff is the starting point of RE3, and [reconciliation.md](reconciliation.md) F22 lists what it got right and the two things it got wrong — the re-added `--yes` (F5) and the `pendingSites` entry in `noprompt_lint_test.go` it leaves for the no-prompt policy's own T15. **Nobody starts over.**
 
@@ -29,7 +29,7 @@ Loaded from `CLAUDE.md` and the area rules rather than restated here: comments e
 | 2 | **RE2** (`ls`) | RE0 (the view); RE1 and RE3, because it shares two files with them (below) |
 | 3 | **RE4** (`rm`) | RE0, RE3 (the converge it inverts) |
 | 4 | **RE5** (docs, the skill, the release notes, the census pin) | RE1–RE4 |
-| 5 | **RE6** (Check 620, owner-run) | RE1–RE4 |
+| 5 | **RE6** (Check 670, owner-run) | RE1–RE4 |
 
 Four ordering facts are load-bearing:
 
@@ -150,26 +150,26 @@ The verb that makes the empty container visible from the day it lands. It writes
 - **SEC**: it edits what a coding agent's session is told it may run.
 - **Commit:** `repos-management RE5: the skill, the console's read reach, the docs and the census pin`.
 
-## RE6. Check 620 — enrol the sandbox end to end and remove it. **SEC, OWNER-RUN**
+## RE6. Check 670 — enrol the sandbox end to end and remove it. **SEC, OWNER-RUN**
 
-**No agent runs any step of this.** The owner runs it at their own terminal, on a throwaway installation and a throwaway checkout of `dimipaun/fugarosandbox`; **never `belong`**.
+**No agent runs any step of this.** The owner runs it at their own terminal, on a throwaway installation and a throwaway checkout of `dimipaun/fugarosandbox`; **never `belong`**. It was written as Check 620 and is **Check 670**: 620 is the mobile-auth work's (its block is 620–627, and the register says so), the owner ruled on 2026-11-21 that this plan's one check renumbers to 670, and the script, the register row and the section all read 670.
 
-- **The script.** `scripts/live-checks/check620.sh` plus `scripts/live-checks/check620_test.sh`, the latter driving fake `gcloud`, `fugaro` and `git` on PATH — the shape Check 313 established — with its registration and description in `scripts/live_checks_test.go` (`liveCheckScripts`), a row in `docs/gcp-live-checklist.md`'s table and a `## Check 620` section with a Restore.
+- **The script.** `scripts/live-checks/check670.sh` plus `scripts/live-checks/check670_test.sh`, the latter driving fake `gcloud`, `fugaro`, `gh` and `git` on PATH — the shape Check 313 established — with its registration and description in `scripts/live_checks_test.go` (`liveCheckScripts`), a row in `docs/gcp-live-checklist.md`'s table and a `## Check 670` section with a Restore. The fake `gh` is the fourth tool because the App's installation on the repository is a fact only the provider holds, and `rm` leaves the local config without the entry that would let `fugaro` name it (the same read Check 542 makes with `gh api /user/installations`).
 - **What it does, in order.** (1) On a fresh throwaway checkout, run `fugaro project repos add` and read every one of the six steps' own output; (2) **leave the `github-app-key` container empty on the first attempt** and assert that `fugaro project repos status` names that row, names `fugaro secrets set` as its fix, and **exits nonzero** — this is F11, the failure the whole order answers; (3) fill it, converge again, and assert the row turns green and the exit status becomes zero; (4) launch one run and assert it starts; (5) start a second run, run `rm` while it is going, and assert the strict confirmation fires, the removal proceeds and **the run finishes**; (6) assert the six things `rm` leaves are still there (the App installation, the image, the secret and its version, the run history, the pull request, the branch) and that `fugaro update` afterwards writes nothing new.
 - **What it never does.** Read or print a secret value; touch `belong`; run anything as an agent.
-- **Files (≤6).** `scripts/live-checks/check620.sh` (new), `scripts/live-checks/check620_test.sh` (new), `scripts/live_checks_test.go` (the registration and its description), `docs/gcp-live-checklist.md` (the row and the section), and — if the row's cost column needs it — `docs/repos-management/implementation-plan.md`'s §5.
-- **Command.** `bash scripts/live-checks/check620_test.sh && go test ./scripts/ -run 'TestLiveCheckScripts/check620' -count=1 -timeout 30m`
+- **Files (≤6).** `scripts/live-checks/check670.sh` (new), `scripts/live-checks/check670_test.sh` (new), `scripts/live_checks_test.go` (the registration and its description), `docs/gcp-live-checklist.md` (the row and the section), and — if the row's cost column needs it — `docs/repos-management/implementation-plan.md`'s §5.
+- **Command.** `bash scripts/live-checks/check670_test.sh && go test ./scripts/ -run 'TestLiveCheckScripts/check670' -count=1 -timeout 30m`
 - **Depends on:** RE1–RE4. **Owner-run**, and it is the plan's only owner-run step.
-- **Commit:** `repos-management RE6: Check 620, the sandbox enrolment and removal, owner-run`.
+- **Commit:** `repos-management RE6: Check 670, the sandbox enrolment and removal, owner-run`.
 
 ## 5. Checks the plan takes
 
 | Check | What it measures | Who runs it |
 | --- | --- | --- |
-| **620** | the whole order on a real installation: the six steps, the empty container named with its fix and a nonzero exit, a run started, a run finished through a removal, and the six things `rm` leaves | **the owner**, at their own terminal, on a throwaway installation — **OWNER-RUN, NOT RUN** |
+| **670** | the whole order on a real installation: the six steps, the empty container named with its fix and a nonzero exit, a run started, a run finished through a removal, and the six things `rm` leaves | **the owner**, at their own terminal, on a throwaway installation — **OWNER-RUN, NOT RUN** |
 | 621–629 | **reserved and unused.** A Bitbucket end to end is the obvious second (§6 of the reconciliation), and it needs one of these numbers when the owner asks for it | — |
 
-Nothing in 620 is run by an agent, and no step of it is a claim this plan makes. **Until it runs, every one of the four verbs is built and unverified live.**
+Nothing in 670 is run by an agent, and no step of it is a claim this plan makes. **Until it runs, every one of the four verbs is built and unverified live.**
 
 ## 6. What this plan does not own
 

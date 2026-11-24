@@ -19,15 +19,19 @@ import (
 )
 
 // The project stage (stage 1, M11 task 16): a first run of fugaro setup
-// creates the GCP project, adds Firebase to it and links billing. Fugaro only
-// starts fresh (the owner's ruling of 2026-10-23): the ID must not exist, and
-// one that does is refused before anything is asked or changed — except the
-// project an earlier run of fugaro setup created itself, which carries
-// infra.CreatedLabelKey from its creation on, and which a rerun resumes (a run
-// that stopped for billing, or before its installation was applied).
+// creates the GCP project, adds Firebase to it and links billing. An ID that
+// is already taken is refused before anything is asked or changed — except
+// two. The project an earlier run of fugaro setup made Fugaro's itself
+// carries infra.CreatedLabelKey from the moment it did, and a rerun resumes it
+// (a run that stopped for billing, or before its installation was applied).
+// And a project that holds nothing of Fugaro's at all is adopted: this run
+// uses it as if it had created it, marks it managed the same way, and writes
+// the label that makes it resumable (the owner's ruling of 2026-11-22;
+// init_adopt.go is the read that decides and the label that records it). A
+// project holding anything of Fugaro's keeps the refusal of 2026-10-23.
 //
 // What it never does:
-//   - create a project, add Firebase or link billing under --yes,
+//   - create or adopt a project, add Firebase or link billing under --yes,
 //     --non-interactive or --json, with stdin not a terminal, or in a coding
 //     agent's session (agentEnv): the loop does not even call Apply for a
 //     stage --yes does not cover when it cannot prompt, and Apply refuses
@@ -90,6 +94,16 @@ func (o *initOptions) checkCreateProject() error {
 		return userErr("--create-project creates a project; it excludes --forget, --config-only and --print-vars")
 	case o.cloud.gcpProject == "":
 		return userErr("fugaro setup creates a new GCP project and needs --gcp-project <id>: the new ID (fugaro setup never uses the gcloud default project)")
+	// A run that creates has no installation to carry the account from:
+	// check()'s trio rule lets an explicit --budget take the account the
+	// installation's own state records (R7), and this run's installation is
+	// what it is about to make. Refused here, at the door, and not at the
+	// state read that rule would otherwise fall back to — that read is the
+	// installation stage's, and the project, its Firebase link, its billing
+	// and its APIs are all made before it, so a run that ended there would
+	// have changed cloud and left nothing that says why.
+	case o.billingAccount == "" && o.budget > 0 && o.budgetCurrency != "":
+		return userErr("a budget needs --billing-account: this run creates the project, so there is no installation whose state records the account its alert was created with. Pass --billing-account <id> with --budget and --budget-currency")
 	}
 	// The pairing rule, read through the default (firebaseProject, D7): the
 	// project this run creates is its own Firebase project, and Fugaro uses no
@@ -123,8 +137,17 @@ type projectStage struct {
 	e  *initEngine
 	id string
 
-	pc   *infra.ProjectClients
+	pc *infra.ProjectClients
+	// ic is the run's own clients, built on first use (initClients): the
+	// footprint read and the adopted label write (init_adopt.go).
+	ic   *infra.Clients
 	info infra.ProjectInfo
+	// adopt is whether this run adopts the project: it was there, held
+	// nothing of Fugaro's and is not being deleted, so setup uses it as if it
+	// had created it (the owner's ruling of 2026-11-22) and Apply writes the
+	// label that makes it resumable. It is work of the stage even when
+	// Firebase and billing are already in place, because the label is a write.
+	adopt bool
 	// todo is what the last check found to do.
 	create, addFirebase, link bool
 	guide                     bool   // billing is missing and is not linked by this run
@@ -142,11 +165,13 @@ func (s *projectStage) Name() string { return initflow.Project }
 func (s *projectStage) o() *initOptions { return s.e.r.o }
 
 // freshOnly is the one refusal of a project that already exists and that no
-// run of fugaro setup created (infra.ProjectInfo.CreatedByFugaro): Fugaro only
-// starts fresh (the owner's ruling of 2026-10-23), so nothing is created,
-// linked or applied in it, and the run says which ID to change.
+// run of fugaro setup made Fugaro's (infra.ProjectInfo.CreatedLabel): it
+// holds something of Fugaro's, so nothing is created, adopted, linked or
+// applied in it, and the run says which ID to change. A project that holds
+// nothing of Fugaro's is not refused — it is adopted (init_adopt.go) — and
+// the project an earlier run made Fugaro's is the resume.
 func freshOnly(id string) error {
-	return userErr("Fugaro only starts fresh: %s already exists; pick another id (--gcp-project): nothing was created or applied", id)
+	return userErr("%s already exists and holds something of Fugaro's (an installation, its state, or a label fugaro setup writes): fugaro setup only adopts a project that holds nothing of Fugaro's, so pick another id (--gcp-project). Nothing was created or applied", id)
 }
 
 // freshOnlyInstalled is freshOnly for an ID that already holds a Fugaro
@@ -154,27 +179,14 @@ func freshOnly(id string) error {
 // refusal, and the one command that uses that installation from this machine
 // instead (fugaro update writes the local config from it and applies nothing).
 func freshOnlyInstalled(id, name, region string) error {
-	return userErr("Fugaro only starts fresh: %s already exists; pick another id (--gcp-project). It holds the Fugaro project %s: to use it from this machine, run fugaro update --gcp-project %s --region %s, which writes this machine's local config from it and applies nothing", id, pluginwire.Printable(name), id, region)
+	return userErr("%s already exists and holds the Fugaro project %s: fugaro setup only adopts a project that holds nothing of Fugaro's, so pick another id (--gcp-project). To use that installation from this machine, run fugaro update --gcp-project %s --region %s, which writes this machine's local config from it and applies nothing", id, pluginwire.Printable(name), id, region)
 }
 
-// refuseExisting is freshOnly for the project this stage read: a project that
-// is there, that this run did not create, and that carries no creation label.
-// The project an earlier run of fugaro setup created is the resume, not a
-// refusal: it carries the label from its creation on.
-//
-// fugaro restore's child (strictCreate) resumes nothing: its project is new
-// or the restore is refused, whatever the project carries.
-func (s *projectStage) refuseExisting() error {
-	if !s.info.Exists || s.e.r.res.Created == s.id {
-		return nil
-	}
-	if s.o().strictCreate {
-		return userErr("GCP project %s already exists, and this creation must make a new one (fugaro restore always creates its project): nothing was created or applied", s.id)
-	}
-	if !s.info.CreatedByFugaro {
-		return freshOnly(s.id)
-	}
-	return nil
+// strictCreateRefusal is what fugaro restore's child says about a project that
+// is already there: its project is new or the restore is refused, whatever the
+// project carries, and nothing about it is read.
+func (s *projectStage) strictCreateRefusal() error {
+	return userErr("GCP project %s already exists, and this creation must make a new one (fugaro restore always creates its project): nothing was created or applied", s.id)
 }
 
 func (s *projectStage) clients(ctx context.Context) error {
@@ -255,26 +267,52 @@ func (s *projectStage) read(ctx context.Context) error {
 	// run created from one that never reached the creation at all (see
 	// initRun.projectExisted).
 	s.e.r.projectExisted = info.Exists
-	// A project that is already there and that no run of fugaro setup created
-	// is refused, here and before anything else is read of it: it gets no
-	// creation fact, and the installation would be applied into someone
-	// else's or a stale project. The project this run created itself is
-	// read again after the creation, and the one an earlier run created
-	// carries the label: both go on.
-	if err := s.refuseExisting(); err != nil {
-		return err
-	}
-	// A project that is there and passed the refusal is an earlier setup's
-	// creation, resumed (restore's strict child never gets here with one).
-	s.e.r.resumedCreation = info.Exists && info.CreatedByFugaro && s.e.r.res.Created != s.id
-	s.create, s.addFirebase, s.link, s.guide = false, false, false, false
+	s.create, s.addFirebase, s.link, s.guide, s.adopt = false, false, false, false, false
+	s.e.r.resumedCreation = ""
 	if !info.Exists {
 		s.create = true
 		s.link = s.o().linkBilling != ""
 		return nil
 	}
 	if info.State != "" && info.State != "ACTIVE" {
+		// A project being deleted is neither created nor adopted: Check and
+		// Apply say what it is (a project in that state is refused before
+		// anything else about it is read).
 		return nil
+	}
+	switch {
+	case s.e.r.res.Created == s.id || s.e.r.res.Adopted == s.id:
+		// This run made it Fugaro's a moment ago, in this stage: the project
+		// it reads again carries the label the run wrote. It is checked before
+		// strictCreate, because restore's own child reads its project again
+		// after creating it, and refusing that would refuse every restore.
+	case s.o().strictCreate:
+		return s.strictCreateRefusal()
+	case info.CreatedByFugaro() || info.AdoptedByFugaro():
+		// An earlier run of fugaro setup made it Fugaro's: the resume, with
+		// the label's own value saying how (resumedCreation).
+		s.e.r.resumedCreation = info.CreatedLabel
+	case info.CreatedLabel != "":
+		// The key a run of fugaro setup writes, carrying a value this program
+		// does not: Fugaro did not write this label, and the project is
+		// refused like any other of Fugaro's rather than adopted — the
+		// refusal's own words ("a label fugaro setup writes") and
+		// init_adopt.go's list of what stops an adoption. Read off the
+		// project the stage already read, so nothing about it is asked for
+		// again.
+		return freshOnly(s.id)
+	default:
+		// A project that is there and that no run of fugaro setup made
+		// Fugaro's. It is adopted when it holds nothing of Fugaro's, and
+		// refused when it holds anything (init_adopt.go).
+		f, err := s.footprint(ctx)
+		if err != nil {
+			return err
+		}
+		if f.holds() {
+			return freshOnly(s.id)
+		}
+		s.adopt = true
 	}
 	s.addFirebase = !info.Firebase
 	if !(info.BillingKnown && info.BillingEnabled) {
@@ -310,7 +348,7 @@ func (s *projectStage) Check(ctx context.Context) (initflow.Status, error) {
 	if lb := s.o().linkBilling; lb != "" && s.info.Exists && s.info.BillingKnown && s.info.BillingEnabled {
 		note = "; billing is already linked, and fugaro setup never changes an existing link (--link-billing is not applied)"
 	}
-	if s.create || s.addFirebase || s.link {
+	if s.create || s.addFirebase || s.link || s.adopt {
 		return initflow.Status{State: initflow.Todo, Detail: s.describe() + note}, nil
 	}
 	if s.guide {
@@ -327,8 +365,10 @@ func (s *projectStage) Check(ctx context.Context) (initflow.Status, error) {
 // describe is the one line of what Apply would do.
 func (s *projectStage) describe() string {
 	var parts []string
-	if !s.create && s.info.Exists {
-		parts = append(parts, resumeNote(s.id)+":")
+	if s.adopt {
+		parts = append(parts, "adopt existing project "+s.id+" (it holds nothing of Fugaro's)")
+	} else if !s.create && s.info.Exists {
+		parts = append(parts, s.resumeLead()+":")
 	}
 	if s.create {
 		p := "create project " + s.id
@@ -354,14 +394,14 @@ func (s *projectStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan,
 	if err := s.read(ctx); err != nil {
 		return initflow.Plan{}, err
 	}
-	if !(s.create || s.addFirebase || s.link) {
+	if !(s.create || s.addFirebase || s.link || s.adopt) {
 		return initflow.Plan{NothingToDo: !s.guide, Detail: "nothing to create"}, nil
 	}
 	return initflow.Plan{Detail: s.describe()}, nil
 }
 
 func (s *projectStage) Left() initflow.Left {
-	if s.create || s.addFirebase || s.link {
+	if s.create || s.addFirebase || s.link || s.adopt {
 		args := []string{s.o().doorName(), "--gcp-project", quoteWord(s.id)}
 		if p := s.o().parent; p != "" {
 			args = append(args, "--parent", quoteWord(p))
@@ -369,7 +409,11 @@ func (s *projectStage) Left() initflow.Left {
 		if s.o().linkBilling != "" {
 			args = append(args, "--link-billing", quoteWord(s.o().linkBilling))
 		}
-		return promptLeft(initflow.Project, "create the project (and link the billing account) from the banner it prints, which asks you nothing", args...)
+		what := "create the project"
+		if s.adopt {
+			what = "adopt the existing project"
+		}
+		return promptLeft(initflow.Project, what+" (and link the billing account) from the banner it prints, which asks you nothing", args...)
 	}
 	return s.billingForAdmin()
 }
@@ -417,12 +461,27 @@ func (s *projectStage) confirm(banner, question string) (bool, error) {
 	return true, nil
 }
 
-// resumeNote is what every confirmation and the plan say about a project
-// that was there before this run: an earlier run of fugaro setup created it
-// (it carries the creation label; any other existing project is refused before
-// this is said), and this run finishes what that one started.
-func resumeNote(id string) string {
+// resumeNote is what every confirmation and the plan say about a project that
+// was there before this run and that a run of fugaro setup made Fugaro's: the
+// label's own value says which of the two it was — created, or adopted
+// because it was there and held nothing of Fugaro's (any other existing
+// project is refused before this is said) — and this run finishes what that
+// one started.
+func resumeNote(id, label string) string {
+	if label == infra.AdoptedLabelValue {
+		return "resuming project " + id + ", which carries the label " + infra.CreatedLabelKey + "=" + infra.AdoptedLabelValue + " (the label fugaro setup puts on the projects it adopts)"
+	}
 	return "resuming project " + id + ", which carries the creation label " + infra.CreatedLabelKey + "=" + infra.CreatedLabelValue + " (the label fugaro setup puts on the projects it creates)"
+}
+
+// resumeLead is resumeNote for this stage's project, or the other case: this
+// run is the one making the project Fugaro's, by adopting it, and then the
+// sentence says that instead of claiming to resume anything.
+func (s *projectStage) resumeLead() string {
+	if s.adopt {
+		return "adopting project " + s.id + ", which exists and holds nothing of Fugaro's"
+	}
+	return resumeNote(s.id, s.info.CreatedLabel)
 }
 
 var safeIDRE = regexp.MustCompile(`[^a-zA-Z0-9._:-]`)
@@ -574,13 +633,28 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 		fmt.Fprintf(r.w, "created project %s\n", s.id)
 		s.addFirebase = true
 	} else if s.addFirebase {
-		ok, err := s.confirm(fmt.Sprintf("%s: it has no Firebase, and this ADDS Firebase to it (free; Firebase is how Fugaro keeps its budget and dashboard data), %s. Nothing else about the project changes.", resumeNote(s.id), s.credentialNote()), "add Firebase to project "+s.id+"?")
+		ok, err := s.confirm(fmt.Sprintf("%s: it has no Firebase, and this ADDS Firebase to it (free; Firebase is how Fugaro keeps its budget and dashboard data), %s. Nothing else about the project changes.", s.resumeLead(), s.credentialNote()), "add Firebase to project "+s.id+"?")
 		if err != nil {
 			return initflow.Outcome{}, err
 		}
 		if !ok {
 			return initflow.Outcome{}, s.declined("adding Firebase to project " + s.id)
 		}
+	}
+	if s.adopt {
+		// The one write of the adoption, and the first thing this run does to
+		// the project: nothing about the adoption itself is confirmed — the
+		// run decided on what it read of the project, and the read is the
+		// whole of the gate (the owner's ruling of 2026-11-22) — and the
+		// label is what a later run resumes this one by (init_adopt.go).
+		// It goes after the confirmations above and before the steps they
+		// confirm, so a step nobody confirmed leaves the project as it was.
+		if err := s.markAdopted(ctx); err != nil {
+			return initflow.Outcome{}, err
+		}
+		r.res.Adopted = s.id
+		did = append(did, "adopted existing project "+s.id)
+		fmt.Fprintf(r.w, "adopted existing project %s (it held nothing of Fugaro's)\n", s.id)
 	}
 	if s.addFirebase {
 		if err := infra.AddFirebase(ctx, s.pc, s.id); err != nil {
@@ -592,12 +666,20 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 		did = append(did, "added Firebase")
 		fmt.Fprintf(r.w, "added Firebase to project %s\n", s.id)
 	}
+	if s.info.Exists && s.info.BillingKnown && s.info.BillingEnabled {
+		// A project that was already there and already has billing: neither
+		// the billing question nor a link happens, and this is the one line
+		// that says so. It names no account — none of this stage's modes
+		// prints the account a project is linked to (infra.ProjectInfo has no
+		// field for one).
+		fmt.Fprintf(r.w, "billing is already linked to project %s: nothing was linked, and fugaro setup never changes an existing link\n", s.id)
+	}
 	switch {
 	case s.link:
 		acct := o.linkBilling
 		lead := ""
 		if !created {
-			lead = resumeNote(s.id) + ": "
+			lead = s.resumeLead() + ": "
 		}
 		ok, err := s.confirm(fmt.Sprintf("%sthis LINKS billing account %s to project %s. Everything Fugaro runs in the project (Cloud Run jobs, builds, storage, Firestore, Vertex AI calls) may incur charges on that account. "+
 			"It is not undone by deleting resources; unlink it with gcloud billing projects unlink %s.", lead, acct, s.id, quoteWord(s.id)), "link billing account "+acct+" to project "+s.id+"?")
@@ -712,7 +794,7 @@ func (s *projectStage) fail(err error) error {
 // ask the organization for.
 func (s *projectStage) refusedCreate() string {
 	return "Fugaro could not create the project " + s.id + ": your Google account is not allowed to create projects in your organization. " +
-		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder: Fugaro only starts fresh, so it creates the project itself. " +
+		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder. If they create the project for you instead, rerun this command with the same --gcp-project: fugaro setup adopts a project that already exists and holds nothing of Fugaro's. " +
 		"See docs/gcp-setup.md#not-an-owner."
 }
 

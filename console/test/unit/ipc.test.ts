@@ -28,10 +28,13 @@
 //     refusal repeats nothing the sender wrote: removing the sender check, or
 //     any one of the three things it checks, fails the tests named for them;
 //   - a handler's own message that is a megabyte long, or that carries a
-//     control character or an absolute path, is bounded, flattened and redacted;
-//     removing any of the three fails the test named for it, and the test that
-//     an ordinary CLI sentence comes through verbatim is what keeps the three
-//     from eating the case design section 6.3 asks for;
+//     control character, is bounded and flattened; removing either fails the
+//     test named for it, and the test that an ordinary CLI sentence comes
+//     through verbatim is what keeps the two from eating the case design
+//     section 6.3 asks for. An absolute path is not one of them: the operator's
+//     own directories are the remedy a refusal names, so a path stays as written
+//     (D3213, ID6), and the renderer's `sanitizeRefusal` is what masks a secret
+//     wherever one stands;
 //   - removing `assertReachableSurface(CONSOLE_OPERATIONS)` from
 //     `registerConsoleHandlers`, or moving it after the channels are registered,
 //     fails "checks the surface before it registers anything"; dropping the
@@ -827,7 +830,7 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * is still `runs ls --json` and rule 6's row carries the two words in its
  * parenthetical.
  *
- * **It is thirty-eight argvs, and this surface is the same thirty-eight.** (The
+ * **It is thirty-nine argvs, and this surface is the same thirty-nine.** (The
  * enumeration below numbers twenty-two of them: CG9a's `graph --json` landed
  * after it was written and sits between `plan status --json` and
  * `coordinator status --from-store --all --json`, and this plan's
@@ -949,6 +952,18 @@ const DESIGN_ARGV: readonly string[] = [
   // out -- and with no argument to fill, no caller word can reach the child
   // (`src/main/spawn.ts`'s empty `args`).
   'coordinator intents --all --json',
+  // The orchestrator map (the console-fixes plan's CG7a, D3221; C-ORCH's
+  // document, `internal/orchestrator/mapdoc.go`). The declarations read's shape
+  // exactly: the whole argv is the row's own words -- `--json` included -- and
+  // the row declares no argument at all (`src/main/spawn.ts`'s empty `args`),
+  // so this file's convention has nothing to take out and no caller word can
+  // reach the child. The two project flags are main-process state like every
+  // other read's here. It is the one row on this list whose command a released
+  // CLI has not got: `fugaro orchestrator map` is registered from `ee/`
+  // (`ee/orchestrator/cli/map.go`, CG6), so the console's own read sits behind
+  // `ORCHESTRATOR_MAP_CLI_FLOOR` (`src/shared/version.ts`) and below that floor
+  // the tab names the CLI version it needs rather than spawning the row.
+  'orchestrator map --json',
   // The record's move (the dependency-graph plan's GV3.2). This row is the
   // command and its one fixed flag: the task is the operation's positional
   // argument and `--to` is its release argument, so this file's convention
@@ -2316,6 +2331,12 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
     tags: 'node,redis',
     description: 'the app image',
   },
+  // The empty payload again: the orchestrator map takes no argument at all (the
+  // console-fixes plan's CG7a, D3221). The map is already one project's whole
+  // active set, so there is no scope, no repository and no window here for a
+  // caller to spell -- the two project flags are main-process state like every
+  // other read's -- which the pins below read back key by key.
+  'orchestrator.map': {},
 }
 
 const RUN_ID = '20261016-121029-4a1b'
@@ -3808,7 +3829,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these fifty-six, and no others".
+ * channel. The claim is "these fifty-seven, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -4065,11 +4086,12 @@ describe('the spend read’s arguments', () => {
  *     write: the dry run and the write behind the window are that row's children.
  *   - **Every one of them is inert until the CLI release that carries its
  *     flags**: each floor in `src/shared/version.ts` is `null` today, and the
- *     handler behind each answers 'not available in this build' until I-OPS
- *     registers the real one -- **except `settings.editor.open`, whose handler
- *     the console improvements plan's SU2b registered** (`settingsEditorRunner`
- *     in `src/main/index.ts`), because the pencil that presses it is on screen
- *     and a stub behind it would make the Project tab's only write dead. The
+ *     handler behind each refuses in its own flow's words, naming that floor
+ *     (`src/main/handlers.ts`, I-OPS) -- **except `settings.editor.open`, whose
+ *     handler the console improvements plan's SU2b registered**
+ *     (`settingsEditorRunner` in `src/main/index.ts`), because the pencil that
+ *     presses it is on screen and a stub behind it would make the Project tab's
+ *     only write dead. The
  *     rows are here rather than in a later task because the allow-list is the
  *     thing the whole console spawns through.
  */
@@ -4111,6 +4133,14 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['coordinator.status', 'coordinatorStatus'],
   ['coordinator.show', 'coordinatorShow'],
   ['coordinator.intents', 'coordinatorIntents'],
+  // The Coordinator tab's map read (the console-fixes plan's CG7a, D3221), in
+  // the preload table's own order: `fugaro orchestrator map --json` sits beside
+  // the declarations read it replaces on that screen's v2 sections. It is a read
+  // with no argument at all -- the whole argv is the row's own words and the
+  // installation's two -- and it is behind `ORCHESTRATOR_MAP_CLI_FLOOR`
+  // (`src/shared/version.ts`), because the command it spawns is registered from
+  // `ee/` and no release carries it yet.
+  ['orchestrator.map', 'orchestratorMap'],
   // The record's move (the dependency-graph plan's GV3.2), appended for the
   // reason every row above was: what the task added must be visible as a diff.
   // It is the surface's **third write**, the first whose two caller-named
@@ -4169,8 +4199,8 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   // nine with `refusedAfterLapse`) and the settings editor's window -- the one
   // operation of the nine whose `command` is `null`. Every one of them is inert
   // until the CLI release that carries its flags, which is why the floors in
-  // `src/shared/version.ts` are `null` and the handlers answer 'not available in
-  // this build' until I-OPS registers the real ones.
+  // `src/shared/version.ts` are `null` and the real handler behind each (I-OPS's
+  // `src/main/handlers.ts`) refuses in its own flow's words.
   ['runs.stream', 'streamRuns'],
   ['spend.stream', 'streamSpend'],
   ['budget.stream', 'streamBudget'],
@@ -4196,6 +4226,12 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   // operation driving `image add` is refused.
   ['image.add.plan', 'planImageAdd'],
   ['image.add', 'addImage'],
+  // The Coordinator tab's map read (the console-fixes plan's CG7a, D3221),
+  // appended for the reason every row above was: what the task added must be
+  // visible as a diff. It is a read with no argument at all -- the whole argv is
+  // the row's own words and the installation's two -- and it is behind
+  // `ORCHESTRATOR_MAP_CLI_FLOOR` (`src/shared/version.ts`), because the command
+  // it spawns is registered from `ee/` and no release carries it yet.
 ]
 
 /**
@@ -4226,7 +4262,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these fifty-six, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these fifty-seven, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -4243,11 +4279,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A fifty-seventh channel: what each task added must stay one row, and the
+    // A fifty-eighth channel: what each task added must stay one row, and the
     // next task that adds a read cannot do it quietly.
     const fiftyThird = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
     expect(fiftyThird).toContain('fleet.report: a channel this console does not ship')
-    expect(fiftyThird).toContain('57 rows, and this console ships 56')
+    expect(fiftyThird).toContain('58 rows, and this console ships 57')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -4261,7 +4297,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('55 rows, and this console ships 56')
+    expect(withoutTheNewRow).toContain('56 rows, and this console ships 57')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -4276,8 +4312,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the fifty-six methods and nothing else', () => {
-    // The bridge the window is handed: the fifty-six methods and the names,
+  it('is frozen, and hands the window a bridge with the fifty-seven methods and nothing else', () => {
+    // The bridge the window is handed: the fifty-seven methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -4829,7 +4865,10 @@ describe('the registrar', () => {
     expect(reply.reason.endsWith('…')).toBe(true)
   })
 
-  it('takes an absolute path out of a handler’s message and leaves the rest', async () => {
+  it('keeps an absolute path in a handler’s message and leaves the rest as written', async () => {
+    // The operator's own directories are the remedy a refusal names (D3213, ID6):
+    // the CLI's sentence is shown verbatim, and a path in it is a path a screen
+    // would print. The renderer's `sanitizeRefusal` is where a secret is masked.
     const { ipcMain } = wiredConsole({
       'cli.version': () => {
         throw new Error('open /home/user/.fugaro/secrets.yaml: permission denied')
@@ -4839,17 +4878,30 @@ describe('the registrar', () => {
     const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
     expect(reply.ok).toBe(false)
     if (reply.ok) return
-    expect(reply.reason).not.toContain('/home/user')
-    expect(reply.reason).not.toContain('secrets.yaml')
-    expect(reply.reason).toContain('open')
-    expect(reply.reason).toContain('permission denied')
-    expect(reply.reason).toContain('<path>')
+    expect(reply.reason).toContain('/home/user/.fugaro/secrets.yaml')
+    expect(reply.reason).toEqual('open /home/user/.fugaro/secrets.yaml: permission denied')
+  })
+
+  it('keeps a refusal naming /Users/ana/repo as it is', async () => {
+    // ID6's own case: the path the operator recognises stays, so the refusal
+    // still names the repository it is about.
+    const { ipcMain } = wiredConsole({
+      'cli.version': () => {
+        throw new Error('refused: /Users/ana/repo is not a checkout of this project')
+      },
+    })
+    const listener = ipcMain.listeners.get(channelForOperation('cli.version'))
+    const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
+    expect(reply.ok).toBe(false)
+    if (reply.ok) return
+    expect(reply.reason).toContain('/Users/ana/repo')
+    expect(reply.reason).not.toContain('<path>')
   })
 
   // A path is not only ever preceded by a space or a quote. Go's own errors put
   // one straight after a colon (`open:/...` in a wrapped error), Markdown puts
   // one in backticks, a list puts one in brackets, and a URL can carry one as
-  // `file://`. Each of these spellings reached the renderer whole before.
+  // `file://`. Each of these spellings is drawn as written now (D3213, ID6).
   it.each([
     ['after a colon', 'open:/Users/dimi/.config/fugaro/projects/belong.yaml: permission denied'],
     ['in brackets', 'refused [/Users/dimi/.config/fugaro/a]'],
@@ -4858,7 +4910,7 @@ describe('the registrar', () => {
     ['as a Windows drive after a colon', 'dir:C:\\Users\\dimi'],
     ['in backticks', 'see `/Users/dimi/x` for details'],
     ['in angle brackets', 'wrote </Users/dimi/x>'],
-  ])('takes a path %s out of a handler’s message', async (_label, message) => {
+  ])('keeps a path %s in a handler’s message', async (_label, message) => {
     const { ipcMain } = wiredConsole({
       'cli.version': () => {
         throw new Error(message)
@@ -4868,8 +4920,7 @@ describe('the registrar', () => {
     const reply = (await listener?.(consoleEvent(), {})) as ConsoleReply
     expect(reply.ok).toBe(false)
     if (reply.ok) return
-    expect(reply.reason, message).not.toMatch(/dimi|passwd|Users/)
-    expect(reply.reason, message).toContain('<path>')
+    expect(reply.reason, message).toBe(message)
   })
 
   it('leaves a web URL in a message whole, rather than redacting from its //', async () => {
@@ -5457,7 +5508,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: forty-seven of the surface's fifty-six operations,
+    // The non-vacuity half: forty-eight of the surface's fifty-seven operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its
@@ -5567,7 +5618,16 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     //
     // The two writes' four halves are the forty-fourth to forty-seventh (MW1
     // and MW2, D2903), each pair open for `settings.edit`'s reason.
-    expect(THE_OPEN_OPERATIONS.length).toBe(47)
+    //
+    // **`orchestrator.map` (the console-fixes plan's CG7a, D3221) is the
+    // forty-eighth**, and it is here for `graph.read`'s reason: the map is
+    // repository state -- the orchestrators being driven right now, the edges
+    // between them and the coordinator's heartbeat -- so there is no spent
+    // dollar, no notional dollar and no cap anywhere in its document for the
+    // reduced mode to withhold. Withholding it would take away the one read
+    // that says what is running, which is what an operator bringing an
+    // installation back needs.
+    expect(THE_OPEN_OPERATIONS.length).toBe(48)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(

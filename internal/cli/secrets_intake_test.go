@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -767,5 +768,289 @@ func TestIntakeAddressIsTheServicesOwnLabelOver(t *testing.T) {
 				t.Errorf("intakeURLOf answered %q, %v; want a refusal naming %q", got, err, tc.want)
 			}
 		})
+	}
+}
+
+// The installations a test's machine holds beside the fixture's own: a second
+// project's, which a call must never be answered at, and the decoy a member's
+// pin names as the workspace's service — the address whose own label swap would
+// be an intake address if a pin were a source (R13).
+const (
+	intakeTestOtherCredentialsURL = "https://fugaro-credentials-fghij-uc.a.run.app"
+	intakeTestOtherIntakeURL      = "https://fugaro-intake-fghij-uc.a.run.app"
+	intakeTestDecoyCredentialsURL = "https://fugaro-credentials-klmno-uc.a.run.app"
+	intakeTestDecoyIntakeURL      = "https://fugaro-intake-klmno-uc.a.run.app"
+)
+
+// writeIntakeProject writes one project config whose installation has a
+// credentials service at creds: the block, and nothing else, that the intake's
+// own address is read out of. creds empty writes a project config with no such
+// block, which is a machine that has an installation config but took no
+// credential from its service.
+func writeIntakeProject(t *testing.T, name, creds string) {
+	t.Helper()
+	path, err := localcfg.ProjectPath(os.Getenv, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gcp := name + "-1234"
+	cfg := "version: 1\nname: " + name + "\ngcp_project: " + gcp + "\nregion: us-east5\nruns_bucket: fugaro-runs-" + gcp + "\n"
+	if creds != "" {
+		cfg += "credentials_service:\n  url: " + creds + "\n"
+	}
+	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeIntakeMemberProject writes one member's project config: an installation
+// whose credentials service is at creds (no block at all when creds is empty),
+// pinned to a workspace whose own credentials service is at pinAddress. Both
+// addresses are in the one file, so a test can say which of them a reader of
+// the intake's address used.
+func writeIntakeMemberProject(t *testing.T, name, creds, pinAddress, workspace string) {
+	t.Helper()
+	path, err := localcfg.ProjectPath(os.Getenv, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gcp := name + "-1234"
+	pin := "workspace: " + workspace + "\nworkspace_pin:\n" +
+		"  firebase_project: " + workspace + "-1234\n" +
+		// The issuer is never free: validateWorkspace holds it to exactly this
+		// project's securetoken issuer, so the fixture is built with the same
+		// function the loader checks it against.
+		"  issuer: " + localcfg.WorkspaceIssuer(workspace+"-1234") + "\n" +
+		"  assertion_key: marker-assertion-key\n" +
+		"  service_account: fugaro-workspace@" + workspace + "-1234.iam.gserviceaccount.com\n" +
+		"  service_address: " + pinAddress + "\n"
+	cfg := "version: 1\nname: " + name + "\ngcp_project: " + gcp + "\nregion: us-east5\nruns_bucket: fugaro-runs-" + gcp + "\n"
+	if creds != "" {
+		cfg += "credentials_service:\n  url: " + creds + "\n"
+	}
+	if err := os.WriteFile(path, []byte(cfg+pin), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSecretsUserSetReachesTheWorkspacesIntake: a person who is no launcher of
+// the workspace's project stores, lists and removes at the workspace's intake
+// by naming the project with the existing --project and nothing else (D3148).
+// The address is read out of that project's own config on the person's machine
+// — the file the workspace's owner hands out, as any project's config travels
+// (R13) — the value comes from stdin, and the client asks the intake no
+// launcher question of its own: the intake is what admits the roster's people
+// (WC3, D2971), and a check here would be a second and weaker copy of the
+// service's.
+func TestSecretsUserSetReachesTheWorkspacesIntake(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	// The machine holds two project configs, as a member's does: the
+	// workspace's own, and the person's own project's. The address is the one
+	// the project named carries.
+	const works, own = "heimdall", "vidar"
+	writeIntakeProject(t, works, intakeTestCredentialsURL)
+	writeIntakeProject(t, own, intakeTestOtherCredentialsURL)
+	seen := fakeIntakeCalls(t, intakeAnswerFor(intake.ScopeUser))
+
+	out, _, err := executeStdin(t, intakeTestValue+"\n", "secrets", "user", "set", "claude-oauth-token", "--project", works)
+	if err != nil {
+		t.Fatalf("secrets user set --project %s: %v", works, err)
+	}
+	if !strings.Contains(out, "stored claude-oauth-token") {
+		t.Errorf("the store printed %q, want the line that names what was written", out)
+	}
+	if len(*seen) != 1 {
+		t.Fatalf("the store made %d calls, want one", len(*seen))
+	}
+	got := (*seen)[0]
+	if got.URL != intakeTestIntakeURL {
+		t.Errorf("the store asked %s, want %s (the intake of the project named, read out of its own config; %s is the other config's)", got.URL, intakeTestIntakeURL, intakeTestOtherIntakeURL)
+	}
+	req, ok := got.Call.Body.(intake.CreateRequest)
+	if !ok || req.Scope != intake.ScopeUser || req.Name != "claude-oauth-token" {
+		t.Fatalf("the store sent %#v, want the caller's own scope and the name that was typed", got.Call.Body)
+	}
+	if want := base64.StdEncoding.EncodeToString([]byte(intakeTestValue)); req.Value != want {
+		t.Errorf("the store sent a value that is not base64 of what stdin carried: a value comes from stdin only")
+	}
+
+	// The family's other two verbs reach the same address, so one project name
+	// is the whole of what the person has to know.
+	for _, v := range []struct {
+		args []string
+		path string
+	}{
+		{[]string{"secrets", "user", "ls", "--project", works}, intake.ListPath},
+		{[]string{"secrets", "user", "rm", "claude-oauth-token", "--project", works}, intake.DeletePath},
+	} {
+		*seen = (*seen)[:0]
+		if _, _, err := execute(t, v.args...); err != nil {
+			t.Fatalf("%s: %v", strings.Join(v.args, " "), err)
+		}
+		if len(*seen) != 1 {
+			t.Fatalf("%s made %d calls, want one", strings.Join(v.args, " "), len(*seen))
+		}
+		if u, p := (*seen)[0].URL, (*seen)[0].Call.Path; u != intakeTestIntakeURL || p != v.path {
+			t.Errorf("%s asked %s on %s, want %s on %s", strings.Join(v.args, " "), u, p, intakeTestIntakeURL, v.path)
+		}
+	}
+
+	// And a coding agent's session is refused as it is for every verb of the
+	// family: the intake verifies the person's own Google ID token, which an
+	// agent's session holds a copy of (F9).
+	t.Setenv("CLAUDECODE", "1")
+	*seen = (*seen)[:0]
+	if _, _, err := execute(t, "secrets", "user", "ls", "--project", works); err == nil || ExitCode(err) != ExitUserError {
+		t.Errorf("an agent's session answered %v (exit %d), want the session's own refusal", err, ExitCode(err))
+	}
+	if len(*seen) != 0 {
+		t.Errorf("an agent's session reached the intake: nothing was listed")
+	}
+}
+
+// TestTheIntakeAddressIsNeverAMembers: the intake's address is the workspace's
+// own, and the two sources that are not the project's own config file are
+// refused by name — a member's pin, which carries the workspace's service
+// address as the member's own value and never as the intake's (R13), and the
+// config an installation publishes to its runs bucket, which anyone who can
+// write that bucket can edit (the owner's answer to the threat model's finding
+// 3). Nothing resolves a workspace's name to a project either: --workspace is
+// not a flag of this family (D3148).
+func TestTheIntakeAddressIsNeverAMembers(t *testing.T) {
+	t.Run("a member's pin is not the address", func(t *testing.T) {
+		// The member's own project config carries both candidate addresses:
+		// its own installation's credentials service, and the workspace's that
+		// the pin names. Only the first may be swapped into an intake address.
+		isolateProjects(t, t.TempDir())
+		const member, works = "vidar", "heimdall"
+		writeIntakeMemberProject(t, member, intakeTestOtherCredentialsURL, intakeTestDecoyCredentialsURL, works)
+		seen := fakeIntakeCalls(t, intakeAnswerFor(intake.ScopeUser))
+
+		if _, _, err := execute(t, "secrets", "user", "ls", "--project", member); err != nil {
+			t.Fatalf("secrets user ls --project %s: %v", member, err)
+		}
+		if len(*seen) != 1 {
+			t.Fatalf("the listing made %d calls, want one", len(*seen))
+		}
+		if got := (*seen)[0].URL; got != intakeTestOtherIntakeURL {
+			t.Errorf("the listing asked %s, want %s: the address comes out of the project's own config, never out of the workspace's service address a member's pin names (%s)", got, intakeTestOtherIntakeURL, intakeTestDecoyIntakeURL)
+		}
+
+		// The same config without a credentials service has no address at all:
+		// the pin beside it is not one, so the command refuses rather than
+		// reading a second source, and sends nothing anywhere.
+		writeIntakeMemberProject(t, member, "", intakeTestDecoyCredentialsURL, works)
+		*seen = (*seen)[:0]
+		_, _, err := execute(t, "secrets", "user", "ls", "--project", member)
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("a config with no credentials service answered %v (exit %d), want a refusal: there is no address to read", err, ExitCode(err))
+		}
+		if !strings.Contains(err.Error(), "no credentials service") {
+			t.Errorf("the refusal does not name what is missing: %v", err)
+		}
+		if len(*seen) != 0 {
+			t.Errorf("the caller's own token was sent to an address a member's pin named (%d calls), want none", len(*seen))
+		}
+	})
+
+	t.Run("the published config is not the address", func(t *testing.T) {
+		// Anyone who can write the runs bucket writes the published config,
+		// credentials_service.url included. Its host is Cloud Run's own and
+		// carries the project number, so nothing in this tree can check it —
+		// which localcfg's own shape check says — so a person with no config of
+		// their own for the project is refused rather than aimed at whatever
+		// that file names.
+		f := sharedEnd2EndWith(t, auroraShared()+"credentials_service:\n  url: "+intakeTestCredentialsURL+"\n")
+		seen := fakeIntakeCalls(t, intakeAnswerFor(intake.ScopeUser))
+		t.Chdir(gitCheckout(t, filepath.Join(f.dir, "app"), "version: 1\nproject: aurora\ngcp_project: proj-1234\n"))
+
+		_, _, err := execute(t, "secrets", "user", "ls")
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("a config taken from the published file answered %v (exit %d), want a refusal", err, ExitCode(err))
+		}
+		for _, want := range []string{"credentials_service.url", "--config"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal must say %q: %v", want, err)
+			}
+		}
+		if len(*seen) != 0 {
+			t.Errorf("the caller's own token was sent to an address the published config named (%d calls), want none", len(*seen))
+		}
+	})
+
+	t.Run("there is no --workspace flag", func(t *testing.T) {
+		// D3148: nothing resolves a workspace's name to a project, so the
+		// person names the project and there is no second name to get wrong.
+		isolateProjects(t, t.TempDir())
+		writeIntakeProject(t, "heimdall", intakeTestCredentialsURL)
+		seen := fakeIntakeCalls(t, intakeAnswerFor(intake.ScopeUser))
+		_, _, err := executeStdin(t, intakeTestValue+"\n", "secrets", "user", "set", "claude-oauth-token", "--workspace", "heimdall")
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("--workspace answered %v (exit %d), want the family's own unknown-flag refusal", err, ExitCode(err))
+		}
+		if !strings.Contains(err.Error(), "unknown or malformed flag; secrets user commands take --json") {
+			t.Errorf("the refusal is not the family's own: %v", err)
+		}
+		if len(*seen) != 0 {
+			t.Errorf("a --workspace invocation reached the intake, want none")
+		}
+	})
+}
+
+// TestTheIntakesRefusalNamesTheRoster: the refusal a workspace's intake makes
+// of the caller's identity is read as what that admission is — the roster, and
+// the owner's `fugaro update` that publishes it — so a person it refuses is
+// told the two things they can act on instead of only that they are not one of
+// the installation's launchers (WC3, D2971). A refusal that is not about the
+// caller's identity says nothing of a roster: this client cannot tell a
+// workspace's project from an ordinary installation's, so the sentence is a
+// rule and its readings, and a type that is about somebody else's permission
+// gets none of it.
+func TestTheIntakesRefusalNamesTheRoster(t *testing.T) {
+	var refuse credsvc.WireError
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		credsvc.WriteWireError(w, credsvc.StatusUnverified, refuse)
+	}))
+	t.Cleanup(srv.Close)
+	prevIdentity := secretsIntakeIdentity
+	secretsIntakeIdentity = func(context.Context, string, string) (string, error) { return fakeLauncherToken, nil }
+	t.Cleanup(func() { secretsIntakeIdentity = prevIdentity })
+	call := func() error {
+		return secretsIntakeOver(context.Background(), srv.URL, secretsIntakeCall{
+			Path: intake.ListPath, Body: intake.ListRequest{Scope: intake.ScopeUser}, Out: &intake.ListAnswer{},
+		})
+	}
+
+	refuse = credsvc.WireError{Error: intake.ErrorUnverifiedLauncher, Message: "the caller is not one of this installation's launchers"}
+	err := call()
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("the intake's refusal of the caller answered %v (exit %d), want the user's own error", err, ExitCode(err))
+	}
+	for _, want := range []string{
+		"the caller is not one of this installation's launchers",
+		"the intake of a workspace's project admits the people on the workspace's roster",
+		"not on that roster yet",
+		"since the workspace's owner last ran `fugaro update`",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal must say %q: %v", want, err)
+		}
+	}
+
+	// The shared prefix's own refusal: a caller who is not an admin. It is not
+	// the roster's answer, and the sentence would be a wrong one here.
+	refuse = credsvc.WireError{Error: intake.ErrorNotAdmin, Message: "the caller is not on the admin list"}
+	err = call()
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("the intake's refusal of a non-admin answered %v (exit %d), want the user's own error", err, ExitCode(err))
+	}
+	if strings.Contains(err.Error(), "roster") {
+		t.Errorf("a refusal that is not about the caller's identity names a roster: %v", err)
 	}
 }

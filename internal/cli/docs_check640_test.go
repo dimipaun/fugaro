@@ -84,7 +84,7 @@ func TestDocsCheck640(t *testing.T) {
 		// The register's own marker for an owner-run check that has not been
 		// run: a row that lost either half reads as something an agent did, on
 		// the dogfood installation.
-		"**owner-run, not run.**",
+		"**owner-run, passed 2026-11-22.**",
 		"no agent runs any step of it",
 		// The installation this check must never touch, and the one it reads.
 		"never `belong`",
@@ -104,7 +104,7 @@ func TestDocsCheck640(t *testing.T) {
 	section := check640Section(t, register)
 	flat := strings.ToLower(flattenDoc(section))
 	for _, want := range []string{
-		"**not run.**",
+		"**pass, run by the owner on 2026-11-22**",
 		"no agent runs any step of it",
 		"never `belong`",
 		check640Run,
@@ -115,7 +115,7 @@ func TestDocsCheck640(t *testing.T) {
 		"forge-labels/implementation-plan.md",
 	} {
 		if !strings.Contains(flat, want) {
-			t.Errorf("Check %s's section does not say %q: the check is owner-run and has not been run, and a section that leaves either half out reads as something an agent did", check640Number, want)
+			t.Errorf("Check %s's section does not say %q: the check is owner-run and its record names the owner's run, and a section that leaves either half out reads as something an agent did", check640Number, want)
 		}
 	}
 
@@ -128,6 +128,13 @@ func TestDocsCheck640(t *testing.T) {
 		}
 	}
 	runner := readRepoFile(t, "scripts/live_checks_test.go")
+	for _, want := range []string{
+		`{"check640-queue-probe.sh", "check640-queue-probe_test.sh"}`,
+	} {
+		if !strings.Contains(runner, want) {
+			t.Errorf("scripts/live_checks_test.go does not list %s: the script that queues Check 640's task is driven from that table too", want)
+		}
+	}
 	if !strings.Contains(runner, `{"check640.sh", "check640_test.sh"}`) {
 		t.Errorf("scripts/live_checks_test.go does not list {\"check640.sh\", \"check640_test.sh\"}: every check's sibling test is driven from that table, and a check missing from it is one no job runs")
 	}
@@ -288,20 +295,17 @@ func TestDocsCheck640ScriptKeepsItsPromises(t *testing.T) {
 	}
 }
 
-// TestDocsCheck640IsNotClaimedAsRun: the register's own rule for a check nobody
-// has run, applied to this one — the words that would read as a result are the
-// ones that must not be here. The check is the owner's, and the whole of its
-// registration says so.
-func TestDocsCheck640IsNotClaimedAsRun(t *testing.T) {
+// TestDocsCheck640RecordsTheOwnersRun: the owner ran the check on 2026-11-22 and
+// it passed, so the row says that and says it is theirs: a result is recorded
+// only for a run the owner made, never one an agent claims.
+func TestDocsCheck640RecordsTheOwnersRun(t *testing.T) {
 	register := readDoc(t, liveChecksDoc)
 	row := check640RowRE.FindString(register)
 	if row == "" {
 		t.Fatalf("%s's register has no `| %s |` row", liveChecksDoc, check640Number)
 	}
-	for _, banned := range []string{"PASSED", "PASS on", "RAN on", "was run on"} {
-		if strings.Contains(row, banned) {
-			t.Errorf("Check %s's row says %q: nobody has run the check, and a row that reads as a result is a claim its owner never made", check640Number, banned)
-		}
+	if !strings.Contains(row, "OWNER-RUN, PASSED 2026-11-22") {
+		t.Errorf("Check %s's row does not record the owner's run of 2026-11-22", check640Number)
 	}
 	// The plan's own conditional owner step is the one thing a failure adds,
 	// and the section has to say it is the owner's: an agent cannot raise an
@@ -309,5 +313,37 @@ func TestDocsCheck640IsNotClaimedAsRun(t *testing.T) {
 	flat := strings.ToLower(flattenDoc(check640Section(t, register)))
 	if !strings.Contains(flat, "an agent cannot") {
 		t.Errorf("Check %s's section does not say an agent cannot raise the App's permission: the conditional step the plan writes is the owner's alone", check640Number)
+	}
+}
+
+// TestDocsCheck640NamesTheQueueStep: Check 640 launches nothing, so the register
+// says which script queues the one approved task it needs, that the approval is
+// the owner's typed confirmation, and that the script, its digest tool and its
+// test are really there. check640.sh's own usage text points at it too.
+func TestDocsCheck640NamesTheQueueStep(t *testing.T) {
+	flat := strings.ToLower(flattenDoc(check640Section(t, readDoc(t, liveChecksDoc))))
+	for _, want := range []string{
+		"bash scripts/live-checks/check640-queue-probe.sh",
+		"scripts/live-checks/check640-queue-probe_test.sh",
+		"go run ./scripts/orchdigest",
+		"you** type the project's name",
+		"`--dry-run`",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("Check %s's section does not say %q: the owner needs the task queued and approved, and this is the one command that does it", check640Number, want)
+		}
+	}
+	for _, p := range []string{
+		"scripts/live-checks/check640-queue-probe.sh",
+		"scripts/live-checks/check640-queue-probe_test.sh",
+		"scripts/orchdigest/main.go",
+		"scripts/orchdigest/main_test.go",
+	} {
+		if _, err := os.Stat(filepath.Join("..", "..", p)); err != nil {
+			t.Errorf("the register names %s and there is no such file: %v", p, err)
+		}
+	}
+	if !strings.Contains(readRepoFile(t, check640Script), "check640-queue-probe.sh") {
+		t.Errorf("%s's usage text does not name check640-queue-probe.sh, the script that queues its task", check640Script)
 	}
 }
