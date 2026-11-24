@@ -97,9 +97,12 @@ start. This file is the three commands and what each row means.
   taken on trust), which is the account `gcp.CatalogBuildSpec.check` admits. A repository-level derived
   image is disabled (**D1900**), so this build is what `fugaro image build <entry>` or `fugaro apply`
   submits; `fugaro image refresh` is refused and builds nothing.
-- **`mounts-github`**, **`mounts-bitbucket`** — the catalog build carries exactly the provider's git
-  credential, the `availableSecrets` entry the build clones with (`GITHUB_APP_KEY` for GitHub,
-  `GIT_TOKEN` for Bitbucket), and names **no** credentials service: `_CREDENTIALS_SERVICE_URL` is empty
+- **`mounts-github`**, **`mounts-bitbucket`** — the catalog build carries exactly one git
+  credential, and it is the **entry's source repository's**, not the served repository's when one entry
+  serves several: it is the `availableSecrets` entry the build clones with (`GITHUB_APP_KEY` for a
+  GitHub-sourced entry, `GIT_TOKEN` for a Bitbucket-sourced one — the request's provider is the entry's
+  own, so a GitHub repository whose entry is sourced from a Bitbucket repository mounts `GIT_TOKEN`), and
+  the build names **no** credentials service: `_CREDENTIALS_SERVICE_URL` is empty
   for every catalog build (**B4.5**), because the build-credentials route serves one repository to the
   account bound to that repository and never the project's build identity (**D2301**). A build with
   **no** mount and no service holds no credential at all and is a **FAIL**.

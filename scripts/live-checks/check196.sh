@@ -567,6 +567,22 @@ def repourl_of(b):
     return str(((b.get("substitutions") or {}).get("_REPO_URL")) or "")
 
 
+def provider_of_url(url):
+    """The provider a repository URL names, by its host. A CATALOG build's
+    provider is the ENTRY SOURCE repository's and never the served repository's
+    when one entry serves several: the request's GitProvider and RepoURL are the
+    entry's own source repository (internal/cli/image_build_catalog.go sets both
+    off that entry), which is the checkout the build clones and the credential
+    its request mounts. "" for a host neither provider serves, which is the one
+    thing this reading cannot answer."""
+    host = url.split("//", 1)[-1].split("/", 1)[0].strip().lower()
+    if host == "github.com":
+        return "github"
+    if host == "bitbucket.org":
+        return "bitbucket"
+    return ""
+
+
 def builds_of(path, repo, entry=""):
     """Every CATALOG-ENTRY build of one repository, newest first, and which of
     the two answers selected them.
@@ -711,6 +727,7 @@ if cmd == "builds":
         subs = b.get("substitutions") or {}
         print("match=%s" % match)
         print("source=%s" % word(repourl_of(b), 200))
+        print("source_provider=%s" % word(provider_of_url(repourl_of(b)), 40))
         print("id=%s" % word(b.get("id"), 60))
         print("status=%s" % word(b.get("status"), 40))
         print("account=%s" % word(account_address(b.get("serviceAccount")), 160))
@@ -1276,6 +1293,7 @@ step_repo() { # step_repo LABEL REPO PROVIDER
   local label=$1 repo=$2 provider=$3 ans
   ans=$(build_read "$repo" "$label")
   local found id status account entry image src_repo match containers url slug cenv
+  local src_prov
   found=$(field_of found "$ans")
   if [ "$found" != yes ]; then
     unmeasured "build-$label" "no CATALOG-ENTRY build of ${repo} is among the ${L} region's last ${BUILDS} builds, so the image this repository runs could not be read. $(no_build_remedy "$repo")"
@@ -1289,11 +1307,19 @@ step_repo() { # step_repo LABEL REPO PROVIDER
   entry=$(field_of entry "$ans")
   image=$(field_of image "$ans")
   src_repo=$(field_of source "$ans")
+  src_prov=$(field_of source_provider "$ans")
   match=$(field_of match "$ans")
   containers=$(field_of containers "$ans")
   url=$(field_of url "$ans")
   slug=$(repo_slug "$(field_of slug "$ans")" "$label" "$repo")
-  cenv=$(mint_env_name "$provider")
+  # The provider whose credential the request mounts is the ENTRY SOURCE
+  # repository's, read off `_REPO_URL` — not this repository's: the request's
+  # provider comes off the entry (gcp.CatalogBuildSpec's GitProvider), and one
+  # entry may serve several repositories, so a GitHub repository whose entry is
+  # sourced from a Bitbucket one mounts GIT_TOKEN and not GITHUB_APP_KEY. A host
+  # neither provider serves leaves the credential unnamed rather than guessed.
+  cenv=""
+  case "$src_prov" in github | bitbucket) cenv=$(mint_env_name "$src_prov") ;; esac
 
   # build-LABEL: the image this repository really runs — the CATALOG ENTRY its
   # image_map names, baked from the ENTRY's source repository (the checkout the
@@ -1313,8 +1339,10 @@ step_repo() { # step_repo LABEL REPO PROVIDER
   fi
 
   # mounts-LABEL: what a catalog build clones with. The request mounts exactly
-  # one Secret Manager container — the provider's git credential — and feeds it
-  # to the build step as GITHUB_APP_KEY (GitHub) or GIT_TOKEN (Bitbucket)
+  # one Secret Manager container — the git credential of the ENTRY's SOURCE
+  # repository, which is the checkout the build clones and not the served
+  # repository when one entry serves several — and feeds it to the build step as
+  # GITHUB_APP_KEY (GitHub) or GIT_TOKEN (Bitbucket)
   # (gcp.CatalogBuildSpec.AvailableSecrets). It is the one credential this build
   # has, and B4.9's flip does not take it away: the build runs as the project's
   # build identity, which the build-credentials route does not admit, so its
@@ -1325,10 +1353,12 @@ step_repo() { # step_repo LABEL REPO PROVIDER
     fact "mounts-$label" FAIL "the newest catalog build of ${repo} (${id}) carries no availableSecrets and names no credentials service: it holds no credential at all, so its clone can only fail — a catalog build clones with the provider credential its request MOUNTS, and a request with neither a mount nor a service is one no submitter of this installation writes. Submit the entry again with 'fugaro image build ${entry}' (or 'fugaro apply')"
     ;;
   *)
-    if printf '%s\n' "$ans" | grep -q "^container=${cenv}|"; then
-      fact "mounts-$label" PASS "the newest catalog build of ${repo} (${id}, entry ${entry}) carries ${containers} availableSecrets entry(ies) and one of them is the ${provider} clone credential, fed to the build step as ${cenv} ($(printf '%s\n' "$ans" | sed -n "s/^container=${cenv}|//p" | head -n 1)): the image is baked with the credential the request mounts — the one path a catalog build has, since its identity is not one the build-credentials route admits and B4.9's flip therefore leaves this mount in place"
+    if [ -z "$cenv" ]; then
+      unmeasured "mounts-$label" "the entry's source repository cannot be told from the build's _REPO_URL (${src_repo:-unknown}), so the provider credential its request mounts cannot be named and this row cannot be measured"
+    elif printf '%s\n' "$ans" | grep -q "^container=${cenv}|"; then
+      fact "mounts-$label" PASS "the newest catalog build of ${repo} (${id}, entry ${entry}) carries ${containers} availableSecrets entry(ies) and one of them is the ${src_prov} clone credential of the ENTRY's SOURCE repository (${src_repo:-unknown}), fed to the build step as ${cenv} ($(printf '%s\n' "$ans" | sed -n "s/^container=${cenv}|//p" | head -n 1)): a catalog entry's build clones that repository and mounts its ${src_prov} credential — the served repository's only where the entry is sourced from it — and its identity is not one the build-credentials route admits, so B4.9's flip leaves this mount in place"
     else
-      fact "mounts-$label" FAIL "the newest catalog build of ${repo} (${id}) carries ${containers} availableSecrets entry(ies) and none of them is the ${provider} clone credential the build clones with (${cenv}): the mounts it does carry read $(printf '%s\n' "$ans" | sed -n 's/^container=/&/p' | tr '\n' ' '). A catalog entry's build mounts exactly the provider's git credential (gcp.CatalogBuildSpec.AvailableSecrets)"
+      fact "mounts-$label" FAIL "the newest catalog build of ${repo} (${id}) carries ${containers} availableSecrets entry(ies) and none of them is the credential the build clones with — the ${src_prov} one of the ENTRY's SOURCE repository (${cenv}, ${src_repo:-unknown}): the mounts it does carry read $(printf '%s\n' "$ans" | sed -n 's/^container=/&/p' | tr '\n' ' '). A catalog entry's build mounts exactly its source repository's provider git credential (gcp.CatalogBuildSpec.AvailableSecrets)"
     fi
     ;;
   esac

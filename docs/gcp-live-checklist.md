@@ -14605,8 +14605,10 @@ itself** (`gcloud run services describe`) and depends on no build at all: a serv
 or that Cloud Run serves no URL, is a **FAIL**, and a read that failed is a row that could not be
 measured. The **mounts** row reads the request's own `availableSecrets` (the Secret Manager
 **container** ids and the env names — a container is a name and never a value, **G18**): a catalog build
-mounts exactly the provider's git credential, and a build whose request carries **no** mount and names
-no service holds no credential at all and is a **FAIL**. Then the service's own
+mounts exactly one git credential, the **entry's source repository's** (the request's provider is the
+entry's own, so a GitHub repository whose entry is sourced from a Bitbucket repository mounts
+`GIT_TOKEN`), and a build whose request carries **no** mount and names no service holds no credential at
+all and is a **FAIL**. Then the service's own
 `credsvc: audit` line of purpose `build` for each repository is read out of Cloud Logging — retried
 while ingestion catches up, because an empty answer taken immediately is an answer about Cloud Logging
 and not about the service, and a **read that failed** is a row that could not be measured rather than

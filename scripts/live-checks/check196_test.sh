@@ -249,10 +249,17 @@ def build(repo, provider):
     if mode == "catalog-build-no-mount" and provider == "github":
         mounts = 0
     if mounts:
+        # The credential is the ENTRY SOURCE repository's, which is the checkout
+        # this build clones and not the served repository when one entry serves
+        # several: a GitHub repository whose entry is sourced from a Bitbucket
+        # repository mounts GIT_TOKEN and the Bitbucket secret, and a check that
+        # expected the SERVED repository's GITHUB_APP_KEY would fail a correct
+        # installation (the request's provider is the entry's own,
+        # gcp.CatalogBuildSpec's GitProvider).
         b["availableSecrets"] = {"secretManager": [
-            {"versionName": "projects/fugaro-dev/secrets/%s/versions/latest" % slug(provider),
-             "env": MINT_ENV[provider]}]}
-        b["steps"][0]["secretEnv"] = [MINT_ENV[provider]]
+            {"versionName": "projects/fugaro-dev/secrets/%s/versions/latest" % slug(source_provider),
+             "env": MINT_ENV[source_provider]}]}
+        b["steps"][0]["secretEnv"] = [MINT_ENV[source_provider]]
     if mode in ("build-failed", "flip-build-failed") and provider == "github":
         b["status"] = "FAILURE"
     if mode == "build-other-account" and provider == "github":
@@ -579,6 +586,12 @@ test_a_build_is_found_through_the_map_when_the_source_repository_differs() {
   expect_contains "$out" "CATALOG ENTRY shared-web" "map source: the entry the map names"
   expect_contains "$out" "found by the catalog entry shared-web its image_map names" "map source: how it was found"
   expect_contains "$out" "bitbucket.org/acme/bb-sandbox.git" "map source: the entry's source repository"
+  # The mount row is judged against the ENTRY SOURCE repository's credential and
+  # not this repository's: the build mounts GIT_TOKEN and the Bitbucket secret,
+  # where a row that expected the served repository's GITHUB_APP_KEY would fail
+  # a correct installation.
+  expect_contains "$out" "FACT mounts-github: PASS" "map source: the mount row"
+  expect_contains "$out" "the bitbucket clone credential of the ENTRY's SOURCE repository (https://bitbucket.org/acme/bb-sandbox.git), fed to the build step as GIT_TOKEN" "map source: the credential it reads"
   expect_absent "$out" "FAIL" "map source: no row failed"
 }
 
