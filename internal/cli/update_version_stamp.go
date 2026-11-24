@@ -235,6 +235,34 @@ func (s *versionStampStage) heldLine(p *versionStampPlan, why string) string {
 		p.fromText(), why, selfCommand()+" update")
 }
 
+// promised is what this run would really do, and the one line it says about it:
+// whether the node moves to this release, and what to say when it does not.
+//
+// The release bound is asked here and not only in Apply because a stage that
+// plans a change is a stage the loop stops at, and a stop blocks every stage
+// behind it (F2): a coding agent's session, which may not write the node at
+// all, would end at this slot with workspace-project and the five stages after
+// it left unrun — over a raise that a lookup cannot confirm and that Apply
+// would then not make. What a run is about to do is asked of all of it, the
+// bound included, so the answer a session stops for is one the owner's own
+// terminal would carry out too.
+func (s *versionStampStage) promised(ctx context.Context, p *versionStampPlan) (bool, string) {
+	if !p.wanted() {
+		return false, stampCurrentLine
+	}
+	if why := s.held(p); why != "" {
+		return false, s.heldLine(p, why)
+	}
+	published, err := publishedRelease(ctx, p.ver)
+	if err != nil {
+		return false, fmt.Sprintf("the required CLI is left as it is: %v", err)
+	}
+	if !published {
+		return false, fmt.Sprintf("the required CLI is left as it is: fugaro %s is not a published release, and only a published release may be required (D3269)", p.ver)
+	}
+	return true, p.line()
+}
+
 // Check reports what the project's required CLI is. A malformed node is refused
 // with its own sentence and never overwritten. The three states that leave the
 // node exactly where it was — a build with no release, a database that is not
@@ -271,18 +299,14 @@ func (s *versionStampStage) Plan(ctx context.Context, env initflow.Env) (initflo
 	if err != nil {
 		return initflow.Plan{}, err
 	}
-	if p.wanted() {
-		if why := s.held(p); why != "" {
-			return initflow.Plan{NothingToDo: true, Detail: s.heldLine(p, why)}, nil
-		}
-	}
-	if !p.wanted() {
-		return initflow.Plan{NothingToDo: true, Detail: stampCurrentLine}, nil
+	raise, line := s.promised(ctx, p)
+	if !raise {
+		return initflow.Plan{NothingToDo: true, Detail: line}, nil
 	}
 	if env.Interactive || env.Yes {
-		fmt.Fprintln(s.e.r.cmd.OutOrStdout(), p.line())
+		fmt.Fprintln(s.e.r.cmd.OutOrStdout(), line)
 	}
-	return initflow.Plan{Detail: p.line()}, nil
+	return initflow.Plan{Detail: line}, nil
 }
 
 // Apply is the write. The session that may not write to the cloud refuses
@@ -310,20 +334,8 @@ func (s *versionStampStage) Apply(ctx context.Context, env initflow.Env) (initfl
 	if err != nil {
 		return initflow.Outcome{}, err
 	}
-	if p.wanted() {
-		if why := s.held(p); why != "" {
-			return initflow.Outcome{Detail: s.heldLine(p, why)}, nil
-		}
-	}
-	if !p.wanted() {
-		return initflow.Outcome{Detail: stampCurrentLine}, nil
-	}
-	published, err := publishedRelease(ctx, p.ver)
-	if err != nil {
-		return initflow.Outcome{Detail: fmt.Sprintf("the required CLI is left as it is: %v", err)}, nil
-	}
-	if !published {
-		return initflow.Outcome{Detail: fmt.Sprintf("the required CLI is left as it is: fugaro %s is not a published release, and only a published release may be required (D3269)", p.ver)}, nil
+	if raise, line := s.promised(ctx, p); !raise {
+		return initflow.Outcome{Detail: line}, nil
 	}
 	cmd := s.e.r.cmd
 	if err := s.e.r.asking(func() error {
