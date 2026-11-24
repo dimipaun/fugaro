@@ -128,7 +128,16 @@ var gatedStages = map[string]bool{
 	// refusal the stage makes either way — the owner's own step with it, a run
 	// failure without it (TestUpdateManagedGatesTheCredentialsServiceStage).
 	initflow.CredentialsService: true,
-	initflow.Workspace:          true,
+	// The required-CLI stamp is here with the rules stage, and for the rules
+	// stage's own reason: its document is not read from anywhere — it is the one
+	// this binary composes, the bytes its conditional write puts at
+	// config/policy/required_cli (versionStampPlan.payload, D1022's own answer
+	// for "a document the binary carries, so the plan IS the generation"). The
+	// entry alone admits nothing: the stage's own gateStep is what judges the
+	// document with the binary's own Version in hand, and a step the gate does
+	// not open keeps the session's refusal exactly.
+	initflow.VersionStamp: true,
+	initflow.Workspace:    true,
 }
 
 // initGate is this run's use of the gate: M6's helper, and the one read of the
@@ -934,6 +943,65 @@ var workspaceAdmittedRules = []string{
 var workspaceCredentialsAdmittedRules = []string{
 	"the database is this installation's: budgetDBUnadopted admitted it (D1017)",
 	fmt.Sprintf("the published credentials node is one this binary's own may write over: there is none, or it is at version %d (or at a version the migration carries to it in place)", projectpolicy.WorkspaceCredentialsVersion),
+}
+
+// gateStep judges the document the required-CLI stage is about to write, and
+// answers whether the gate admitted it: the stamp stage's version of the policy
+// and workspace stages' gateStep, for the third stage of this command whose
+// document is the database node it writes rather than a plan.
+//
+// The document is p.payload() — the exact bytes the stage's one conditional PUT
+// puts at config/policy/required_cli, built once and handed to the write as
+// well, under the ETag the stage's own read took, so the document the gate
+// judged and the document that lands are the same bytes (D1022). The two
+// questions the record names are the two the stage answered before this call:
+// budgetDBUnadopted first (the database is this installation's, and a database
+// the predicate refuses is a stage that has already skipped), and the node
+// itself after (there is none, or it names a release below this binary's — a
+// stamp never falls, D3262, so a node at or above this release is a stage that
+// never reaches here at all).
+//
+// The class is the ordinary one and there is no unjudged half: a raise only ever
+// adds to the fence, so the document is ConvergeAdmitted and the helper's own
+// rules are the whole verdict. What a session may not decide is who is admitted
+// to the project, and this node admits nobody — it is the release every member
+// is required to run, which is the same fact for every member.
+func (s *versionStampStage) gateStep(ctx context.Context, p *versionStampPlan, doc []byte) (bool, error) {
+	r := s.e.r
+	if !r.gateUnderway() {
+		return false, nil
+	}
+	if len(doc) == 0 {
+		// A step with no bytes to write is the stage's own contract broken, and
+		// it is refused rather than written: an empty document is the one thing
+		// this gate must never hand to a write.
+		return true, &initflow.GatedError{Reason: gateUnreadable, Err: errors.New("the required-CLI document this step would write is empty"), Refusal: initflow.GateRefusedUnread}
+	}
+	m, err := r.gate.g.admit(ctx, managedmode.ConvergeAdmitted(doc, versionStampAdmittedRules(p.ver)))
+	if err != nil {
+		return true, &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: gateRefusalOf(err)}
+	}
+	if !initflow.GateStandsIn(r.conditions(), m) {
+		return false, nil
+	}
+	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
+	return true, nil
+}
+
+// versionStampAdmittedRules is what the record says admitted the stamp step: the
+// two questions the stage answered before its write, in the order it asked them
+// — the database is this installation's (D1017's ownership, F22's first
+// predicate), and the node in play is one this binary's own may raise. The
+// release is named, and it is the whole point of the rule: what the step does is
+// require THIS binary's own version of every member of the project, so an owner
+// reading the record afterwards is told which release a session made the
+// project require. The document's digest is what the node is checked against;
+// the values in it are not repeated here.
+func versionStampAdmittedRules(ver string) []string {
+	return []string{
+		"the database is this installation's: budgetDBUnadopted admitted it (D1017)",
+		fmt.Sprintf("the node in play is one this binary's own may raise: there is none, or it names a release below fugaro %s", ver),
+	}
 }
 
 // gateApplied records the step the gate admitted, AFTER the step's own write
