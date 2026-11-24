@@ -1,5 +1,5 @@
 {
-  "about": "The spoken-confirmation state machine's accept/refuse cases as data (mobile plan Task P6.2). Replayed by shared/confirm/index.test.js today, and by P6.7's Go parity test (TestConfirmParityWithShared) so the Go consumer and the app cannot disagree about what a confirmation authorises. Each case starts from initialState({now, timeoutMs, maxPending, maxLedger}) and feeds `events` in order; `expect[i]` is what step answers for events[i]. A refusal carries no state, so the next event is judged against the same machine. A confirmation's text is P6.1's `confirm` app command (\"Fugaro, confirm\"); a bare \"confirm\" is agent text and confirms nothing. Every `record` is P6.3's action record verbatim (shared/mailbox-schema validates it). Written by hand from the rules in docs/mobile/implementation-plan.md (D128 as amended 2026-10-17, D169, D162) -- not generated from the module.",
+  "about": "The spoken-confirmation state machine's accept/refuse cases as data (mobile plan Task P6.2). Replayed by shared/confirm/index.test.js today, and by P6.7's Go parity test (TestConfirmParityWithShared) so the Go consumer and the app cannot disagree about what a confirmation authorises. Each case starts from initialState({now, timeoutMs, maxPending, maxLedger}) and feeds `events` in order; `expect[i]` is what step answers for events[i], and an `expect[i]` naming `state` also says what the step left behind (its pending read-backs and its ledger entries, counted). A refusal carries no state, so the next event is judged against the same machine. A confirmation's text is P6.1's `confirm` app command (\"Fugaro, confirm\"); a bare \"confirm\" is agent text and confirms nothing. Every `record` is P6.3's action record verbatim (shared/mailbox-schema validates it). Written by hand from the rules in docs/mobile/implementation-plan.md (D128 as amended 2026-10-17, D169, D162) -- not generated from the module.",
   "now": 1700000000000,
   "timeoutMs": 60000,
   "maxPending": 4,
@@ -113,6 +113,19 @@
       ],
       "expect": [
         { "ok": true, "outcome": "read-back", "phase": "pending" },
+        { "ok": false, "code": "replayed-action", "field": "actionId" }
+      ]
+    },
+    {
+      "name": "a costly start that reuses the action id of one already confirmed is refused (D2786)",
+      "events": [
+        { "type": "command", "now": 1700000001000, "utteranceId": "utt_1", "text": "kick off the docs job in pro mode", "verb": "launch", "mode": "pro", "actionId": "act_1" },
+        { "type": "confirm", "now": 1700000002000, "utteranceId": "utt_2", "text": "Fugaro, confirm", "actionId": "act_1", "confirmationId": "cnf_1", "target": { "kind": "mode", "mode": "pro" } },
+        { "type": "command", "now": 1700000003000, "utteranceId": "utt_3", "text": "kick off the other job in pro mode", "verb": "launch", "mode": "pro", "actionId": "act_1" }
+      ],
+      "expect": [
+        { "ok": true, "outcome": "read-back", "phase": "pending", "readBack": "Start a run in pro mode. Say \"Fugaro, confirm\" to confirm.", "actionId": "act_1", "biometric": false, "state": { "pending": 1, "ledger": 2 } },
+        { "ok": true, "outcome": "confirmed", "phase": "idle", "actionId": "act_1", "confirmationId": "cnf_1", "readBack": "Start a run in pro mode. Say \"Fugaro, confirm\" to confirm.", "record": { "id": "act_1", "verb": "launch", "target": { "mode": "pro" }, "confirmation": { "id": "cnf_1", "at": 1700000002000 } }, "state": { "pending": 0, "ledger": 4 } },
         { "ok": false, "code": "replayed-action", "field": "actionId" }
       ]
     },

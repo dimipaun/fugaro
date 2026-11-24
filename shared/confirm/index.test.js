@@ -1464,6 +1464,14 @@ test('the vectors file replays exactly: every accept and every refusal', () => {
         if (expected.actionId !== undefined) assert.equal(result.actionId, expected.actionId, `${where}: action id`);
         if (expected.confirmationId !== undefined) assert.equal(result.confirmationId, expected.confirmationId, `${where}: confirmation id`);
         if (expected.record !== undefined) assert.deepEqual(result.record, expected.record, `${where}: record`);
+        // The machine the step produced, where a case names it: the answer says
+        // what was spoken, and this says what the step left behind -- a second
+        // pending read-back, or an action id that was not spent, is a failing
+        // case here rather than a divergence nothing looks at.
+        if (expected.state !== undefined) {
+          assert.equal(result.state.pending.length, expected.state.pending, `${where}: pending read-backs`);
+          assert.equal(result.state.ledger.length, expected.state.ledger, `${where}: ledger entries`);
+        }
         // D2786's policy answer, where a case names it: a costly start asks for
         // the read-back, and with the switch the biometric beside it.
         if (expected.biometric !== undefined) assert.equal(result.biometric, expected.biometric, `${where}: biometric`);

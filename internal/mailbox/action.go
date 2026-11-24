@@ -714,10 +714,13 @@ func confirmCommand(state ConfirmState, ev ConfirmEvent) ConfirmAnswer {
 	if confirmHasSpent(state, ConfirmLedgerUtterance, utteranceID) {
 		return ConfirmAnswer{Code: CodeConfirmReplayedUtterance, Field: "utteranceId"}
 	}
-	if !isStart && confirmHasSpent(state, ConfirmLedgerAction, actionID) {
+	if needsReadBack && confirmHasSpent(state, ConfirmLedgerAction, actionID) {
 		// Two commands under one action id are an ambiguity about which action a
 		// confirmation authorised, so the second is refused rather than allowed
-		// to overwrite the first.
+		// to overwrite the first. It is the resolved target that makes an action
+		// id one to spend -- a costly start's mode as much as a run's id -- so a
+		// start that is read back is held to it exactly as a cancel is, and a
+		// plain start, which carries no action id at all, never reaches here.
 		return ConfirmAnswer{Code: CodeConfirmReplayedAction, Field: "actionId"}
 	}
 

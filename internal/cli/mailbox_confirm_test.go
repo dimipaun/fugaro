@@ -103,6 +103,19 @@ type confirmVectorExpect struct {
 	// D2786's policy answer, where a case names it: a costly start asks for the
 	// read-back, and with the switch the biometric beside it.
 	Biometric *bool `json:"biometric"`
+	// What the machine holds after an accept, where a case names it: the answer
+	// says what was spoken, and this says what the step produced. An omitted key
+	// is "not asserted", as every other one is.
+	State *confirmVectorState `json:"state"`
+}
+
+// confirmVectorState is the machine a case says the step left behind: how many
+// read-backs are pending and how many ids the ledger has spent. It is counted
+// rather than compared entry for entry, so a case stays about the shape of the
+// state rather than about every field the port carries.
+type confirmVectorState struct {
+	Pending int `json:"pending"`
+	Ledger  int `json:"ledger"`
 }
 
 // TestConfirmParityWithShared replays every vector in `shared/confirm/vectors.json`
@@ -204,6 +217,14 @@ func confirmParityWithShared(t *testing.T) {
 						where("no record, want %v", want.Record)
 					} else if got := canonicalJSON(t, answer.Record.Value()); !reflect.DeepEqual(got, canonicalJSON(t, want.Record)) {
 						where("record = %v, want %v", got, want.Record)
+					}
+				}
+				if want.State != nil {
+					if n := len(answer.State.Pending); n != want.State.Pending {
+						where("state holds %d pending read-backs, want %d", n, want.State.Pending)
+					}
+					if n := len(answer.State.Spent); n != want.State.Ledger {
+						where("state holds %d ledger entries, want %d", n, want.State.Ledger)
 					}
 				}
 				// An omitted key is "not asserted": a case that confirms without
