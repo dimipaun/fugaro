@@ -56,7 +56,7 @@ strict_fugaro_verify() {
     esac
   done <"$table"
 
-  local path="" seen_flag=no resolving=yes
+  local path="" resolving=yes
   local -a argv=("$@")
   local i=0 tok name short candidate
   while [ "$i" -lt "${#argv[@]}" ]; do
@@ -78,7 +78,6 @@ strict_fugaro_verify() {
         return 1
         ;;
       esac
-      seen_flag=yes
       ;;
     -?*)
       resolving=no
@@ -92,7 +91,6 @@ strict_fugaro_verify() {
         return 1
         ;;
       esac
-      seen_flag=yes
       ;;
     *)
       if [ "$resolving" = yes ]; then
@@ -111,7 +109,6 @@ strict_fugaro_verify() {
     esac
     i=$((i + 1))
   done
-  [ -n "$seen_flag" ] || true
   return 0
 }
 
