@@ -173,7 +173,7 @@ Paths: `internal/budget/model.go:31-52`.
 
 | Setting | Store | Show | Set | agent | Gap |
 |---|---|---|---|---|---|
-| managed marker plus monthly budget alert amount | `gs://<runs>/fugaro/managed.json` plus project label | none dedicated | `managed flag` (managed_flag.go:98) | refused (:188) | L (adds only; "edits nothing", per its `--help`) |
+| managed marker plus monthly budget alert amount | `gs://<runs>/fugaro/managed.json` plus project label | none dedicated | `managed flag` (managed_flag.go:98) | refused (:188) | L (writes the marker and the label; an explicit `--budget` replaces a recorded amount, D2215) |
 | approved deletes | `fugaro/allow-delete.json` | `allow-delete` with no arguments | `allow-delete ADDR=ID...` (allow_delete.go:69) | refused (:198) | closed |
 | project recipes | `fugaro/recipes/NAME.yaml` | `recipes ls|show --json` | `recipes publish FILE` (recipes.go:327) | refused (:332) | M (same FILE-publish shape as the layer) |
 | secrets | Secret Manager | `secrets ls --json`, `creds ls` | `secrets set` (secrets.go:279), `creds set` (creds.go:128) | `creds` refused (:116); `secrets set` not refused | closed (values only, never shown) |

@@ -66,12 +66,14 @@
 // only thing that reaches a point's `title` through this path is a date this
 // file wrote.
 //
-// **The person breakdown is off by default** (design D15 and section 2.3): the
-// report can group by `person`, the document still carries those rows, and the
-// screen draws none of them until the operator turns the view on. When it is on,
-// a person key is drawn through `sanitize.ts`'s `person` class, which draws the
-// identity the document named (D3213, 2026-11-21) -- who spent the money is the
-// answer this view exists to give.
+// **The person breakdown is on by default** (D3214, 2026-11-21, amending D15):
+// the report groups by `person` when the operator asks it to, and the by-person
+// panel beside it is drawn from the screen's own read. A person key is drawn
+// through `sanitize.ts`'s `person` class, which draws the identity the document
+// named (D3213, 2026-11-21) -- who spent the money is the answer this view
+// exists to give -- and the knob beside the chart turns the view off for the
+// session, after which no person row is drawn and no read naming a person is
+// made.
 //
 // **The by-person view is `runs stats --json`, and it is fail-private.** The
 // knob above turns on a *second read* beside the report (`peopleArguments` and
@@ -123,12 +125,12 @@
 // file's business. It was written before that caller existed and kept whole, so
 // the entry point had nothing left to decide about the Spend screen's controls.
 //
-// **And the person view is off until the operator says otherwise.** `--by
-// person` is not a read this screen makes while the knob is off, and the
-// document's person rows are not drawn either (see the D15 paragraph above):
-// both halves are held by `spend-controls.test.ts` against a default of `on`.
-// The knob is per session, and nothing here writes it anywhere -- the console
-// never writes to disk (design section 5.1 rule 10).
+// **And the person view is on until the operator says otherwise.** `--by
+// person` is a read this screen may make without being asked, and the
+// document's person rows are drawn (see the D3214 paragraph above): both halves
+// are held by `spend-controls.test.ts` against the default it opens on. The
+// knob is per session, and nothing here writes it anywhere -- the console never
+// writes to disk (design section 5.1 rule 10).
 //
 // **What is deliberately not here.** No stylesheet and no colour: the design's
 // density rules are markup and CSS, and `src/renderer/theme/tokens.css` is in
@@ -663,10 +665,11 @@ export interface SpendSwitchEntry {
 /** SpendOptions is what the caller of `buildSpendModel` decides. */
 export interface SpendOptions {
   /**
-   * `persons` turns the `person` breakdown on. It is **off by default** (design
-   * D15): the report can name the people whose runs spent the money, and a
-   * desktop window is not a terminal. The rows are in the document either way;
-   * this decides whether the screen draws them.
+   * `persons` turns the `person` breakdown on. It is **on by default** (D3214,
+   * 2026-11-21, amending D15): the report can name the people whose runs spent
+   * the money, and the operator turns the view off for the session rather than
+   * on. The rows are in the document either way; this decides whether the screen
+   * draws them.
    */
   readonly persons?: boolean
   /**
@@ -856,8 +859,9 @@ export interface SpendModel {
   /**
    * the by-person view (`runs stats --json`, console L5b), or `null` when the
    * person view is off: the panel exists only while the operator's own knob is
-   * on (design D15), so a screen with the knob off has no question to answer
-   * about whose rows it may draw and no read to make.
+   * on, which is the default (D3214, amending D15), so a screen the operator has
+   * turned the knob off on has no question to answer about whose rows it may
+   * draw and no read to make.
    */
   readonly people: SpendPeople | null
   readonly warnings: readonly string[]
@@ -1752,16 +1756,17 @@ function capRowOf(raw: unknown): SpendCapRow | null {
 // ---------------------------------------------------------------------------
 
 /** PERSON_OFF_NOTE is the one-line reason the design asks for beside a view
- * that is off by default (`section 2.3`: "with a one-line note on what it
- * shows"). It is the console's own sentence, drawn as a literal. */
+ * the operator has turned off (`section 2.3`: "with a one-line note on what it
+ * shows"). It is the console's own sentence, drawn as a literal, and it states
+ * the scope of the switch -- this session only -- because nothing persists it. */
 const PERSON_OFF_NOTE =
-  'the person breakdown is off by default, and when turned on it is on for this session only and not remembered: these rows name the people whose runs spent the money'
+  'the person breakdown is off for this session only and not remembered: these rows name the people whose runs spent the money'
 
-/** PERSON_ON_NOTE is the same line for the view once the operator has turned it
- * on: what it shows, and that an address on the wire is drawn as the console's
- * own marker (`sanitize.ts`'s `person` class). */
+/** PERSON_ON_NOTE is the same line for the view in the state the screen opens
+ * on: what it shows, and that an identity on the wire is drawn as the run
+ * recorded it (`sanitize.ts`'s `person` class, D3213). */
 const PERSON_ON_NOTE =
-  'the person breakdown is on for this session only and not remembered (off by default): it names the people whose runs spent the money, and each address is drawn as the console’s own marker'
+  'the person breakdown is on by default, and on for this session only and not remembered: it names the people whose runs spent the money, and each identity is drawn as the run recorded it'
 
 /** dimensionOf reads the document's `by`. */
 function dimensionOf(raw: string | null): SpendDimension | null {
@@ -1815,7 +1820,9 @@ export function buildSpendModel(
   budget: JSONDoc | null,
   options: SpendOptions = {},
 ): SpendModel {
-  const personsEnabled = options.persons === true
+  // On unless the operator's own knob turned it off (D3214): the screen opens
+  // on, so an absent option is the default rather than the exception.
+  const personsEnabled = options.persons !== false
   const source = textAt(report['source'])
   const since = textAt(report['since'])
   const until = textAt(report['until'])
@@ -1943,13 +1950,13 @@ export interface SpendControls {
   readonly until: string | null
   /** the breakdown switch's `--by` */
   readonly by: SpendDimension
-  /** the person view's own knob (design D15) */
+  /** the person view's own knob (D3214, amending design D15) */
   readonly persons: boolean
 }
 
 /**
  * SPEND_DEFAULT_CONTROLS is the screen as it opens: the recent week, by day,
- * with the person view off (D15).
+ * with the person view on (D3214, 2026-11-21, amending D15).
  *
  * **`7d` is the owner's choice and not the CLI's default** (console 0.118.0,
  * "when going to the Spend screen, let's default to 7d/day"): the question this
@@ -1968,7 +1975,7 @@ export const SPEND_DEFAULT_CONTROLS: SpendControls = Object.freeze({
   since: '7d',
   until: null,
   by: 'day',
-  persons: false,
+  persons: true,
 })
 
 /** SpendArguments is the argument object this screen sends: `spend.report`'s
@@ -1990,7 +1997,7 @@ const WINDOW_UNKNOWN =
 const UNTIL_NOT_A_DAY = 'the range picker’s end of the range is not a UTC day (YYYY-MM-DD)'
 const BREAKDOWN_UNKNOWN = 'the breakdown switch asked for a breakdown this console does not know'
 const PERSON_OFF_BECAUSE =
-  'the breakdown switch asked for the person breakdown, which is off by default, and on for this session only and not remembered, until the operator turns the person view on'
+  'the breakdown switch asked for the person breakdown, which the operator turned off for this session only and did not remember, so no read naming a person is made'
 
 /** pickerSince is the picker's `since` as `report --since`, or `null` for a
  * value outside the picker's own two forms: a window of `SPEND_PICKER_WINDOWS`,
@@ -2023,9 +2030,10 @@ export function spendArguments(controls: SpendControls): SpendArgumentDecision {
   }
   const by = dimensionOf(controls.by)
   if (by === null) return { ok: false, reason: BREAKDOWN_UNKNOWN }
-  // The person breakdown is off until its own knob is on (D15), and that is
-  // enforced here and not only in the drawing: a switch word the operator never
-  // turned on must not become a read, however the state was reached.
+  // The person breakdown is a read only while its own knob is on -- the state
+  // the screen opens on (D3214) -- and that is enforced here and not only in the
+  // drawing: a switch word the operator turned off must not become a read,
+  // however the state was reached.
   if (by === 'person' && !controls.persons) return { ok: false, reason: PERSON_OFF_BECAUSE }
   // `--until` is omitted rather than sent empty: absent is `report`'s own
   // today, and an empty string is not a day.
@@ -2094,11 +2102,12 @@ function refusalSentence(cause: unknown): string {
  *
  * `people` is the by-person read (`runs.stats`, console L5b), and it is a
  * parameter of its own for the same reason: it is a *different operation*, and
- * it is made **only while the operator's knob is on** (design D15) -- so a
- * screen with the knob off spawns once, exactly as it did before this task. It
- * is optional and defaults to `null`, which is the state "this caller wired no
- * by-person read": the panel then draws the console's own sentence for that
- * (`NO_PEOPLE_READ`) rather than an empty list, and nothing is spawned.
+ * it is made **only while the operator's knob is on** (D3214, amending design
+ * D15) -- the state the screen opens on, so a screen the operator turned the
+ * knob off on spawns once. It is optional and defaults to `null`, which is the
+ * state "this caller wired no by-person read": the panel then draws the
+ * console's own sentence for that (`NO_PEOPLE_READ`) rather than an empty list,
+ * and nothing is spawned.
  *
  * **The by-person read's refusal is the panel's and not the screen's.** The
  * report read is the screen's subject -- its refusal is `SpendOutcome`'s
@@ -2143,8 +2152,9 @@ interface PeopleRead {
 /** readPeople makes the by-person read, and it is shared by this file's two
  * report reads -- `readSpend`, the whole-document one, and `readReportStream`,
  * RS5's -- because they differ in how they read the *report* and not in how they
- * read the people. Both make it **only while the knob is on** (design D15), and
- * both draw a refusal as the panel's own sentence rather than as the screen's.
+ * read the people. Both make it **only while the knob is on** (D3214, amending
+ * design D15), and both draw a refusal as the panel's own sentence rather than
+ * as the screen's.
  *
  * The order is the report first and the people after, which is what this read
  * has always been: the panel is one part of a screen the report has already
@@ -2498,10 +2508,10 @@ export async function readCapsStream(read: CapsStreamRead): Promise<CapsStreamOu
 }
 
 /**
- * personView is the operator's own knob (design D15: the person breakdown is off
- * by default and turned on per installation; **this knob is per session only
- * and is not remembered**, because persisting it needs a write channel this
- * console does not have -- an open owner question). Turning it on
+ * personView is the operator's own knob (D3214, amending design D15: the person
+ * breakdown is on by default and turned off per session; **this knob is per
+ * session only and is not remembered**, because persisting it needs a write
+ * channel this console does not have -- an open owner question). Turning it on
  * asks for the person breakdown -- the same `runReport` with `by person` and
  * nothing more -- and turning it off leaves no read that names a person: the
  * switch's own word goes back to `day`, because `--by person` with the view off
@@ -3068,9 +3078,9 @@ function picker(factory: ScreenFactory, controls: SpendControls): ScreenElement 
 }
 
 /**
- * personKnob draws the person view's own switch (design D15): a real `button`
- * whose word names the view and whose state says whether it is on, and the
- * one-line note the design asks for beside a view that is off by default.
+ * personKnob draws the person view's own switch (D3214, amending design D15): a
+ * real `button` whose word names the view and whose state says whether it is on,
+ * and the one-line note the design asks for beside it.
  *
  * It is a control of its own rather than a state of the breakdown switch: the
  * switch's `person` word is one of the eight the CLI has, and the operator's
@@ -3585,8 +3595,8 @@ const NO_PEOPLE_TOTAL =
  * fail-private sentence above it.
  *
  * It is drawn only while the operator's knob is on (`renderSpend`): with the
- * knob off there is no read and no panel, which is D15's rule and not a state of
- * this function.
+ * knob off there is no read and no panel, which is the knob's rule and not a
+ * state of this function.
  */
 function peoplePanel(factory: ScreenFactory, people: SpendPeople): ScreenElement {
   const element = make(factory, 'section', 'spend-people')
@@ -3769,7 +3779,8 @@ export function fillSpendReport(
 
   // The by-person panel sits beside the report's own totals -- it is the same
   // window read a second way -- and it is drawn only while the operator's knob
-  // is on: `buildSpendModel` has no panel when it is off (design D15).
+  // is on, which is the default (D3214): `buildSpendModel` has no panel when it
+  // is off.
   if (model.people !== null) element.append(peoplePanel(factory, model.people))
 
   for (const note of model.notes) {

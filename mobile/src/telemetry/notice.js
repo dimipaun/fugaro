@@ -13,34 +13,30 @@
 // a modal and not a first-launch prompt: it is part of the shell, drawn on
 // every screen.
 //
-// **The two rulings, and which half of the sentence each one leaves standing.**
-// The owner answered **D255** on 2026-10-19 as *always on* -- no switch, no
-// sheet, no stored choice -- and the statement was first written to it, in the
-// page's own sentence for that answer (*"There is no switch inside the app to
-// turn them off"*). **The owner's ruling of 2026-10-30 (D731) supersedes D255**:
-// crash reports are **on by default and opt-out**, and Firebase Analytics is
-// **dropped from the app** -- one posture everywhere, and the ruling **orders
-// P7.2 and section 7.4 amended before they are built**. That amendment is task
-// **T0.1**'s (`docs/review-levels-ab-jobmax/implementation-plan.md`, which
-// rewrites section 6, P7.2 and the section 7.4 scan in
-// `docs/mobile/telemetry-plan.md`), and the build side is task
-// **T3.1**'s: the app's one collection call site, read
-// from the project's own `settings` node, and the page's paragraph beside it.
-// Neither has landed, so this module carries **the half of the statement both
-// rulings leave standing** -- and makes **no claim about how collection is
-// turned off**, in either direction: not D255's *"no switch inside the app"*,
-// which D731 removes, and not an opt-out control, which the build does not have
-// yet. The superseded clauses are pinned absent by `notice.test.js`, so putting
-// one back is a deliberate act rather than a slip.
+// **The two rulings, and what D731 left standing.** The owner answered **D255**
+// on 2026-10-19 as *always on* -- no switch, no sheet, no stored choice -- and
+// the statement was first written to it, in the page's own sentence for that
+// answer (*"There is no switch inside the app to turn them off"*). **The owner's
+// ruling of 2026-10-30 (D731) supersedes D255**: crash reports are **on by
+// default and opt-out**, and Firebase Analytics is **dropped from the app**.
+// T3.1 built both halves: Analytics left the manifest, the config, the SDK
+// wiring and this statement, and the switch is the published project policy's
+// `mobile_crash_reports` key, which the app reads as `crash_reports` in the
+// pairing session's policy and applies in `src/telemetry/crash.js` -- the app's
+// one collection call site. The statement below therefore says what the app
+// sends, that the switch is the project's own published policy rather than one
+// inside the app, and that nothing is sent before it has been read; D255's
+// *"no switch inside the app"* and *"uninstalling the app stops them"* are
+// pinned **absent** by `notice.test.js`, so putting one back is a deliberate
+// act rather than a slip.
 //
-// **What that half is, is what the build sends, not what the plans intend.**
-// Both Firebase reporters ship today -- T3.1 drops Analytics under D731, and it
-// has not landed -- so the statement names both, exactly as the live page does.
-// `notice.test.js` reads `mobile/package.json` and holds the statement to the
-// reporter packages it finds, in both directions: a package with no words in
-// the statement fails, and a clause whose package has gone fails too. The
-// Analytics sentences therefore leave with the package, in T3.1's own change,
-// and nothing here has to remember to do it.
+// **What the statement names is what the build sends, not what the plans
+// intend.** `notice.test.js` reads `mobile/package.json` and holds the
+// statement to the reporter packages it finds, in both directions: a package
+// with no words in the statement fails, and a clause whose package has gone
+// fails too. That is how D731's removal emptied this statement of Analytics --
+// the clause left with the package in T3.1's own change -- and how a reporter
+// added later cannot arrive without a sentence beside it.
 //
 // **The link, and how it is built.** The statement carries the URL of the
 // privacy page, and a URL leaves this app only through **P0.3's validator**
@@ -61,11 +57,11 @@
 // **What is not here.** No consent state, no stored choice, no settings key and
 // no call that would set collection state on either SDK. Under D731 the app
 // carries **exactly one** call site that sets collection state on Crashlytics,
-// and it is T3.1's `crash.js`, not this module: this file is the one that would
-// carry one if a statement were a control, so `notice.test.js` reads its source
-// for both call names -- spelled with their parenthesis there, and named here
+// and it is `crash.js`, not this module: this file is the one that would carry
+// one if a statement were a control, so `notice.test.js` reads its source for
+// both call names -- spelled with their parenthesis there, and named here
 // without it so that the file can pass its own scan -- and the app-wide version
-// is the section 7.4 scan T3.1 lands beside the call site.
+// is `scan.test.js`.
 
 import { DEFAULT_HOST_ALLOW_LIST, validateExternalUrl } from '../../../shared/url/index.js';
 
@@ -75,13 +71,12 @@ import { DEFAULT_HOST_ALLOW_LIST, validateExternalUrl } from '../../../shared/ur
  * reports are read, and the three things that never leave the device.
  *
  * **It describes what the app sends today, and the build is what says so.** The
- * app ships both Firebase reporters (the crash reporter and Analytics), and
- * `notice.test.js` reads `mobile/package.json` and requires the statement to
- * name the product of every reporter package it finds -- so a statement that
- * leaves one out fails there, and the package that leaves (T3.1 drops Analytics
- * under D731) fails until the clause leaves with it. That is the rule this text
- * exists under: the disclosure is the app's own dependencies, not the posture
- * the plans intend.
+ * app ships one Firebase reporter -- Crashlytics, since T3.1 dropped Analytics
+ * under D731 -- and `notice.test.js` reads `mobile/package.json` and requires
+ * the statement to name the product of every reporter package it finds: a
+ * statement that leaves one out fails there, and so does a clause whose package
+ * has gone. That is the rule this text exists under: the disclosure is the
+ * app's own dependencies, not the posture the plans intend.
  *
  * "What a report holds", and why it is read, are not decoration: a statement
  * that says only where reports go leaves a reader unable to judge what they are
@@ -94,15 +89,15 @@ import { DEFAULT_HOST_ALLOW_LIST, validateExternalUrl } from '../../../shared/ur
  * and a caller that composed its own sentence would be a second statement
  * nobody checked against the page.
  */
-export const STATEMENT = 'The app versions that carry these reports send two things to a Firebase '
-  + 'project the Fugaro project operates, and not to your own: crashes, through Firebase '
-  + 'Crashlytics, and anonymous usage, through Firebase Analytics. A crash report holds the '
-  + 'crash\'s logs, diagnostics and app performance data, and the usage count says which screens '
-  + 'were opened. Firebase gives the app an app-instance identifier of its own, and that travels '
-  + 'with both. The reports are read to find and fix crashes and to see which screens are used, '
-  + 'and for nothing else. Never sent: the contents of any message, anything from your '
-  + 'installation or its mailbox, your credentials and your keys. The app carries no advertising '
-  + 'identifier.';
+export const STATEMENT = 'The app versions that carry these reports send crashes, through Firebase '
+  + 'Crashlytics, to a Firebase project the Fugaro project operates, and not to your own. A crash '
+  + 'report holds the crash\'s logs, diagnostics and app performance data, and Firebase gives the '
+  + 'app an app-instance identifier of its own, and that travels with the report. The reports are '
+  + 'read to find and fix crashes, and for nothing else. The switch is the project\'s own '
+  + 'published policy and not one inside the app: it is on by default, nothing is sent before the '
+  + 'app has read it, and a project that publishes it as false sends nothing. Never sent: the '
+  + 'contents of any message, anything from your installation or its mailbox, your credentials '
+  + 'and your keys. The app carries no advertising identifier.';
 
 /** The privacy page, as the one URL this app may hand to a browser. */
 export const PRIVACY_URL = 'https://fugaro.dev/privacy/';

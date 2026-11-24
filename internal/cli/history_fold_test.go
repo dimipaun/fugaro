@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"testing"
@@ -328,6 +329,161 @@ func TestStaleFoldMarksIncomplete(t *testing.T) {
 				t.Fatalf("the rollover moved the stamp: %#v", sum["folded_through"])
 			}
 		})
+	}
+}
+
+// executeHistoryCtx runs the command tree with a context of its own, which is
+// how a test hands the history job a deadline the process's clock cannot reach:
+// the command derives its own eight-minute timeout from this context, and
+// context.WithTimeout keeps the shorter one, so a test's deadline is the
+// execution's.
+func executeHistoryCtx(t *testing.T, ctx context.Context, args ...string) (string, string, error) {
+	t.Helper()
+	cmd := NewRootCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetContext(ctx)
+	cmd.SetArgs(NormalizeArgs(args))
+	err := cmd.Execute()
+	return out.String(), errOut.String(), err
+}
+
+// TestHistoryReindexWalksTheBucket is the job's --reindex mode end to end
+// (RI5): the flag the history job is started with walks every run in the runs
+// bucket into the index, recomputes the summary from what it wrote and says
+// what it did. It is the one mode whose whole job is the walk -- a sweep folds
+// only what changed and a rollover moves days -- and the pass an operator
+// watches after `fugaro runs reindex` or `fugaro update` starts it.
+func TestHistoryReindexWalksTheBucket(t *testing.T) {
+	f := newFoldFixture(t)
+	f.entry(foldRunOne, time.Minute)
+	f.run(foldRunOne, runstore.StatusSucceeded, f.now.Add(-3*time.Hour), foldCost(3.5, 1.0, 0.25, true))
+	// A run that is in flight: a task and a launch, no record at all. The walk
+	// takes it too, because the walk reads the bucket and not the registry.
+	f.entry(foldRunTwo, time.Minute)
+	f.runInFlight(foldRunTwo, f.now.Add(-time.Hour))
+
+	before := f.bucketKeys()
+	out, _, err := execute(t, "budget", "history", "--reindex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "index: 2 walked, 0 unreadable, through "+f.now.Format(time.RFC3339)+" (complete)") {
+		t.Fatalf("the reindex does not say what it walked: %q", out)
+	}
+	// The walk reads the runs bucket and never writes it.
+	if after := f.bucketKeys(); len(after) != len(before) {
+		t.Fatalf("the reindex wrote a run object: %v became %v", before, after)
+	}
+	for _, id := range []string{foldRunOne, foldRunTwo} {
+		if _, ok := f.fs.Value(runindex.EntriesCollection, id); !ok {
+			t.Fatalf("the reindex left %s out of the index: %v", id, f.fs.IDs(runindex.EntriesCollection))
+		}
+	}
+	if sum := f.summaryDoc(); sum["complete"] != true || sum["runs"] != int64(2) {
+		t.Fatalf("summary = %v", sum)
+	}
+	// A completed walk frees the lease, so the next sweep folds rather than
+	// walking behind it.
+	if got := f.db.Value(runindex.PathLease); got != nil {
+		t.Fatalf("the reindex left its lease behind: %v", got)
+	}
+}
+
+// TestHistoryReindexIsBoundedByTheExecutionDeadline pins the wiring the mode
+// exists for: a pass is bounded by the execution's own deadline -- the job's
+// eight minutes, or the shorter one a caller hands it -- minus reindexReserve,
+// so a walk that reaches the bound stops at the run it is on and leaves its
+// position with the lease for the next sweep to continue, rather than being
+// killed by the platform with nothing to resume from (F39, RI5).
+//
+// The deadline here is thirty seconds out and the reserve is forty-five, so the
+// bound is already behind the walk when it reaches the first run: the pass
+// walks exactly that one and stops. The second execution is the resume -- a
+// plain --sweep finds the cursor and carries the walk to the end.
+func TestHistoryReindexIsBoundedByTheExecutionDeadline(t *testing.T) {
+	f := newFoldFixture(t)
+	// The walk's clock is the process's, so the execution's deadline is in the
+	// future for the fakes' HTTP calls and still inside the walk's own window.
+	f.now = time.Now().UTC()
+	f.entry(foldRunOne, time.Minute)
+	f.run(foldRunOne, runstore.StatusSucceeded, f.now.Add(-3*time.Hour), foldCost(3.5, 1.0, 0.25, true))
+	f.entry(foldRunTwo, time.Minute)
+	f.run(foldRunTwo, runstore.StatusSucceeded, f.now.Add(-2*time.Hour), foldCost(1.0, 0.0, 0.1, true))
+
+	ctx, cancel := context.WithDeadline(context.Background(), f.now.Add(30*time.Second))
+	defer cancel()
+	out, _, err := executeHistoryCtx(t, ctx, "budget", "history", "--reindex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The runs are walked newest first, so the pass stops on the newer one.
+	want := "index: 1 walked, 0 unreadable, through " + f.now.Format(time.RFC3339) + " (unfinished: the next sweep continues from there)"
+	if !strings.Contains(out, want) {
+		t.Fatalf("a pass cut by the execution deadline does not say so: %q, want %q", out, want)
+	}
+	// The position is left with the lease rather than thrown away with it.
+	l, ok := f.db.Value(runindex.PathLease).(map[string]any)
+	if !ok {
+		t.Fatalf("the unfinished walk left no lease: %#v", f.db.Value(runindex.PathLease))
+	}
+	if cursor := (runindex.Cursor{Slug: appSlug, RunID: foldRunTwo}).Encode(); l["cursor"] != cursor {
+		t.Fatalf("the unfinished walk left cursor %#v, want the run it stopped on (%s)", l["cursor"], foldRunTwo)
+	}
+
+	// The next sweep continues from the cursor instead of starting over.
+	out, _, err = execute(t, "budget", "history", "--sweep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "index: 1 walked, 0 unreadable, through "+f.now.Format(time.RFC3339)+" (complete)") {
+		t.Fatalf("the sweep did not continue the walk: %q", out)
+	}
+	if sum := f.summaryDoc(); sum["complete"] != true || sum["runs"] != int64(2) {
+		t.Fatalf("summary = %v", sum)
+	}
+	if got := f.db.Value(runindex.PathLease); got != nil {
+		t.Fatalf("the completed walk left its lease behind: %v", got)
+	}
+}
+
+// TestHistoryReindexSaysWhoHoldsTheLease is printWalk's third answer, and the
+// one only --reindex can reach: a sweep that finds a fresh claim reports it at
+// the sweep and never walks, while --reindex asks for the walk itself and is
+// told who is in the way. An operator who starts a reindex and reads nothing
+// has no way to tell a walk that found nothing from one that never ran, so the
+// pass names the holder and exits cleanly, having written nothing.
+func TestHistoryReindexSaysWhoHoldsTheLease(t *testing.T) {
+	f := newFoldFixture(t)
+	// The database's clock is the fixture's, so the claim below is fresh when
+	// the pass judges it rather than lapsed by the process's own clock.
+	f.db.SetClock(func() time.Time { return f.now })
+	at := f.now.UTC()
+	f.db.Set(runindex.PathLease, map[string]any{
+		"holder":     "fugaro-history-xyz12",
+		"at":         at.Format(time.RFC3339Nano),
+		"expires_at": at.Add(runindex.LeaseTTL).Format(time.RFC3339Nano),
+	})
+	f.run(foldRunOne, runstore.StatusSucceeded, f.now.Add(-3*time.Hour), foldCost(3.5, 1.0, 0.25, true))
+
+	out, _, err := execute(t, "budget", "history", "--reindex")
+	if err != nil {
+		t.Fatalf("a reindex that reached another writer is not a failure: %v", err)
+	}
+	if !strings.Contains(out, "index: not walked: fugaro-history-xyz12 holds the writer lease") {
+		t.Fatalf("the reindex does not say who holds the lease: %q", out)
+	}
+	// Nothing was read into the index and nothing was written: the holder's
+	// walk is untouched.
+	if _, ok := f.fs.Value(runindex.EntriesCollection, foldRunOne); ok {
+		t.Fatal("a reindex wrote while another writer held the lease")
+	}
+	if _, ok := f.fs.Value(runindex.SummaryCollection, runindex.SummaryDocument); ok {
+		t.Fatal("a reindex wrote the summary while another writer held the lease")
+	}
+	if got := f.db.Value(runindex.PathLease); got == nil {
+		t.Fatal("the reindex freed a lease it never took")
 	}
 }
 

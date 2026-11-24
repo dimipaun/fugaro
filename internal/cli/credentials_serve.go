@@ -898,6 +898,39 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	if err != nil {
 		return credsvc.Config{}, userErr("the credentials service cannot verify its callers, so it will not start: %v", err)
 	}
+	// MG3's release-1 bridge, which the chain walk (CS1) consults for a run
+	// whose image predates the routing table: the old access record read as the
+	// chain it stands for, over this deployment's own database client —
+	// therefore the same service identity every node beside it is read with —
+	// and bounded by the published policy's paid fallback, which is what an
+	// `api-key` or `cascade` record was bound by before the table existed
+	// (legacy_auth.go). It is assigned because this is the one place a client
+	// exists — the bridge takes creds.DB so that a test can drive it against a
+	// fake, and the seam's own default is the stub that answers "no old record"
+	// (chain_stub.go) — and it is assigned rather than left to that default
+	// because the default is the answer that refuses a run whose image predates
+	// the table, which is the one thing the migration's first release promises
+	// not to do.
+	//
+	// An INSTALLATION assigns it, and a workspace does not. `fugaro update`
+	// writes the record into the database of the repository's OWN project, so a
+	// workspace's process serves members whose records live in the MEMBERS'
+	// databases and reads them there, through the scope's own reader, per call
+	// (scope.go's RepoAuth): the member's own service is what authored it. This
+	// bridge holds one client and holds it for the whole process — the seam's
+	// answer has no caller in it (chain_wire.go) — so a workspace that assigned
+	// one would answer a member's older run out of the WORKSPACE's database:
+	// an absent record where it holds no such slug, and, where it holds one,
+	// another installation's record, which would serve a member's call off a
+	// reach nobody recorded for it. Both directions are worse than the stub's
+	// refusal, which is what a workspace keeps here: a member's run whose image
+	// predates the table is refused rather than served a stranger's reach, and
+	// the bridge it needs is the walk's to assign, because the walk is what
+	// holds the caller's scope and therefore the member's database. X4 removes
+	// the assignment with the bridge.
+	if workspace == "" {
+		credsvc.LegacyChain = credsvc.NewLegacyAuth(db, credsvc.RTDBPolicy{DB: db})
+	}
 	return credsvc.Config{
 		Auth:    auth,
 		Bundles: loader,
