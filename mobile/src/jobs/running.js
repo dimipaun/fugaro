@@ -18,10 +18,15 @@
 // therefore running only while two things hold, and it is **stale** when either
 // fails:
 //
-//   * **inside the repository's total timeout** (`timeouts.total`, the reading's
-//     `timeoutMs`). The phone cannot read a repository's `fugaro.yaml` -- no
-//     grant covers it -- so the bound arrives with the reading, set by whoever
-//     built it, and the app's own configuration is where it comes from.
+//   * **inside its repository's total timeout** (`timeouts.total`). This is the
+//     **run's** bound and not the project's: one project serves many
+//     repositories, each with its own `timeouts.total`, so a single bound for
+//     the whole reading would mark a long-running repository's run stale before
+//     its time and let a short one read as running past its own. The run's
+//     repository is the `$slug` of the path the phone read its day share from
+//     (`spend/$day/runs/$slug/$run`), and its `fugaro.yaml` is not readable --
+//     no grant covers it -- so the bound arrives with the **run entry**, set by
+//     whoever built the reading.
 //   * **on the day its id names.** `internal/task.NewRunID` mints an id as
 //     `YYYYMMDD-HHMMSS-xxxx` in UTC, so the id the phone holds carries the run's
 //     own start: the **age** of a run is `now - that instant` and the day the
@@ -57,8 +62,9 @@
 // every field of it rather than trusting the app that built it:
 //
 // ```
-// { project: '<opaque project id>', reachable: true, timeoutMs: 21600000,
-//   runs: [ { run: '20261124-101530-ab12', spend: <figure|null>, outcome: null } ] }
+// { project: '<opaque project id>', reachable: true,
+//   runs: [ { run: '20261124-101530-ab12', timeoutMs: 21600000,
+//             spend: <figure|null>, outcome: null } ] }
 // ```
 //
 // `outcome` is the entry at `outcomes/$day/$slug/$run`, or `null` when there is
@@ -78,7 +84,7 @@ export const RUNNING_CODES = Object.freeze({
   BAD_PROJECTS: 'bad-projects',
   /** A project's reading is not one: no project, no `reachable`, or not an object. */
   BAD_PROJECT: 'bad-project',
-  /** The repository's total timeout is missing, zero or not whole milliseconds. */
+  /** A run's repository total timeout is missing, zero or not whole milliseconds. */
   BAD_TIMEOUT: 'bad-timeout',
   /** A reachable project's runs are not a list of entries. */
   BAD_RUNS: 'bad-runs',
@@ -162,15 +168,18 @@ function projectRows(reading, nowMs, today) {
   if (typeof project !== 'string' || project.length === 0) return refuse(RUNNING_CODES.BAD_PROJECT, 'project');
   if (typeof reading.reachable !== 'boolean') return refuse(RUNNING_CODES.BAD_PROJECT, 'reachable');
   if (!reading.reachable) return Object.freeze({ ok: true, rows: [row('unreachable', project, null, null, null)] });
-  const timeoutMs = reading.timeoutMs;
-  if (typeof timeoutMs !== 'number' || !Number.isInteger(timeoutMs) || timeoutMs <= 0) {
-    return refuse(RUNNING_CODES.BAD_TIMEOUT, 'timeoutMs');
-  }
   if (!Array.isArray(reading.runs)) return refuse(RUNNING_CODES.BAD_RUNS, 'runs');
   const rows = [];
   for (const entry of reading.runs) {
     if (!isNode(entry)) return refuse(RUNNING_CODES.BAD_RUN, 'runs[]');
     if (typeof entry.run !== 'string' || startedAt(entry.run) === null) return refuse(RUNNING_CODES.BAD_RUN, 'run');
+    // The bound is the run's own repository's (`timeouts.total`), which is why
+    // it is read here and not from the reading: a project serves many
+    // repositories and each sets its own.
+    const timeoutMs = entry.timeoutMs;
+    if (typeof timeoutMs !== 'number' || !Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+      return refuse(RUNNING_CODES.BAD_TIMEOUT, 'runs[].timeoutMs');
+    }
     const outcome = entry.outcome;
     if (outcome !== null && outcome !== undefined && !isNode(outcome)) return refuse(RUNNING_CODES.BAD_RUN, 'outcome');
     const spend = entry.spend;

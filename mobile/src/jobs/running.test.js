@@ -30,14 +30,16 @@ function runId(atMs, suffix = 'ab12') {
 }
 
 /** One run entry of a project's reading: no outcome (still going, as far as the
- * record says), a minute old, and a measured half a dollar. */
+ * record says), a minute old, a measured half a dollar, and the total timeout of
+ * **its own repository** (`timeouts.total`) -- the bound belongs to the run and
+ * not to the project, which serves many repositories. */
 function run(over = {}) {
-  return { run: runId(NOW - 60_000), spend: measured(0.5), outcome: null, ...over };
+  return { run: runId(NOW - 60_000), timeoutMs: TIMEOUT, spend: measured(0.5), outcome: null, ...over };
 }
 
 /** One paired project's reading. */
 function project(over = {}) {
-  return { project: 'p-1', reachable: true, timeoutMs: TIMEOUT, runs: [run()], ...over };
+  return { project: 'p-1', reachable: true, runs: [run()], ...over };
 }
 
 /** The view's answer for one set of readings, as the rows a screen would draw. */
@@ -95,6 +97,20 @@ test('a run with no spend read carries null, never zero', () => {
   assert.equal(unread.spend.state, unavailable().state);
 });
 
+test('the bound is the run’s own repository’s, and not the project’s', () => {
+  // A project serves many repositories and `timeouts.total` is set in each
+  // repository's own `fugaro.yaml`, so one bound for the whole reading would
+  // mark a long-timeout repository's run stale before its time and let a
+  // short-timeout repository's run read as running past its own bound. Two runs
+  // of one project, both an hour old, in repositories with different timeouts.
+  const short = run({ run: runId(NOW - 3_600_000, 'aaaa'), timeoutMs: 30 * 60_000 });
+  const long = run({ run: runId(NOW - 3_600_000, 'bbbb'), timeoutMs: 6 * 3_600_000 });
+  const rows = rowsOf([project({ project: 'p-1', runs: [short, long] })]);
+  const states = Object.fromEntries(rows.map((row) => [row.run, row.state]));
+  assert.equal(states[short.run], 'stale', 'a run past its own repository’s total timeout');
+  assert.equal(states[long.run], 'running', 'a run well inside its own repository’s total timeout');
+});
+
 test('a run past the repository total timeout is stale, not running', () => {
   const [row] = rowsOf([project({ runs: [run({ run: runId(NOW - TIMEOUT - 1_000) })] })]);
   assert.equal(row.state, 'stale');
@@ -109,14 +125,14 @@ test('a run from an earlier day is stale however young it is', () => {
   // still not running, because a run does not outlive the day it started in.
   const at = Date.parse('2026-11-23T23:30:00Z');
   const [row] = rowsOf(
-    [project({ timeoutMs: 24 * 3_600_000, runs: [run({ run: runId(at) })] })],
+    [project({ runs: [run({ run: runId(at), timeoutMs: 24 * 3_600_000 })] })],
   );
   assert.equal(row.state, 'stale');
   assert.equal(row.ageMs, NOW - at);
   // A run started later today is running even at the same age: it is the day the
   // id names that makes the difference, not how long ago it was.
   const [today] = rowsOf([
-    project({ timeoutMs: 24 * 3_600_000, runs: [run({ run: runId(Date.parse('2026-11-24T00:30:00Z')) })] }),
+    project({ runs: [run({ run: runId(Date.parse('2026-11-24T00:30:00Z')), timeoutMs: 24 * 3_600_000 })] }),
   ]);
   assert.equal(today.state, 'running');
 });
@@ -170,8 +186,8 @@ test('within a state the oldest run is first, and ties are broken deterministica
   const young = runId(NOW - 60_000);
   const old = runId(NOW - 600_000);
   const rows = rowsOf([
-    project({ project: 'p-2', runs: [{ run: young, spend: null }, { run: old, spend: null }] }),
-    project({ project: 'p-1', runs: [{ run: young, spend: null }] }),
+    project({ project: 'p-2', runs: [{ run: young, timeoutMs: TIMEOUT, spend: null }, { run: old, timeoutMs: TIMEOUT, spend: null }] }),
+    project({ project: 'p-1', runs: [{ run: young, timeoutMs: TIMEOUT, spend: null }] }),
   ]);
   assert.deepEqual(rows.map((row) => [row.project, row.run]), [
     ['p-2', old],
@@ -196,9 +212,9 @@ test('a reading the app did not build is refused, and the code names what', () =
     ['a reading is not an object', ['p-1'], NOW, RUNNING_CODES.BAD_PROJECT],
     ['the project is not named', [project({ project: '' })], NOW, RUNNING_CODES.BAD_PROJECT],
     ['reachable is not a boolean', [project({ reachable: 'yes' })], NOW, RUNNING_CODES.BAD_PROJECT],
-    ['the timeout is missing', [project({ timeoutMs: undefined })], NOW, RUNNING_CODES.BAD_TIMEOUT],
-    ['the timeout is zero', [project({ timeoutMs: 0 })], NOW, RUNNING_CODES.BAD_TIMEOUT],
-    ['the timeout is not whole', [project({ timeoutMs: 1.5 })], NOW, RUNNING_CODES.BAD_TIMEOUT],
+    ['the run carries no repository timeout', [project({ runs: [run({ timeoutMs: undefined })] })], NOW, RUNNING_CODES.BAD_TIMEOUT],
+    ['the repository timeout is zero', [project({ runs: [run({ timeoutMs: 0 })] })], NOW, RUNNING_CODES.BAD_TIMEOUT],
+    ['the repository timeout is not whole', [project({ runs: [run({ timeoutMs: 1.5 })] })], NOW, RUNNING_CODES.BAD_TIMEOUT],
     ['the runs are not a list', [project({ runs: 'a run' })], NOW, RUNNING_CODES.BAD_RUNS],
     ['the run entry is not an object', [project({ runs: ['20261124-120000-ab12'] })], NOW, RUNNING_CODES.BAD_RUN],
     ['the run is not a run id', [project({ runs: [run({ run: 'demo-run-7' })] })], NOW, RUNNING_CODES.BAD_RUN],
@@ -227,7 +243,7 @@ test('the view is wired on the session port, and reads every paired project once
     sessions: [first, second],
     readRuns: async (session) => {
       asked.push(session);
-      return { project: session.project_id, reachable: true, timeoutMs: TIMEOUT, runs: [run()] };
+      return { project: session.project_id, reachable: true, runs: [run()] };
     },
   });
   const answer = await reader.running();
@@ -254,7 +270,7 @@ test('a project the phone cannot read is unreachable, and the others still draw'
     sessions: [stubSession(), stubSession({ project_id: 'stub-project-two' })],
     readRuns: async (session) => {
       if (session.project_id === 'stub-project') throw new Error('the read failed');
-      return { project: session.project_id, reachable: true, timeoutMs: TIMEOUT, runs: [run()] };
+      return { project: session.project_id, reachable: true, runs: [run()] };
     },
   });
   const answer = await reader.running();
