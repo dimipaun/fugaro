@@ -10,8 +10,10 @@
 #     workspace's folder; the member's hangs under the test folder until
 #     `workspace project link` has run, then under the workspace's folder, and
 #     back under the test folder once `workspace project unlink` has run. Those
-#     two moves are the whole of U1 and U6, so a case that bends one is a case
-#     that stops the marker from being written.
+#     two moves are the whole of U1, and of the return U6's row reads; U6's own
+#     case (a caller with the folder's rights and none on the member) is a skip
+#     the `u6` INFO row records, so no case here bends one, because no call this
+#     check can make is that caller.
 #   * a REAL TERMINAL. `fugaro setup --create-project` and `--link-billing` are
 #     confirmed by being at one, so the check gives each setup a pty
 #     (run_at_a_terminal) and the fake logs whether it had one.
@@ -326,9 +328,9 @@ workspace)
         # used to print a form the CLI cannot print, so the check's first pattern
         # was only ever matched here.
         if [ -f "$dir/adopt-plural" ]; then
-          printf "adopted 3 people into workspace %s's roster: user:%s, user:b@example.com, user:c@example.com\n" "${FUGARO_PROJECT:-}" "${CHK720_GRANTEE:-the-member-owner@example.com}"
+          printf "adopted 3 people into workspace %s's roster: user:%s, user:b@example.com, user:c@example.com\n" "${FUGARO_PROJECT:-}" "chk720-member@example.com"
         else
-          printf "adopted 1 person into workspace %s's roster: user:%s\n" "${FUGARO_PROJECT:-}" "${CHK720_GRANTEE:-the-member-owner@example.com}"
+          printf "adopted 1 person into workspace %s's roster: user:%s\n" "${FUGARO_PROJECT:-}" "chk720-member@example.com"
         fi
       fi
       ;;

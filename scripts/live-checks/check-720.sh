@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Check 720 — the folder mechanism end to end, on throwaway projects, and the
-# console page `workspace project rm` prints. Run by YOU. It settles U1, U3, U6
-# and U8 of docs/workspace-projects-users/reconciliation.md.
+# console page `workspace project rm` prints. Run by YOU. It settles U1, U3 and
+# U8 of docs/workspace-projects-users/reconciliation.md and the RETURN half of
+# U6, and it records rather than claims U6's own case (the `u6` row below).
 #
 # What it settles, and how it reads each one:
 #
