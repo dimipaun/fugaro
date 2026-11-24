@@ -265,11 +265,45 @@ type Caps struct {
 // Enforcing reports whether the cap comparisons apply.
 func (c Caps) Enforcing() bool { return c.Mode == ModeEnforce }
 
-// RepoDaily is the repository's day cap: its own node, else the default.
-// ok is false when neither is set.
+// RepoCeiling is the largest cap a repository's own node may hold, per
+// dimension: the project's global cap when it is set, else the default
+// repository cap (A3, spec §5.6). A nil field is a dimension with no ceiling,
+// and then the node stands. An admin's direct database write bypasses the
+// rules, so the clamp at read is what holds.
+type RepoCeiling struct {
+	DailyMicros  *Micros
+	PerRunMicros *Micros
+}
+
+// RepoCeiling is this project's ceiling for a repository's caps. Each
+// dimension falls back on its own: a global daily cap with no global per-run
+// cap leaves the per-run dimension to the default. Only a repository's own
+// node is clamped by it: the default is the owner's value and the global cap
+// bounds it beside.
+func (c Caps) RepoCeiling() RepoCeiling {
+	var ceil RepoCeiling
+	if c.Global != nil && c.Global.DailyMicros != nil {
+		ceil.DailyMicros = c.Global.DailyMicros
+	} else if c.Defaults != nil {
+		ceil.DailyMicros = c.Defaults.RepoDailyMicros
+	}
+	if c.Global != nil && c.Global.PerRunMicros != nil {
+		ceil.PerRunMicros = c.Global.PerRunMicros
+	} else if c.Defaults != nil {
+		ceil.PerRunMicros = c.Defaults.RepoPerRunMicros
+	}
+	return ceil
+}
+
+// RepoDaily is the repository's day cap: its own node, counted as RepoCeiling
+// when that is smaller, else the default. ok is false when neither is set.
 func (c Caps) RepoDaily() (Micros, bool) {
 	if c.Repo != nil && c.Repo.DailyMicros != nil {
-		return *c.Repo.DailyMicros, true
+		v := *c.Repo.DailyMicros
+		if ceil := c.RepoCeiling().DailyMicros; ceil != nil && *ceil < v {
+			v = *ceil
+		}
+		return v, true
 	}
 	if c.Defaults != nil && c.Defaults.RepoDailyMicros != nil {
 		return *c.Defaults.RepoDailyMicros, true
@@ -285,11 +319,16 @@ func (c Caps) GlobalDaily() (Micros, bool) {
 	return 0, false
 }
 
-// RepoPerRun is the repository's own per-run cap, else the default for
-// repositories without one. ok is false when neither is set.
+// RepoPerRun is the repository's own per-run cap, counted as RepoCeiling when
+// that is smaller, else the default for repositories without one. ok is false
+// when neither is set.
 func (c Caps) RepoPerRun() (Micros, bool) {
 	if c.Repo != nil && c.Repo.PerRunMicros != nil {
-		return *c.Repo.PerRunMicros, true
+		v := *c.Repo.PerRunMicros
+		if ceil := c.RepoCeiling().PerRunMicros; ceil != nil && *ceil < v {
+			v = *ceil
+		}
+		return v, true
 	}
 	if c.Defaults != nil && c.Defaults.RepoPerRunMicros != nil {
 		return *c.Defaults.RepoPerRunMicros, true
