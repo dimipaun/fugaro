@@ -1143,6 +1143,9 @@ probe account carries predefined grants only).
 | 380 | `fugaro update` with its stdin closed finishes **without a prompt** ([`docs/no-prompt-policy/`](no-prompt-policy/implementation-plan.md), its task **T7** — no command waits on stdin — and its **Check 380**; the HARD RULE that `fugaro update` is the whole upgrade is where that rule is worth most): the check runs `fugaro update` itself with its stdin on `/dev/null` and its whole transcript in files, under a deadline, and a run that **ended by itself and asked nothing** is the reading — a step it leaves for you and refuses to apply is a PASS too, because the policy's answer to a step nobody confirmed is that refusal and not a question (T7: removing a prompt is not the same as applying a step nobody asked for). What a PASS refuses is a **question**: `[y/N]` in any casing, `(y/n)`, `(yes/no)`, a `to confirm:` left open, an enter-prompt, or a question mark followed by a blank; a run still going at the deadline is **killed** and is the failure the check exists for, because a run waiting on a terminal looks exactly like that. The `⚠ CONFIRM` banner is **not** one of those shapes: the policy keeps the banner, which is the note of a step and not a read | See "Check 380" below; `bash scripts/live-checks/check-380-no-prompt-update.sh [--project <name>] [--fugaro-flags '<flags>'] [--deadline <seconds>]` is the whole of it, its sibling test `scripts/live-checks/check-380-no-prompt-update_test.sh` drives it against a fake `fugaro` only — a fake `update` that plays each transcript shape beside the real closed stdin it records, so a case says the check really closed it — and converges nothing, and **you** run it, on the **sandbox installation**, **never `belong`** (refused in what you type and in what `doctor` answers, and so is a coding agent's session); **no agent runs any step of it** | One `fugaro doctor --json` (read-only) and one real `fugaro update`, which is the command itself: it may build an image, apply Terraform and spend what a converge spends. No model call of this check's own and no run launched. It rolls nothing back — a converge is not something to undo, and the reading is only worth having on the release that is installed. **OWNER-RUN, NOT RUN.** |
 | 381 | An image build **over the cap** is refused, with the estimate, the cap, the day's figure and the one command that raises it ([`docs/no-prompt-policy/`](no-prompt-policy/implementation-plan.md), its task **T7** (the typed confirmation is gone from `fugaro image build`) and **T8**'s build lease, its **D1543** and its **Check 381**): the check lowers the repository's **own** caps to `$0.00` — a tightening, so nothing is asked (**D1542**) — reads them back, and then runs `fugaro image build --no-wait` from the checkout, which must exit **1 before the submission** with ONE sentence carrying all four parts: what the build **reserves** and where that price came from (the `N s` build timeout at the machine's rate, read from the Cloud Billing catalog), the **cap** it met, the **figure that cap compared** (the day's counted figure for the repository's daily cap, what the build holds for its per-run one) and the **one command that raises it**. A refusal that lost any part is a FAIL, and so is a build that was **not** refused — it may have been submitted, and the row carries the transcript's own last line. A budget mode that is not `enforce` is a **refusal to run** and not a measurement: in `observe` the over-cap decision comes back as an advisory and the build goes out anyway, which is money (**D1548**), and the mode is your own choice and never this check's to set | See "Check 381" below; `bash scripts/live-checks/check-381-over-cap-build.sh [--checkout <path>] [--project <name>] [--fugaro-flags '<flags>'] [--deadline <seconds>]` is the whole of it, its sibling test `scripts/live-checks/check-381-over-cap-build_test.sh` drives it against a fake `fugaro` — whose `budget set` really applies what it is handed, so the check's read-back of its own lowering and of its own putting back are readings of state that changed — beside a real git checkout and its origin, and **you** run it, in a **sandbox repository checkout** whose project is **never `belong`** (refused in what you type and in what `doctor` answers, and so is a coding agent's session); **no agent runs any step of it** | Four or five reads, two `budget set` (the lowering and the putting back) and one `image build --no-wait` that is refused before it is submitted: **no model call, no image and no Cloud Build** on a healthy installation, and nothing is counted for a build that was refused. It lowers ONE repository's own caps for the few seconds the build takes and puts them back from the exit trap, on every way out, reading them back to say so. **OWNER-RUN, NOT RUN.** |
 | 382 | A coding agent's `budget set` **raise** is refused, and the refusal carries the command its owner can run ([`docs/no-prompt-policy/`](no-prompt-policy/implementation-plan.md), its task **T3** (the fence on every raise form) and **D1542**, and its **Check 382**; **F8** — a cap the session it bounds can lift is not a limit — and **F20** — the fence is a courtesy, as strong as the markers and no stronger): `fugaro budget set --repo <this repository> --daily <more than it holds now>` is run with `CLAUDECODE=1` set **for the child alone**, and must exit **1** with one sentence carrying all of it — the act in its own words ("raising a cap is the owner's own step"), the marker it read, that **nothing was applied**, and the same invocation you would type at your own terminal. A command naming another repository, another value or another project, starting with another program or carrying a flag `budget set --help` does not name is a FAIL: an agent handed half that sentence has nothing to hand over. The caps read back must be exactly what was there before, and a raise that **landed** is the loudest FAIL the check has. The value is chosen so the call is always a raise: setting a cap where none existed is a raise as much as an increase is, and a no-op answers "nothing changed" instead of asking the fence | See "Check 382" below; `bash scripts/live-checks/check-382-agent-cannot-raise-a-cap.sh [--checkout <path>] [--project <name>] [--fugaro-flags '<flags>'] [--deadline <seconds>]` is the whole of it, its sibling test `scripts/live-checks/check-382-agent-cannot-raise-a-cap_test.sh` drives it against a fake `fugaro` whose fence refuses on the marker set in **its own** environment and can be told to bend the sentence each way, beside a real git checkout and its origin, and **you** run it, in a **sandbox repository checkout** whose project is **never `belong`** (refused in what you type and in what `doctor` answers, and so is a coding agent's session); **no agent runs any step of it** | **Nothing at all on a PASS**: five reads, one `budget set --help` and ONE `budget set` refused **before the write** — no model call, no build, no run and no cloud write. A FAIL where the raise landed, or a caps read-back that did not answer, leaves the teardown to put the caps back from the exit trap and read them back. **OWNER-RUN, NOT RUN.** |
+| 390 | `fugaro image add` alone leaves the entry in the catalog with nothing owed, and the repository's jobs on images the catalog describes ([`docs/composite-commands/`](composite-commands/implementation-plan.md), its task **AP10** and its **Check 390**, against spec rule 1 — a management command writes its change AND runs the steps that make it live (**D1561**) — with **D1574** (the redeploy is per repository) and **D1577** for the three steps an add owes): `fugaro image add <entry> --dockerfile <owner/name:path>` must exit 0 with its own success line, the entry must be in the catalog (`fugaro image ls --json`) carrying the digest the build recorded, every job of the checkout's repository (`gcloud run jobs list`, matched by the job's own `FUGARO_REMOTE` and its `fugaro_repo` label) that the deploy stamped with a catalog entry (`FUGARO_IMAGE_ENTRY`) must name an entry the project's catalog holds, and the image such a job is deployed with must resolve now to the digest the catalog records for that entry (`gcloud artifacts docker images describe`), and `fugaro apply --status --json` must owe nothing — a command that wrote its change and left its steps to a second command is exactly the failure this check exists to catch. The entry is removed again at the teardown | See "Check 390" below; `bash scripts/live-checks/check-390.sh --dockerfile <owner/name:path> [--entry <catalog entry>] [--project <name>] [--fugaro-flags '<flags>'] [--deadline <seconds>]` is the whole of it, its sibling test `scripts/live-checks/check-390_test.sh` drives it against a fake `fugaro` and a fake `gcloud`, and **you** run it, in a checkout of a repository the project onboards, against an installation whose project is **never `belong`** (refused in what you typed and in what `doctor` answered, and so is a coding agent's session); **no agent runs any step of it** | One Cloud Build, two repository redeploys (the add's and the teardown's) and the policy publications those two runs make, on the **sandbox** installation: **no model call and no run is launched**, and the teardown removes the entry again, so a PASS leaves the installation as it found it. **OWNER-RUN, NOT RUN.** |
+| 391 | Three `--no-apply` changes leave ONE entry per step name, and ONE `fugaro apply` runs each of them once ([`docs/composite-commands/`](composite-commands/implementation-plan.md), its task **AP10** and its **Check 391**, against the record's collapse (**D1562**, **D1570**) over **D1565**'s save-and-stop): three changes that all owe the `policy` stage — `fugaro image add <entry> --dockerfile <owner/name:path> --no-apply` (owing `catalog-build`, `repository` and `policy`) and two `fugaro settings set <key> <value> --layer local --no-apply` — must leave exactly three entries, each ONCE, so `fugaro apply --status --json` names `catalog-build`, `repository` and `policy` and no name twice; the one `fugaro apply` must exit 0 and its own account must name each of the three once; its own transcript must carry the `policy` stage's row and the `repository` stage's row exactly once each, the stage having run once and not once per change; and the record must owe nothing afterwards. The teardown removes the entry and puts both keys back | See "Check 391" below; `bash scripts/live-checks/check-391.sh --dockerfile <owner/name:path> [--entry <catalog entry>] [--project <name>] [--fugaro-flags '<flags>'] [--deadline <seconds>]` is the whole of it, its sibling test `scripts/live-checks/check-391_test.sh` drives it against a fake `fugaro`, and **you** run it, in a checkout of a repository the project onboards, against an installation whose project is **never `belong`** (refused in what you typed and in what `doctor` answered, and so is a coding agent's session); **no agent runs any step of it** | One Cloud Build and two repository redeploys (at the one `fugaro apply` and at the teardown's) plus the policy publications those runs make, on the **sandbox** installation: **no model call and no run is launched**, and the teardown takes the entry out of the catalog and puts both settings back the way it found them. **OWNER-RUN, NOT RUN.** |
+| 392 | A forced `policy` stage failure leaves the change saved, the step pending, exit non-zero; `fugaro apply` finishes it ([`docs/composite-commands/`](composite-commands/implementation-plan.md), its task **AP10** and its **Check 392**, against **D1563** — a step that fails keeps the change and the step — with the failure forced by **D1571**, under which a coding agent's session may not publish the policy): `fugaro settings set <key> <value> --layer local --no-apply` saves the change and owes `policy` alone, and the same `fugaro apply` run with `CLAUDECODE=1` on **the child's own command line** must exit non-zero, print `saved, not live yet: policy still owed` with the line under it naming `fugaro apply` to finish it, and carry the session's refusal in its own account — while the record still owes `policy` exactly once and the key still reads the written value `unpublished`, so the change was kept and nothing was published. One plain `fugaro apply` must then exit 0, say it applied `policy`, leave nothing owed and leave the key live (`state=ok`). The key is put back at the teardown | See "Check 392" below; `bash scripts/live-checks/check-392.sh [--key <settings key>] [--value <true or false>] [--project <name>] [--fugaro-flags '<flags>'] [--deadline <seconds>]` is the whole of it, its sibling test `scripts/live-checks/check-392_test.sh` drives it against a fake `fugaro`, and **you** run it, against the **sandbox** installation, whose project is **never `belong`** (refused in what you typed and in what `doctor` answered, and so is a coding agent's session) and which is **NOT managed** — a managed project's gate applies the policy stage in a coding agent's session rather than refusing it (**D1016**), so the marker the failure is forced with is no refusal there, and the check refuses to run rather than read the loudest FAIL it has about the one thing that did not happen; **no agent runs any step of it** | Three `fugaro apply` runs (the forced one that is refused, the one that finishes the step, and the teardown's) and one settings write that the teardown puts back: **no model call, no build and no run**, and the only cloud writes are the two policy publications (the change's and the undoing's), on the sandbox installation. **OWNER-RUN, NOT RUN.** |
 | 650 | The one-time reconciliation: a whole window's recorded, reported and table spend beside the OpenRouter invoice ([`docs/spend-accuracy/`](spend-accuracy/implementation-plan.md), its **Check 650** and task **SA0.1**, from the plan's own Checks section under the block it reserved (**650–659**, recorded by the paragraph above) — and the reconciliation's **A5** (past spend is not repriced, so this output is the note), **U1** (whether the endpoint reports a cost at all) with **O1** behind it, **U2** (whether `output_tokens` includes reasoning tokens) and **U5** (the 46% figure and its split between the three ranked causes): on the **dogfood installation**, `fugaro budget reconcile --all --from 2026-10-12 --to 2026-11-16 --json`, pasted beside the OpenRouter invoice for the key — **the share of the window's runs whose record carries `reported_usd`** (U1, O1), **per model the charge against the report**, with `unattributed` a row of its own and the totals read **with and without the route fee** (U5), and **one call's token counts and `reported_micros`** against the price of the endpoint that served it (U2) | See "Check 650" below; **you** run it, on the **dogfood installation `fugaro`** (GCP project `fugaro-dev`, never `belong`), at your own terminal, with the OpenRouter invoice for that key in front of you and the `--json` pasted beside it, and **no agent runs any step of it** | **Nothing billable**: no run, no model call, no image build. One bounded read of the runs bucket's records — bounded to the window's newest runs (`UserStatsMaxRuns`, 5000), and the output says when the window held more — one read of the invoice, and, for step 3, one run's `model call` entries out of Cloud Logging. Nothing is created, changed or deleted, and the Restore is nothing. **OWNER-RUN, NOT RUN.** |
 | 651 | The acceptance: the week's recorded spend within **±3%** of the OpenRouter invoice, and a run halted at a cap below its expected cost ([`docs/spend-accuracy/`](spend-accuracy/implementation-plan.md), its **Check 651** and task **SA0.1**, from the plan's own Checks section under the block it reserved (**650–659**) — and **D2643** (the invoice's dollars against the charge **with** the fee, not the key's credit usage against the charge without it), **F11** (the catalog's `checked_at`, since from 2026-11-22 a stale catalog charges its tier's maximum whatever `price_policy` says), **D2640** with **D2651** (what a complete call settles on), **D2644** with **SA3.1** (`highest` by default) and the spec's acceptance, whose second half is the cap promise: a week after the release carrying **SA2.1** and **SA3.1**, `fugaro budget reconcile`'s totals **with the route fee** against the OpenRouter invoice **in dollars** for the same week, with the catalog's `checked_at` recorded; then one task launched with `fugaro run --max-usd` **below its expected cost**, ending `halted (run_cap)` with `cost.reported_usd` **within one call of the cap** | See "Check 651" below; **you** run it, on the **dogfood installation `fugaro`** (GCP project `fugaro-dev`, never `belong`), at your own terminal, and **no agent runs any step of it** | **ONE billable run**: step 2's launch and what its task spends before the cap halts it, on the installation's own budget, plus the pull request it may open, which you decline in the Restore. Everything else is a read — the reconcile over the week's records, the invoice, one run's record and its `model call` entries. **OWNER-RUN, NOT RUN.** |
 | 660 | The service wakes on its tick, and holds nothing between wakes ([`docs/mobile/`](mobile/implementation-plan.md), Task **P5.1h**, the number taken on 2026-11-16, and the design of record [design/always-on-orchestrator.md](mobile/design/always-on-orchestrator.md) §4.1 and §4.9; task **P5.1c** is the service and its tick and **P5.1b** the account it runs as): on the installation's own project the always-on module is applied, the Cloud Run **service** carries `min-instances = 0` with request-based billing, the Cloud Scheduler tick wakes it **with nothing in the mailbox**, and a pass that ends takes its instance with it — the instance count at a minute you choose with no tick in flight is **0**, the revision's `minScale` is **`0`**, and the next tick starts an instance that did not exist a minute before and still finds the state the last pass left, because the lease and the ledger are the durable ones and not memory. A service that answered from a warm instance is what this row catches, and `min-instances = 1` is the shape the design priced and did not take | See "Check 660" below; **you** run it, on a **sandbox installation** with the module applied and its own project, **never `belong`**, and **no agent runs any step of it** | The service's own request time and the ticks you read: **no model call, no run and nothing billable** — nothing here sends a message, launches anything or opens a pull request, and a scale-to-zero service bills nothing between ticks (Cloud Scheduler's free allowance is **per billing account and not per installation**, the design's U8, which an owner with more than one installation has to price). Every command above is a read: nothing is created, changed or deleted, and the restore is nothing. **OWNER-RUN, NOT RUN.** |
@@ -18892,6 +18895,304 @@ not a word the fake was told to say.
 refusal's sentence and the command it printed; nothing in it is a secret, and the block is what says whether the
 fence is there on your installation.
 
+## Check 390: `fugaro image add` alone leaves the entry in the catalog and nothing owed (a checkout of an onboarded repository, on the sandbox installation, never `belong`; one script you run; NOT RUN)
+
+**NOT RUN.** Written by task **AP10** of
+[docs/composite-commands/implementation-plan.md](composite-commands/implementation-plan.md) — its "Checks (reserved
+390–399)" — and it reads the whole of spec rule 1 for one command: a management command writes its change **and runs
+the steps that make it live**, so no second command is needed (**D1561**). `fugaro image add` owes three steps — the
+catalog image's build, the redeploy of the checkout's repository (per repository, **D1574**) and the publication of
+the catalog (**D1577**) — and this check reads, from outside the CLI, that all three landed and that nothing was left
+owed. The check is `scripts/live-checks/check-390.sh` (its sibling test
+`scripts/live-checks/check-390_test.sh` drives it against a fake `fugaro` and a fake `gcloud`, so a case can say what
+the jobs run, what the registry answers and what the record owes), and **no agent runs any step of it**: a project
+naming `belong` is refused before anything is run, and so is a coding agent's session.
+
+**It changes the installation, and the teardown is what takes the change back.** `fugaro image add` builds an image,
+redeploys the repository's jobs and publishes the catalog; the teardown is `fugaro image rm <entry>`, which owes the
+same three steps and redeploys again. An entry the catalog already holds under this check's name — a leftover of an
+earlier attempt — is removed first, with the check's own `fugaro image rm`, so running it twice in a row works and a
+crashed run does not wedge it.
+
+**What it reads, in this order.** Every row goes into the one `CHECK 390 RESULT` block on stdout:
+
+- **`xtrace`** — this shell was not started with tracing on. The check prints the run's own transcript and the block
+  you would paste back, so a shell that arrived tracing is stopped first.
+- **`agent-session`** — no coding agent's marker is set **in this check's environment**: this check builds a real
+  image and redeploys real jobs, and it is yours to run at your own terminal.
+- **`checkout`** — the current directory is a git work tree whose `origin` remote names the repository the redeploy is
+  for, read as `owner/name`: the `repository` step is per repository (**D1574**), so the check and the command have to
+  agree on which repository's jobs it is about.
+- **`installation`** — which installation this is about, out of `fugaro doctor --json`: the project, its GCP project
+  and its region, held to `--project` where you typed one.
+- **`belong`** — the project is not the owner's own installation, refused in what you typed and in what `doctor`
+  answered.
+- **`entry`** — the project's catalog does not already hold this check's entry name (`fugaro image ls --json`), or
+  held it as a leftover of an earlier attempt and the check removed it.
+- **`add`** — the fact this check is: `fugaro image add <entry> --dockerfile <owner/name:path>`, its two streams in
+  the scratch directory, under the deadline (1800 seconds by default). It must exit 0 **with its own success line**
+  ("Image `<entry>` added and now available to your jobs."): a run that answers nothing has not made the change live,
+  and a non-zero exit or a run still going at the deadline FAILs, with the whole transcript kept.
+- **`record`** — the entry is in the catalog and carries the digest the build recorded, read out of
+  `fugaro image ls --json` (the catalog build's own record).
+- **`job`** — the jobs of the checkout's repository out of `gcloud run jobs list --format=json`, matched the way
+  Check 193 reads them (the job's own `FUGARO_REMOTE` and its `fugaro_repo` label). Each job's own
+  `FUGARO_IMAGE_ENTRY` — the deploy's stamp of the catalog entry its image came from, empty on a job the catalog
+  chose no image for (**D1371**) — must name an entry the project's catalog holds: a stamp the catalog does not hold
+  is the redeploy having left that job on an image no catalog describes. The entry this check added is deliberately
+  **not** what the row looks for: a catalog gives a job an image only through a workflow's `image_name:`, its
+  `needs:`, the project's image map or the catalog's default (`catalog.JobImage`), and an entry a job selects is one
+  `fugaro image rm` refuses to remove — so an entry a check adds and removes again is one no job can be running, and
+  a row demanding the jobs run it would FAIL every correct installation.
+- **`registry`** — the digest the image of a job that carries such a stamp resolves to **now**, out of
+  `gcloud artifacts docker images describe`: the job is deployed with the moving tag (**D1152**), so the digest it
+  will pull is the registry's. No job of the repository carrying a stamp leaves this row and the one below
+  **NOT MEASURED**.
+- **`digest`** — the two held to each other: the digest the deployed image resolves to and the digest the project's
+  catalog records for the entry that job's stamp names. They must be the same, or the jobs would start on an image
+  the catalog's own record does not describe.
+- **`status`** — `fugaro apply --status --json`, which must owe nothing after the add: an entry that was written and
+  left owed is exactly what rule 1 forbids (**D1561**, **D1563**).
+- **`teardown`** — the entry is out of the catalog again (`fugaro image rm <entry>`, then `fugaro image ls --json`),
+  so the installation is as this check found it. A teardown that failed is its own FAIL, and the claim says what is
+  still there and how to remove it.
+- **`claim`** — the verdict: the claim **HOLDS** (the add exited 0 with its own line, the entry is in the catalog
+  with the digest the build recorded, every job the deploy stamped names an entry the catalog holds, the deployed
+  image resolves to the digest the catalog records for that entry, and nothing is owed), does **NOT** hold, or is
+  **NOT MEASURED** (a row above could not be read).
+
+Exit `0` means the claim held; `1` means it did not (each row says which); `2` means the check could not tell (a
+guard stopped it, a tool or a document could not be read, an internal error ended it).
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check-390.sh --dockerfile <owner/name:path> --dry-run
+bash scripts/live-checks/check-390.sh --dockerfile <owner/name:path>
+```
+
+`--dry-run` prints the plan and makes **no call at all**: it builds nothing and redeploys nothing. `--dockerfile` is
+the source of the entry, a Dockerfile in one of the project's repositories as `owner/name:path`; it is required, and
+it is the one flag a coding agent's session may use of `image add` (**D1573**). `--entry` is the catalog entry this
+check owns (default `chk390-catalog`) — give it a name nothing else uses. `--project` is the Fugaro project;
+leave it out where a project config is in force. `--fugaro-flags '<flags>'` adds flags to every `fugaro` call, and
+`--deadline` bounds how long the add may take. The knobs are `CHECK390_FUGARO`, `CHECK390_GCLOUD`,
+`CHECK390_DEADLINE`, `CHECK390_DRY_RUN` and `CHECK390_KEEP_SCRATCH`, which keeps the scratch directory with the
+add's whole transcript.
+
+**What it costs.** One Cloud Build (the entry's image), **two** repository redeploys (the add's and the teardown's),
+the policy publications those two runs make, and one `gcloud run jobs list`. No model call and no run is launched.
+On a PASS the entry is out of the catalog again and the jobs are back on the image they had.
+
+**What it cannot settle.** It does not launch a run, so it says nothing about whether a run on those jobs works —
+what it reads is that the repository's jobs are left on images the project's catalog describes, and that the image
+one of them is deployed with is the one the catalog records for the entry its stamp names. It measures `image add`
+alone: the other
+management commands, and the collapse of the pending record, are Check 391's subject, and the failure path is Check
+392's. The hermetic half is `scripts/live-checks/check-390_test.sh`, run from `scripts/live_checks_test.go`: the
+fake `gcloud` serves the jobs and the registry, and a case that bends each answer — a job stamped with an entry the
+catalog does not hold, a registry digest that is not the catalog's record for that entry, a record that still owes a
+step, a missing success line — proves the FAIL the check reads is the reading's and not a word the fake was told to
+say.
+
+**Paste back:** the whole `CHECK 390 RESULT` block and nothing else. It carries the entry's name, the digests, the
+job counts and the record; nothing in it is a secret, and the block is what says whether one command made the entry
+live on your installation.
+
+## Check 391: three `--no-apply` changes leave one entry per step name, and ONE `fugaro apply` runs each step once (a checkout of an onboarded repository, on the sandbox installation, never `belong`; one script you run; NOT RUN)
+
+**NOT RUN.** Written by task **AP10** of
+[docs/composite-commands/implementation-plan.md](composite-commands/implementation-plan.md) — its "Checks (reserved
+390–399)" — and it reads the collapse the pending record exists for (**D1562**, **D1570**): `--no-apply` saves a
+change and stops (**D1565**), and the steps it owes are recorded **one entry per step name**, so three changes that
+all owe the `policy` stage leave ONE entry for it, and the single `fugaro apply` that finishes them runs that stage
+once and not three times. The check is `scripts/live-checks/check-391.sh` (its sibling test
+`scripts/live-checks/check-391_test.sh` drives it against a fake `fugaro`, so a case can say what each change owes,
+what the record holds and which stage rows the one apply prints), and **no agent runs any step of it**: a project
+naming `belong` is refused before anything is run, and so is a coding agent's session.
+
+**Three changes, all owing `policy`, and one of them owing more.** The first is `fugaro image add <entry>
+--dockerfile <owner/name:path> --no-apply`, which owes the build, the redeploy and the publication; the other two
+are `fugaro settings set <key> <value> --layer local --no-apply` on two keys whose write owes the `policy` stage
+alone. Nothing is built or redeployed until the one `fugaro apply`, and the teardown is `fugaro image rm <entry>
+--no-apply` plus the two keys put back, then one more `fugaro apply` to make the undoing live.
+
+**What it reads, in this order.** Every row goes into the one `CHECK 391 RESULT` block on stdout:
+
+- **`xtrace`** — this shell was not started with tracing on.
+- **`agent-session`** — no coding agent's marker is set **in this check's environment**.
+- **`checkout`** — the current directory is a git work tree whose `origin` remote names the repository the entry's
+  change owes a redeploy to, read as `owner/name` (**D1574**).
+- **`installation`** — which installation this is about, out of `fugaro doctor --json`, held to `--project` where
+  you typed one.
+- **`belong`** — the project is not the owner's own installation, refused in what you typed and in what `doctor`
+  answered.
+- **`entry`** — the catalog does not already hold this check's entry name, or held it as a leftover and the check
+  removed it.
+- **`keys`** — the two settings keys out of `fugaro settings get <key> --json`: what each holds now, at which layer
+  it wins, and whether the generic write path carries it. What is read here is what the teardown puts back, and a
+  key that cannot be read or cannot be written is a reason not to write it at all.
+- **`saved`** — the fact this check is: each of the three changes written with `--no-apply`, each answering its own
+  "saved, not live yet" line. The entry's change must name the build, the redeploy and the publication; each
+  settings change must name the `policy` stage alone, because the machine's own config is what the published node is
+  derived from. A change that exited non-zero, or named other steps, FAILs and there is nothing to apply.
+- **`status`** — `fugaro apply --status --json`, which must name exactly `catalog-build`, `repository` and `policy`,
+  each **once**: a second `policy` row is the failure this check exists to catch (**D1562**, **D1570**).
+- **`applied`** — the one `fugaro apply`, under the deadline (1800 seconds by default). It must exit 0 and its own
+  account must name each of the three steps once ("applied catalog-build, repository, policy"): a run that answered
+  one twice, or answered something else, did fewer or more steps than the record owed.
+- **`stages`** — the stage rows of that apply's own transcript. The `policy` row and the `repository` row must
+  appear exactly once each: three changes that all owed `policy` reached that stage once, which is the collapse the
+  record exists for.
+- **`owed`** — `fugaro apply --status --json` again, which must owe nothing: the three changes are live and the
+  record is clear.
+- **`teardown`** — the entry is out of the catalog again and both keys are back the way this check found them (the
+  value they held, or unset), with one more `fugaro apply` to make that live, and the record read once more.
+- **`claim`** — the verdict: the claim **HOLDS**, does **NOT** hold, or is **NOT MEASURED** (a row above could not be
+  read).
+
+Exit `0` means the claim held; `1` means it did not (each row says which); `2` means the check could not tell (a
+guard stopped it, a tool or a document could not be read, an internal error ended it).
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check-391.sh --dockerfile <owner/name:path> --dry-run
+bash scripts/live-checks/check-391.sh --dockerfile <owner/name:path>
+```
+
+`--dry-run` prints the plan and makes **no call at all**. `--dockerfile` is the source of the entry the first change
+adds, as `owner/name:path`, and it is required; `--entry` is the catalog entry this check owns (default
+`chk391-catalog`). `--project` is the Fugaro project, `--fugaro-flags '<flags>'` adds flags to every `fugaro` call,
+and `--deadline` bounds how long the one `fugaro apply` may take. The knobs are `CHECK391_FUGARO`,
+`CHECK391_DEADLINE`, `CHECK391_DRY_RUN`, `CHECK391_KEEP_SCRATCH`, and `CHECK391_KEY_A`, `CHECK391_VALUE_A`,
+`CHECK391_KEY_B` and `CHECK391_VALUE_B`, which replace the two settings this check writes.
+
+**What it costs.** One Cloud Build and **two** repository redeploys (at the one `fugaro apply` and at the teardown's
+apply), plus the policy publications those two runs make. No model call and no run is launched. On a PASS the entry
+is out of the catalog again and both keys are back as they were found.
+
+**What it cannot settle.** It does not read the cloud: every reading here is the CLI's own record and transcript, so
+it says nothing about whether the steps did their work — Check 390 reads the `image add` chain's own effect. It does
+not measure the failure path either: a step left owed is Check 392's subject. The hermetic half is
+`scripts/live-checks/check-391_test.sh`, run from `scripts/live_checks_test.go`: a case that makes a change owe the
+wrong steps, makes the record hold two `policy` rows, makes the one apply answer a step twice or print two stage
+rows, or leaves a step owed, proves each FAIL the check reads is the reading's.
+
+**Paste back:** the whole `CHECK 391 RESULT` block and nothing else. It carries the three changes' own lines, the
+record's three entries, the one apply's account and its stage rows; nothing in it is a secret.
+
+## Check 392: a forced `policy` stage failure leaves the change saved, the step owed and the exit non-zero, and `fugaro apply` finishes it (the sandbox installation, never `belong`, and NOT a managed project; one script you run; NOT RUN)
+
+**NOT RUN.** Written by task **AP10** of
+[docs/composite-commands/implementation-plan.md](composite-commands/implementation-plan.md) — its "Checks (reserved
+390–399)" — and it reads the other half of spec rule 1: a step that fails **keeps the change and the step**, says so
+in one line naming the command that finishes it, and exits non-zero (**D1563**). The failure is forced rather than
+waited for: the same `fugaro apply` is run with `CLAUDECODE=1` on **the child's own command line**, and a coding
+agent's session may not publish the policy (**D1571**), so the `policy` stage does not run. The check is
+`scripts/live-checks/check-392.sh` (its sibling test `scripts/live-checks/check-392_test.sh` drives it against a fake
+`fugaro` that leaves the step owed when the marker is set on its own command line, so a case can bend each answer),
+and **no agent runs any step of it**: a project naming `belong` is refused before anything is run, and so is a
+coding agent's session.
+
+**The one installation this cannot run on.** On a **managed** project — one Fugaro converges on its owner's behalf —
+the policy stage asks the managed gate first, and an admitted step applies in a coding agent's session exactly as it
+does for the owner (**D1016**). The marker this check forces the failure with is therefore **no refusal there**, and
+the forced run would publish the policy and exit 0 — the loudest FAIL this check has, about the one thing that did
+not happen. So the check reads `fugaro managed status --json` (the marks' own answer, the same reader the gate uses)
+and **refuses to run** when the project is managed, or when that read does not answer at all. Run it on the sandbox
+installation.
+
+**The change it writes is made to have work to do.** The policy stage publishes only what the local file and the
+published node disagree about, and a stage with nothing to do answers its step without running it — so the check
+writes one setting with `--no-apply` and reads the key back: it must now read the written value with
+`state=unpublished`, which is what gives the stage work and what the forced run must leave exactly where it is.
+
+**What it reads, in this order.** Every row goes into the one `CHECK 392 RESULT` block on stdout:
+
+- **`xtrace`** — this shell was not started with tracing on.
+- **`agent-session`** — no coding agent's marker is set **in this check's environment**: the marker the forced run
+  carries is the one the check sets on that child's command line and nowhere else. The editor extension's own marker
+  (`CLAUDE_CODE_SSE_PORT`) is dropped from this script's environment rather than refused, because it says this shell
+  sits in an editor's terminal and not that an agent is driving it.
+- **`installation`** — which installation this is about, out of `fugaro doctor --json`: the project, its GCP project
+  and its region, held to `--project` where you typed one. An answer naming no project stops the run: it could not
+  tell which installation it would write.
+- **`belong`** — the project is not the owner's own installation, refused in what you typed and in what `doctor`
+  answered.
+- **`managed`** — `fugaro managed status --json` answers `managed=false`. A managed project stops the run with a row
+  saying why (see above), and so does a read that does not answer: without it there is no telling whether the marker
+  below stops the step, which is this check's whole premise.
+- **`sync`** — `fugaro settings --json`: the `policy` layer was **read** (its status is `ok`), and **no** key of the
+  project reads `unpublished`. A database that could not be read makes the forced failure meaningless (the stage
+  skips its work and answers the step), and a key already `unpublished` is a change of yours that the applies below
+  would publish — this check publishes its own setting and nothing else.
+- **`key`** — `fugaro settings get <key> --json`: the key is stated by this machine's own config at the local layer
+  (`set=yes`, `wins=local`), the generic write path carries it (`writable=yes`), it is a boolean, and it is not
+  already out of step. A key this check cannot read, cannot write or could not put back is a **refusal to run**: what
+  it holds now is what the teardown restores.
+- **`saved`** — the fact this check's change is: `fugaro settings set <key> <value> --layer local --no-apply`, which
+  must exit 0 with its own "saved, not live yet" line naming the `policy` step alone (**D1565**).
+- **`drift`** — the key read back, which must read the written value with `state=unpublished`: the local file and
+  the published node differ, so the policy stage has work to do. A stage with no work answers its step without
+  running it, and the forced run below would exit 0 for a reason that has nothing to do with the marker.
+- **`forced`** — the fact this check is: `CLAUDECODE=1 fugaro apply` with its stdin on `/dev/null`, under the
+  deadline (600 seconds by default). Exit **0** is a FAIL and the loudest one here (the policy step RAN in a coding
+  agent's session); any non-zero status must come with D1563's sentence, word for word — `saved, not live yet: policy
+  still owed` and the line under it naming `fugaro apply` to finish it — and with the session's refusal in the run's
+  own account, including what the person can do about it. A run still going at the deadline is killed and FAILs.
+- **`owed`** — `fugaro apply --status --json` and the key again: the record must owe `policy` **exactly once**, and
+  the key must still read the written value `unpublished`. A record that cleared the step, or a node that moved,
+  means the change was not kept.
+- **`finish`** — the recovery: the same `fugaro apply` with no marker and its stdin on `/dev/null`, under the same
+  deadline. It must exit 0 and its own account must say it applied `policy`: the step the forced run left owed, run
+  once, with nothing typed.
+- **`closed`** — `fugaro apply --status --json` again, which must owe nothing, and the key, which must read the
+  written value with `state=ok`: the change is live and the record is clear.
+- **`teardown`** — the key put back to the value it held (`fugaro settings set <key> <old> --layer local --no-apply`)
+  and one more `fugaro apply` to make that live, then the record and the key read once more. Where the guard refused
+  the key, the check wrote nothing and says so.
+- **`claim`** — the verdict: the claim **HOLDS** (the step did not run, the change was kept, the step stayed owed
+  with a non-zero exit carrying D1563's sentence, and ONE `fugaro apply` finished it with nothing typed), does
+  **NOT** hold, or is **NOT MEASURED** (a row above could not be read).
+
+Exit `0` means the claim held; `1` means it did not (each row says which); `2` means the check could not tell (a
+guard stopped it — a managed project above all — a tool or a document could not be read, an internal error ended
+it).
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check-392.sh --dry-run
+bash scripts/live-checks/check-392.sh
+```
+
+`--dry-run` prints the plan and makes **no call at all**: it writes no setting and runs no `apply`. `--key` is the
+settings key this check writes (default `bake_repos`; it must be a boolean stated at the local layer and carried by
+the generic write path — `bake_repos`, `triage` and `review_against_task` are the three of that shape) and
+`--value` is the answer it writes (default: the other one). `--project` is the Fugaro project; leave it out where a
+project config is in force. `--fugaro-flags '<flags>'` adds flags to every `fugaro` call, and `--deadline` bounds
+each `apply`. The knobs are `CHECK392_FUGARO`, `CHECK392_PROJECT`, `CHECK392_KEY`, `CHECK392_VALUE`,
+`CHECK392_DEADLINE`, `CHECK392_DRY_RUN` and `CHECK392_KEEP_SCRATCH`, which keeps the scratch directory with both
+applies' transcripts.
+
+**What it costs.** Three `fugaro apply` runs (the forced one that is refused, the one that finishes the step, and the
+teardown's) and one settings write that the teardown puts back. No model call, no build and no run is launched; the
+only cloud writes are the two policy publications — the change's and the undoing's. On a PASS the key is back to the
+value it held.
+
+**What it cannot settle.** It reads one stage's failure and one door's sentence, not every step's: a build that fails
+or a redeploy that cannot reach a repository leaves the same sentence and is not forced here. The refusal it forces
+is a **marker test** — a session that unsets `CLAUDECODE` is outside it — and what the check reads is the marker it
+set itself. And it cannot run on a managed project at all (see above), so it says nothing about the failure path
+there. The hermetic half is `scripts/live-checks/check-392_test.sh`, run from `scripts/live_checks_test.go`: a case
+that makes the forced run exit 0, publish anyway, keep another step or say nothing, makes the record owe the step
+twice, makes the recovery answer nothing or fail, or makes the teardown fail, proves each FAIL the check reads is the
+reading's and not a word the fake was told to say.
+
+**Paste back:** the whole `CHECK 392 RESULT` block and nothing else. It carries the key, the two applies' own lines
+and the record's entries; nothing in it is a secret, and the block is what says whether a step that does not run
+keeps the change on your installation.
 ## Check 211: the judge's input is blind (sandbox project and sandbox repository only, never `belong`; run by you; NOT RUN)
 
 **NOT RUN.** Written by task **A5.3** of

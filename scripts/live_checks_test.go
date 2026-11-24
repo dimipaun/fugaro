@@ -813,6 +813,9 @@ var liveCheckScripts = []struct {
 	{"check-890-data-layout.sh", "check-890-data-layout_test.sh"},
 	{"check-891-update-trace.sh", "check-891-update-trace_test.sh"},
 	{"check-892-iam.sh", "check-892-iam_test.sh"},
+	{"check-390.sh", "check-390_test.sh"},
+	{"check-391.sh", "check-391_test.sh"},
+	{"check-392.sh", "check-392_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
@@ -877,12 +880,6 @@ func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
 // TestLiveCheckCIShardCoversTheSuiteOnce: the split CI makes is a partition of
 // this file's items -- every one of them on exactly one runner, each item
 // unchanged -- and a variable it cannot read is refused rather than run whole.
-// The suite is 261 items on one runner (87 scripts, three shards each) and under
-// a minute each -- Check 632's three shards are the slowest, at about four
-// minutes each, because each case waits out the run and the update it is about;
-// a split that dropped one, ran one twice or fell back to
-// everything would show up as a green run that tested less, which is the failure
-// this pins.
 // The suite is one item per script per shard -- every liveCheckScripts entry on
 // each of liveCheckShards shards, and under a minute each, so the figures are
 // derived from those two lists rather than spelled here; a split that dropped
