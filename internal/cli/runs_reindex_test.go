@@ -22,7 +22,7 @@ func reindexRig(t *testing.T) (*cloudFixture, *gcpfake.Firestore) {
 	t.Helper()
 	fs := gcpfake.NewFirestore(t)
 	f := newCloudFixture(t, "firestore: "+fs.URL+"/")
-	f.rewriteConfig(t, "rtdb_url: "+f.budget.DB.URL+" }", "rtdb_url: "+f.budget.DB.URL+", firebase_project: proj-1234 }")
+	f.rewriteConfig(t, "rtdb_url: "+f.budget.DB.URL+",", "rtdb_url: "+f.budget.DB.URL+", firebase_project: proj-1234,")
 	f.run.AddJob(infra.HistoryJob, "1", "2Gi")
 	return f, fs
 }
@@ -122,6 +122,31 @@ func TestRunsReindexStartsJob(t *testing.T) {
 	}
 }
 
+// TestRunsReindexWithoutAReportedName is the line the command prints when the
+// platform started the execution but its operation reported no readable name
+// (gcp.ErrStartedUnnamed): the walk is going, so the line says that rather than
+// leaving "reindexing now as" with nothing after it, and it must not read as
+// "no execution was started", which would be untrue and would invite a second
+// start.
+func TestRunsReindexWithoutAReportedName(t *testing.T) {
+	f, _ := reindexRig(t)
+	f.run.BadRunMetadata = true
+
+	out, stderr, err := execute(t, "runs", "reindex")
+	if err != nil {
+		t.Fatalf("err = %v, stdout = %q, stderr = %q", err, out, stderr)
+	}
+	if !strings.Contains(out, "index: reindexing now (the platform started the execution but did not report its name), resuming from its own cursor") {
+		t.Fatalf("the line does not name the start without an execution name: %q", out)
+	}
+	if strings.Contains(out, "no execution was started") {
+		t.Fatalf("a started execution was reported as one that never started: %q", out)
+	}
+	if got := len(f.run.RunRequests()); got != 1 {
+		t.Fatalf("the history job was started %d times, want one: %+v", got, f.run.RunRequests())
+	}
+}
+
 // TestRunsReindexOverAFoldClaimMarks is the lease's other holder (RI5, U3): the
 // writer lease is the sweep's own while the sweep folds, and a dead execution's
 // claim stands for its whole TTL. A person asking for a rebuild must not be
@@ -163,6 +188,59 @@ func TestRunsReindexOverAFoldClaimMarks(t *testing.T) {
 	l, ok := f.budget.DB.Value(runindex.PathLease).(map[string]any)
 	if !ok || l["holder"] != "fugaro-history-fold1" {
 		t.Fatalf("the command stamped over a folding writer's claim: %#v", f.budget.DB.Value(runindex.PathLease))
+	}
+}
+
+// TestRunsReindexStandsWhenTheJobStartIsRefused is O7: only the installation's
+// scheduler account holds run.invoker on the history job, so a caller who may
+// not start it -- a member, an operator whose role does not cover the job -- is
+// refused by the platform. That refusal must not fail the command, because the
+// reset ran first and is the half the command is for: the index is marked
+// incomplete, the next sweep of the history job walks it on its own, and the
+// command says so in one line rather than erroring.
+func TestRunsReindexStandsWhenTheJobStartIsRefused(t *testing.T) {
+	f, fs := reindexRig(t)
+	f.run.FailRunWith = 403
+
+	out, stderr, err := execute(t, "runs", "reindex")
+	if err != nil {
+		t.Fatalf("a refused job start failed the command: err = %v, stderr = %q", err, stderr)
+	}
+	if !strings.Contains(out, "index: marked incomplete") {
+		t.Fatalf("the command does not say what it marked: %q", out)
+	}
+	if !strings.Contains(out, "index: no execution was started") || !strings.Contains(out, "The reindex stands all the same") {
+		t.Fatalf("the command does not report the refused start and the mark that stands: %q", out)
+	}
+	if strings.Contains(out, "index: reindexing now as ") {
+		t.Fatalf("the command claims it started an execution it could not: %q", out)
+	}
+
+	// The start was attempted and refused, so nothing carries an execution.
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != infra.HistoryJob || calls[0].Execution != "" {
+		t.Fatalf("the refused start was recorded as an execution: %+v", calls)
+	}
+
+	// The reset landed before the start was tried, which is what makes the
+	// refusal harmless: the lease names the person and holds nothing, and the
+	// summary is latched incomplete, so every later sweep walks the index.
+	l, ok := f.budget.DB.Value(runindex.PathLease).(map[string]any)
+	if !ok {
+		t.Fatalf("lease = %#v", f.budget.DB.Value(runindex.PathLease))
+	}
+	if l["holder"] != "someone@example.com" {
+		t.Fatalf("the reset's node names %#v, want the person", l["holder"])
+	}
+	if c, ok := l["cursor"]; ok && c != nil && c != "" {
+		t.Fatalf("the reset left a cursor behind: %#v", l)
+	}
+	sum, ok := fs.Value(runindex.SummaryCollection, runindex.SummaryDocument)
+	if !ok {
+		t.Fatal("the reset seeded no summary, so no sweep would walk")
+	}
+	if done, ok := sum["complete"].(bool); !ok || done {
+		t.Fatalf("summary = %v", sum)
 	}
 }
 
