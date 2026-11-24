@@ -22603,7 +22603,7 @@ phones' own settings pages for the keychain read.
 **The command.** It is **one command**, the half the CLI can read, and it only reads:
 
 ```sh
-fugaro pair ls --json | jq -c '.[]'
+fugaro pair ls --json | jq -c '.list.devices[]'
 ```
 
 **The script is that command.** `scripts/live-checks/check733.sh` (its sibling test is
