@@ -1861,6 +1861,88 @@ body, and not as a `div`.
   left). Jobs are the other thing that is never in the first paint (§2.5), for the same
   reason: a read nobody asked for is a child process nobody asked for.
 
+### 2.16 The setup wizard — `console/src/renderer/wizard/wizard.ts`
+
+**The wizard is the first-run screen, and it replaces the command line §2.1 already lists.**
+With no installation the onboarding view draws it where `fugaro setup`'s command line used to
+stand (the console-improvements plan's task SW3b, D2904): the five questions of
+`src/shared/new-ops.ts`'s `SETUP_ANSWER_KEYS` with the CLI's own defaults, and then the
+`setup.plan` feed drawn line by line as it arrives. **It is one screen with no onboarding
+state**, so the rail's "Add project" opens the same module under its own heading — which is why
+it draws **no `h1`** and takes no title: the view that mounts it owns the heading, and the
+wizard drawing a second one with the same words would be a bug.
+
+**Every rule for it is the class alone.** The module draws through one helper,
+`make(factory, tag, className)`, whose tag is its caller's, so one class is drawn as more than
+one element: `console-wizard-command` is a `code` where a Copy stands beside it and a `p` where
+the line is displayed only, and `console-wizard-event-text` is a `span` beside its kind word
+and a `div` under it. A stylesheet that qualified these with a tag would be a stylesheet about
+the branch it happened to read, and the pairing a rule is written from cannot be read back out
+of such a helper — so these are the one part of §2 whose hooks stand unqualified, and the
+element column below is what the module draws today rather than what a rule may assume. **The
+only attributes any rule here keys on are `:disabled` and `aria-busy`** (all four of the
+module's own attributes — `data-wizard-question`, `data-wizard-event` and the two `aria-busy`
+marks — are licensed by §3.1's list and are named in the rows below; the `id` a box carries
+and the `for` its label does are not attributes a rule reads at all, they are the pairing
+that gives the box its accessible name); the screen deliberately
+sets **no `data-busy`**, because `flight-deck.css`'s rule for a busy section fades every child
+that is not the busy slot, and the operator's own typed answers fading for the up-to-an-hour a
+setup may take is not what a read in flight should look like here.
+
+| Hook | Element | What it is |
+|---|---|---|
+| `console-wizard` | the screen's root, a `section` | the questions and the attempts and nothing else. No heading, no card, no `h1`: the view that mounts it owns the title, and SW3c's dialog will draw its own. It carries `aria-busy="true"` while an attempt is in flight, and never `data-busy` |
+| `console-wizard-lead` | the sentence above the questions | the console's own words for what is about to happen, muted. It is `max-width`-capped like the prose below it rather than stretched across a wide window |
+| `console-wizard-questions` | the questions' column | the five questions as a grid, narrower than the events below them: a form is read in one column and a feed is read across |
+| `console-wizard-question` | one question, a `div` | the label and its box as one unit, with `data-wizard-question` naming the answer key it collects so the tree can be read back against `SETUP_ANSWER_KEYS` |
+| `console-wizard-label` | a question's label, a `label` | the question in the operator's words, drawn `for` its own control's id (`for` before the box, the way the launch window's form does it, `launch.ts`'s `field`), so every box has an accessible name. The pairing is a label and an id rather than nesting: a `select` inside a `label` is a target a click on the label opens, which is not what a click on a question should do |
+| `console-wizard-note` | a question's note, a `p` | the smaller line under a question — the default it takes when the operator types nothing, and why one question has none. Muted, and the console's words, never a document's |
+| `console-wizard-input` | a text question's box, an `input` | `type="text"`, with the CLI's default as its `value` and a placeholder naming that default. Its `id` is `console-wizard-field-` and the row's own answer key, which is the string its label's `for` carries; the box is typed into, never filled from a document |
+| `console-wizard-option` | a choice question's option, an `option` | one member of a `select`. The popup it opens is the platform's and is not styled here; the rule sets the closed state's colours so an option does not read as a native widget inside a themed panel |
+| `console-wizard-submit` | the one control that sends the answers, a `button` | a `type="button"` — the questions are drawn in a plain container and **not** in a `form`, so Enter is not a second way to send an answer. It is `disabled` for as long as the send it started is unanswered: this screen's answer can take up to an hour |
+| `console-wizard-follow` | the control that follows the run, a `button` | a `type="button"` in the same shape, asking for the run the confirmation window's yes started. Held `disabled` with the submit while an attempt is in flight, for the same reason |
+| `console-wizard-busy` | the line naming the attempt in flight, a `p` | one line for the screen rather than one per attempt: it is written when a send starts — `Planning the setup…`, `Following the run…`, in the register §2.5's busy marks already use — and cleared when its answer lands, on every path, a thrown bridge included |
+| `console-wizard-answer` | one answer line, a `p` | the console's own whole-sentence answers: the CLI's refusal for the attempt that refused, the done line, the hand-off line for a feed that left the operator something to run, and `STREAM_INTERRUPTED_WORD` for a read with no last line |
+| `console-wizard-attempts` | the column of attempts, a `div` | one block per send, in the order they were sent: a second attempt beside the first is what this screen draws for a read that stopped, so nothing is replaced |
+| `console-wizard-attempt` | one send's whole output, a `div` | the block its lines and its answer land in. It too carries `aria-busy="true"` while its own send is outstanding |
+| `console-wizard-lines` | one attempt's event lines, a `div` | the feed, in arrival order, one line per paint tick |
+| `console-wizard-event` | one event line, a `div` | a `step`, a `stage`, a `left_for_you`, a `done` or an `error`, with `data-wizard-event` naming its type. It is the row a person scans down, so the line is a block rather than a list item |
+| `console-wizard-event-kind` | the kind word, a `span` | the event's type in the console's own vocabulary (`working`, `stage`, `for you`, `done`, `failed`), uppercased and letter-spaced — the smallest thing read in this block |
+| `console-wizard-event-stage` | the stage's name, a `span` | which stage the CLI is on, in the medium step: the one word a person watching a long setup actually reads |
+| `console-wizard-event-state` | a stage's state, a `span` | the stage's own state word, and `undone` where the stage has not happened, muted |
+| `console-wizard-event-after` | the stage waited for, a `span` | the stage this one followed, so a feed out of order is legible, muted and small |
+| `console-wizard-event-text` | a line's document text, a `span` or a `div` | the CLI's own sentence, through the class its event declared in `TEXT_CLASSES` (`putText`): a value the class refuses never reaches the element. It is a `span` on the row of the kind words and a `div` under it where the line carries a command |
+| `console-wizard-command` | the command a `left_for_you` line names, a `code` or a `p` | the argv MG0's `manage/command.ts` assembled, drawn in a block of its own. It is a `code` beside a Copy and a `p` where the builder refused the line or where the line is the step's own text — a `command` step with no `commands` is itself its one command (`fugaro update`, `fugaro update-skills`, `fugaro orchestrator install`, the CLI's own `PrintedCommands` rule), and that line is drawn once, in this element, with its Copy beside it rather than repeated as a `code` under itself |
+| `console-wizard-copy` | that line's Copy, a `button` | a `type="button"` whose label **is** the joined argv, copying that text through the caller's seam. Mono (§3.7), for the same reason §2.15's `manage-copy` is: its whole value is that a person compares it character by character with the command they are about to run |
+| `console-wizard-copy-refusal` | a command the builder would not assemble, a `p` | the builder's own reason beside the displayed line, muted. The console never repairs a command it will not copy |
+
+- **The failed stage comes from the feed, not from the sentence.** An `error` line draws the stage
+  the run stopped at in `console-wizard-event-stage` and the CLI's sentence in
+  `console-wizard-event-text`; nothing here re-reads the sentence to guess a stage, and an error
+  that named none draws the sentence alone.
+- **A `left_for_you` line is displayed whichever way it goes.** A line whose first word is `fugaro`
+  or `gcloud` is assembled and gets the Copy; any other word is drawn as text with no control
+  beside it — a `left_for_you` line is the CLI telling the operator what is left, so dropping the
+  ones this console cannot act on would be dropping the answer. A builder refusal takes the Copy
+  away and keeps the line, with the builder's reason under it.
+- **A `command` step with no commands is its own command.** The CLI's `PrintedCommands`
+  (`initflow/stage.go`) answers the step's own text as its one command line, and that is the shape
+  of the steps a first setup leaves constantly (`fugaro update`, `fugaro update-skills`,
+  `fugaro orchestrator install`), so the line above is what gets the Copy. Every other kind's text
+  is a sentence — a step in a web console, a refusal — and keeps the console's own "no command to
+  run" note.
+- **No question carries a secret, and no control opens a prompt.** There is no `password` box, no
+  path, no flag and no second window: a question whose answer is a secret is asked by
+  `fugaro setup`'s own terminal prompt, which this screen never opens and never imitates.
+- **The busy line is one line for the screen, and the two controls it started are the ones it
+  holds.** The Retry a finished attempt drew is **not** held: a second attempt beside the first is
+  what this screen draws for a read that stopped, so holding it would deny the person the only way
+  forward.
+- **The wizard draws its own busy line rather than calling `sectionRead`.** The helper's mark, its
+  skeleton and its Retry belong to a section with one read and a refusal of its own (§2.15); this
+  screen draws a feed of lines from one child that answers once, so its mark is a sentence and an
+  `aria-busy` on the block whose send is outstanding.
+
 ## 3. The theme system
 
 ### 3.1 One file, one value set, one vocabulary

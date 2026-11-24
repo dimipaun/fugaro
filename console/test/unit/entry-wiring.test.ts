@@ -106,8 +106,9 @@ import {
   tabStop,
   tabTarget,
 } from '../../src/renderer/entry'
-import { NEW_OPS_NOT_AVAILABLE, NEW_OPS_UNREADABLE } from '../../src/shared/new-ops'
+import { NEW_OPS_NOT_AVAILABLE, NEW_OPS_UNREADABLE, SETUP_ANSWER_KEYS } from '../../src/shared/new-ops'
 import type { SettingsEditorOpenRequest, SettingsEditorOutcome } from '../../src/shared/new-ops'
+import { WIZARD_CLASS, WIZARD_QUESTION_CLASS } from '../../src/renderer/wizard/wizard'
 import { GRAPH_DOCUMENT_VERSION, decodeSnapshot } from '../../src/shared/schema'
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
 import { NO_PLAN_CHECKOUT } from '../../src/source/source'
@@ -2940,7 +2941,13 @@ describe('the rail with nothing left to open', () => {
     const onboarding = classed(panelOf(document), ONBOARDING_CLASS)[0]
     expect(onboarding, 'the panel drew no onboarding').toBeDefined()
     expect(classed(onboarding as FakeNode, ONBOARDING_TITLE_CLASS)[0]?.textContent).toBe('Set up your first installation')
-    expect(classed(onboarding as FakeNode, ONBOARDING_COMMAND_CLASS)[0]?.textContent).toBe('fugaro setup')
+    // The wizard takes the place of the sentence and the command line (SW3b,
+    // D2904): the console asks `setup.plan` itself, so nothing here tells the
+    // operator to run `fugaro setup` by hand.
+    expect(classed(onboarding as FakeNode, ONBOARDING_COMMAND_CLASS)).toHaveLength(0)
+    const wizard = classed(onboarding as FakeNode, WIZARD_CLASS)[0]
+    expect(wizard, 'the onboarding drew no wizard').toBeDefined()
+    expect(classed(wizard as FakeNode, WIZARD_QUESTION_CLASS)).toHaveLength(SETUP_ANSWER_KEYS.length)
     // Nothing to read, so nothing is read -- no Live refusal drawn in its place.
     expect(calls).toEqual([])
     const empty = classed(railOf(document), RAIL_EMPTY_CLASS)[0]
