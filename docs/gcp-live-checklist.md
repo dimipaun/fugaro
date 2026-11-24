@@ -14490,13 +14490,16 @@ throwaway account are all deleted, and each of the three is **read back** rather
 project binding is removed **before** the account, because a binding that outlives its member reads
 back as `deleted:serviceAccount:…` and can never be removed again. Those two writes are ordered, and
 IAM's own consistency can still put them out of order, so the account deletion **re-reads the project
-policy and is retried** (up to six times): a delete issued in the moment after the binding is removed
-is refused as *still referenced by a policy binding* even though the policy already reads clean, and
-that is the answer the owner's run of 2026-11-24 came back with — the service deleted, the binding
-removed and read back clean, and `account-deleted` FAILed with the account still there. **A build that
-FAILED changes nothing about any of it**: the account is this check's and goes whether the build passed
-or failed. The Restore runs from the exit trap too, so a Ctrl-C in the middle still leaves nothing
-running, and the scratch directory goes at the end. What is left is the **build's own record**, in the
+policy and is retried** (up to six times). The owner's run of 2026-11-24 ended with the service
+deleted, the binding removed and read back clean, and `account-deleted` FAILed with the account still
+there — **what the refusal said was not captured**, and either of two causes fits it: a delete issued
+in the moment after the binding is removed is refused as *still referenced by a policy binding* even
+though the policy already reads clean, and a delete that landed can leave the account still named by a
+listing that has not caught up either. The re-read before each attempt and the read-back after it
+answer both. **A build that FAILED changes nothing about any of it**: the account is this check's and
+goes whether the build passed or failed. The Restore runs from the exit trap too, so a Ctrl-C in the
+middle still leaves nothing running, and the scratch directory goes at the end. What is left is the
+**build's own record**, in the
 project's Cloud Build history: it is the project's log of what ran rather than a resource this check
 made, and nothing here deletes it. **No agent runs any step of it.**
 

@@ -292,9 +292,14 @@ elif sub == ("iam", "service-accounts", "delete"):
     if mode == "account-delete-fails":
         die("iam.serviceAccounts.delete failed")
     if mode == "account-delete-fails-once" and state_get("delete_tries") != "1":
-        # The refusal a real project answers with when the account's own policy
-        # binding has not finished going away: IAM is eventually consistent, and
-        # the delete reads a policy the removal has not reached yet.
+        # ONE of the two ways a delete can leave the account behind, and the one
+        # the owner's run of 2026-11-24 could have got: the binding's removal has
+        # not reached the policy this delete reads, so the project refuses it as
+        # still referenced (IAM is eventually consistent). What that run's own
+        # refusal said was NOT captured — the other candidate is a delete that
+        # landed whose account the listing went on naming — so this mode stands
+        # for a first attempt that did not take, whatever the cause was; the
+        # check's re-read covers both.
         state_set("delete_tries", "1")
         die("FAILED_PRECONDITION: Service account %s is still referenced by a policy binding" % CALLER)
     state_set("account", "0")
@@ -354,8 +359,9 @@ elif sub == ("builds", "submit"):
         "step-exit-15": "15",
         "step-exit-unknown": "1",
         # The owner's own run of 2026-11-24: a build that ended FAILURE, an empty
-        # `gcloud builds log`, and a Restore whose account delete was refused once
-        # and left the account behind. Here the delete lands on the retry.
+        # `gcloud builds log`, and a Restore whose account delete did not take the
+        # first time and left the account behind — the refusal was not captured,
+        # so this stands for either cause. Here the delete lands on the retry.
         "account-delete-fails-once": "13",
     }
     # The exit code the build's own record carries for its step, per the mode.
@@ -1223,10 +1229,11 @@ test_a_call_the_service_refuses_with_the_log_present_reads_the_log() {
 }
 
 # The owner's run of 2026-11-24, end to end: a build that FAILED, no log, and a
-# deletion refused the first time because the project binding's removal had not
-# reached the policy the delete reads. The account is this check's and goes
-# either way — so the delete is attempted again, and the block says the account
-# is gone.
+# deletion that did not take the first time — the refusal was not captured, so
+# the mode stands for either candidate (a delete refused as still referenced by a
+# policy binding, or one that landed whose account the list was still naming).
+# The account is this check's and goes either way — so the delete is attempted
+# again, and the block says the account is gone.
 test_a_delete_that_fails_once_is_retried() {
   local dir=$work/acretry
   prepare "$dir"
