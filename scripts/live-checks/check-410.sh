@@ -16,9 +16,8 @@
 #     FOUND). Every call the probe makes is against a project that does not
 #     exist, so nothing in the cloud can be created, changed or deleted, and
 #     your own installation is not the subject of any of them;
-#   * the line that failure printed: `Something went wrong. Run: fugaro
-#     troubleshoot <id>` — T-DG9's sentence, and the whole reason this check
-#     exists. A build without it is a real finding and the row says which
+#   * the line that failure printed: `Help: fugaro troubleshoot <id>` —
+#     T-DG9's sentence, and the whole reason this check exists. A build without it is a real finding and the row says which
 #     sentence it looked for;
 #   * the run ID that line named: the log of the run that failed, in the store
 #     the run wrote it to, so the ID and the log are the same run;
@@ -364,9 +363,9 @@ step_failure_line() {
   local text
   if probe_unmeasured failure-line "no failed run printed anything"; then return 0; fi
   text=$(cat "$SCRATCH/probe.out" "$SCRATCH/probe.err" 2>/dev/null || true)
-  LINE_ID=$(printf '%s\n' "$text" | sed -n 's/.*Run: fugaro troubleshoot \([A-Za-z0-9][A-Za-z0-9._-]*\).*/\1/p' | head -n 1)
+  LINE_ID=$(printf '%s\n' "$text" | sed -n 's/.*Help: fugaro troubleshoot \([A-Za-z0-9][A-Za-z0-9._-]*\).*/\1/p' | head -n 1)
   if [ -z "$LINE_ID" ]; then
-    fact failure-line FAIL "the failed update printed no 'Something went wrong. Run: fugaro troubleshoot <id>' line: a person whose command failed is told the one command that explains it (D1604, D1609), and this run told them nothing. Its output is in $SCRATCH/probe.out and $SCRATCH/probe.err, and this is T-DG9's sentence — if the wording moved, move this row with it"
+    fact failure-line FAIL "the failed update printed no 'Help: fugaro troubleshoot <id>' line: a person whose command failed is told the one command that explains it (D1604, D1609), and this run told them nothing. Its output is in $SCRATCH/probe.out and $SCRATCH/probe.err, and this is T-DG9's sentence — if the wording moved, move this row with it"
     return 0
   fi
   fact failure-line PASS "the failed update printed the line naming ${LINE_ID}: what a person is told is the one command that explains the failure, and no setup"
@@ -484,7 +483,7 @@ plan() {
   say "  [network, read] gcloud projects describe ${P} — it must come back NOT FOUND, which is what makes the probe harmless"
   say "  [network] fugaro update --name ${NAME} --gcp-project ${P} --region ${REGION} --yes — a real failed update against a project that does not exist; it opens its log and fails inside its own converge"
   say "  [read] the log store under <scratch>/state/fugaro/logs — the run ID of the failed run"
-  say "  [read] the failed run's own output — the 'Something went wrong. Run: fugaro troubleshoot <id>' line (T-DG9)"
+  say "  [read] the failed run's own output — the 'Help: fugaro troubleshoot <id>' line (T-DG9)"
   if [ -n "$SKIP_DIAGNOSIS" ]; then
     say "  [not asked for] the diagnosis: CHECK410_SKIP_DIAGNOSIS is set, so no model call is made"
   else
