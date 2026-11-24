@@ -145,6 +145,7 @@ project_repos_set.go	run would ever read this selection: fugaro update
 project_repos_set.go	then holds and fugaro project policy publish
 project_repos_set.go	then holds, and fugaro project policy publish
 project_routing.go	run through fugaro update
+recipes_resolve.go	then run fugaro update
 recipes_skew.go	Run fugaro image build
 recipes_skew.go	Run fugaro update
 recipes_skew.go	run at bootstrap on a key it does not know. Run fugaro update
