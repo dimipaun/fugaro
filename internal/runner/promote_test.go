@@ -574,6 +574,86 @@ func TestPromoteSeamsDeliverThePass(t *testing.T) {
 	}
 }
 
+// TestPromotePartNamesTheItemsOwnStatusAndTheRulesTwoClauses: the status
+// section is what a reviewer reads, so every line has to be true of the item it
+// names. An item is named by the status its own file holds — the pass may only
+// close, and one the run dropped instead is a status the line carries rather
+// than one read as a close — and the reason a stray's line gives covers both
+// clauses of the rule the close is held to.
+//
+// The second clause is what makes the reason necessary: an item whose code the
+// run DID change and whose code lies outside the area's own paths is a stray,
+// and the line that said "its code is what the run must change" told its reader
+// the opposite of what happened (task.Promote.Paths, reconciliation §3b item
+// 12e).
+//
+// Mutation (print `closed` for every item of the two lists, as this code did
+// before): the dropped row fails. Mutation (word the stray line "its code is
+// what the run must change"): the second row fails, for an item whose code the
+// diff does change.
+func TestPromotePartNamesTheItemsOwnStatusAndTheRulesTwoClauses(t *testing.T) {
+	paidDown := item("20260101-01", "payments", "closed", "`internal/payments/charge.go`")
+	outsideThePaths := item("20260101-02", "payments", "closed", "`internal/ledger/entry.go`")
+	dropped := item("20260101-03", "payments", "dropped", "`internal/payments/refund.go`")
+	r := &run{rec: &runstore.Record{Version: 1, RunID: promoteTestRunID}}
+	r.promote = &promotePass{area: "payments", level: "pro",
+		closed: []backlog.Item{paidDown}, stray: []backlog.Item{outsideThePaths, dropped}}
+	part := r.promotePart()
+
+	for _, want := range []string{
+		"- closed 20260101-01: the 20260101-01 item",
+		"- closed 20260101-02, which this run's diff does not admit: the item's area is payments, and the rule admits a close only when the run changed the code the item names, inside this area's own paths",
+		"- dropped 20260101-03, which this run's diff does not admit",
+	} {
+		if !strings.Contains(part, want) {
+			t.Errorf("the status section does not carry %q:\n%s", want, part)
+		}
+	}
+	if strings.Contains(part, "its code is what the run must change") {
+		t.Errorf("a stray's line claims the code did not change, which is untrue of an item whose code is outside the area's paths:\n%s", part)
+	}
+	if strings.Contains(part, "- closed 20260101-03") {
+		t.Errorf("an item the run dropped is reported as a close:\n%s", part)
+	}
+}
+
+// TestPromoteAuditNamesTheHandBackWhereItIs: the audit's own line sends its
+// reader to the hand-back for the list a run that could not write the folder
+// leaves there, and the section it names is the one below it — the promote
+// block is rendered before the hand-back block (prflow.go's finalSection), so a
+// line saying "above" points at another run's sections or at nothing.
+//
+// Mutation (name the hand-back "above", or render the promote block after it in
+// finalSection): the order this test pins stops matching the words the line
+// uses.
+func TestPromoteAuditNamesTheHandBackWhereItIs(t *testing.T) {
+	r := promoteFixture(t, nil)
+	// The hand-back is read from the state directory, so the file has to be
+	// written where this run reads it: an empty StateDir would put it in the
+	// package's own directory, on the checkout, and read it from there.
+	r.d.StateDir = t.TempDir()
+	r.rec.Rigor = &runstore.RigorRecord{Level: "startup", Mode: "startup", From: "request", At: runstore.RigorAtBootstrap}
+	r.promote = &promotePass{area: "payments", level: "startup", audit: true}
+	if err := os.WriteFile(filepath.Join(r.d.StateDir, prFile),
+		[]byte("# Audit the payments area\n\n## Deferred\n\n- the charge path has no retry\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r.d.Now = func() time.Time { return time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC) }
+	section := r.finalSection(true, "", nil)
+
+	const want = "the hand-back section below lists them for a run that could not write the folder"
+	if !strings.Contains(section, want) {
+		t.Fatalf("the audit's line does not name the hand-back as this test reads it (%q):\n%s", want, section)
+	}
+	promote, hand := strings.Index(section, "**Promote: the payments area at startup**"), strings.Index(section, "**Hand-back** (`"+prFile+"`)")
+	if promote < 0 || hand < 0 {
+		t.Fatalf("the section carries no promote or hand-back block (promote %d, hand-back %d):\n%s", promote, hand, section)
+	}
+	if hand < promote {
+		t.Errorf("the hand-back block is at %d and the promote block at %d: the audit's line says the hand-back is below it:\n%s", hand, promote, section)
+	}
+}
+
 // TestSystemPromptCarriesThePromoteBrief: promptData's field is what delivers
 // the brief, and the prompt builder puts it after the run's rules and before
 // the repository's own instructions — the runner's words about the run, above

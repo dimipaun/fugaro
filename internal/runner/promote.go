@@ -40,7 +40,8 @@ import (
 // finalize were closed by this run (only this run writes on this branch), and
 // each is judged against the one rule a diff can hold — the area is the one
 // being promoted, and the code the item names changed in the diff the close is
-// held against. An item closed outside that rule is named in the pull
+// held against, inside this repository's own part of the area (the task's
+// Promote.Paths). An item closed outside that rule is named in the pull
 // request's status section rather than reopened: D31's own honest rule beside
 // the pin is "a run may not close an item it did not fix", and it is a review
 // rule, stated so a reviewer can ask.
@@ -670,9 +671,13 @@ func (r *run) promoteChanged(ctx context.Context) []string {
 
 // promotePart is the pull request status section a promote run owes its
 // reader: what the pass was (the fix, or the audit of an area with no item),
-// which items the run closed, which it closed that the rule does not admit,
-// and which it left open. The strays are named and not reopened: the rule is
-// D31's honest one, and a reviewer is the one who asks about it.
+// which of the area's items the run closed, which of them left the open set
+// without the rule admitting it, and which it left open. Each item is named by
+// the status its own file holds rather than by the list it is in — the run may
+// only close, and an item it dropped instead of closing is a status the line
+// has to carry rather than be read as a close. The strays are named and not
+// reopened: the rule is D31's honest one, and a reviewer is the one who asks
+// about it.
 //
 // Empty for every run whose task carries no promote block, and for a promote
 // run whose finalize never read the branch (a run that failed before it), so
@@ -684,7 +689,7 @@ func (r *run) promotePart() string {
 	}
 	line := fmt.Sprintf("**Promote: the %s area at %s**\n", inlineText(p.area), inlineText(p.level))
 	if p.audit {
-		return line + "- no item of the area was open, so this pass was the audit: it writes what the area is missing at this level down as the area's items rather than paying anything down (the hand-back section above lists them)" + promoteNoteLines(p.morning)
+		return line + "- no item of the area was open, so this pass was the audit: it writes what the area is missing at this level down as the area's items rather than paying anything down (the hand-back section below lists them for a run that could not write the folder)" + promoteNoteLines(p.morning)
 	}
 	if len(p.closed) == 0 && len(p.stray) == 0 && len(p.kept) == 0 {
 		return line + "- the area had no item left to read at the end of the run" + promoteNoteLines(p.morning)
@@ -693,10 +698,16 @@ func (r *run) promotePart() string {
 	b.WriteString(line)
 	b.WriteString(promoteNoteLines(p.morning))
 	for _, it := range p.closed {
-		fmt.Fprintf(&b, "- closed %s: %s\n", inlineText(it.ID), inlineText(it.Title))
+		fmt.Fprintf(&b, "- %s %s: %s\n", inlineText(it.Status), inlineText(it.ID), inlineText(it.Title))
 	}
 	for _, it := range p.stray {
-		fmt.Fprintf(&b, "- closed %s, which this run's diff does not admit: the item's area is %s and its code is what the run must change — a reviewer should ask (D31)\n", inlineText(it.ID), inlineText(it.Area))
+		// The rule has two clauses and the line names both, without saying
+		// which one refused: an item whose code the run did change and whose
+		// code is outside the area's own paths is a stray the first wording
+		// ("its code is what the run must change") described as the opposite
+		// of what happened.
+		fmt.Fprintf(&b, "- %s %s, which this run's diff does not admit: the item's area is %s, and the rule admits a close only when the run changed the code the item names, inside this area's own paths — a reviewer should ask (D31)\n",
+			inlineText(it.Status), inlineText(it.ID), inlineText(it.Area))
 	}
 	for _, it := range p.kept {
 		fmt.Fprintf(&b, "- left open %s: %s\n", inlineText(it.ID), inlineText(it.Title))
