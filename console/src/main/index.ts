@@ -364,8 +364,28 @@ function installationState(): ActiveInstallation | undefined {
   // `withResolvedBinary` is where the direction of the join is decided and
   // unit-tested; this file only supplies the two values.
   const resolved = chosen.chosen ? resolvedBinaries.get(chosen.project) : undefined
-  return withResolvedBinary(chosen, resolved)
+  const active = withResolvedBinary(chosen, resolved)
+  if (!active.chosen) return active
+  // The picker's Add project request rides this read and is **spent** by it
+  // (SW3c, R4): the picker window has no channel to the dashboard, so the only
+  // way its door can reach the screen that shows the wizard is a fact main
+  // holds until the dashboard asks for its installation -- and the dashboard
+  // asks exactly once, at boot, which is the boot the door asked for by
+  // remaking the window. A later read (a reload, a second window) must not
+  // open the wizard again, so the flag is cleared here and not kept.
+  const asked = addProjectPlease
+  addProjectPlease = false
+  return asked ? { ...active, addProject: true } : active
 }
+
+/**
+ * addProjectPlease is the picker's Add project door waiting for the window that
+ * answers it (SW3c, R4), and the reason it is a flag here rather than a field
+ * of the store is that nothing is being remembered: the operator asked for a
+ * screen, not for an installation. `installationState` above is its only
+ * reader, and it is written by the picker's `onAddProject`.
+ */
+let addProjectPlease = false
 
 /**
  * activeBinding is the installation the source is bound to: the same state, as
@@ -1396,6 +1416,18 @@ async function main(): Promise<void> {
       newOperations.cancelFor(chosen.project)
       resolvedBinaries.set(chosen.project, chosen.resolvedBinaryPath)
       return lifecycle.choose(chosen.compatibility).catch(reportAndQuit)
+    },
+    // The picker window's Add project door (SW3c, R4). It opens no child and
+    // writes no record: the wizard is the **dashboard's** screen, so what this
+    // hands over is a window. The flag goes up first, because the boot that
+    // reads it is the one `choose` is about to cause -- a remade window reads
+    // `installation.current` once, and that read is the door's whole delivery.
+    // The same call a re-choice makes, with the answer the console already
+    // holds: nothing about which installation is active changes, and the
+    // operator is put back on the console with the wizard in its main area.
+    onAddProject: () => {
+      addProjectPlease = true
+      void lifecycle.choose(storedCompatibility()).catch(reportAndQuit)
     },
     // A removal that took the active installation drops the bound source (Task
     // 3.4c; the seam 3.4b left for it). Without this the surface would keep

@@ -1310,6 +1310,16 @@ export type ActiveInstallation =
       readonly distro?: string
       readonly cliVersion: string | null
       readonly mode: InstallationMode
+      /** `addProject` is present exactly once, on the answer the dashboard reads
+       * after the picker window's Add project door was used (SW3c, R4): it says
+       * that the operator asked for a second installation, and the dashboard
+       * opens the wizard on it. It is **not a stored fact** -- the picker's door
+       * is a window request rather than a process, so main holds it as a flag
+       * this read consumes, and every answer after that one carries nothing.
+       * The dashboard reads `installation.current` once, at boot, which is why
+       * a one-shot member is enough; a member that stayed true would re-open
+       * the wizard on every reload. */
+      readonly addProject?: boolean
     }
 
 /**
