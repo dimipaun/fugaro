@@ -94,10 +94,17 @@ func (r *initRun) nextAfterRefusal() string {
 // which address is refused to the person who owns the project and stop" — is an
 // instruction to a reader who is neither the owner nor able to take the step,
 // and it is what the owner read about their own project on 2026-11-24. The
-// owner is told what is true of their own run instead: it is their decision,
-// and no flag of this command takes it, because --allow-delete is a session's
-// and the owner's delete list approves the agent-authored root alone (D72/D74).
-const managedDeleteAdviceTerminal = "This is a managed project, so deleting or replacing fugaro's own resources in it is your own decision and no flag of this command takes it: --allow-delete is a session's, and the owner's delete list approves the agent-authored root alone. Nothing was applied and nothing was written."
+// owner is told what is true of their own run instead: the decision is theirs,
+// and --allow-delete is the flag that makes it (guard hands the flag to
+// tf.Guard in every project, managed or not; what the managed project changes
+// is that a coding agent's session is refused rather than told the flag).
+const managedDeleteAdviceTerminal = "This is a managed project, so deleting or replacing fugaro's own resources here is your decision: a coding agent's session is refused and told to hand it to you, and nothing was applied. Name an address in --allow-delete if the deletion is intended."
+
+// managedReadFailedTerminal is the sentence the refusal above ends with when
+// whether the project is managed could not be read at all. It keeps the fact
+// the agent's text states — this refusal names no way past it — and drops the
+// instruction to report to the owner, which the owner is.
+const managedReadFailedTerminal = "Whether this is a managed project could not be read, so this refusal names no way past it: nothing was applied — rerun once the read answers."
 
 // refusalIsShort is whether this run's guard refusal is the block above rather
 // than Guard's own text: the standalone --repo door, a person at a real

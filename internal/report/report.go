@@ -287,16 +287,38 @@ type Step struct {
 
 // Done ends the step with a tick. detail says what changed, when there is
 // anything to say: a stage that did nothing and one that changed something
-// are both a tick.
+// are both a tick. Under Brief the screen carries its first clause and the log
+// the whole of it (end); DoneWhole is the same result for a detail that is not
+// a reason.
 func (s *Step) Done(detail string) {
-	s.end(glyphDone, colourDone, Done, " ", detail, nil)
+	s.end(glyphDone, colourDone, Done, " ", detail, nil, cutReason)
+}
+
+// DoneWhole ends the step with a tick and a detail the screen keeps whole:
+// Done's result for a step whose detail is the answer itself rather than a
+// reason for it — a plan's counts, and where the run's whole account of that
+// plan is kept. The brief account's cut is for a reason read while a run goes
+// past, and the detail this ends with is what that reader is reading: cutting
+// it would take away the count and the path and leave the one step line saying
+// less than nothing.
+func (s *Step) DoneWhole(detail string) {
+	s.end(glyphDone, colourDone, Done, " ", detail, nil, keepWhole)
 }
 
 // Skipped ends the step without a tick: the work was not needed, and reason
 // is why. A skipped step is neither a failure nor a step the user owes.
 func (s *Step) Skipped(reason string) {
-	s.end(glyphSkipped, colourSkipped, Done, " ", reason, nil)
+	s.end(glyphSkipped, colourSkipped, Done, " ", reason, nil, cutReason)
 }
+
+// reasonView is what end puts on the screen for a step's reason under the
+// brief account: its first clause, or the whole of it.
+type reasonView bool
+
+const (
+	cutReason reasonView = true
+	keepWhole reasonView = false
+)
 
 // Failed ends the step with a cross and prints the error, the last lines of
 // context behind it, the log's path and the command that explains the run. The
@@ -306,7 +328,7 @@ func (s *Step) Failed(err error, context []string) {
 	lines := append([]string(nil), context...)
 	s.r.appendLogLine(&lines)
 	s.r.appendDiagnoseLine(&lines)
-	s.end(glyphFailed, colourFailed, Failed, ": ", err.Error(), lines)
+	s.end(glyphFailed, colourFailed, Failed, ": ", err.Error(), lines, cutReason)
 }
 
 // Left ends the step with its own marker: the work needs the user before the
@@ -315,7 +337,7 @@ func (s *Step) Failed(err error, context []string) {
 func (s *Step) Left(text string) {
 	var lines []string
 	s.r.appendLogLine(&lines)
-	s.end(glyphLeft, colourLeft, Left, ": ", text, lines)
+	s.end(glyphLeft, colourLeft, Left, ": ", text, lines, cutReason)
 }
 
 // Refused ends the step with a cross and the log's path, and it is Left all
@@ -327,7 +349,7 @@ func (s *Step) Left(text string) {
 func (s *Step) Refused(text string) {
 	var lines []string
 	s.r.appendLogLine(&lines)
-	s.end(glyphFailed, colourFailed, Left, ": ", text, lines)
+	s.end(glyphFailed, colourFailed, Left, ": ", text, lines, cutReason)
 }
 
 // Abandon ends the step without a line and without counting it: the run never
@@ -353,8 +375,10 @@ func (s *Step) Abandon() {
 // is left with. Under Brief the reason is shortened to its first clause on
 // the screen and kept whole in the log — the log is what a person goes to for
 // the rest, and its path is under a failure and under a step left for the
-// user (D1352) — so `under` and the log line stay exactly as they were.
-func (s *Step) end(g glyph, c termenv.ANSIColor, state State, sep, reason string, under []string) {
+// user (D1352) — so `under` and the log line stay exactly as they were. view
+// is whether that cut applies at all, and it is what DoneWhole turns off for
+// a detail the cut would be the loss of.
+func (s *Step) end(g glyph, c termenv.ANSIColor, state State, sep, reason string, under []string, view reasonView) {
 	r := s.r
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -372,7 +396,7 @@ func (s *Step) end(g glyph, c termenv.ANSIColor, state State, sep, reason string
 	human := ""
 	if reason != "" {
 		tail, human = sep+reason, sep+reason
-		if r.o.Brief {
+		if r.o.Brief && view == cutReason {
 			human = sep + Short(reason)
 		}
 	}

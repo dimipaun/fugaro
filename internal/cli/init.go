@@ -1841,6 +1841,15 @@ func (r *initRun) stageDetail() io.Writer {
 		// with no log (G5).
 		return r.detail
 	}
+	if r.repoDoor && r.repLog != nil {
+		// The standalone --repo door is not a stage of a converge: these lines
+		// are its whole account of the checkout, and the step above them is one
+		// line among many rather than the converge's own list, so they stay on
+		// the terminal where they have always been and land in the log beside
+		// it (loggedOut). Terraform's own stream is not one of them: progress
+		// keeps that in the log alone.
+		return loggedOut(r.w, r.repLog)
+	}
 	return streamOut(r.rep, r.repLog, r.w)
 }
 
@@ -1905,7 +1914,7 @@ func (r *initRun) planBlock(plan *tf.Plan) {
 		// refusal this door stops on prints its own short block in those words
 		// (guard), and a plan that is not refused is confirmed by the counts
 		// this line carries.
-		r.rep.Step("repository " + r.res.Repo).Done(tf.Counts(plan) + " (log: " + r.repLog.Path() + ")")
+		r.rep.Step("repository " + r.res.Repo).DoneWhole(tf.Counts(plan) + " (log: " + r.repLog.Path() + ")")
 		fmt.Fprint(r.rep.Stream(), tf.Brief(plan)+tf.Summary(plan))
 		return
 	}
@@ -3001,6 +3010,9 @@ func (r *initRun) guard(ctx context.Context, c *infra.Clients, plan *tf.Plan, al
 	isManaged, readErr := r.managedProject(ctx, c)
 	switch {
 	case readErr != nil:
+		if r.refusalIsShort() {
+			return userErr("%s", r.guardRefusalBlock(plan, allowDelete, managedReadFailedTerminal))
+		}
 		return userErr("%s\nwhether %s is a managed project could not be read (%s), so this refusal names no way past it: say which address is refused to the person who owns the project",
 			tf.GuardWith(plan, allowDelete, ""), safetext.Field(r.projectName), safetext.Field(readErr.Error()))
 	case isManaged:
