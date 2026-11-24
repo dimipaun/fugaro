@@ -2701,6 +2701,7 @@
         "ee/keyservice/docstore/**",
         "ee/licence/**",
         "ee/licence/*.go",
+        "ee/licence/keys/production.pub",
         "ee/licence/login/**",
         "ee/licence/project/**",
         "ee/licence/testdata/vectors_v1.json",
