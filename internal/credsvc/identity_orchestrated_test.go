@@ -143,11 +143,22 @@ func orchestratedAsk(slug, run, attempt string) identitywire.TicketRequest {
 }
 
 // orchestratedScopeFor builds the check under test over one record, with the
-// other classes' check refusing everything.
+// other classes' check refusing everything and a service that recorded no pause
+// at all: the two records a resume is judged against are the record's own and
+// this service's, and a test that is not about a resume hands the empty second
+// one.
 func orchestratedScopeFor(t *testing.T, rec OrchestratorRecord) (ScopeCheck, *judgingScope) {
 	t.Helper()
+	return orchestratedScopeOver(t, rec, &pausesFake{})
+}
+
+// orchestratedScopeOver is that same check over the service's own record of the
+// pauses it wrote, which the test hands in (D3189): the resume's evidence is that
+// record and nothing else, so a test about a resume states it here.
+func orchestratedScopeOver(t *testing.T, rec OrchestratorRecord, pauses PausedNodes) (ScopeCheck, *judgingScope) {
+	t.Helper()
 	next := &judgingScope{}
-	check, err := NewOrchestratedScope(next, rec)
+	check, err := NewOrchestratedScope(next, rec, pauses)
 	if err != nil {
 		t.Fatalf("NewOrchestratedScope: %v", err)
 	}

@@ -23,9 +23,11 @@ start. This file is the three commands and what each row means.
 - An account that can list the project's Cloud Build records, list Cloud Run jobs, list one job's
   executions, read the service's own IAM policy and read the service's own lines out of Cloud Logging:
   a project Owner can.
-- **Two sandbox repositories already switched and refreshed**: one **GitHub** (`CHECK196_REPO`) and one
-  **Bitbucket** (`CHECK196_BITBUCKET`), both required, each with `fugaro image refresh` run in its
-  checkout — which is what task B4.8 does, and what puts a served build in the project's own records
+- **Two sandbox repositories already switched and built**: one **GitHub** (`CHECK196_REPO`) and one
+  **Bitbucket** (`CHECK196_BITBUCKET`), both required, each with its **catalog entry's** build submitted
+  from its own checkout — `fugaro image build <entry>` (or `fugaro apply`, which submits the same
+  build); `fugaro image refresh` is refused under D1900 and builds nothing — which is what task B4.8
+  does, and what puts a build in the project's own records
   for the check to read. A repository with no build in the project's last `CHECK196_BUILDS` (default
   50) builds is a row the check **could not measure** (exit 2), not a pass.
 - **Nothing else**: no token, no secret, no file to prepare. The check **submits no build of its own**
@@ -57,8 +59,8 @@ start. This file is the three commands and what each row means.
    as, the service's own address, the names of the credentials the service served and the callers it
    verified — all names, and no credential value.
 
-3. **After the flip** (task B4.10, once B4.9 has been applied and each repository's image refreshed
-   again):
+3. **After the flip** (task B4.10, once B4.9 has been applied and each repository's root re-applied
+   with the switch on):
 
    ```sh
    CHECK196_REPO=<owner>/<github-repository> \
@@ -78,23 +80,31 @@ start. This file is the three commands and what each row means.
 - **`xtrace`** — the shell was not started with `-x`. A trace would print every command of the run,
   including the `gcloud` session's, into the log you paste.
 - **`inputs`** — the two repositories, and that neither is `belong` and that they are not the same one.
-- **`service`** — the address of the credentials service, read off the GitHub repository's own newest
-  build's `_CREDENTIALS_SERVICE_URL` substitution. **An empty one is a FAIL**: that repository's builds
-  hold their own git credential and their workflow secrets as mounts, so the switch has not reached
-  them — re-apply the root with the switch on and refresh the image.
-- **`build-github`**, **`build-bitbucket`** — each repository's own newest build ended `SUCCESS`, ran
-  as that repository's **own** build account (`fugaro-b-…@fugaro-dev.iam.gserviceaccount.com`, read off
-  the build's own record, never taken on trust) and names the service in its request.
-- **`mounts-github`**, **`mounts-bitbucket`** — before the flip each build still carries its
-  `availableSecrets` entries beside the service's address: the build mounts exactly what the credential
-  step fetches (**F33**, **D1267**). A build that already carries **none** while naming the service
-  reads **INFO** — the flip has landed and `--after-flip` is the mode to run. A row that could not be
-  read from a build whose request names no service is **FAIL**, not a pass.
+- **`service`** — the credentials service **itself**, read with `gcloud run services describe` and
+  measured from nothing else (no build is read for this row). It is deployed and Cloud Run serves it a
+  `status.url`, which is the address every caller mints its ID token for. Not deployed, or no URL, is a
+  **FAIL**; a read that failed is a row that could not be measured.
+- **`build-github`**, **`build-bitbucket`** — each repository's newest **catalog entry's** build (the
+  entry its `image_map` names, picked out by the catalog image in its `_IMAGE` substitution) ended
+  `SUCCESS` and ran as the installation's **build identity**
+  (`fugaro-build-identity@fugaro-dev.iam.gserviceaccount.com`, read off the build's own record, never
+  taken on trust), which is the account `gcp.CatalogBuildSpec.check` admits. A repository-level derived
+  image is disabled (**D1900**), so this build is what `fugaro image build <entry>` or `fugaro apply`
+  submits; `fugaro image refresh` is refused and builds nothing.
+- **`mounts-github`**, **`mounts-bitbucket`** — the catalog build carries exactly the provider's git
+  credential, the `availableSecrets` entry the build clones with (`GITHUB_APP_KEY` for GitHub,
+  `GIT_TOKEN` for Bitbucket), and names **no** credentials service: `_CREDENTIALS_SERVICE_URL` is empty
+  for every catalog build (**B4.5**), because the build-credentials route serves one repository to the
+  account bound to that repository and never the project's build identity (**D2301**). A build with
+  **no** mount and no service holds no credential at all and is a **FAIL**.
 - **`served-github`**, **`served-bitbucket`** — the service's **own** `credsvc: audit` line of purpose
-  `build` for each repository, read out of Cloud Logging: it must name the account the build's own
-  record says it ran as (**G20**, the one field a call cannot claim for itself), the provider's own git
-  credential (the App key for GitHub, a `bitbucket-token…` for Bitbucket) and the repository's own
-  slug. **No line at all is a FAIL**: the build's credential was answered by something else.
+  `build` for each repository, read out of Cloud Logging: where one exists it must name the account the
+  build's own record says it ran as (**G20**, the one field a call cannot claim for itself), the
+  provider's own git credential (the App key for GitHub, a `bitbucket-token…` for Bitbucket) and the
+  repository's own slug. A repository whose newest build is a catalog entry's reads **INFO** when there
+  is no line at all — a catalog build never asks the build route, so its absence is this installation's
+  own shape, and any refused line is printed beside it. **No line for a build that *does* name the
+  service is a FAIL**: that build's credential was answered by something else.
 - **`check-github`**, **`check-bitbucket`** — the repository's own daily check job runs as its build
   account, still **mounts** the repository's git credential (the platform's own reserved variable for the
   provider's git secret, `FUGARO_GITHUB_APP_PRIVATE_KEY` or `FUGARO_BITBUCKET_TOKEN`) and carries **no**
@@ -116,14 +126,15 @@ start. This file is the three commands and what each row means.
 
 ## What each row means (`--after-flip`)
 
-- **`noavailable-github`**, **`noavailable-bitbucket`** — the newest build carries **0**
-  `availableSecrets` entries and **0** `secretEnv` entries, and does name the service: the request asks
-  Cloud Build for no secret whose accessor the build account has given up (**B4.9**, **D2077**). A
-  request that carries neither a mount nor a service is a **FAIL** — the switch and the flip have moved
-  apart.
-- **`build-flip-github`**, **`build-flip-bitbucket`** — that build still ended `SUCCESS`, ran as the
-  build account and names the service: with the mounts gone the service is the build's only credential
-  path, and the build still bakes.
+- **`noavailable-github`**, **`noavailable-bitbucket`** — for a derived image's build, the newest build
+  carries **0** `availableSecrets` entries and **0** `secretEnv` entries and does name the service: the
+  request asks Cloud Build for no secret whose accessor the build account has given up (**B4.9**,
+  **D2077**). For a **catalog entry's** build — what a repository builds today — the flip does not reach
+  it (**D2301**), so the row reads the build that **keeps** its provider credential and names no
+  service. A build that carries neither a mount nor a service is a **FAIL** either way.
+- **`build-flip-github`**, **`build-flip-bitbucket`** — that build still ended `SUCCESS` and ran as the
+  installation's build identity, with the credential its request mounts: nothing the flip took was a
+  path this build used, and the image still bakes.
 - **`served-github-flip`**, **`served-bitbucket-flip`** — the service's own line for that build, read
   exactly as the switch mode reads it.
 - **`noaccessor-github`**, **`noaccessor-bitbucket`** — the repository's daily check job mounts **0**
@@ -158,7 +169,8 @@ execution that could not be read — reads **FAIL** in the block and ends the ru
 **Nothing.** This check creates no cloud resource, submits no build, writes no record and deletes
 nothing: the only thing its Restore removes is its own scratch directory, which the exit trap takes
 too, so a Ctrl-C leaves nothing behind. The builds and the check executions it reads are the ones you
-submitted with `fugaro image refresh`, and they are the project's own records rather than resources
+submitted (the sandbox repositories' catalog entries, with `fugaro image build <entry>` or `fugaro
+apply`), and they are the project's own records rather than resources
 this check made — nothing here deletes them, and `gcloud builds list --project=fugaro-dev` shows them.
 `CHECK196_KEEP_SCRATCH` keeps the scratch directory (mode `0700`) when you want to read what the check
 wrote; its row then says it was kept rather than that it was left behind.

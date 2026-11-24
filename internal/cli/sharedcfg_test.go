@@ -211,7 +211,7 @@ func TestInitPublishFailureWarnsAndSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a publish failure must not fail init: %v", err)
 	}
-	if !strings.Contains(out, "warning: could not publish the shared config: ") || !strings.Contains(out, "teammates will need fugaro setup until it is published") {
+	if !strings.Contains(out, "Warning: could not publish the shared config: ") || !strings.Contains(out, "teammates will need fugaro setup until it is published") {
 		t.Errorf("no warning:\n%s", out)
 	}
 }
