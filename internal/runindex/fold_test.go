@@ -29,6 +29,10 @@ const (
 	// moment.
 	runOne = "20261120-093000-a1b2"
 	runTwo = "20261120-101500-c3d4"
+	// runThree is older than both, and runGhost sits between them: a run
+	// directory a walk reaches and reads nothing from (RI5's failure test).
+	runThree = "20261120-080000-eeee"
+	runGhost = "20261120-090000-ffff"
 )
 
 var foldNow = time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
@@ -49,9 +53,9 @@ func newFoldEnv(t *testing.T) *foldEnv {
 	return &foldEnv{t: t, db: gcpfake.NewRTDB(t), fs: gcpfake.NewFirestore(t), bucket: memblob.OpenBucket(nil), now: foldNow}
 }
 
-// fold runs one fold, as the sweep does: the lease's holder is the execution's
+// index is the folder one pass runs as: the lease's holder is the execution's
 // name and the wall clock is the fixture's.
-func (e *foldEnv) fold() (FoldReport, error) {
+func (e *foldEnv) index() *Fold {
 	e.t.Helper()
 	c, err := rtdb.New(e.db.URL, rtdb.Auth{IDToken: func() string { return "" }})
 	if err != nil {
@@ -61,9 +65,14 @@ func (e *foldEnv) fold() (FoldReport, error) {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	f := &Fold{DB: c, FS: fs, Bucket: e.bucket, Holder: "exec-1", Now: func() time.Time { return e.now },
+	return &Fold{DB: c, FS: fs, Bucket: e.bucket, Holder: "exec-1", Now: func() time.Time { return e.now },
 		Warn: func(s string) { e.warns = append(e.warns, s) }}
-	return f.Fold(context.Background())
+}
+
+// fold runs one fold, as the sweep does.
+func (e *foldEnv) fold() (FoldReport, error) {
+	e.t.Helper()
+	return e.index().Fold(context.Background())
 }
 
 // agent is a run's registry heartbeat: what a live run writes, and the fold's
