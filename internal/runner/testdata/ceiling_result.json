@@ -27,6 +27,14 @@
     "format": 1
   },
   "outcome": "ready",
+  "plan": {
+    "steps": [
+      {
+        "kind": "review",
+        "rounds": 2
+      }
+    ]
+  },
   "policy": {
     "effective": {
       "max_run_tokens": 900000,

@@ -56,11 +56,7 @@ func TestValidateNamesACraftModelProblemAtItsOwnPath(t *testing.T) {
 	// an owner's price, because the price rule reaches them: every run has a
 	// gateway now (AB1b, D3009), so `validate` prices the crafts' models in
 	// every mode, and "no price" would otherwise be a problem this test's
-	// fixture contributed rather than the allow-list rule it is about. Their
-	// rows are craftLocalExtra's -- the fixture every craft test resolves over
-	// carries them (AB4) -- so this world writes the allow-list and nothing
-	// else: a second `model_prices:` key here is a YAML duplicate the strict
-	// parser refuses, which is a world this test never reached the rule in.
+	// fixture contributed rather than the allow-list rule it is about.
 	craftFixtureWith(t, "budget: { allowed_models: [\"claude-opus-4\"] }\n")
 	testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": validateCraftModelYAML})
 	out, errOut, err := execute(t, "validate", "--offline", "fugaro.yaml")
@@ -111,8 +107,8 @@ func TestValidateNamesACraftModelProblemAtItsOwnPath(t *testing.T) {
 // reason: the price rule reaches the crafts' models in every mode now (AB1b,
 // D3009), so a model with no row in the shipped table would be a problem this
 // fixture contributed rather than the crafts-of-the-installation rule it is
-// about. craftLocalExtra writes that row, so this world writes the allow-list
-// and nothing else.
+// about. That price is the fixture's own (craftLocalExtra, AB4, D3020), and it
+// is not repeated here: the installation config carries one model_prices block.
 func TestValidateIgnoresTheCraftsNoRunReads(t *testing.T) {
 	craftFixtureWith(t, "budget: { allowed_models: [\"claude-opus-4-1\", \"claude-sonnet-5-5\"] }\n")
 	testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": validateCraftPinnedYAML})

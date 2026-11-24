@@ -107,6 +107,24 @@ func TestUpdateStartsReindexWithRunInFlight(t *testing.T) {
 	run.laterWrites(t, r)
 }
 
+// TestUpdateReindexWithoutAReportedName is the same step when the platform
+// started the execution but its operation reported no readable name
+// (gcp.ErrStartedUnnamed): the mark landed and the walk is going, so the line
+// says so without a name rather than printing "reindexing now as" and stopping.
+func TestUpdateReindexWithoutAReportedName(t *testing.T) {
+	r, _ := reindexConvergeRig(t)
+	r.run.BadRunMetadata = true
+
+	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	if !strings.Contains(out, "run index: marked incomplete and reindexing now (the platform started the execution but did not report its name), so `fugaro runs ls` is short") {
+		t.Fatalf("the update's reindex line does not name the start without an execution name:\n%s", out)
+	}
+	if strings.Contains(out, "no reindex execution was started") {
+		t.Fatalf("a started reindex was reported as one that never started:\n%s", out)
+	}
+}
+
 // TestUpdateDoesNotReindexACompleteIndex is the first reindex and not one per
 // upgrade (RI5): the walk reads every run in the bucket, and an installation
 // whose index is complete with no unfinished walk has nothing for it to

@@ -489,6 +489,19 @@ const FULL_ROW: JSONDoc = Object.freeze({
   // screen draws it yet -- and it is a word of the CLI's own table rather than
   // text a job wrote, so it is in `NON_TEXT_STRING_KEYS`.
   pr_state: 'ready',
+  // PR7 of model-credentials-routing, between `pr_state` and `pushed` in the
+  // struct: the pause a row ended in -- the instant the orchestrator resumes
+  // the run's chain at, and the run that did resume it (contract-pause R15,
+  // D3195). `runs ls` writes them on a row whose record ended `paused` and on
+  // no other, and this row is not one, so they are carried here for the
+  // classification walk's sake and not as a document the CLI writes: the
+  // strings of a `runs ls` row are what `RECORD_KEYS` is checked against, and a
+  // key with no class would otherwise fall out of that walk unseen. Neither is
+  // read by a screen yet -- the paused row is VS3's -- and they are classified
+  // rather than exempted: `resume_at` is a stamp beside `waiting_until` and
+  // `resumed_by` a run id like `previous_run` below.
+  resume_at: '2026-10-15T12:40:00Z',
+  resumed_by: '20261015-124000-aa03',
   pushed: true,
   pushed_head: 'c'.repeat(40),
   started_at: '2026-10-15T10:20:00Z',
@@ -607,6 +620,14 @@ const FULL_FINISHED_RUN: JSONDoc = Object.freeze({
   launched_by: 'redacted@example.invalid',
   // GV1.2: a finished run does not stop having been asked to work on a task.
   plan_task: 'setup-wizard/W1.3',
+  // PR7 of model-credentials-routing: a paused run is a row of `finished[]` --
+  // its execution is terminal and its chain is in flight -- so the two facts of
+  // its pause are `JSONFinished`'s own, and `JSONRun`'s neither: a run still
+  // going has not paused yet. They are the credentials service's node for the
+  // pause and the task of the run that picked it up, both the listing's own
+  // computation, so a row whose reader could see neither carries neither.
+  resume_at: '2026-10-15T12:40:00Z',
+  resumed_by: '20261015-124000-aa03',
 })
 
 /** LIVE_REAL is the committed fixture's first document carrying those two rows:
@@ -792,6 +813,16 @@ describe('both document shapes decode', () => {
       expect(runKeys, `JSONRun carries ${found}`).toContain(found)
       expect(FINISHED_KEYS, `JSONFinished does not carry ${found}`).not.toContain(found)
     }
+    // PR7 of model-credentials-routing's two are the mirror image of those:
+    // `JSONFinished`'s alone, because a paused run is a finished row -- its
+    // execution is terminal -- and a run still going has not paused yet. Named
+    // for the same reason the five and `plan_task` above are: the comparison
+    // would agree with two lists that lost one together.
+    const finishedKeys = structTags(WATCH_SOURCE, 'JSONFinished').map((tag) => tag.key)
+    for (const found of ['resume_at', 'resumed_by']) {
+      expect(finishedKeys, `JSONFinished carries ${found}`).toContain(found)
+      expect(RUN_KEYS, `JSONRun does not carry ${found}`).not.toContain(found)
+    }
     // The fixture above claims to carry every key of the shape, and a claim in a
     // comment is what let the drift happen twice: the row's own key set is held
     // to the list, so a key added to `RUN_KEYS` and forgotten here fails this
@@ -825,6 +856,12 @@ describe('both document shapes decode', () => {
     // GV1.2's `plan_task` (decision GD5), named for the same reason: the
     // comparison below cannot catch a key both sides lost together.
     expect(fromTheStruct, 'plan_task is the omission this pin exists for').toContain('plan_task')
+    // PR7 of model-credentials-routing's pair, named the same way: the row's
+    // pause and its resumer arrived between `pr_state` and `pushed`, and the
+    // comparison above cannot catch a key both sides lost together.
+    for (const found of ['resume_at', 'resumed_by']) {
+      expect(fromTheStruct, `${found} is the arrival this pin names`).toContain(found)
+    }
     expect([...RECORD_KEYS].sort()).toEqual([...fromTheStruct].sort())
     expect(RECORD_KEYS.length).toBe(fromTheStruct.length)
     // The keys without `omitempty` are the ones whose absence broke it, and they

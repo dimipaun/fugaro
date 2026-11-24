@@ -17,7 +17,9 @@ import (
 //
 // firebase_project is added to the harness's budget block because the Firestore
 // client is built from it (reportcore.go): the config records which Firebase
-// project the index lives in, and the fake endpoint stands in for it.
+// project the index lives in, and the fake endpoint stands in for it. The
+// block ends on the signer account (testutil.Budget, AB4: every installation
+// with a database has one), which is where this rig writes the project in.
 func reindexRig(t *testing.T) (*cloudFixture, *gcpfake.Firestore) {
 	t.Helper()
 	fs := gcpfake.NewFirestore(t)
@@ -119,6 +121,31 @@ func TestRunsReindexStartsJob(t *testing.T) {
 	}
 	if l, ok := f.budget.DB.Value(runindex.PathLease).(map[string]any); !ok || l["holder"] != "fugaro-history-abc12" {
 		t.Fatalf("the running walk's claim was stamped over: %#v", f.budget.DB.Value(runindex.PathLease))
+	}
+}
+
+// TestRunsReindexWithoutAReportedName is the line the command prints when the
+// platform started the execution but its operation reported no readable name
+// (gcp.ErrStartedUnnamed): the walk is going, so the line says that rather than
+// leaving "reindexing now as" with nothing after it, and it must not read as
+// "no execution was started", which would be untrue and would invite a second
+// start.
+func TestRunsReindexWithoutAReportedName(t *testing.T) {
+	f, _ := reindexRig(t)
+	f.run.BadRunMetadata = true
+
+	out, stderr, err := execute(t, "runs", "reindex")
+	if err != nil {
+		t.Fatalf("err = %v, stdout = %q, stderr = %q", err, out, stderr)
+	}
+	if !strings.Contains(out, "index: reindexing now (the platform started the execution but did not report its name), resuming from its own cursor") {
+		t.Fatalf("the line does not name the start without an execution name: %q", out)
+	}
+	if strings.Contains(out, "no execution was started") {
+		t.Fatalf("a started execution was reported as one that never started: %q", out)
+	}
+	if got := len(f.run.RunRequests()); got != 1 {
+		t.Fatalf("the history job was started %d times, want one: %+v", got, f.run.RunRequests())
 	}
 }
 

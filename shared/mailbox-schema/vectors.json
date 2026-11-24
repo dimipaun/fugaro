@@ -120,6 +120,60 @@
       "verdict": "verified"
     },
     {
+      "name": "action: launch in a costly mode",
+      "why": "O10's typed start: the mode is the field the record exists for, and a costly mode's read-back carries the confirmation that authorises it (D2786)",
+      "direction": "inbox",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "start it in pro",
+        "at": 1700000000000,
+        "mac": "1b3754b7a321dc3ccb24cacf969d77f834756f3bff764df32123ad786160d91d",
+        "kind": "action",
+        "agent": "orchestrator",
+        "action": {
+          "id": "a-0003",
+          "verb": "launch",
+          "mode": "pro",
+          "target": {
+            "repo": "dimipaun/fugaro"
+          },
+          "confirmation": {
+            "id": "c-0003",
+            "at": 1700000000000
+          }
+        }
+      },
+      "canonical": "{\"action\":{\"confirmation\":{\"at\":1700000000000,\"id\":\"c-0003\"},\"id\":\"a-0003\",\"mode\":\"pro\",\"target\":{\"repo\":\"dimipaun/fugaro\"},\"verb\":\"launch\"},\"agent\":\"orchestrator\",\"at\":1700000000000,\"direction\":\"inbox\",\"id\":\"m-0001\",\"kind\":\"action\",\"sender\":\"phone\",\"text\":\"start it in pro\"}",
+      "mac": "1b3754b7a321dc3ccb24cacf969d77f834756f3bff764df32123ad786160d91d",
+      "verdict": "verified"
+    },
+    {
+      "name": "action: a plain launch",
+      "why": "a start in a mode the session does not call costly needs no read-back, so the record carries no confirmation (D162, D2786)",
+      "direction": "inbox",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "start it",
+        "at": 1700000000000,
+        "mac": "94ccfe267475694aba11ed4a3c277c7f9bd38f91c88ab561acfba5bf1e40c4ab",
+        "kind": "action",
+        "agent": "orchestrator",
+        "action": {
+          "id": "a-0004",
+          "verb": "launch",
+          "mode": "default",
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        }
+      },
+      "canonical": "{\"action\":{\"id\":\"a-0004\",\"mode\":\"default\",\"target\":{\"repo\":\"dimipaun/fugaro\"},\"verb\":\"launch\"},\"agent\":\"orchestrator\",\"at\":1700000000000,\"direction\":\"inbox\",\"id\":\"m-0001\",\"kind\":\"action\",\"sender\":\"phone\",\"text\":\"start it\"}",
+      "mac": "94ccfe267475694aba11ed4a3c277c7f9bd38f91c88ab561acfba5bf1e40c4ab",
+      "verdict": "verified"
+    },
+    {
       "name": "stop request",
       "why": "the phone asking a human to stop what it is looking at: a kind of its own, signed like every other, and never executed by anything",
       "direction": "inbox",
@@ -439,6 +493,35 @@
       },
       "canonical": "{\"action\":{\"confirmation\":{\"at\":1700000000000,\"id\":\"c-0002\"},\"head_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"id\":\"a-0002\",\"target\":{\"pr\":532,\"repo\":\"dimipaun/fugaro\"},\"verb\":\"merge\"},\"agent\":\"orchestrator\",\"at\":1700000000000,\"direction\":\"inbox\",\"id\":\"m-0001\",\"kind\":\"action\",\"sender\":\"phone\",\"text\":\"merge the pull request\"}",
       "mac": "898a72c8d2171a1bf67d78c287a3ff91a8b2cf404fd08d753998d8aa7174d6bb",
+      "verdict": "refused"
+    },
+    {
+      "name": "mode swapped",
+      "why": "a costly start relabelled as a cheap one under the tag its read-back produced: the mode is what the session read back, so a swap has to break the tag",
+      "direction": "inbox",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "start it in pro",
+        "at": 1700000000000,
+        "mac": "1b3754b7a321dc3ccb24cacf969d77f834756f3bff764df32123ad786160d91d",
+        "kind": "action",
+        "agent": "orchestrator",
+        "action": {
+          "id": "a-0003",
+          "verb": "launch",
+          "mode": "default",
+          "target": {
+            "repo": "dimipaun/fugaro"
+          },
+          "confirmation": {
+            "id": "c-0003",
+            "at": 1700000000000
+          }
+        }
+      },
+      "canonical": "{\"action\":{\"confirmation\":{\"at\":1700000000000,\"id\":\"c-0003\"},\"id\":\"a-0003\",\"mode\":\"default\",\"target\":{\"repo\":\"dimipaun/fugaro\"},\"verb\":\"launch\"},\"agent\":\"orchestrator\",\"at\":1700000000000,\"direction\":\"inbox\",\"id\":\"m-0001\",\"kind\":\"action\",\"sender\":\"phone\",\"text\":\"start it in pro\"}",
+      "mac": "43ca8eefee25bd8c62b014241df9708291840aafd773b92a7004201a389555e1",
       "verdict": "refused"
     },
     {
@@ -810,7 +893,7 @@
     },
     {
       "name": "unknown verb",
-      "why": "the verbs are cancel, merge and confirm, and nothing else",
+      "why": "the verbs are cancel, merge, confirm and launch, and nothing else",
       "record": "message",
       "value": {
         "id": "m-0001",
@@ -915,6 +998,220 @@
         }
       },
       "code": "missing-field",
+      "field": "action.head_sha"
+    },
+    {
+      "name": "a launch without a mode",
+      "why": "a start names the mode it starts in, and the mode is the field the record exists for (O10)",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "action",
+        "action": {
+          "id": "a-0003",
+          "verb": "launch",
+          "target": {
+            "repo": "dimipaun/fugaro"
+          },
+          "confirmation": {
+            "id": "c-0003",
+            "at": 1700000000000
+          }
+        }
+      },
+      "code": "missing-field",
+      "field": "action.mode"
+    },
+    {
+      "name": "a mode on a cancel",
+      "why": "mode is a launch's field, and a cancel that carried one would be a record the consumer had to guess the meaning of",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "action",
+        "action": {
+          "id": "a-0001",
+          "verb": "cancel",
+          "target": {
+            "run": "20261018-125859-d3c8"
+          },
+          "confirmation": {
+            "id": "c-0001",
+            "at": 1700000000000
+          },
+          "mode": "pro"
+        }
+      },
+      "code": "field-not-allowed",
+      "field": "action.mode"
+    },
+    {
+      "name": "a launch without a target",
+      "why": "every action names what it acts on, and a start names the repository it starts in",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "action",
+        "action": {
+          "id": "a-0003",
+          "verb": "launch",
+          "mode": "pro",
+          "confirmation": {
+            "id": "c-0003",
+            "at": 1700000000000
+          }
+        }
+      },
+      "code": "missing-field",
+      "field": "action.target"
+    },
+    {
+      "name": "a launch targeting a run",
+      "why": "a start starts a repository: a run is what a cancel cancels, and there is no run id before the start",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "action",
+        "action": {
+          "id": "a-0003",
+          "verb": "launch",
+          "mode": "pro",
+          "target": {
+            "run": "20261018-125859-d3c8"
+          },
+          "confirmation": {
+            "id": "c-0003",
+            "at": 1700000000000
+          }
+        }
+      },
+      "code": "bad-target",
+      "field": "action.target"
+    },
+    {
+      "name": "a launch whose target carries a pull request",
+      "why": "a start has no pull request to name, so a repository-and-pr target is a target the verb cannot use",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "action",
+        "action": {
+          "id": "a-0003",
+          "verb": "launch",
+          "mode": "pro",
+          "target": {
+            "repo": "dimipaun/fugaro",
+            "pr": 532
+          },
+          "confirmation": {
+            "id": "c-0003",
+            "at": 1700000000000
+          }
+        }
+      },
+      "code": "bad-target",
+      "field": "action.target"
+    },
+    {
+      "name": "a mode one code unit past its bound",
+      "why": "a mode is a short word (64 code units), not a body: 65 is the first length that is not one",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "action",
+        "action": {
+          "id": "a-0003",
+          "verb": "launch",
+          "mode": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "target": {
+            "repo": "dimipaun/fugaro"
+          },
+          "confirmation": {
+            "id": "c-0003",
+            "at": 1700000000000
+          }
+        }
+      },
+      "code": "too-long",
+      "field": "action.mode"
+    },
+    {
+      "name": "a mode carrying a space",
+      "why": "a mode is an identity string, and a space in one is a phrase where the session expects a word",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "action",
+        "action": {
+          "id": "a-0003",
+          "verb": "launch",
+          "mode": "pro mode",
+          "target": {
+            "repo": "dimipaun/fugaro"
+          },
+          "confirmation": {
+            "id": "c-0003",
+            "at": 1700000000000
+          }
+        }
+      },
+      "code": "bad-character",
+      "field": "action.mode"
+    },
+    {
+      "name": "a head SHA on a launch",
+      "why": "the head SHA belongs to a merge: a start has no branch state that was read back",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "action",
+        "action": {
+          "id": "a-0003",
+          "verb": "launch",
+          "mode": "pro",
+          "target": {
+            "repo": "dimipaun/fugaro"
+          },
+          "confirmation": {
+            "id": "c-0003",
+            "at": 1700000000000
+          },
+          "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "code": "field-not-allowed",
       "field": "action.head_sha"
     },
     {

@@ -1711,7 +1711,7 @@ func (r *run) trackedInputs(ctx context.Context) ([]string, error) {
 //     write below, so the attached bytes would land outside the checkout
 //     entirely and the name refusals above (which judge the NAME) would have
 //     had nothing to say about it. A link is refused rather than followed,
-//     the rule readRepoRecipe already reads a repository file by;
+//     the rule recipe.ReadRepoFile already reads a repository file by;
 //   - a directory the checkout COMMITS under inputs/ is refused (tracked,
 //     git's own answer): an attached file whose name is one of the committed
 //     paths' would replace it in the checkout the run commits from, and the
