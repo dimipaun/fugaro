@@ -361,6 +361,56 @@ func TestRunsLsLimitBoundsTheIndexRead(t *testing.T) {
 	}
 }
 
+// TestRunsLsJoinsAnActiveRunOlderThanTheWindow: the one executions listing a
+// listing reads is floored at the runs it is joined with, not at the window its
+// flags name. An index-answered page is the newest runs plus every run that has
+// not ended, whatever its age (D3203), so a run older than the window is on the
+// page -- and its execution, created when the run was launched, is inside that
+// floor all the same.
+//
+// Mutation caught: flooring the listing at --since instead (an eight-day-old
+// active run then falls outside a listing trusted as the whole of the runs
+// joined, joins with no execution at all, and is printed as infra_error, "no
+// execution found and the run has no deadline", where its execution says
+// running).
+func TestRunsLsJoinsAnActiveRunOlderThanTheWindow(t *testing.T) {
+	f := newCloudFixture(t)
+	idx := &indexFake{}
+	lsIndex(t, idx)
+
+	// A run going since eight days ago -- a day past the seven-day window a
+	// listing with no --since is read for -- with the execution that launch
+	// made then, still live.
+	id := recentRunID(t, 8*24*time.Hour, "old1")
+	at := lsNow().UTC().Add(-8 * 24 * time.Hour)
+	exec := seedSpec(t, f, firstRunSpec(id), true)
+	f.run.SetState(exec, backend.StateRunning)
+	f.run.SetCreated(exec, at)
+	writeRecord(t, f, id, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Status: runstore.StatusRunning, Execution: exec})
+	idx.entries = append(idx.entries, runindex.Entry{RunID: id, Slug: appSlug, Repo: "acme/app", UpdatedAt: at, Status: runstore.StatusRunning, Workflow: "web"})
+
+	gets := func() int {
+		n := 0
+		for _, r := range f.run.Requests() {
+			if r.Method == "GET" && strings.Contains(r.Path, "/executions/") {
+				n++
+			}
+		}
+		return n
+	}
+
+	_, got := lsIndexDoc(t, "--all")
+	if rows := runIDs(got.Runs); len(rows) != 1 || rows[0] != id {
+		t.Fatalf("runs ls listed %v, want the active run %s: a run that has not ended is on the page whatever its age (D3203)", rows, id)
+	}
+	if row := got.Runs[0]; row.Status != string(runstore.StatusRunning) {
+		t.Errorf("the run is listed as %q (%q), want %q: its execution is live, and an execution older than the window is not one the platform has lost", row.Status, row.Reason, runstore.StatusRunning)
+	}
+	if n := gets(); n != 0 {
+		t.Errorf("the listing asked for %d executions one by one, want 0: the one listing covers the runs it is joined with, old ones included (U2)", n)
+	}
+}
+
 // TestRunsLsAfterRunID: --after stays a run id, which is what the console's
 // allow-list checks, and the reader resolves it to that run's own sort key: the
 // listing starts after the run, and the figure beside the page does not move

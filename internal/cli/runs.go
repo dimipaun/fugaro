@@ -815,19 +815,25 @@ func readRefRows(ctx context.Context, env *cloudEnv, f lsFilter, refs []lsRef, l
 	// that listing found: its answer is the join's, so the two states cost one
 	// backend call and never two (U2).
 	execs := map[string]backend.Execution{}
-	// listed is set only when the listing below is the whole of the window: an
-	// execution it lacks is then one the platform no longer holds, which is
-	// what a read of it would answer, one call per run, for every run of the
-	// window whose execution Cloud Run has already deleted.
+	// listed is set only when the listing below is the whole of the runs it is
+	// joined with -- every one of them inside its floor: an execution it lacks
+	// is then one the platform no longer holds, which is what a read of it
+	// would answer, one call per run, for every run whose execution Cloud Run
+	// has already deleted.
 	listed := false
 	switch {
 	case live != nil:
 		execs = live.execs
 	case f.runRef == "" && slices.ContainsFunc(runs, func(r runObjects) bool { return r.execution != "" }):
+		// The floor is the oldest run joined and not the flags' own --since:
+		// the page of an index-answered listing is the newest runs plus every
+		// active one whatever its age (D3203), so a floor taken from --since
+		// leaves an older run's live execution out of a listing that is then
+		// trusted as the whole of them, and that run joins with no execution at
+		// all -- an infra_error where the execution says running, a preempted
+		// run stripped of what the execution derived.
 		lf := backend.ListFilter{}
-		if !f.since.IsZero() {
-			lf.Since = f.since.Add(-time.Hour)
-		}
+		lf.Since = executionsSince(runs)
 		list, err := env.be.List(ctx, lf)
 		if err != nil {
 			return nil, remote(fmt.Errorf("listing executions: %w", err))
@@ -1536,11 +1542,33 @@ func readRecord(ctx context.Context, s *runstore.Store, rd runcache.Reader) (*ru
 	return &rec, nil
 }
 
+// executionsSince is the floor a listing of these runs' executions is read
+// from: an hour before the oldest run among them, since a run ID is minted
+// before its launch only by moments (readRefRows). Zero -- no floor, the
+// listing read whole -- when a run ID carries no moment, which is still a
+// superset of the runs joined and so still a listing none of them falls outside.
+func executionsSince(runs []runObjects) time.Time {
+	oldest := time.Time{}
+	for _, r := range runs {
+		at, err := runstore.RunTime(r.in.RunID)
+		if err != nil {
+			return time.Time{}
+		}
+		if oldest.IsZero() || at.Before(oldest) {
+			oldest = at
+		}
+	}
+	if oldest.IsZero() {
+		return time.Time{}
+	}
+	return oldest.Add(-time.Hour)
+}
+
 // followExecution joins r with its execution, from execs (the listing)
 // or, when the listing lacks it, from the backend. A listing that is the whole
-// of the window (listed) is the platform's answer for every run in it, so a run
-// it lacks has no execution and none is read: a read would be one request per
-// run of the window, which on a long history is thousands against a quota the
+// of the runs joined with it (listed) is the platform's answer for every one of
+// them, so a run it lacks has no execution and none is read: a read would be one
+// request per run, which on a long history is thousands against a quota the
 // launches share.
 func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs map[string]backend.Execution, listed bool, warnf func(string, ...any)) error {
 	in, s, name := &r.in, r.store, r.execution
@@ -1550,8 +1578,9 @@ func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs ma
 	// The run's service account can write both objects: follow only the
 	// execution the run's own FUGARO_RUN names, which is what tells two runs
 	// of one shared job apart (checkExecution). The listing's own entry saves
-	// the read; a run whose execution is outside the listing's window is read
-	// back on its own. A read that fails is this run's own row, not the
+	// the read; a run the listing does not hold -- a listing that is not the
+	// whole of the runs joined, or one a live read made -- is read back on its
+	// own. A read that fails is this run's own row, not the
 	// listing's: one run's execution failing to read must not hide the other
 	// runs' rows, as a corrupt object of one run does not.
 	eid, _ := backend.ParseExecution(name)
