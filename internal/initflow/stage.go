@@ -600,8 +600,8 @@ type Outcome struct {
 
 // Stage is one step of the converge. Check, Plan and Verify only read;
 // Apply is called only after the loop has decided a confirmation can be
-// had, and keeps its own confirmations (typed project name, permanent
-// location, billable build): the loop never confirms for a stage.
+// had, and keeps its own confirmations (typed project name, billable build):
+// the loop never confirms for a stage.
 type Stage interface {
 	Name() string
 	// Check says what is missing or different, without changing anything.

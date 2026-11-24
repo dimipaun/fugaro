@@ -19,10 +19,9 @@
 // applies. What the amendment does **not** change is what this ruling is about:
 //
 //   - **no secret value is ever asked for in the console.** Creating the GCP
-//     project, linking its billing account, the permanent Firestore location and
-//     every secret are steps a person takes, and `setup --json` confirms none of
-//     them, so each one comes back as a `left_for_you` line for the operator's
-//     own terminal (F15, F27);
+//     project, linking its billing account and every secret are steps a person
+//     takes, and `setup --json` confirms none of them, so each one comes back as
+//     a `left_for_you` line for the operator's own terminal (F15, F27);
 //   - **the console opens no terminal prompt and asks nothing at one.** It never
 //     passes `--onboard-repo`, so the repository question is not asked either
 //     (O7);
