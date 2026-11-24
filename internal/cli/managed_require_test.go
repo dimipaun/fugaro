@@ -55,22 +55,22 @@ func fugaroAtItsOwnName(t *testing.T) {
 	t.Cleanup(func() { selfCommand = old })
 }
 
-// fenceRig is the fence's own world: an installation whose managed read has
+// managedFenceRig is the fence's own world: an installation whose managed read has
 // somewhere to go — both endpoints, under the no_auth a test configuration
 // carries — and whose GCP project carries neither mark. It is the shape every
 // fenced command is refused in, and the shape an exempt command must not even
 // read.
-type fenceRig struct {
+type managedFenceRig struct {
 	gcs *gcpfake.GCS
 	crm *gcpfake.CRM
 	lc  *localcfg.Config
 }
 
-func newFenceRig(t *testing.T) *fenceRig {
+func newManagedFenceRig(t *testing.T) *managedFenceRig {
 	t.Helper()
 	g, c := gcpfake.NewGCS(t), gcpfake.NewCRM(t)
 	c.AddProject(initProject, initProjectNumber)
-	return &fenceRig{gcs: g, crm: c, lc: &localcfg.Config{
+	return &managedFenceRig{gcs: g, crm: c, lc: &localcfg.Config{
 		Name: initProjectName, GCPProject: initProject,
 		Endpoints: localcfg.Endpoints{NoAuth: true, Storage: g.URL + "/storage/v1/", ResourceManager: c.URL + "/"},
 	}}
@@ -79,7 +79,7 @@ func newFenceRig(t *testing.T) *fenceRig {
 // requests is everything the two fakes were asked, so a test can say "nothing
 // was written" about an empty listing rather than about the call it remembered
 // to look for.
-func (r *fenceRig) requests() []gcpfake.Request {
+func (r *managedFenceRig) requests() []gcpfake.Request {
 	return append(append([]gcpfake.Request{}, r.gcs.Requests()...), r.crm.Requests()...)
 }
 
@@ -190,7 +190,7 @@ func TestFencedCommandRefusesUnmanaged(t *testing.T) {
 	noAgentSession(t)
 	noRunSession(t)
 	fugaroAtItsOwnName(t)
-	r := newFenceRig(t)
+	r := newManagedFenceRig(t)
 	for _, tc := range seamFencedCommands {
 		t.Run(tc.path, func(t *testing.T) {
 			cmd := managedFencedCommand(t, tc.path)
@@ -397,7 +397,7 @@ func TestExemptCommandsWriteNothing(t *testing.T) {
 	noAgentSession(t)
 	noRunSession(t)
 	fugaroAtItsOwnName(t)
-	r := newFenceRig(t)
+	r := newManagedFenceRig(t)
 	for path := range managedExemptCommands {
 		cmd := managedFencedCommand(t, path)
 		if err := requireManaged(withManagedCommand(context.Background(), cmd), cmd, r.lc); err != nil {
@@ -484,7 +484,7 @@ func TestFenceReadFailsWarns(t *testing.T) {
 	noAgentSession(t)
 	noRunSession(t)
 	fugaroAtItsOwnName(t)
-	r := newFenceRig(t)
+	r := newManagedFenceRig(t)
 	// The project read is the fence's first call and the one the label comes
 	// back on: an API that answers a 5xx is a read that failed, which is
 	// neither the 403/404 the read answers "not managed" to nor a label.
