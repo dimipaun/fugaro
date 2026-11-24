@@ -119,6 +119,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/repourl"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -729,6 +730,30 @@ type Policy struct {
 	// default.
 	MobileCrashReports *bool `json:"mobile_crash_reports,omitempty"`
 
+	// ModelRouting is the project's routing table, published: where each model
+	// is reached, which repositories each credential may serve, and the pools in
+	// the shape C2 gives them (docs/model-credentials-routing, RT4, R21, F49).
+	//
+	// **It is ONE new top-level key and not a member of a block the node
+	// already carries.** `craft_pools` and `craft_credentials` decode strictly
+	// in every job image of the installation, so a pool's own new members
+	// (`rule`, `principal`, `threshold`) written there make a reader of the
+	// release behind refuse the WHOLE policy — and the node is re-read while
+	// runs are in flight (internal/runner's projectpolicy.Read on every run, the
+	// credentials service on every model call), so that refusal would stop the
+	// runs an update promises to leave alone
+	// (docs/design/update-in-flight.md). An unknown top-level key is listed in
+	// UnknownKeys and tolerated, which is what lets this release publish the
+	// table while a release-behind runner keeps serving from `craft_pools`
+	// exactly as it did (contract-table.md: the rule that made
+	// `bitbucket_tokens`, `orchestrator_enabled` and `mobile_crash_reports`
+	// keys of their own rather than members of a block they belong to).
+	//
+	// It is a pointer and absent for a project that has published no table: the
+	// installation's own `model_routing:` block may be empty, and a node that
+	// carries no member is byte for byte what it was before this key existed.
+	ModelRouting *ModelRouting `json:"model_routing,omitempty"`
+
 	// UnknownKeys lists the top-level keys of the node this Fugaro does not
 	// know, sorted. Decode fills it in and never writes it back (json:"-"):
 	// the keys are tolerated so that a policy a newer Fugaro wrote does not
@@ -779,6 +804,13 @@ var knownTopLevelKeys = map[string]bool{
 	// reader of the release behind, which is what update must never do. Read by
 	// MobileCrashReportsOn, which answers an absent key off.
 	"mobile_crash_reports": true,
+	// The project's routing table (RT4 of docs/model-credentials-routing): a
+	// top-level key and not a member of any block, for the reason every key
+	// above is one — a reader of the release behind lists it in UnknownKeys and
+	// keeps reading the whole policy, which is what lets an update publish the
+	// table while runs are in flight (F49, R21). The pools' own new members live
+	// inside it, so `craft_pools` stays byte for byte what that reader decodes.
+	"model_routing": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -893,6 +925,103 @@ type Routing = config.Routing
 // ClaudeRoute is the Claude routing switch: an explicit list of Claude IDs,
 // never a pattern (D1a). config.RoutingClaude, by the alias above.
 type ClaudeRoute = config.RoutingClaude
+
+// ModelRouting is the project's routing table, published: the one top-level key
+// a run of this release and the credentials service are served by
+// (docs/model-credentials-routing/contract-table.md, RT4).
+//
+// `entries` is the Table itself — the ordered entries, each source carrying its
+// own `admit` list, which is where the per-repository admissions live — and
+// `pools` is C2's shape: the project's pools with the three members a pool
+// gained here (rule, principal, threshold), which `craft_pools` may not carry.
+// The two blocks are the same facts the config holds, and the types are the
+// contract's own, so a source or a pool cannot be spelled one way in the
+// installation's file and another on the wire.
+//
+// The members are read strictly, the rule every block of this node is held to:
+// this document decides where a project's calls go and what they cost, so a
+// misspelt member is refused rather than read as nothing. What the key buys is
+// the one thing a member of `craft_pools` cannot: a reader of the release
+// behind lists it in UnknownKeys and reads every block it does know byte for
+// byte, so an update publishes the table while runs are in flight (F49, R21).
+// A release that grows the key's own members says what a reader of the release
+// behind does with the growth; R25 leaves that question to it.
+type ModelRouting struct {
+	// Entries is the table: the model or pattern each entry answers and the
+	// chain of sources that may serve it, first usable one wins. nil is a
+	// project that has published no entry, which routes nothing.
+	Entries routing.Table `json:"entries"`
+	// Pools are the project's pools in C2's shape, and they are what the
+	// service resolves a source of kind pool against: a pool's members, its
+	// rule, its threshold and the principal it belongs to.
+	Pools []config.Pool `json:"pools,omitempty"`
+}
+
+// ModelRoutingProblems is routing.Problems asked of this node's table (RT3):
+// every problem the published table has against the project's own credentials,
+// pools, providers and budget, plus the warnings it carries (today exactly X2's
+// lone subscription token, which release 1 reports and release 2 refuses).
+//
+// It is the node's own validation — Decode refuses the first problem it reports
+// — and the publisher's gate, so a table `fugaro routing set` or `fugaro
+// validate` refuses is a table no door of this release writes into the policy.
+//
+// The project is read from the node itself, and the one list the node cannot
+// supply whole is the models a run can call: a run's rungs are the run's
+// (craft.ModelRungs: the task's grade, a level's model, a pinned role,
+// agent.model — none of them a member of this node) and a `--model` override is
+// the launcher's, so the models asked about here are the ones the node names:
+// the crafts' own and the two grades' (publishedModels). A model no entry
+// matches is therefore refused for those and left to the run's own door for the
+// rest (R22; RT5 and RT6 are where a person asks the whole ladder).
+//
+// Check 50 is left unrecorded, which is the refusal R3 asks for: nothing in
+// this release records the check as passed, and a Claude model through a
+// provider key is what D3196 leaves on the release-1 bridge rather than in a
+// table.
+func (p *Policy) ModelRoutingProblems() (problems, warnings []routing.Problem) {
+	if p == nil || p.ModelRouting == nil {
+		return nil, nil
+	}
+	return routing.Problems(routing.Checks{
+		Table:           p.ModelRouting.Entries,
+		Models:          p.publishedModels(),
+		Credentials:     p.CraftCredentials,
+		Pools:           p.ModelRouting.Pools,
+		Providers:       providerCarrier(p.Providers),
+		BudgetMode:      p.Budget.Mode,
+		BudgetPerRunUSD: p.Budget.PerRunUSD,
+	})
+}
+
+// publishedModels are the models the node itself says a run calls: the five
+// crafts, each with what it inherits (config.Crafts.Inherited, so a craft that
+// sets no model of its own is the coder's), and the two grades of the
+// escalation ladder (E2, D2039). A model the node names twice is named once,
+// and one it does not name at all is skipped: a craft with no model anywhere is
+// answered by the rungs below it, which are the run's (F17's carve-out).
+func (p *Policy) publishedModels() []string {
+	var out []string
+	seen := make(map[string]bool)
+	add := func(model string) {
+		if model == "" || seen[model] {
+			return
+		}
+		seen[model] = true
+		out = append(out, model)
+	}
+	if p.Crafts != nil {
+		for _, name := range config.CraftNames {
+			add(p.Crafts.Inherited(name).Model)
+		}
+	}
+	if p.ModelGrades != nil {
+		for _, name := range config.GradeNames {
+			add(p.ModelGrades.Of(name).Model)
+		}
+	}
+	return out
+}
 
 // ImageCatalog is the project's image catalog, the definitions its jobs are
 // built from (D1140, spec.md §Catalog entry). It is config.Catalog, aliased
@@ -1673,6 +1802,36 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 			return nil, true, err
 		}
 		p.ModelGrades = grades
+	}
+	// The routing table is read after every block it is judged against — the
+	// credentials and the pools a chain's source names, the providers it
+	// resolves through, the budget a paid source after a pool is held to, and
+	// the crafts and grades whose models it must answer — because its own
+	// problems are properties of those together (routing.Problems, RT3). A block
+	// that sets neither an entry nor a pool is no block, the crafts' rule: two
+	// spellings of "this project routes nothing" are one answer and a writer
+	// that round trips this policy writes no member.
+	if mraw, ok := doc["model_routing"]; ok && !IsNull(mraw) {
+		dec := json.NewDecoder(bytes.NewReader(mraw))
+		dec.DisallowUnknownFields()
+		var mr ModelRouting
+		if err := dec.Decode(&mr); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: model_routing: %w", err)
+		}
+		// The pools the table names are published pools, so they are held to the
+		// rules a published pool is held to (config.ValidatePublishedPools):
+		// craft_pools carries the same set beside this key, and the members that
+		// are only here — a pool's rule, its principal and its threshold — are
+		// the ones no earlier release could have refused.
+		for _, prob := range config.ValidatePublishedPools(mr.Pools, p.CraftCredentials) {
+			return nil, true, fmt.Errorf("projectpolicy: model_routing.%s: %s", prob.Path, prob.Message)
+		}
+		if len(mr.Entries) > 0 || len(mr.Pools) > 0 {
+			p.ModelRouting = &mr
+		}
+		if problems, _ := p.ModelRoutingProblems(); len(problems) > 0 {
+			return nil, true, fmt.Errorf("projectpolicy: %s: %s", problems[0].Path, problems[0].Message)
+		}
 	}
 	// The Bitbucket block is judged *before* the profiles block, and the
 	// profiles against it: a profile that mounts the token admits a subset of

@@ -734,6 +734,16 @@ func policyNodeForPublish(ctx context.Context, lc *localcfg.Config, old *project
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	// The routing table is the one member the builder above does not assemble:
+	// it is built here, from the installation's own `model_routing:` block and
+	// the pools this publish has just written into craft_pools, and it is
+	// refused here as well as by the writer's own read-back below — the decode's
+	// sentence for a broken node is the block's own, while this one names the
+	// table the operator is about to publish and the fix the check carries.
+	pol.ModelRouting = modelRoutingForPublish(lc, old, pol.CraftPools)
+	if problems, _ := pol.ModelRoutingProblems(); len(problems) > 0 {
+		return nil, nil, nil, userErr("the routing table this publish would write is not one a run can be served by, so nothing was written: %s %s", problems[0].Path, problems[0].Message)
+	}
 	if err := policyContextRefusal(pol, imageContextShipped); err != nil {
 		return nil, nil, nil, err
 	}
@@ -748,6 +758,74 @@ func policyNodeForPublish(ctx context.Context, lc *localcfg.Config, old *project
 		return nil, nil, nil, err
 	}
 	return body, pol, sources, nil
+}
+
+// modelRoutingForPublish is the node's `model_routing` member: the table the
+// installation's runs are routed by and the project's pools in their new shape
+// (RT4, contract-table.md). It is the one key whose presence tells the
+// credentials service the installation is migrated (PL3), so its two rules are
+// what makes a publish safe:
+//
+// The key is written when the config states a table, and kept when the node
+// carries one — the keep direction every other member of the node is written in
+// (clone_urls, binaries, the craft blocks). A machine whose config predates the
+// key, and an owner who declined to write it, keep a project routed exactly as
+// it was: un-routing an installation is never something a publish infers from a
+// silence, and a node that carries the key and no entry keeps carrying it (what
+// MG2 wrote is what the next publish writes back). A project with neither is
+// written no key at all — its pools stay inert and its calls are served as they
+// are today, which is the state an installation that has not migrated is in.
+//
+// The pools are `craft_pools` — the very pools this publish writes into the
+// node — with the three members `craft_pools` may not carry (rule, principal,
+// threshold) taken from the config's own pool where it states one and from the
+// node's own member where it does not. The membership is the published one by
+// construction, so the two blocks cannot come to describe different projects: a
+// pool left out of craft_pools (an ownerless one this machine's config states)
+// is left out here, which is what keeps the service from resolving a source to
+// a pool no run may be served from.
+func modelRoutingForPublish(lc *localcfg.Config, old *projectpolicy.Policy, pools []config.Pool) *projectpolicy.ModelRouting {
+	var out projectpolicy.ModelRouting
+	node := make(map[string]config.Pool)
+	if old != nil && old.ModelRouting != nil {
+		out.Entries = old.ModelRouting.Entries
+		for _, q := range old.ModelRouting.Pools {
+			node[q.Name] = q
+		}
+	}
+	if len(lc.ModelRouting) > 0 {
+		out.Entries = lc.ModelRouting
+	}
+	if len(out.Entries) == 0 && (old == nil || old.ModelRouting == nil) {
+		return nil
+	}
+	stated := make(map[string]config.Pool, len(lc.Pools))
+	for _, c := range lc.Pools {
+		stated[c.Name] = c
+	}
+	for _, q := range pools {
+		pub, held := node[q.Name]
+		if !held {
+			pub = q
+		}
+		// Each of the three is the config's where it writes one, the node's
+		// otherwise — never a zero written over a member this machine's file
+		// says nothing about, which would be the migration's principal dropped
+		// by a config that merely predates it.
+		if c, ok := stated[q.Name]; ok {
+			if c.Rule != "" {
+				pub.Rule = c.Rule
+			}
+			if c.Principal != nil {
+				pub.Principal = c.Principal
+			}
+			if c.Threshold != nil {
+				pub.Threshold = c.Threshold
+			}
+		}
+		out.Pools = append(out.Pools, pub)
+	}
+	return &out
 }
 
 // policyCeiling is one member a publish loosens: the node's key, and the two
