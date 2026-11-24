@@ -1145,10 +1145,24 @@ func credentialsWorkspaceService(ctx context.Context, workspace string, env map[
 //
 // The class is PEOPLE ONLY, and the roster's machines are not on it (F12, C2's
 // rule 2): a `sa` person of the roster is a service account, and a service
-// account is never a launcher of this service — the class's own construction
-// refuses the shape, which is why no second list is handed to it (a workspace's
-// grant is asked for by a person, on a run they launch; the roster's machines
-// are the ones the WORKSPACE's own project runs things as, WC3).
+// account is never a launcher of this service — which is why no second list is
+// handed to it (a workspace's grant is asked for by a person, on a run they
+// launch; the roster's machines are the ones the WORKSPACE's own project runs
+// things as, WC3).
+//
+// AN ADDRESS OF THAT SHAPE IS DROPPED BEFORE THE CLASS IS BUILT, WHATEVER THE
+// ROSTER CALLS IT. The class's own construction refuses a
+// `*.gserviceaccount.com` entry, and nothing upstream stops one from being
+// written as a HUMAN: a roster address is held to the address grammar and not
+// to its domain, `workspace user add` records a person as a human unless told
+// otherwise, and adopting a member project's grants records every address it
+// finds as one — a member's own roster among them, which that member's admins
+// can write (D1943). A class built straight off the people would then refuse
+// this whole deployment at its next cold start, every member's model and forge
+// routes with it, over an entry that could never be verified as a person
+// anyway. So the entry is left out and the process starts: C2 fixes a roster
+// this service can serve nobody from as a state and not a refusal ("What each
+// side may rely on", WC14's paragraph).
 //
 // A WORKSPACE WITH NO ROSTER NODE IS NOT A FAILURE TO START; A ROSTER THIS
 // BUILD CANNOT READ IS. The first is the state of every workspace whose owner
@@ -1203,7 +1217,19 @@ func credentialsWorkspacePerson(ctx context.Context, name string, env map[string
 
 // workspaceRosterLaunchers is the roster's people as the launcher class's
 // account list (R3, D2970): the address of every `human` and no machine's, in
-// the roster's own spelling, sorted and each once.
+// the roster's own spelling, sorted and each once — and no address of the
+// service-account shape, whatever kind the roster gave it.
+//
+// The shape is dropped rather than handed on because the class refuses it and
+// this deployment cannot afford that refusal: one roster entry mis-kinded as a
+// human — a forgotten `--kind sa`, or a service account a member's own roster
+// granted a role to and this workspace adopted — would otherwise stop the whole
+// service on its next cold start, every member's routes with it. An address of
+// that shape can never be a caller of the launcher class (credsvc's own
+// foldLauncherAccounts refuses it for the same reason), so leaving it out costs
+// this class nothing it could have admitted. A roster whose people are ALL of
+// that shape therefore yields an empty list and not a refusal: the class admits
+// nobody, the scope serves no grant, and the process starts (C2).
 //
 // The roster's addresses are already canonical and unique within it
 // (workspace.Roster.Validate), so the sort and the compact are the class's own
@@ -1215,9 +1241,16 @@ func credentialsWorkspacePerson(ctx context.Context, name string, env map[string
 func workspaceRosterLaunchers(document *workspace.Roster) []string {
 	out := []string{}
 	for _, p := range document.People {
-		if p.Kind == workspace.KindHuman {
-			out = append(out, p.Address)
+		if p.Kind != workspace.KindHuman {
+			continue
 		}
+		// Folded, as the class folds it: the domain is lowercased by the
+		// canonical spelling a roster is held to, and this is the same
+		// comparison credsvc makes of the address it is handed.
+		if strings.HasSuffix(strings.ToLower(p.Address), saAddressSuffix) {
+			continue
+		}
+		out = append(out, p.Address)
 	}
 	slices.Sort(out)
 	return slices.Compact(out)

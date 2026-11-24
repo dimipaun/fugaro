@@ -21,7 +21,6 @@ import (
 	secretmanager "google.golang.org/api/secretmanager/v1"
 
 	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -1847,17 +1846,19 @@ func publishRoster(t *testing.T, fake *gcpfake.RTDB, client *rtdb.Client, name s
 // is observed from the other end, by what the process DOES with a roster — and
 // the two rosters below are the pair that pins it exactly:
 //
-//   - a roster naming a human AND a machine starts, and the class's own
-//     construction refuses a `*.gserviceaccount.com` address
-//     (foldLauncherAccounts). So the machine did not reach the class, which is
-//     R3's "people only" (F12) — a machine's address there would have refused
-//     the process.
+//   - a roster naming a human AND a machine starts: the machine's address is
+//     one the class's own construction refuses (foldLauncherAccounts), so the
+//     process starting is what says the machine never reached it — R3's "people
+//     only" (F12).
 //   - a roster whose only person is a HUMAN with a service account's address
-//     refuses the process, naming the variable. A human's address is held to
-//     the address grammar and not to its domain (workspace.CanonicalAddress),
-//     so C1's roster admits this document and the refusal can only have come
-//     from the class — which is what says the class was built from the roster's
-//     humans and from nothing else.
+//     starts too, and the person half is set. A human's address is held to the
+//     address grammar and not to its domain (workspace.CanonicalAddress), so
+//     C1's roster admits this document, and a class built straight off its
+//     people would have refused the whole deployment at the class's own
+//     construction. It starts because the list builder leaves the shape out
+//     (workspaceRosterLaunchers): one entry a member's roster could plant, or
+//     an operator could mis-kind, must not stop every member's routes, and an
+//     address of that shape could never be verified as a person anyway.
 func TestWorkspaceModeIsHandedTheRosterAndItsSlips(t *testing.T) {
 	const workspaceName = "aurora-ws"
 	// The configuration is the package's, and the process is one deployment:
@@ -1982,12 +1983,15 @@ func TestWorkspaceModeIsHandedTheRosterAndItsSlips(t *testing.T) {
 		}
 	})
 
-	t.Run("a roster whose human is a service account refuses the process", func(t *testing.T) {
+	t.Run("a roster whose human is a service account still starts", func(t *testing.T) {
 		// A HUMAN with a service account's address: C1's roster admits the
 		// document (a person's address is held to the address grammar, and its
-		// domain is not the roster's business), and the launcher class refuses
-		// it. The refusal is therefore evidence that the class was built from
-		// the roster's humans.
+		// domain is not the roster's business), and the launcher class would
+		// refuse it — so the process starting, with the class built and handed
+		// to the scope, is the observation that the list builder left the entry
+		// out rather than handing it on. A deployment stopped here would stop
+		// every member's model and forge routes over one entry that could never
+		// be verified as a person (C2's "not a failure to start").
 		const machine = "svc-1@proj-1234.iam.gserviceaccount.com"
 		for n, v := range workspaceServeEnv(workspaceName) {
 			t.Setenv(n, v)
@@ -2001,15 +2005,19 @@ func TestWorkspaceModeIsHandedTheRosterAndItsSlips(t *testing.T) {
 			{Address: machine, Kind: workspace.KindHuman},
 		}, []string{machine})
 
-		_, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
-		if err == nil || ExitCode(err) != ExitUserError {
-			t.Fatalf("err = %v, want a user error: this workspace's owner HAS published a roster, and a service that started with the personal half silently unwired would refuse every grant of every person that roster names while looking healthy", err)
+		cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+		if err != nil {
+			t.Fatalf("credentialsServiceConfig with a roster whose only person is a human holding a service account's address: %v", err)
 		}
-		if !strings.Contains(err.Error(), creds.WorkspaceModeEnv) {
-			t.Errorf("err = %v, want the refusal to name %s", err, creds.WorkspaceModeEnv)
+		if cfg.Resolver == nil {
+			t.Fatal("the workspace's configuration handed the Server no resolver: this workspace's owner HAS published a roster, so the personal half is the workspace's own and a nil resolver would be the installation's")
 		}
-		if strings.Contains(err.Error(), machine) {
-			t.Errorf("err = %v, which carries the address the roster holds: a refusal names the variable and never what it held", err)
+		person := credsvc.PersonScopeConfigForServe
+		if person.Roster == nil || person.Launchers == nil || person.Slips == nil {
+			t.Fatalf("the process left Roster=%v Launchers=%v Slips=%v: the half is set whether or not the roster named anybody this class can admit, and the class being BUILT and non-refusing is what says the service-account-shaped entry never reached it", person.Roster != nil, person.Launchers != nil, person.Slips != nil)
+		}
+		if _, err := credsvc.NewServer(cfg); err != nil {
+			t.Fatalf("NewServer refused the workspace's configuration: %v", err)
 		}
 	})
 
