@@ -40,6 +40,7 @@ import {
   NO_NAMED_SCOPE,
   NO_ORCHESTRATOR_MAP,
   NO_PLAN_CHECKOUT,
+  NO_PLAN_NO_MERGES,
   SourceRefusal,
 } from '../../src/source/source'
 import type { RoadmapMoveAnswer, RoadmapMoveOutcome, Snapshot } from '../../src/source/source'
@@ -67,7 +68,7 @@ const SECOND: BoundInstallation = {
  * `noApplySupported`. With it unset every other case in this file reads the real
  * constant, which is `null`, and so nothing here behaves differently.
  */
-const floor = vi.hoisted(() => ({ value: null as string | null }))
+const floor = vi.hoisted(() => ({ value: null as string | null, merges: null as string | null }))
 
 vi.mock('../../src/shared/version', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../src/shared/version')>()
@@ -75,6 +76,13 @@ vi.mock('../../src/shared/version', async (importOriginal) => {
     ...real,
     orchestratorMapSupported: (version: string, at: string | null = floor.value) =>
       real.orchestratorMapSupported(version, at),
+    // IR4's own floor, mocked the same way and for the same reason:
+    // `PLAN_STATUS_NO_MERGES_CLI_FLOOR` is `null` on this tree, so a `noMerges`
+    // payload is refused for every installation and the branch a release takes
+    // -- the argument reaching the child, and its own entry in the cadence --
+    // could not be driven at all.
+    planStatusNoMergesSupported: (version: string, at: string | null = floor.merges) =>
+      real.planStatusNoMergesSupported(version, at),
   }
 })
 
@@ -85,8 +93,16 @@ vi.mock('../../src/shared/version', async (importOriginal) => {
 const MAP_FLOOR = '1.4.0'
 const MAP_VERSION = '1.4.2'
 
+/** MERGES_FLOOR is the release that first carries `plan status --no-merges`
+ * (IR4's floor) and MERGES_VERSION the installation's own line: one patch above
+ * it, so the argument is admitted. Spelled rather than imported, on the two
+ * above's terms. */
+const MERGES_FLOOR = '0.33.0'
+const MERGES_VERSION = '0.33.1'
+
 afterEach(() => {
   floor.value = null
+  floor.merges = null
 })
 
 /** MAP is the map document the teaching case is answered with: two active
@@ -543,6 +559,102 @@ describe('the plan read, whose directory is the binding’s', () => {
     installation = { ...FIRST, checkout: '/home/operator/src/other' }
     expect((await source.planStatus({})).document, 'the previous directory’s graph was served').toEqual({ read: 4 })
     expect(spawned).toHaveLength(4)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The plan's `--no-merges` argument and its floor (IR4 of the console-fixes
+// plan, D3217 as amended).
+// ---------------------------------------------------------------------------
+
+describe('the plan read’s `noMerges` argument', () => {
+  /** aPlanSource is the same stand-in as the cadence case's, with the bindings
+   * this describe can flip: the installation the console is on, and the child
+   * factory's recording of what each read was asked for. */
+  function aPlanSource(installation: () => BoundInstallation, spawned: unknown[]): CliSource {
+    let reads = 0
+    return {
+      version: async () => ({ text: FIRST.id, receivedAt: '2026-10-15T12:00:00Z' }),
+      close: async () => undefined,
+      planStatus: async (args: unknown): Promise<Snapshot> => {
+        reads += 1
+        spawned.push(args)
+        return {
+          document: { read: reads },
+          receivedAt: '2026-10-15T12:00:00Z',
+          sequence: reads,
+          day: null,
+          rolled: false,
+          notices: [],
+        }
+      },
+    } as unknown as CliSource
+  }
+
+  it('refuses `--no-merges` below the flag’s floor, before a child exists', async () => {
+    // **The floor is asked before `resolve`**, on `orchestratorMap`'s terms: an
+    // installation whose CLI predates the release that carries the flag answers
+    // `unknown flag: --no-merges` and fails the whole read, which is a failure
+    // the operator can do nothing about. The constant names no release on this
+    // tree, so this is every installation today -- and the branch a release
+    // takes is driven below with the predicate's own argument.
+    const built: unknown[] = []
+    const spawned: unknown[] = []
+    const installation: BoundInstallation = { ...FIRST, checkout: '/home/operator/src/acme', version: '0.32.0' }
+    const source = createBoundSource({
+      installation: () => installation,
+      create: async () => {
+        built.push('child')
+        return aPlanSource(() => installation, spawned)
+      },
+    })
+
+    const error = await refusalOf(source.planStatus({ all: true, noMerges: true }))
+    expect(error, 'a read below the flag’s floor was not refused').toBeInstanceOf(SourceRefusal)
+    expect((error as SourceRefusal).message).toBe(NO_PLAN_NO_MERGES)
+    expect(built, 'the refusal spawned a child after all').toEqual([])
+
+    // **The refusal is the argument's and not the read's.** The same binding
+    // still answers the plain read -- which is the whole point of the floor: an
+    // older CLI gets the single read it has always had rather than a Graph tab
+    // with no canvas.
+    expect((await source.planStatus({ all: true })).document).toEqual({ read: 1 })
+    expect(spawned).toEqual([{ all: true }])
+  })
+
+  it('passes the argument above the floor, and caches it as its own document', async () => {
+    // The branch a release takes: the constant becomes the version whose flag
+    // lands, and the source hands the word to the child. **The cadence is keyed
+    // by the argv the arguments become**, so the canvas read and the plain read
+    // are two documents and neither is served for the other -- without this the
+    // merge section would draw the canvas document, or the first paint would be
+    // handed the merge-inclusive one, for up to a minute.
+    floor.merges = MERGES_FLOOR
+    const spawned: unknown[] = []
+    const installation: BoundInstallation = {
+      ...FIRST,
+      checkout: '/home/operator/src/acme',
+      version: MERGES_VERSION,
+    }
+    const source = createBoundSource({
+      installation: () => installation,
+      create: async () => aPlanSource(() => installation, spawned),
+    })
+
+    // The first paint: `--all --no-merges`, served from the cache on a repeat.
+    expect((await source.planStatus({ all: true, noMerges: true })).document).toEqual({ read: 1 })
+    expect((await source.planStatus({ all: true, noMerges: true })).document).toEqual({ read: 1 })
+    expect(spawned).toHaveLength(1)
+    // The merge section: the same command with the lookups left in, and a child
+    // of its own.
+    expect((await source.planStatus({ all: true })).document).toEqual({ read: 2 })
+    expect((await source.planStatus({ all: true })).document).toEqual({ read: 2 })
+    expect(spawned).toHaveLength(2)
+    expect(spawned).toEqual([{ all: true, noMerges: true }, { all: true }])
+    // And `noMerges: false` is the same argv as no `noMerges` at all, which is
+    // the plain read above rather than a third document.
+    expect((await source.planStatus({ all: true, noMerges: false })).document).toEqual({ read: 2 })
+    expect(spawned).toHaveLength(2)
   })
 })
 

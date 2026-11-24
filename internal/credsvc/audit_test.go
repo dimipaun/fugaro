@@ -142,9 +142,22 @@ func TestAuditVocabulary(t *testing.T) {
 		{refusalMalformed, "malformed"},
 		{refusalUnknown, "unknown"},
 		{refusalUnexpected, "unexpected"},
+		// C1's three, the codes version 2 refuses with: they are the statuses
+		// the line carries for those refusals, so they are this vocabulary's.
+		{ErrorWorkflowSecretNotAllowed, "workflow_secret_not_allowed"},
+		{ErrorWorkflowSecretUnmarked, "workflow_secret_unmarked"},
+		{ErrorWorkflowSecretsOff, "workflow_secrets_off"},
 	} {
 		if c.got != c.want {
 			t.Errorf("the audit vocabulary changed: %q, want %q", c.got, c.want)
+		}
+	}
+	for _, code := range []string{ErrorWorkflowSecretNotAllowed, ErrorWorkflowSecretUnmarked, ErrorWorkflowSecretsOff} {
+		// A code the contract answers and this closed set does not carry is a
+		// verified refusal written down nowhere — and quietly: refuseCallCause
+		// logs the audit failure and answers the typed refusal anyway.
+		if !ValidStatus(code) {
+			t.Errorf("the audit cannot record %q: a refusal answered with that code would leave no line", code)
 		}
 	}
 }

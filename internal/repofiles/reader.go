@@ -20,6 +20,13 @@
 // fugaro.yaml through gitprov.ContentsReader, and the recipes folder through
 // gitprov.TreeReader at the commit gitprov.CommitReader resolves the default
 // branch to, since a tree read of a directory is a read at a commit.
+//
+// A caller may ask for paths of its own beside those files (Input.ExtraPaths):
+// the plugin pin's .claude/settings.json and the backlog's docs/backlog/ are
+// what `fugaro update` reads there. They cost an exchange each, so they are
+// read only when asked for, and the answer carries the default branch's name
+// and its head commit beside every file, which is what tells a caller which
+// revision it is looking at (R1).
 package repofiles
 
 import (
@@ -47,6 +54,17 @@ const YAML = "fugaro.yaml"
 // read carries bytes and paths, and judging them is the parser's.
 const MaxRecipeFiles = 64
 
+// MaxExtraFiles and MaxExtraBytes bound one extra path read as a tree, the way
+// MaxRecipeFiles bounds the recipes folder: a folder over either is a
+// repository that could not be read rather than one carried in part. The
+// numbers are a caller's own folder of small files — the backlog's briefs are
+// the tree this reads today — and they are ceilings on what one read of one
+// repository costs, not a judgement of what a folder may hold.
+const (
+	MaxExtraFiles = 256
+	MaxExtraBytes = 8 << 20
+)
+
 // Listed is a repository the caller can name: its owner/name, and the git
 // provider kind it is on.
 type Listed struct {
@@ -68,6 +86,17 @@ type Input struct {
 	// anything else — a pattern, or an entry that names no provider — is
 	// answered unexpanded rather than guessed at.
 	Admits []string
+	// ExtraPaths are repository-relative paths to read beside the files L8
+	// needs, each at the commit the default branch resolved to. A path ending
+	// in "/" is a directory and is read as a tree; anything else is one file.
+	// A path the repository does not hold answers no files, which is the
+	// ordinary case for both of the ones `fugaro update` asks for (a
+	// repository that pins no plugin, one that keeps no backlog) and never a
+	// repository nobody could read.
+	//
+	// None is read when the list is empty, so a caller that needs only L8's
+	// files pays no exchange for them.
+	ExtraPaths []string
 }
 
 // File is one file of a repository's recipes folder: its path relative to
@@ -77,14 +106,36 @@ type File struct {
 	Data []byte
 }
 
+// Extra is one extra path's answer: the path the read was asked for, and the
+// files it holds, each at its repository-relative path (a tree read answers
+// paths relative to the directory it read, which is not what a caller that
+// named the path from the repository root holds).
+type Extra struct {
+	// Path is the path as the caller spelled it.
+	Path string
+	// Files are the files at that path: one entry for a file path, whose Path
+	// is the path itself, and a directory's files, in path order. None is a
+	// path the repository does not hold.
+	Files []File
+}
+
 // Repo is one listed repository and what its default branch holds. Exactly one
 // of Unread and the files is the answer: Unread is set when the repository
-// could not be read, and then YAML and Recipes are not that repository's
-// files — a caller must not plan from them (D3306: a repository update cannot
-// read is not migrated, and its lifted values are dropped, never moved).
+// could not be read, and then YAML, Recipes and Extra are not that repository's
+// files, nor are Branch and Head the branch they came from — a caller must not
+// plan from them (D3306: a repository update cannot read is not migrated, and
+// its lifted values are dropped, never moved).
 type Repo struct {
 	Repo     string
 	Provider string
+	// Branch is the default branch's name, as the host names it ("main"); ""
+	// when the host named none, which is a host with no default branch to
+	// name rather than a repository nobody could read.
+	Branch string
+	// Head is the commit the default branch resolved to: the revision every
+	// tree read of this repository was made at, and the one the extra paths
+	// were read at (D1394).
+	Head string
 	// YAML is the default branch's fugaro.yaml, and nil when the repository
 	// does not hold one, which is a repository that overrides nothing rather
 	// than a read that failed.
@@ -96,6 +147,9 @@ type Repo struct {
 	// them included, which the read returns as a file and the recipe's own
 	// parse then judges (U3, R12).
 	Recipes []File
+	// Extra are the files the extra paths hold, one entry per path asked for,
+	// in the order asked.
+	Extra []Extra
 	// Unread is the one-line reason this repository could not be read, "" when
 	// it could. It carries no prompt and no repository name: the caller names
 	// the repository in its own line.
@@ -117,7 +171,7 @@ func Read(ctx context.Context, in Input, open gitprov.Opener) ([]Repo, []string,
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
-		r, err := readOne(ctx, n, open)
+		r, err := readOne(ctx, n, in.ExtraPaths, open)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -172,9 +226,10 @@ func listed(in Input) ([]Listed, []string) {
 }
 
 // readOne reads one repository's default branch, or answers the reason it
-// could not. The only error it returns is the caller's own cancellation: a
-// read that failed is a field of the answer (surveyRepo's rule).
-func readOne(ctx context.Context, n Listed, open gitprov.Opener) (Repo, error) {
+// could not, and reads the extra paths of its caller when it holds any. The
+// only error it returns is the caller's own cancellation: a read that failed
+// is a field of the answer (surveyRepo's rule).
+func readOne(ctx context.Context, n Listed, extras []string, open gitprov.Opener) (Repo, error) {
 	r := Repo{Repo: n.Repo, Provider: n.Provider}
 	switch {
 	case n.Repo == "":
@@ -212,9 +267,15 @@ func readOne(ctx context.Context, n Listed, open gitprov.Opener) (Repo, error) {
 		r.Unread = cannotRead(n.Provider, "a ref")
 		return r, nil
 	}
-	if _, err := p.Repository(ctx); err != nil {
+	info, err := p.Repository(ctx)
+	if err != nil {
 		return failed(ctx, r, "the repository could not be read", err)
 	}
+	// The branch is the name the host itself gives, off the repository read
+	// above rather than a call of its own, and it is carried as it came: a
+	// host that names none leaves it empty, and only a read that needs the
+	// name — an adapter's own file read — refuses that.
+	r.Branch = info.DefaultBranch
 	data, err := contents.Contents(ctx, YAML, "")
 	switch {
 	case err == nil:
@@ -235,6 +296,7 @@ func readOne(ctx context.Context, n Listed, open gitprov.Opener) (Repo, error) {
 	if err != nil {
 		return failed(ctx, r, "its default branch could not be resolved", err)
 	}
+	r.Head = commit
 	files, err := tree.Tree(ctx, recipe.RepoDir, commit, gitprov.TreeLimit{
 		MaxFiles: MaxRecipeFiles,
 		MaxBytes: MaxRecipeFiles * recipe.MaxBytes,
@@ -251,20 +313,85 @@ func readOne(ctx context.Context, n Listed, open gitprov.Opener) (Repo, error) {
 	default:
 		return failed(ctx, r, "its "+recipe.RepoDir+"/ could not be read", err)
 	}
+	// The caller's own paths come last, at the same commit, so a caller that
+	// asks for none pays no exchange beyond L8's read: the list is the one
+	// caller's own constants, and nothing a repository holds decides it.
+	for _, path := range extras {
+		e, err := readExtra(ctx, path, commit, contents, tree)
+		if err != nil {
+			return failed(ctx, r, "its "+path+" could not be read", err)
+		}
+		r.Extra = append(r.Extra, e)
+	}
 	return r, nil
+}
+
+// readExtra is one extra path's answer: a directory read through the tree read
+// (a path ending in "/"), or one file read through the contents read, both at
+// the commit the default branch resolved to. What is not there answers no files
+// rather than an error, which is the ordinary case for the two paths `fugaro
+// update` asks for — a repository that pins no plugin and one that keeps no
+// backlog. The one error is a read that failed, which is the repository's own
+// and leaves it unread (D3306: half a repository is not a repository).
+func readExtra(ctx context.Context, path, commit string, contents gitprov.ContentsReader, tree gitprov.TreeReader) (Extra, error) {
+	e := Extra{Path: path}
+	if strings.HasSuffix(path, "/") {
+		files, err := tree.Tree(ctx, path, commit, gitprov.TreeLimit{MaxFiles: MaxExtraFiles, MaxBytes: MaxExtraBytes})
+		switch {
+		case err == nil:
+			for _, f := range files {
+				e.Files = append(e.Files, File{Path: under(path, f.Path), Data: f.Data})
+			}
+			slices.SortFunc(e.Files, func(a, b File) int { return strings.Compare(a.Path, b.Path) })
+		case absent(err):
+		default:
+			return Extra{}, err
+		}
+		return e, nil
+	}
+	data, err := contents.Contents(ctx, path, commit)
+	switch {
+	case err == nil:
+		e.Files = []File{{Path: path, Data: data}}
+	case errors.Is(err, gitprov.ErrContentsEmpty):
+		// The file is there and holds nothing, which is a file all the same:
+		// the contents read refuses one because a definition read has no use
+		// for an empty definition, and what these bytes mean is the caller's
+		// to judge — an empty .claude/settings.json is a repository that pins
+		// nothing, not one nobody could read.
+		e.Files = []File{{Path: path}}
+	case absent(err):
+	default:
+		return Extra{}, err
+	}
+	return e, nil
+}
+
+// under is a tree file's path as the caller named the directory: a tree read
+// answers paths relative to the directory it read, and an extra path's answer
+// carries them where they stand in the repository ("docs/backlog/1234-x.md"),
+// so a file read at the root answers the path the adapter gave.
+func under(dir, path string) string {
+	if dir == "" || dir == "." || dir == "./" {
+		return path
+	}
+	return strings.TrimSuffix(dir, "/") + "/" + path
 }
 
 // failed is one repository's answer when a read of it did not happen: the
 // reason, unless the context is done — a cancelled read is the caller's own
 // and never a repository's, so it is returned rather than recorded (surveyRepo
-// keeps the same rule). The files a read did get before it failed are dropped:
-// half a repository is exactly what a caller must not plan from (D3306), so an
-// answer that carries Unread carries nothing else.
+// keeps the same rule). What a read did get before it failed is dropped: half a
+// repository is exactly what a caller must not plan from (D3306), so an answer
+// that carries Unread carries nothing else — the branch and the commit the
+// files would have come from included, since neither is a fact a stage that may
+// not touch this repository has any use for.
 func failed(ctx context.Context, r Repo, what string, err error) (Repo, error) {
 	if cerr := ctx.Err(); cerr != nil {
 		return Repo{}, cerr
 	}
-	r.YAML, r.Recipes = nil, nil
+	r.Branch, r.Head = "", ""
+	r.YAML, r.Recipes, r.Extra = nil, nil, nil
 	r.Unread = what + ": " + safetext.OneLine(err.Error())
 	return r, nil
 }
@@ -277,8 +404,9 @@ func cannotRead(kind, what string) string {
 }
 
 // absent reports whether err is the host's answer that what was asked for is
-// not there: a fugaro.yaml, for a repository that overrides nothing, or a
-// recipes folder, which most repositories keep none of. Neither is a repository
+// not there: a fugaro.yaml, for a repository that overrides nothing, a recipes
+// folder, which most repositories keep none of, or one of the caller's extra
+// paths, which a repository need not hold either. Neither is a repository
 // nobody could read.
 //
 // The two adapters answer it differently, and only one of them types it:

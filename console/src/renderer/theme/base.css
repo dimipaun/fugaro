@@ -826,6 +826,202 @@ code.installation-onboarding-command {
   font-family: var(--font-mono);
 }
 
+/* ---- The first-run wizard (the console-improvements plan, task SW3b) --------
+ *
+ * The five questions and the run's own feed, drawn by
+ * `console/src/renderer/wizard/wizard.ts` in place of the command line above
+ * (SW3c mounts the same screen for "Add project"). The rules sit here, beside the
+ * view they replace, because that view is this file's and a second stylesheet for
+ * one screen would be a file the bundler serves for one section.
+ *
+ * **Every selector is the class alone.** The module draws through one
+ * `make(factory, tag, class)` helper whose tag is its caller's, which is a shape
+ * the selector scan cannot read back to a tag (`theme-selectors.test.ts`'s
+ * `drawnPairs` resolves a tag from an emitter call's own literal), so a selector
+ * spelled `span.console-wizard-event-state` would be a claim nothing checks --
+ * and one class cannot be qualified with two tags anyway: `console-wizard-command`
+ * is the `code` of a command and the `p` of a step's sentence, and
+ * `console-wizard-event-text` is the `span` of one field and the `div` of a whole
+ * `left_for_you` line. The tags are the code's, and the module spells each of
+ * them once in `drawWizard` and `drawEvent`.
+ *
+ * The two states the module carries are the two this file keys on: a control held
+ * while a read is outstanding (`:disabled`) and the line that says what that read
+ * is waiting for (`.console-wizard-busy`). It keys on no attribute of the
+ * screen's own -- `data-wizard-question` and `data-wizard-event` are the tests'
+ * hooks rather than the theme's -- and it does not set the `data-busy` the theme
+ * dims a section by: the operator's own answers are not a figure being re-read,
+ * and greying the form for the hour a setup may take would be dimming the one
+ * thing on the screen they are meant to be reading.
+ */
+.console-wizard {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  width: 100%;
+}
+
+.console-wizard-lead,
+.console-wizard-answer,
+.console-wizard-busy {
+  margin: 0;
+  max-width: 48rem;
+  font-size: var(--font-size-base);
+  line-height: var(--leading-normal);
+}
+
+.console-wizard-busy {
+  color: var(--text-muted);
+}
+
+.console-wizard-questions {
+  display: grid;
+  gap: var(--space-sm);
+  width: 100%;
+  max-width: 34rem;
+}
+
+.console-wizard-question {
+  display: grid;
+  gap: var(--space-3xs);
+}
+
+.console-wizard-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--weight-medium);
+}
+
+.console-wizard-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: var(--leading-normal);
+}
+
+.console-wizard-input {
+  min-height: var(--row-height);
+  max-width: 100%;
+  padding: var(--space-2xs) var(--space-xs);
+  color: var(--text);
+  background: var(--surface-alt);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+/* A select's popup is the platform's and cannot be restyled; its options are the
+ * part that can, and without this a dark panel opens a light list wherever the
+ * platform paints the popup itself. */
+.console-wizard-option {
+  color: var(--text);
+  background: var(--surface-alt);
+}
+
+.console-wizard-submit,
+.console-wizard-follow,
+.console-wizard-copy {
+  min-height: var(--row-height);
+  padding: var(--space-2xs) var(--space-sm);
+  color: var(--text);
+  background: var(--surface-alt);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-md);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.console-wizard-submit:hover,
+.console-wizard-follow:hover,
+.console-wizard-copy:hover {
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+
+/* A press whose answer has not landed is held: the module sets `disabled` on the
+ * two controls that start a read for as long as one is outstanding, and the busy
+ * line above them says what that read is. It keeps the ring it had and changes the
+ * ring's own style, which is how §4.3 draws a control waiting on a request (the
+ * picker's buttons, `screens.css`): `--border` is the 1 px hairline and may not
+ * carry a control's extent, so the boundary is the enabled state's `--border-strong`
+ * and the dashed rule is what says "not now". */
+.console-wizard-submit:disabled,
+.console-wizard-follow:disabled {
+  color: var(--text-muted);
+  border-style: dashed;
+  cursor: default;
+}
+
+/* A Copy's label **is** the command (`copyCommandText`), so it is mono for the
+ * reason a command is: its value is that it can be compared character by
+ * character with what the operator pastes. */
+.console-wizard-copy {
+  font-family: var(--font-mono);
+}
+
+.console-wizard-attempts,
+.console-wizard-attempt,
+.console-wizard-lines {
+  display: grid;
+  gap: var(--space-2xs);
+  width: 100%;
+}
+
+.console-wizard-attempts {
+  gap: var(--space-md);
+}
+
+.console-wizard-event {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3xs) var(--space-xs);
+  padding: var(--space-2xs) var(--space-xs);
+  background: var(--surface-alt);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.console-wizard-event-kind {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.console-wizard-event-stage {
+  font-size: var(--font-size-sm);
+  font-weight: var(--weight-medium);
+}
+
+.console-wizard-event-state,
+.console-wizard-event-after {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.console-wizard-event-text {
+  display: grid;
+  flex-basis: 100%;
+  gap: var(--space-3xs);
+  font-size: var(--font-size-base);
+  line-height: var(--leading-normal);
+}
+
+.console-wizard-command {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.console-wizard-copy-refusal {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
 /* ---- The installation line, at the top of the switcher's menu ----------- */
 
 /* The line that says which installation the console is showing, in its three
@@ -976,5 +1172,17 @@ p.installation-binary {
   button.installation-issue-reveal,
   button.installation-issue-checkout {
     border-color: CanvasText;
+  }
+
+  /* The wizard's four controls (SW3b): the system paints a control's own face and
+   * text, and the class alone is what is named here for `base.css`'s reason --
+   * the module draws each of them through one tag-parameterized helper. */
+  .console-wizard-input,
+  .console-wizard-submit,
+  .console-wizard-follow,
+  .console-wizard-copy {
+    background: ButtonFace;
+    border-color: ButtonText;
+    color: ButtonText;
   }
 }

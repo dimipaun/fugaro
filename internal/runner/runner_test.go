@@ -259,6 +259,34 @@ func withFixturePins(cfg string) string {
 	return strings.Replace(cfg, "agent:\n", "agent:\n  "+fixturePins+"\n", 1)
 }
 
+// liftedRecipe is the recipe a fixture's launch now embeds (PR3, D3304): a
+// run no longer reads .fugaro/recipes/ (a task that leaves its recipe there
+// is refused at bootstrap), and every fixture below was written while it
+// did — the config names the recipe, the fixture commits the file. Embedding
+// that file's own text makes the task a launch writes once release A's
+// launcher embeds the copy the project resolves (PR2), so those tests still
+// exercise the recipe they mean to.
+//
+// It fills a task that carries no recipe of its own, and nothing else: a
+// task that names one — embedded or as repository recipe — is left exactly
+// as the test wrote it, which is what the tests about the refusal do (their
+// task is written after the harness, setSpec).
+func liftedRecipe(files map[string]string) *task.Recipe {
+	var doc struct {
+		Agent *struct {
+			Recipe string `yaml:"recipe"`
+		} `yaml:"agent"`
+	}
+	if err := yaml.Unmarshal([]byte(files["fugaro.yaml"]), &doc); err != nil || doc.Agent == nil || doc.Agent.Recipe == "" {
+		return nil
+	}
+	text, ok := files[".fugaro/recipes/"+doc.Agent.Recipe+".yaml"]
+	if !ok {
+		return nil
+	}
+	return &task.Recipe{Name: doc.Agent.Recipe, Source: string(recipe.SourceProject), SHA256: recipe.Sum([]byte(text)), YAML: text}
+}
+
 // newHarnessFiles is newHarness with extra files committed to the remote.
 func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string]string) *harness {
 	t.Helper()
@@ -283,6 +311,9 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 		// in, and every test here that gives the run a Cloud Run execution
 		// would stop on that instead of on what it is about.
 		spec = &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature"}
+	}
+	if spec.Recipe == nil {
+		spec.Recipe = liftedRecipe(files)
 	}
 	store := runstore.Open(bucket, repoSlug, spec.RunID)
 	if err := store.WriteTask(context.Background(), spec); err != nil {
@@ -330,10 +361,16 @@ func (h *harness) noBudget() {
 }
 
 // setTask replaces the task text the run bootstraps from: the bootstrap's own
-// checks read it (checkImages), and the harness's default names no file.
+// checks read it (checkImages), and the harness's default names no file. The
+// recipe the harness's own task carried stays: a test that changes the brief
+// is not a test about which recipe the task launched with.
 func (h *harness) setTask(t *testing.T, text string) {
 	t.Helper()
-	h.setSpec(t, &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: text})
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: text}
+	if prev, err := h.store.ReadTask(context.Background()); err == nil {
+		spec.Recipe = prev.Recipe
+	}
+	h.setSpec(t, spec)
 }
 
 // setSpec is setTask for a task of another shape: the run reads its mode and

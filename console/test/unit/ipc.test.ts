@@ -2140,8 +2140,11 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   'runs.summary': { since: '7d' },
   // No `path`, no `checkout`, no `dir`: the read's directory is the
   // installation's own, and this payload is the whole of what a renderer may
-  // say to it (plan GV2.1, constraint C1).
-  'plan.status': { all: false },
+  // say to it (plan GV2.1, constraint C1). `noMerges` is the second of the two
+  // booleans the Graph tab sends (IR4 of the console-fixes plan, D3217 as
+  // amended), and the well-formed payload carries it as the entry does: `false`
+  // below the flag's version floor.
+  'plan.status': { all: false, noMerges: false },
   // No `source`: the scope is optional and its absence is the read a screen
   // opens on (`all`), which is the whole of what a renderer may say to this
   // read -- there is no directory, no repository and no id it can name
@@ -2813,13 +2816,23 @@ describe('the argument schemas', () => {
     }
     // And the whole of what this operation declares, so a key that *is* admitted
     // and that could carry a directory fails here by name rather than needing a
-    // reader to notice it above.
-    expect(operationFor('plan.status').args.map((spec) => spec.key)).toEqual(['all'])
-    // The near-miss that matters more than the six above: the declared key, with
-    // a path in it. `all` is a boolean the argv builder turns into `--all`, and
-    // a string here must not become a word.
+    // reader to notice it above. **The two are `all` and `noMerges`** (the second
+    // added by IR4 of the console-fixes plan, D3217 as amended): the screen's own
+    // control and the first paint's flag, both booleans the argv builder turns
+    // into words of its own.
+    expect(operationFor('plan.status').args.map((spec) => spec.key)).toEqual(['all', 'noMerges'])
+    // The near-miss that matters more than the six above: the declared keys, with
+    // a path in them. Each is a boolean the argv builder turns into its own flag,
+    // and a string here must not become a word.
     expect(validateArguments('plan.status', { all: '/etc' }).ok).toBe(false)
     expect(validateArguments('plan.status', { all: '--all' }).ok).toBe(false)
+    expect(validateArguments('plan.status', { noMerges: '/etc' }).ok).toBe(false)
+    expect(validateArguments('plan.status', { noMerges: '--no-merges' }).ok).toBe(false)
+    // **And the argument is not a door to a word no other row may emit**: the
+    // flag it becomes is on the spawn table's own list of flag spellings
+    // (`SPAWN_FLAGS`, held in `spawn.test.ts`), so a payload that put a flag name
+    // in either key is refused here rather than stringified into an argv.
+    expect(validateArguments('plan.status', { all: '--dir', noMerges: '--dir' }).ok).toBe(false)
     // ...and the control, so the refusals above read as this operation's schema
     // rather than as a surface that refuses every path: `installation.checkout`
     // takes one, and its payload is the one place a renderer may spell it.

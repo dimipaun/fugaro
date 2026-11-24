@@ -288,6 +288,22 @@ export const EXPIRED = 'expired';
  */
 const WRITE_DIRECTION = 'inbox';
 
+/**
+ * The client's word on what it is saying, passed as the speaker port's optional
+ * second argument.
+ *
+ * The port is text in, verdict out, and this is **provenance rather than
+ * audio**: the client speaks two different things through the one port -- a
+ * reply it read and verified out of the outbox, and, when the owner's own
+ * message was not sent, the refusal sentence it looked up in `gate.js` or
+ * `licence/state.js` (S6.3). A port that keeps the conversation (`src/text`'s
+ * `transcriptSpeaker`) has no other way to tell them apart, and a refusal
+ * recorded as the agent's line would be words the agent never said. A port is
+ * free to ignore it -- the pipeline adapter and `MemorySpeaker` do -- because
+ * the only answer the client needs is whether the owner heard it.
+ */
+const REFUSAL_SPEECH = Object.freeze({ refusal: true });
+
 function refuse(code, field) {
   return Object.freeze({ ok: false, code, field });
 }
@@ -437,7 +453,9 @@ function readOutbox(value) {
  *   `isOnline()`. **Optional, and the default refuses**: a client built without
  *   one uses `UNWIRED_CONNECTION` and answers `no-connection`, because the
  *   unsafe default is the one that sends into the SDK's queue
- * @param {object} options.speaker the audio port (P3.6's stub of P3.4): `speak(text)`
+ * @param {object} options.speaker the audio port (P3.6's stub of P3.4):
+ *   `speak(text, speech?)`, where the optional second argument is the client's
+ *   word on what it is saying -- see `REFUSAL_SPEECH`
  * @param {() => number} options.now D117's server-anchored now, in ms
  * @param {() => string} options.newId a fresh message id per call
  * @param {string[]} options.secrets P1.3's secret list (D118)
@@ -615,7 +633,9 @@ export function createMailboxClient(options = {}) {
     // `licence-lapsed` -- so the order of the lookup cannot decide anything, and
     // it is written this way so that it stays that way.
     const message = offlineSpeech(verdict.code) ?? licenceSpeech(verdict.code);
-    const said = await speaker.speak(message);
+    // Marked as the app's own speech, so a port that keeps a transcript does
+    // not record it as the agent's reply (`REFUSAL_SPEECH` above).
+    const said = await speaker.speak(message, REFUSAL_SPEECH);
     if (keepText) unsent.push(Object.freeze({ text, at, code: verdict.code }));
     return Object.freeze({
       ok: false,
@@ -654,7 +674,13 @@ export function createMailboxClient(options = {}) {
    *   the caller's classification that lets the lapse refuse it (see "The lapse"
    *   above). Neither option is written to the record: what the record carries is
    *   P6.3's.
-   * @returns {Promise<{ok: true, id: string, at: number}
+   * The accepted verdict carries **the redacted text** as `text`. D118 makes
+   * redaction this file's rule and no other's, so a caller that has to show or
+   * keep what was sent -- a conversation, D167's `unsent()` parity -- is given
+   * the string that was signed rather than left to redact it again, or to
+   * record the owner's raw words and put a secret on a screen.
+   *
+   * @returns {Promise<{ok: true, id: string, at: number, text: string}
    *   | {ok: false, code: string, field: string|null}>}
    */
   async function send(text, options) {
@@ -770,7 +796,7 @@ export function createMailboxClient(options = {}) {
       // is not in `outbound`, so `flush` cannot re-send it, `pending()` cannot
       // offer it and nothing here will ever write it a second time.
       if (!isAction) outbound.set(id, { record, landed: true });
-      return Object.freeze({ ok: true, id, at });
+      return Object.freeze({ ok: true, id, at, text: body.text });
     }
     // It did not land. The record is kept VERBATIM for `flush` -- never
     // re-minted, never re-stamped (P1.1's caller duty: "never retry an id with
