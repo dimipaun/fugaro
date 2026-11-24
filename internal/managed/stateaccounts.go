@@ -165,6 +165,16 @@ var stateAssetTypes = map[string]string{
 	"google_firebase_project":                "firebase.googleapis.com/FirebaseProject",
 	"google_firebase_database_instance":      "firebasedatabase.googleapis.com/Instance",
 	"google_firestore_database":              "firestore.googleapis.com/Database",
+	// The run index's composite indexes (docs/console-fixes/contract-index.md,
+	// C-INDEX; plan task RI2), applied by the owner-run Firebase root: the
+	// state's id is "projects/<p>/databases/(default)/collectionGroups/<c>/
+	// indexes/<id>", the provider's own id of an index, so the entry accounts
+	// for it by name like the database's beside it. The asset type is the
+	// documented one for a Firestore index and NOT a live observation, with
+	// the same caveat as the compute NAT below: if it is wrong the entry
+	// matches nothing, which leaves the index foreign — the fallback
+	// direction, never a wrong account.
+	"google_firestore_index": "firestore.googleapis.com/Index",
 	// The compute module the Batch backend's own root applies
 	// (deploy/terraform/gcp/modules/compute/network.tf:58,75,84, each with
 	// project = var.project): the deny-all ingress rule on the run-class

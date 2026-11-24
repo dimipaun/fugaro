@@ -1833,3 +1833,185 @@ func TestCredentialIsReadFromTheNamedEntrysRepos(t *testing.T) {
 		}
 	})
 }
+
+// wipCommit adds a commit to the checkout the test is running in and returns
+// it: a commit the fixture's remote does not have, which is the state a build
+// of an entry pinned to the checkout's HEAD is refused in.
+func wipCommit(t *testing.T) string {
+	t.Helper()
+	testutil.WriteFiles(t, ".", map[string]string{"wip.txt": "wip\n"})
+	testutil.Git(t, ".", "add", "wip.txt")
+	testutil.Git(t, ".", "commit", "--quiet", "-m", "wip")
+	return testutil.Git(t, ".", "rev-parse", "HEAD")
+}
+
+// stubRemoteHasCommit answers the remote half of the unpushed-commit check
+// with found, for a test whose fixture's origin is a URL no git in the test
+// can read.
+func stubRemoteHasCommit(t *testing.T, found bool) {
+	t.Helper()
+	was := remoteHasCommit
+	remoteHasCommit = func(context.Context, string, string, string) (bool, error) { return found, nil }
+	t.Cleanup(func() { remoteHasCommit = was })
+}
+
+// stubRemoteUnreadable answers the remote half of the unpushed-commit check
+// with the error of a remote git cannot reach, which is inconclusive rather
+// than an answer about the commit.
+func stubRemoteUnreadable(t *testing.T) {
+	t.Helper()
+	was := remoteHasCommit
+	remoteHasCommit = func(context.Context, string, string, string) (bool, error) {
+		return false, errors.New("could not read from remote repository")
+	}
+	t.Cleanup(func() { remoteHasCommit = was })
+}
+
+// TestCatalogBuildRefusesACommitOnlyInTheCheckout: a build clones the commit
+// it is pinned to, so a checkout whose HEAD the remote does not have is
+// refused where that is known — before the entry's definition is copied, a
+// lease taken or a build submitted — rather than billed and failed two minutes
+// later on the clone step's fetch (the owner's build of 2026-11-23).
+func TestCatalogBuildRefusesACommitOnlyInTheCheckout(t *testing.T) {
+	fb, gcs, _ := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+	stubRemoteHasCommit(t, false)
+	commit := wipCommit(t)
+
+	_, _, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v: a commit only this checkout has is refused", ExitCode(err), err)
+	}
+	for _, want := range []string{commit, "exists only in this checkout", "push the branch", "git switch main && git pull --ff-only"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal is %v, want it to say %q", err, want)
+		}
+	}
+	if n := buildPosts(fb); n != 0 {
+		t.Errorf("the refusal submitted %d Cloud Build builds, want none", n)
+	}
+	if !catalogCopyAbsent(t, gcs, "tools") {
+		t.Error("the refusal wrote the entry's definition into the runs bucket")
+	}
+}
+
+// TestCatalogBuildProceedsWhenTheRemoteHasTheCommit: the check asks the remote
+// and not this machine's remote-tracking refs alone, so a commit the checkout
+// holds no ref of — fetched into it by hand, a pull request's head, one pushed
+// from another checkout — is submitted exactly as it was before this check
+// existed.
+func TestCatalogBuildProceedsWhenTheRemoteHasTheCommit(t *testing.T) {
+	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
+	f.sm.AllowAccess()
+	putSecretID(t, f.sm, mustSlug(gitprov.KindBitbucket, "acme/app"), config.BitbucketSecret, []byte(catalogTokenPlaceholder))
+	stubRemoteHasCommit(t, true)
+	wipCommit(t)
+
+	if _, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1"); err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	if n := buildPosts(fb); n != 1 {
+		t.Errorf("a commit the remote has submitted %d builds, want one", n)
+	}
+}
+
+// TestCatalogBuildProceedsWhenTheRemoteCannotBeRead: only a definite answer
+// refuses. A remote git cannot read — no network, a host that does not answer,
+// a credential that is not there — says nothing about the commit, and a build
+// refused over it would be one that would have worked, so today's behaviour
+// stands and the build is submitted.
+func TestCatalogBuildProceedsWhenTheRemoteCannotBeRead(t *testing.T) {
+	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
+	f.sm.AllowAccess()
+	putSecretID(t, f.sm, mustSlug(gitprov.KindBitbucket, "acme/app"), config.BitbucketSecret, []byte(catalogTokenPlaceholder))
+	stubRemoteUnreadable(t)
+	wipCommit(t)
+
+	if _, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1"); err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	if n := buildPosts(fb); n != 1 {
+		t.Errorf("a remote that could not be read submitted %d builds, want one", n)
+	}
+}
+
+// TestCatalogBuildIsNotRefusedOverACommitItDoesNotClone: only a build pinned
+// to the checkout's HEAD is refused when the remote does not have it. A
+// prebuilt entry's run smokes the reference its own entry names and clones
+// nothing, and a context entry's build is pinned to the commit its copy
+// resolved (D1395), so a checkout standing on a wip commit still submits both.
+func TestCatalogBuildIsNotRefusedOverACommitItDoesNotClone(t *testing.T) {
+	t.Run("a prebuilt entry is smoked", func(t *testing.T) {
+		fb, _, _ := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+		stubRemoteHasCommit(t, false)
+		wipCommit(t)
+		if _, stderr, err := executeBuild(t, "image", "build", "prebuilt", "--base", "b:1"); err != nil {
+			t.Fatalf("%v (%s)", err, stderr)
+		}
+		if n := buildPosts(fb); n != 1 {
+			t.Errorf("smoking a prebuilt entry submitted %d builds, want one", n)
+		}
+	})
+	t.Run("a context entry is built at its own commit", func(t *testing.T) {
+		fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildContextYAML)
+		stubRemoteHasCommit(t, false)
+		wipCommit(t)
+		const sha = "3f2b1c0d9e8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c"
+		tree := map[string]string{"Dockerfile": "FROM example.invalid/base\n", "src/main.go": "package main\n"}
+		atCommit := map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched}
+		for p, data := range tree {
+			atCommit["ci/"+p] = data
+		}
+		stubCatalogProviderState(t, fake.State{
+			Branches: map[string]map[string]string{"main": {".fugaro/base.Dockerfile": catalogBuildFetched}},
+			Commits:  map[string]string{"main": sha},
+			Trees:    map[string]map[string]string{sha: atCommit},
+		})
+		f.sm.AllowAccess()
+		putSecretID(t, f.sm, mustSlug(gitprov.KindBitbucket, "acme/app"), config.BitbucketSecret, []byte(catalogTokenPlaceholder))
+		if _, stderr, err := executeBuild(t, "image", "build", "base", "--base", "b:1"); err != nil {
+			t.Fatalf("%v (%s)", err, stderr)
+		}
+		if n := buildPosts(fb); n != 1 {
+			t.Errorf("building a context entry submitted %d builds, want one", n)
+		}
+	})
+}
+
+// TestCommitOnRemoteAnswersFromTheRefsAndThenTheRemote: the check reads the
+// checkout's own remote-tracking refs first — the shape a commit pushed from
+// this checkout is in — and asks the remote itself only where none of them
+// contains the commit, which is where a commit pushed from another checkout,
+// or fetched into this one without a ref, is found.
+func TestCommitOnRemoteAnswersFromTheRefsAndThenTheRemote(t *testing.T) {
+	testutil.IsolateGit(t)
+	remote := testutil.NewRemote(t, map[string]string{"a.txt": "a\n"})
+	dir := filepath.Join(t.TempDir(), "app")
+	testutil.Git(t, filepath.Dir(dir), "clone", "--quiet", remote, dir)
+	ctx := context.Background()
+	head := testutil.Git(t, dir, "rev-parse", "HEAD")
+	if found, known := commitOnRemote(ctx, dir, head); !found || !known {
+		t.Errorf("the clone's own HEAD (%s) is read as found=%v known=%v, want both true", head, found, known)
+	}
+	// A commit pushed from elsewhere: the remote publishes it as a branch tip
+	// and this checkout holds no remote-tracking ref of that branch.
+	testutil.WriteFiles(t, dir, map[string]string{"b.txt": "b\n"})
+	testutil.Git(t, dir, "add", "b.txt")
+	testutil.Git(t, dir, "commit", "--quiet", "-m", "elsewhere")
+	pushed := testutil.Git(t, dir, "rev-parse", "HEAD")
+	testutil.Git(t, dir, "push", "--quiet", "origin", "HEAD:refs/heads/elsewhere")
+	testutil.Git(t, dir, "update-ref", "-d", "refs/remotes/origin/elsewhere")
+	if found, known := commitOnRemote(ctx, dir, pushed); !found || !known {
+		t.Errorf("a commit the remote publishes (%s) is read as found=%v known=%v, want both true", pushed, found, known)
+	}
+	// A commit only this checkout has: nothing local contains it and the remote
+	// publishes no ref pointing at it.
+	testutil.WriteFiles(t, dir, map[string]string{"c.txt": "c\n"})
+	testutil.Git(t, dir, "add", "c.txt")
+	testutil.Git(t, dir, "commit", "--quiet", "-m", "wip")
+	wip := testutil.Git(t, dir, "rev-parse", "HEAD")
+	if found, known := commitOnRemote(ctx, dir, wip); found || !known {
+		t.Errorf("the wip commit %s is read as found=%v known=%v, want found=false known=true", wip, found, known)
+	}
+}

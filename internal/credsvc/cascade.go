@@ -243,18 +243,24 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 // when the call carries a slip naming one and the member's switch serves it.
 //
 // It is asked of the SCOPE and never of the bundle, and only where the scope is
-// a workspace's (PersonScope): an installation's scope does not implement that
-// interface, so an installation answers no candidate here and its path is
-// exactly what it was (C2, WC5's A3). The slip handed over is the call's
-// VERIFIED binding — the one the fence above reads, and never anything the call
-// says — which is the whole of what C2's reader is given.
+// a workspace's: an installation's scope hands out no person half, so an
+// installation answers no candidate here and its path is exactly what it was
+// (C2, WC5's A3). **This is the ONE place the candidate is assembled** — an
+// entry prepended anywhere else would be one more member of its tier, served by
+// the tie-break's turn or a pool's rotation instead of outright (D3144) — and
+// it is the list the class the reader answers travels out of. The slip handed
+// over is the call's VERIFIED binding — the one the fence above reads, and never
+// anything the call says — which is the whole of what C2's reader is given.
 //
 // A failure here is the reader's own refusal and it travels as this call's
 // (the switch off, a policy or a roster that could not be read, R11): it is
 // returned rather than swallowed, because a call under a slip that names a
-// personal token must be refused where the token cannot be served.
+// personal token must be refused where the token cannot be served, and the
+// sentence the reader answered is the one the run is refused with — the
+// `poolRefusal` this call's carries reaches `candidates`' own branch and is
+// answered verbatim, never collapsed into a sentence of the call path's.
 func (s *Server) personalCandidate(ctx context.Context, sc Scope) (creds.Credential, bool, error) {
-	ps, ok := sc.(PersonScope)
+	ps, ok := personHalfOf(sc)
 	if !ok {
 		return creds.Credential{}, false, nil
 	}
@@ -272,6 +278,29 @@ func (s *Server) personalCandidate(ctx context.Context, sc Scope) (creds.Credent
 		return creds.Credential{}, false, nil
 	}
 	return r.Personal(ctx, creds.Slip{ID: b.id, Owner: b.owner, Allowed: b.allowed})
+}
+
+// personHalfOf answers the workspace's own half of one call's scope, and whether
+// this scope has one at all.
+//
+// It has TWO entries because the merged halves reach it two ways, and C2 admits
+// both. A DEPLOYMENT's scope hands its half out and declares none of the four
+// methods itself (WC4's Persons, which the slip routes dispatch on too, and
+// whose guard test pins the four to the half's own type: a second declarer would
+// be a second deployment that could serve a person's token) — so a scope is
+// asked through the hand-out first. A scope that declares C2's four methods
+// itself IS the half, which is the shape C2's own words describe ("a second
+// interface a scope may also implement") and the shape WC5's fixture has.
+//
+// A scope that answers neither — every installation's, and a workspace's before
+// its half is wired — hands out no half, and `personalCandidate` is what turns
+// that into "no candidate" (C2: absent serves nothing rather than failing).
+func personHalfOf(sc Scope) (PersonScope, bool) {
+	if ps, ok := personScopeOf(sc); ok {
+		return ps, true
+	}
+	direct, ok := sc.(PersonScope)
+	return direct, ok
 }
 
 // ownNamedEntries adds this repository's own named entries to the list the
