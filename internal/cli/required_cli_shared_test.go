@@ -35,6 +35,7 @@ func fenceShared(t *testing.T, min string) (*fenceRig, *cloudFixture) {
 	t.Helper()
 	f := sharedEnd2End(t)
 	t.Chdir(gitCheckout(t, filepath.Join(f.dir, "app"), "version: 1\nproject: aurora\ngcp_project: proj-1234\n"))
+	withVersion(t, fenceVersion)
 	return newFenceRig(t).above(min), f
 }
 
@@ -68,6 +69,18 @@ func fenceNotes(s string) []string {
 		}
 	}
 	return notes
+}
+
+// fenceStampNotes is the notes that are the fence's own line, told from the
+// other notes a shared-config read prints beside its output.
+func fenceStampNotes(s string) []string {
+	var lines []string
+	for _, note := range fenceNotes(s) {
+		if strings.Contains(note, "requires fugaro") {
+			lines = append(lines, note)
+		}
+	}
+	return lines
 }
 
 // TestFenceCoversTheSharedConfigFallback: a project this machine has no local
@@ -116,11 +129,11 @@ func TestDoctorOnTheSharedConfigPassesBelowTheStamp(t *testing.T) {
 	}
 }
 
-// TestRunLsOnTheSharedConfigPassesBelowTheStamp: runs ls is a read the console
+// TestRunsLsOnTheSharedConfigPassesBelowTheStamp: runs ls is a read the console
 // spawns, so it passes below the stamp with one line beside its answer — here
 // through the shared config, where the line comes from selectProject's own
 // check rather than the hook's.
-func TestRunLsOnTheSharedConfigPassesBelowTheStamp(t *testing.T) {
+func TestRunsLsOnTheSharedConfigPassesBelowTheStamp(t *testing.T) {
 	rig, _ := fenceShared(t, fenceAbove)
 
 	out, errOut, err := execute(t, "runs", "ls")
@@ -131,8 +144,12 @@ func TestRunLsOnTheSharedConfigPassesBelowTheStamp(t *testing.T) {
 		t.Errorf("stdout = %q, want the run list: a console read's answer must survive the fence", out)
 	}
 	notes := fenceNotes(errOut)
-	if len(notes) != 1 || !strings.Contains(notes[0], fenceAbove) {
-		t.Errorf("the fence's lines in stderr = %q, want exactly one naming %s:\n%s", notes, fenceAbove, errOut)
+	if len(notes) != 2 {
+		t.Errorf("stderr carries %d notes, want the fence's and the shared config's:\n%s", len(notes), errOut)
+	}
+	stamps := fenceStampNotes(errOut)
+	if len(stamps) != 1 || !strings.Contains(stamps[0], fenceAbove) {
+		t.Errorf("the fence's lines in stderr = %q, want exactly one naming %s:\n%s", stamps, fenceAbove, errOut)
 	}
 	if len(rig.queries) != 1 {
 		t.Errorf("the fence read the stamp %v, want one read", rig.queries)

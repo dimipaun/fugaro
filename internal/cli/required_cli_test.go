@@ -126,11 +126,11 @@ func fenceCommandAt(root *cobra.Command, path string) *cobra.Command {
 // to tell a path that is merely absent from this build from one that no build
 // has, which is a typo in a table.
 var fenceEEOnly = map[string]bool{
-	"fugaro coordinator serve":  true,
-	"fugaro coordinator status": true,
-	"fugaro coordinator show":   true,
+	"fugaro coordinator serve":   true,
+	"fugaro coordinator status":  true,
+	"fugaro coordinator show":    true,
 	"fugaro coordinator intents": true,
-	"fugaro orchestrator map":   true,
+	"fugaro orchestrator map":    true,
 }
 
 // fenceConfigFor writes project name's local config with a budget block naming
@@ -235,6 +235,16 @@ func TestEveryCommandIsFencedOrExempt(t *testing.T) {
 		}
 	}
 	walk(root)
+
+	// And a command added tomorrow is fenced: the table is the whole of the
+	// exemption, so a path nobody wrote down gets the default rather than
+	// being unfenced because nobody thought about it.
+	stranger := &cobra.Command{Use: "brandnew"}
+	parent := &cobra.Command{Use: "fugaro"}
+	parent.AddCommand(stranger)
+	if v := fenceVerdictFor(stranger); v != fenceFenced {
+		t.Errorf("a command in no table is %v, want fenced: the fence is the default", v)
+	}
 
 	// The two tables name commands by path, and a path no command has is an
 	// exemption that silently stopped applying — a renamed command would be
