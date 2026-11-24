@@ -7030,6 +7030,7 @@
         "docs/central-orchestrator/reconciliation.md",
         "docs/checkout.md",
         "docs/checkpoint-pushes/**",
+        "docs/ci-affected-tests/README.md",
         "docs/cli-output-console-graph/README.md",
         "docs/cli-output-console-graph/implementation-plan-graph.md",
         "docs/cli-output-console-graph/implementation-plan-output.md",
