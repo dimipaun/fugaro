@@ -601,10 +601,14 @@ var mobileAuthProviderSymbols = map[string][]string{
 	"mobile/src/app-config.test.js": {"no reverse-DNS identity is committed here"},
 	"mobile/app.config.js":          {"export function resolveConfig(", "export const ID_VARIABLES = Object.freeze({"},
 	// The Firebase packages the app carries today -- which is why the fence is
-	// "no provider and no Auth package" rather than "no Firebase".
+	// "no provider and no Auth package" rather than "no Firebase". Three, since
+	// the owner's ruling of 2026-10-30 (D731) dropped Analytics from the app
+	// (review-levels re-plan, task T3.1), and the document's sentence moves
+	// with the manifest.
 	"mobile/package.json": {
-		"\"@react-native-firebase/app\"", "\"@react-native-firebase/analytics\"",
+		"\"@react-native-firebase/app\"",
 		"\"@react-native-firebase/crashlytics\"",
+		"\"@react-native-firebase/messaging\"",
 	},
 	// Identity Platform is not a resource, and the workspace's own project is the
 	// one where the pin lives rather than the refusal.
@@ -828,12 +832,15 @@ func TestDocsMobileAuthProviderIsRefusedNotPlanned(t *testing.T) {
 		t.Fatalf("%s read through the ruling scan carries none of its vocabulary, and it records the owner's answer under each of D221-D236: the scan, not the provider document, is what broke", mobileAuthRecon)
 	}
 
-	// The document's own claim about the app, held to the tree: the three
-	// packages are the control (the file is really read), and the auth package
-	// is the claim.
+	// The document's own claim about the app, held to the tree: the package the
+	// document names first is the control (the file is really read), and the
+	// auth package is the claim.
 	pkg := readDoc(t, "mobile/package.json")
 	if !strings.Contains(pkg, "@react-native-firebase/app") {
 		t.Errorf("mobile/package.json no longer carries @react-native-firebase/app, which %s names as what the app does carry: the check below would pass on a file that was not read", mobileAuthProvider)
+	}
+	if strings.Contains(pkg, "@react-native-firebase/analytics") {
+		t.Errorf("mobile/package.json declares @react-native-firebase/analytics, and %s names the two packages the app carries: the owner's ruling of 2026-10-30 (D731) dropped Analytics from the app (review-levels re-plan, task T3.1), so the document and the manifest move together", mobileAuthProvider)
 	}
 	if strings.Contains(pkg, "firebase/auth") {
 		t.Errorf("mobile/package.json carries a Firebase Auth package, and %s states that it lists none: that is the app's half of D221 -- no provider session and no Auth package -- and a path that took D221's alternative changes this document in the same change", mobileAuthProvider)

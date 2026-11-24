@@ -81,8 +81,9 @@ owner in Google Cloud and in Entra ID, and the spec's own sentence — *"Each pr
 Fugaro app's OAuth client ID as an allowed client, which project setup handles once"* — is asking
 for an `init`/Terraform surface that does not exist. What **does** exist now, and did not when
 [reconciliation.md](reconciliation.md) was written, is the app's side of it: the app carries Firebase
-through three `@react-native-firebase` packages (`mobile/package.json`: `app`, `analytics`,
-`crashlytics`), `mobile/app.config.js` registers their config plugins and points them at the two
+through three `@react-native-firebase` packages (`mobile/package.json`: `app`, `crashlytics`,
+`messaging` — four until the owner's ruling of 2026-10-30, D731, dropped Analytics from the app),
+`mobile/app.config.js` registers their config plugins and points them at the two
 native config files, and those files — `google-services.json` for Android and
 `GoogleService-Info.plist` for iOS — are **the owner's**, written by the Firebase console, named in
 `mobile/.gitignore` and delivered to a build as EAS **file** environment variables.
@@ -97,7 +98,8 @@ D232 price.
 ### 2.3 The authorised domains
 
 `firebase.json` carries hosting and headers and **no `auth` block**; `mobile/firebase.json` carries
-the app's Analytics settings and no `auth` block either. The action URL's host and every
+the app's Crashlytics and Messaging switches (`crashlytics_auto_collection_enabled: false` and the
+two Messaging keys; the Analytics keys left with D731's removal) and no `auth` block either. The action URL's host and every
 dynamic-link host are per-project console state, added on top of what Terraform applies — which
 means the path puts a **hand-made step in every project**, immediately after `fugaro setup`, that
 nothing in this tree checks for and no convergence repairs.

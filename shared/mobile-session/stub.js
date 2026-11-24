@@ -40,6 +40,9 @@ export const STUB_COSTLY_MODES = Object.freeze(['pro', 'critical']);
 /** The stub project's auto-compaction threshold: a fraction of the window. */
 export const STUB_COMPACTION_THRESHOLD = 0.4;
 
+/** Whether the stub project's app may send crash reports: P6's default, on. */
+export const STUB_CRASH_REPORTS = true;
+
 // Ed25519's signature length, which is what the device key's signature is. The
 // stub's vector is a repeated byte: signature-SHAPED and nothing more, so a
 // caller that checked a value against it would be checking a constant.
@@ -83,6 +86,7 @@ export function stubSession(overrides = {}) {
     costly_modes: [...STUB_COSTLY_MODES],
     biometric_on_costly: false,
     compaction_threshold: STUB_COMPACTION_THRESHOLD,
+    crash_reports: STUB_CRASH_REPORTS,
     ...policyOverride,
   };
 
