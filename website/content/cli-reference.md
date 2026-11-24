@@ -8679,6 +8679,7 @@ Subcommands:
 
 - `fugaro runs digest` -- Write a closed period's report of this repository, or print the stored one
 - `fugaro runs ls` -- List runs with their status, stage, cost and PR
+- `fugaro runs reindex` -- Rebuild the run index from the runs bucket
 - `fugaro runs reports` -- Write every repository's closed-period reports into the runs bucket (the project's reports job)
 - `fugaro runs show` -- Show a run's chain and what is left of its limits
 - `fugaro runs stats` -- Aggregate run records by the person who started each run
@@ -8906,6 +8907,46 @@ Flags:
 | `--state` | string | "" | no | only runs in this state, a run's or its pull request's (cancelled, error, failed, halted, infra_error, launching, pending, running, succeeded, unlaunched, unreviewed, live, ready, stalled) |
 | `--stream` | bool | `false` | no | with --json: one line per run, then a line saying how many there were |
 | `--watch` | bool | `false` | no | redraw until every run has settled |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro runs reindex`
+
+Rebuild the run index from the runs bucket
+
+Rebuild the run index: mark it incomplete, then walk every run in the runs
+bucket into it and recompute the summary (RI5).
+
+The mark is written first and is the part that always lands: from it, every
+later sweep of the history job continues the walk on its own until it reaches
+the end of history, with no execution started by the job and no timeout
+overridden. Then one execution is started in the job's --reindex mode, which
+is the pass that walks now; a caller who may not start the job -- only the
+installation's own scheduler account may -- gets one line saying so, and the
+walk is carried by the next sweep instead.
+
+The walk is resumable: a pass that runs out of time leaves its position
+beside the writer lease, and the next pass continues from there rather than
+starting over. A walk that is already going is left alone: its own fresh
+claim is what says so, and nothing is started.
+
+A reindex asks nothing of any run: a run in flight is neither waited for nor
+touched, because the walk reads the runs bucket and never writes a run's own
+objects.
+
+Usage: `fugaro runs reindex`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for reindex |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 

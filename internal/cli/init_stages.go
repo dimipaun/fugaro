@@ -668,6 +668,14 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// one step here that reads the checkout this run was started in, and the one
 	// that does nothing at all outside one.
 	e.foldBacklog(ctx)
+	// And RI5's: the run index an installation of an earlier release has never
+	// built, marked for a rebuild and started once (update_runindex.go). It is
+	// here for the reason the six above are -- the converge has applied
+	// everything it had, so the installation this run leaves behind is the one
+	// whose index is walked -- and it returns no error either: the index is a
+	// derived object, the mark it leaves is what every later sweep continues on
+	// its own, and failing an upgrade over one is what the HARD RULE forbids.
+	e.reindexRunIndex(ctx)
 	// And T-RU5's, the sixth and last: what this release fixes about the
 	// project's filed issues, which is a step of the run and not of the door
 	// (update_resolved.go) because --json's document carries it and is printed

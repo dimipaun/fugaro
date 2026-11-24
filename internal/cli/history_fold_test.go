@@ -330,3 +330,74 @@ func TestStaleFoldMarksIncomplete(t *testing.T) {
 		})
 	}
 }
+
+// TestSweepDuringReindexStillSweeps is RI5's edge with the rest of the job: a
+// reindex holding the index's writer lease stops the fold and nothing else. The
+// crash sweep is the sweep's own work and runs anyway (D12) -- a registry entry
+// a dead run left behind is removed exactly as it is when no walk is going --
+// and the rollover is a separate execution that never read this lease at all.
+//
+// What the sweep may not do is fold: the summary is a sum over the entries, and
+// a fold beside a walk adds the same run's delta to a figure both of them read.
+func TestSweepDuringReindexStillSweeps(t *testing.T) {
+	f := newFoldFixture(t)
+	// The fixture's clock is the database's too, so a claim written from it is
+	// judged the way the sweep judges one.
+	f.db.SetClock(func() time.Time { return f.now })
+
+	// A crashed run for the crash sweep: a registry entry with a dead
+	// heartbeat, and no execution of the platform's to say otherwise.
+	crashed := "20261002-090000-aaaa"
+	f.db.Set("agents/"+appSlug+"/"+crashed, map[string]any{
+		"repo": "acme/app", "workflow": "web", "requestedBy": "dimi@example.invalid",
+		"startedAt": f.now.Add(-time.Hour).UnixMilli(), "updatedAt": f.now.Add(-time.Hour).UnixMilli(),
+	})
+	// A run the fold would write if it ran: its registry heartbeat is fresh,
+	// so the crash sweep keeps it, and its own records are in the bucket.
+	f.db.Set("agents/"+appSlug+"/"+foldRunOne, map[string]any{
+		"repo": "acme/app", "workflow": "web", "requestedBy": "dimi@example.invalid",
+		"startedAt": f.now.Add(-time.Minute).UnixMilli(), "updatedAt": f.now.Add(-time.Minute).UnixMilli(),
+	})
+	f.run(foldRunOne, runstore.StatusSucceeded, f.now.Add(-3*time.Hour), foldCost(3.5, 1.0, 0.25, true))
+
+	// The walk in flight: a fresh claim, naming the execution holding it, with
+	// the position it has reached.
+	at := f.now.UTC()
+	f.db.Set(runindex.PathLease, map[string]any{
+		"holder":     "fugaro-history-xyz12",
+		"at":         at.Format(time.RFC3339Nano),
+		"expires_at": at.Add(runindex.LeaseTTL).Format(time.RFC3339Nano),
+		"cursor":     runindex.Cursor{Slug: appSlug, RunID: foldRunTwo}.Encode(),
+	})
+
+	out, stderr, err := execute(t, "budget", "history", "--sweep")
+	if err != nil {
+		t.Fatalf("err = %v, stderr = %q", err, stderr)
+	}
+	// The crash sweep ran: the dead run's registry entry is gone.
+	if got := f.db.Value("agents/" + appSlug + "/" + crashed); got != nil {
+		t.Fatalf("a reindex stopped the crash sweep: %v", got)
+	}
+	if !strings.Contains(out, "sweep: 1 removed") {
+		t.Fatalf("the sweep did not remove the crashed run: %q", out)
+	}
+	// The fold did not: the summary and the entries are exactly as they were,
+	// and the sweep says who holds the lease.
+	if !strings.Contains(out, "index: not folded: fugaro-history-xyz12 holds the writer lease") {
+		t.Fatalf("the sweep does not say the fold was skipped: %q", out)
+	}
+	if _, ok := f.fs.Value(runindex.EntriesCollection, foldRunOne); ok {
+		t.Fatal("the sweep folded a run while a reindex held the lease")
+	}
+	if _, ok := f.fs.Value(runindex.SummaryCollection, runindex.SummaryDocument); ok {
+		t.Fatal("the sweep wrote the summary while a reindex held the lease")
+	}
+	if _, ok := f.fs.Value(runindex.EntriesCollection, foldRunTwo); ok {
+		t.Fatal("the sweep walked the cursor a reindex holds")
+	}
+	// The claim is left exactly as it stands: the execution walking it keeps
+	// the lease it is using.
+	if got := f.db.Value(runindex.PathLease); got == nil {
+		t.Fatal("the sweep freed the lease a reindex holds")
+	}
+}
