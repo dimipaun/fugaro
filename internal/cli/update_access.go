@@ -423,13 +423,13 @@ const accessNoBackend = "this installation has no Firebase budget backend, so it
 // migration's own computation, which is the installation's outputs, so the
 // apply carries the installation's roster either way — the node is the record
 // that is missing, and the next update by an owner writes it.
-const accessNeedsAdmin = "this run could not write the grants node, which needs roles/firebasedatabase.admin — held by the project's owners, editors and budget admins: the operators and admins this run applies are the installation's own lists, and a project Owner runs fugaro update once to migrate them into the node"
+const accessNeedsAdmin = "could not write the grants node (needs roles/firebasedatabase.admin): a project Owner runs `fugaro update` once to move the roles into it"
 
 // accessFlagsNeedAdmin is the refusal a run's own --operator/--admin gets when
 // it cannot be landed: unlike the migration, this one is not a step the run may
 // carry on without. An operator who named a list asked for a change to a role,
 // and a change that cannot be written may not look applied.
-const accessFlagsNeedAdmin = "the grants node cannot be written with your credentials: writing it needs roles/firebasedatabase.admin, which the project's owners, editors and budget admins hold. A project Owner runs fugaro update on this installation, or adds you to terraform.budget_admins (fugaro update --budget-admin)"
+const accessFlagsNeedAdmin = "cannot write the grants node (needs roles/firebasedatabase.admin): a project Owner runs `fugaro update`, or runs `fugaro update --budget-admin` for you"
 
 // accessNoOutputs is the warning a migration gets when the installation's own
 // outputs cannot be read: the migration has no roster to write the node from,
@@ -438,7 +438,7 @@ const accessFlagsNeedAdmin = "the grants node cannot be written with your creden
 // bucket may not be the thing that fails it — and the state is the one the
 // installation was in before this release, so nothing is lost by waiting for a
 // later update, which is what the sentence says.
-const accessNoOutputs = "the installation's own outputs could not be read, so its roles were not migrated into the grants node: the operators and admins stay the local config's lists, and the next fugaro update migrates them"
+const accessNoOutputs = "the installation's own outputs could not be read, so its roles were not migrated into the grants node: the next fugaro update does it"
 
 // accessStale is what a migration says when this machine's copy of the two
 // lists is not what the installation holds. It is not fatal and it is not
@@ -446,7 +446,7 @@ const accessNoOutputs = "the installation's own outputs could not be read, so it
 // by hand or by a door this release does not move is the one that would revoke
 // a member — and the sentence names both lists, so an operator who edited the
 // file sees what happened rather than finding it gone.
-const accessStale = "this machine's %s is not what the installation's own outputs list, so this run migrates the installation's: the config lists %s, the installation lists %s"
+const accessStale = "this machine's %s is not what the installation lists, so this run migrates the installation's: the config lists %s, it lists %s"
 
 // migrateAccess computes the grants node for an installation whose lists the
 // node has never held — the caller has read the marker and found it unset
@@ -644,7 +644,7 @@ func (e *initEngine) landMark(ctx context.Context) error {
 // either. Nothing is lost by waiting — the installation's lists hold no member
 // the node could rank, so this run applies the roster it read whatever the
 // marker says — and the next update by an owner is what records it.
-const accessMarkNeedsAdmin = "this run could not record that the installation's member lists have been migrated, and recording it needs roles/firebasedatabase.admin, the write the grants node itself needs: nothing in this run depends on it, the installation's roles are its member lists either way, and the next fugaro update by a project Owner records it"
+const accessMarkNeedsAdmin = "could not record the member-lists migration (needs roles/firebasedatabase.admin): the next fugaro update by a project Owner records it"
 
 // accessMigratedNoGrants is the line the migration leaves for the installation
 // whose lists name nobody the node can rank: the marker is all it writes, and
@@ -654,10 +654,10 @@ const accessMarkNeedsAdmin = "this run could not record that the installation's 
 // are named because they hold admin at project scope without a stored pair
 // (F17.3, resolve.go's Input.Implicit): they, and a grant in the node, are who
 // reaches those commands at all.
-const accessMigratedNoGrants = "this installation's member lists hold no user: member, and a grant ranks a person, so the grants node stays empty and the installation is recorded as migrated: an action that needs a role in it — the image catalog, accounts, the spend document's read, caps and kill switches, secrets and project repositories — is now refused to a caller holding no grant there, while terraform.budget_admins hold admin at project scope without one (fugaro update --budget-admin)"
+const accessMigratedNoGrants = "member lists hold no user: member, so role-checked commands now need a grant in the node (`fugaro update --budget-admin`)"
 
 // accessNodeMoved is what a run says when another writer got to the node first.
-const accessNodeMoved = "another run wrote the grants node while this one was migrating it: this run's migration was not written and the node that landed is theirs, so the next fugaro update derives the roles from it"
+const accessNodeMoved = "another run wrote the grants node first: this run's migration was not written, so the next fugaro update derives the roles from that node"
 
 // accessMigrated is the migration's own line: the roster it wrote, so an
 // operator sees the roles move from a file to the installation.
@@ -667,7 +667,7 @@ func accessMigrated(grants []accesslib.Grant) string {
 		lines = append(lines, fmt.Sprintf("%s (%s)", g.User, g.Role))
 	}
 	slices.Sort(lines)
-	return fmt.Sprintf("migrated the installation's member lists into the grants node: %s; the local config's terraform.operators and terraform.admins are now derived from it",
+	return fmt.Sprintf("migrated the member lists into the grants node: %s; terraform.operators and terraform.admins now derive from it",
 		strings.Join(lines, ", "))
 }
 
@@ -978,7 +978,7 @@ func (e *initEngine) deriveAccessAgain(ctx context.Context) (operators, admins [
 // node (foldFlagLists), and it is named rather than left to be found because
 // the other door on those keys — fugaro user add and rm — writes this machine's
 // file alone, and a change written there is exactly what this sentence is about.
-const accessDropped = "this machine's list holds %s as %s, which the installation's grants node does not: the node is what an installation's roles are, so this run applies its members and those lose the role. A change to a role is written to the node by naming the whole list (fugaro update --operator, --admin)"
+const accessDropped = "this machine's list holds %s as %s, which the grants node does not: this run applies the node's members, so those lose the role (`fugaro update --operator/--admin`)"
 
 // accessAdded is what the roles step says when the grants node holds a member at
 // a role this installation's own outputs do not: either a member the outputs hold
@@ -988,14 +988,14 @@ const accessDropped = "this machine's list holds %s as %s, which the installatio
 // not list them AT ALL, so a plan that does is not covered — the step that plans
 // them names them in its banner and takes the run's ordinary confirmation
 // (init_review.go's confirmPlanned).
-const accessAdded = "the grants node holds %s, whom this installation's own outputs do not hold at the role the node does: the roles the node holds are granted by this run's plan, the review does not list them, and the step that plans them names them in its confirmation"
+const accessAdded = "the grants node holds %s, whom the installation's outputs do not hold at that role: this run's plan grants it, unlisted in the review"
 
 // accessAddsUnknown is what a run that could not read the installation's own
 // outputs says instead. It cannot tell a member the node added from one the
 // installation held, so the review's lists are the node's whole roster — and
 // that, rather than silence, is what this sentence is for: the operator is told
 // the screen's lists are the node's and not the installation's.
-const accessAddsUnknown = "the installation's own outputs could not be read, so this run cannot tell the members the grants node added from the ones the installation held: the review's lists are the node's whole roster"
+const accessAddsUnknown = "the installation's outputs could not be read, so the review lists the node's whole roster, not the members it added"
 
 // droppedUsers is the `user:` members of ran that now does not hold.
 func droppedUsers(ran, now []string) []string {

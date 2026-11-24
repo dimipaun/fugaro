@@ -468,7 +468,7 @@ func gateSentence(marker string) string {
 // no variable and no mark, because a rule that fired is something to read and
 // not something to reach past. It says nothing about the step's confirmation:
 // whether the verdict replaces it is decided after this line and elsewhere.
-const gateContentWarning = "the gate recorded the rules below: they fired and did not refuse this plan, because D1545 makes the cover tables and the guard a tripwire that records and warns, and a blocked cost attribute applies the same way — they are in this step's audit record"
+const gateContentWarning = "the gate recorded the rules below and did not refuse this plan on them: they are this step's audit record"
 
 // gateNamesAnIAMCall is the one sentence such a step leaves behind: what is
 // still there, why nothing removed it here, and the door the owner's own run
@@ -477,7 +477,7 @@ const gateContentWarning = "the gate recorded the rules below: they fired and di
 // stopped here would leave the installation half-converged over an IAM call
 // the owner's next run makes anyway.
 func (r *initRun) gateNamesAnIAMCall(bucket string) string {
-	return fmt.Sprintf("project Viewers can still read %s: removing their read access is an IAM call of its own and not a plan, so the gate a managed project admits a coding agent's session to has nothing to judge here and it was not made; run %s in your own terminal window to remove it", bucket, r.o.doorProgram())
+	return fmt.Sprintf("project Viewers can still read %s: removing that access is an IAM call of its own and not a plan, so the gate did not make it; run %s in your own terminal to remove it", bucket, r.o.doorProgram())
 }
 
 // gateStep judges one Terraform step's saved plan, and answers whether the
