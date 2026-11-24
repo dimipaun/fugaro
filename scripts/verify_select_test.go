@@ -121,15 +121,44 @@ func TestVerifyRunsThePackagesTheChangeReaches(t *testing.T) {
 			whole:   true,
 		},
 		{
-			// A change that reaches a package this step never runs is one it
-			// cannot narrow: those four are CI's, and the answer for such a
-			// change is everything this step does run.
-			name:      "a package this step never runs widens to the whole tree",
+			// The four packages this step never runs are dropped from the
+			// answer and not the answer for them: a change that reaches one of
+			// them usually reaches others too, and those are this step's to
+			// run. This is the case that used to widen, and widening is what
+			// put the whole tree back for nearly every change.
+			name:      "the packages this step never runs are dropped, the rest runs",
 			selection: "./internal/runner ./internal/config",
+			tree:      []string{"./internal/config"},
+			notTree:   []string{"./internal/runner"},
+		},
+		{
+			// An answer that is nothing but those four is the one this step
+			// cannot narrow, and the empty answer is still the whole tree.
+			name:      "an answer that is only those four is the whole tree",
+			selection: "./internal/runner ./images",
 			tree:      []string{"internal/config"},
 			notTree:   []string{"./internal/runner"},
 			cli:       true,
 			whole:     true,
+		},
+		{
+			// The case this narrowing is for: a documents-only change reaches
+			// the packages that read the document, and nothing else. The
+			// sixteen are what docs/design/v1.md really selects today --
+			// scripts/ci-affected against this repository's own read map and
+			// graph, no diff involved -- ./internal/runner and ./images among
+			// them, which is exactly why the guard this replaces was inert.
+			name: "a documents-only change runs what reads the document",
+			selection: "./images ./internal/ciselect ./internal/cli ./internal/config ./internal/digest " +
+				"./internal/imagecheck ./internal/orchestrator ./internal/orchestrator/sensitivity " +
+				"./internal/plan ./internal/policy ./internal/projectpolicy ./internal/rigor " +
+				"./internal/runner ./internal/runstore ./internal/task ./schemas",
+			tree: []string{"./internal/ciselect", "./internal/config", "./internal/digest",
+				"./internal/imagecheck", "./internal/orchestrator", "./internal/orchestrator/sensitivity",
+				"./internal/plan", "./internal/policy", "./internal/projectpolicy", "./internal/rigor",
+				"./internal/runstore", "./internal/task", "./schemas"},
+			notTree: []string{"./internal/runner", "./images", "./internal/cli"},
+			cli:     true,
 		},
 		{
 			// The other half of the doubt: a branch cut before
