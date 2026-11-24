@@ -207,6 +207,7 @@ var exemptListings = map[string]exemptListing{
 	"rigor floor show":         {"a listing: the floor the project layer holds, as a table or a document", true},
 	"recipes validate":         {"a listing: the verdict for a recipe file, as a table or a document", true},
 	"review show":              {"a listing: a review run's verdict artifact and its markdown", true},
+	"routing ls":               {"a listing: this project's routing table and, per model a run can be served on, the entry that wins", true},
 	"runs ls":                  {"a listing: the runs with their status, stage, cost and PR, table or document", true},
 	"runs show":                {"a listing: one run's chain and what is left of its limits, table or document", true},
 	"runs stats":               {"a listing: run records aggregated by the person who started each run", true},
@@ -341,4 +342,6 @@ var exemptAnswers = map[string]string{
 	"accounts repo add":          "admits one repository's own runs to a named Claude account, and prints the list it wrote",
 	"accounts cascade":           "prints its own help: the work is in the set subcommand beside it",
 	"accounts cascade set":       "writes the credentials cascade's members into this installation's own config, and prints what it wrote",
+	"routing set":                "writes one entry of this machine's project config's routing table, and prints the entry it wrote",
+	"routing rm":                 "removes one entry from this machine's project config's routing table, and prints what it dropped",
 }
