@@ -99,7 +99,16 @@ func (e *initEngine) syncAccess(ctx context.Context) error {
 		// before this release is in. It is not silent — the run's result says
 		// so once (accessNoBackend) — because an operator who reads the grants
 		// with `fugaro user ls` and finds the config's must know why.
-		e.r.warn(accessNoBackend)
+		//
+		// A first run is neither: its Firebase stage is later in this same run
+		// and is what creates or adopts the backend, so "this installation has
+		// no budget backend" is said about a state the run is here to end —
+		// and the run that goes on to build one would have warned about a
+		// database it then created. The fact reaches the result through the
+		// Firebase stage's own lines, which are about this run's backend.
+		if !e.firstRun() {
+			e.r.warn(accessNoBackend)
+		}
 		return nil
 	}
 	if err := e.setupCloud(ctx); err != nil {

@@ -611,7 +611,8 @@ func TestFinalSectionNamesTheModeAndWhereItCameFrom(t *testing.T) {
 	}
 
 	r := &run{rec: &runstore.Record{Version: 1, RunID: "20261024-120000-abcd"},
-		d: Deps{Now: func() time.Time { return time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC) }}}
+		spec: &task.Spec{}, // every run has a task: the repository it is for is what the opt-in is read by
+		d:    Deps{Now: func() time.Time { return time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC) }}}
 	if section := r.finalSection(true, "", nil); strings.Contains(section, "rigor") {
 		t.Errorf("a run that resolved no mode shows a rigor line:\n%s", section)
 	}
