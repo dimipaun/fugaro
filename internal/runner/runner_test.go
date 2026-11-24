@@ -263,9 +263,9 @@ func withFixturePins(cfg string) string {
 // run no longer reads .fugaro/recipes/ (a task that leaves its recipe there
 // is refused at bootstrap), and every fixture below was written while it
 // did — the config names the recipe, the fixture commits the file. Embedding
-// that file's own text makes the task the one `fugaro run` writes today (the
-// launcher resolves the name off the config and embeds the copy the project
-// resolves), so those tests still exercise the recipe they mean to.
+// that file's own text makes the task a launch writes once release A's
+// launcher embeds the copy the project resolves (PR2), so those tests still
+// exercise the recipe they mean to.
 //
 // It fills a task that carries no recipe of its own, and nothing else: a
 // task that names one — embedded or as repository recipe — is left exactly
