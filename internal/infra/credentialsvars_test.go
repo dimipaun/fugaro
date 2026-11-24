@@ -819,6 +819,126 @@ func TestRefreshCredentialsServiceJobAccountsUnionsTheSharedJobs(t *testing.T) {
 	}
 }
 
+// A shared row whose repositories the update derived from the machine's own
+// record — a profile that names no allow_repos, sharedJobRepos' fallback — is
+// UNIONED on refresh and never narrowed by the config of whichever machine runs
+// the command. An installation is updated from any of its machines, and one
+// whose config does not record a teammate's repository is the ordinary case:
+// without the union, that machine's refresh writes the row down to its own
+// repositories while the CODING table keeps the teammate's job (it is unioned
+// like every table here), so the job exists, holds roles/run.invoker and is
+// refused by the service whole — Check 580's 403, one axis over.
+//
+// The profile's own allow_repos is the other branch and it still replaces the
+// carried list (the test above pins it): that list is the project's own
+// statement of what the profile serves, so the deployment follows it. The
+// boundary in both directions is the published policy: the service reads
+// projectpolicy.Admits on every call (credsvc's pairShared), so a repository
+// the installation no longer publishes is refused there whatever a row holds.
+//
+// Mutation (verified, run and restored): replace the row with the derived list
+// alone (drop unionSharedRepos from the refresh) — the teammate's repository
+// disappears from the row and this test fails on it.
+func TestRefreshCredentialsServiceJobAccountsNeverNarrowsAMachineDerivedRow(t *testing.T) {
+	// The machine that ran the last update recorded both of the profile's
+	// repositories, and the block it left carries them.
+	wide := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+credentialsBudgetLC+projectAccountLCBlock)
+	rows, err := CredentialsSharedJobAccounts(wide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := credsVarsSpec()
+	svc.SharedJobAccounts = nil
+	for _, r := range rows {
+		if r.Profile != "apikey" {
+			continue
+		}
+		r.Repos = append(slices.Clone(r.Repos), "github/acme/extra")
+		svc.SharedJobAccounts = append(svc.SharedJobAccounts, r)
+	}
+	if len(svc.SharedJobAccounts) != 1 {
+		t.Fatalf("the wide config derives no apikey row: %+v", rows)
+	}
+	vars, err := SetCredentialsService([]byte(credsVarsDiscovered), svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This machine's config records one repository of its own for the provider
+	// and none of the two above: a fresh teammate's clone, or a checkout that
+	// was never `fugaro repos add`ed for them.
+	narrow := parseLC(t, m4LocalConfig+
+		"  acme/narrow: { provider: github, base_branch: main, workflows: [web], github_app_id: \"123456789\" }\n"+
+		m5Additions+credentialsBudgetLC+projectAccountLCBlock)
+	got, err := RefreshCredentialsServiceJobAccounts(vars, narrow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		CredentialsService *CredentialsServiceSpec `json:"credentials_service"`
+	}
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatalf("the result is not a tfvars document: %v\n%s", err, got)
+	}
+	if doc.CredentialsService == nil {
+		t.Fatalf("credentials_service was dropped:\n%s", got)
+	}
+	var have []string
+	for _, r := range doc.CredentialsService.SharedJobAccounts {
+		if r.Profile == "apikey" {
+			have = r.Repos
+		}
+	}
+	// The row's order is not a fact this test has any business pinning (the
+	// derived list comes first, the carried entries it does not hold follow),
+	// so the two are compared as sets.
+	haveSorted := slices.Clone(have)
+	slices.Sort(haveSorted)
+	want := []string{"github/acme/extra", "github/acme/narrow", "github/acme/webapp"}
+	if !slices.Equal(haveSorted, want) {
+		t.Errorf("the apikey row's repositories after a narrower machine's refresh = %v, want %v: the fallback list is the updating machine's record, and a row narrowed by it refuses the teammate's shared run whole", have, want)
+	}
+	// And it converges: the union of the row with the same derived list is the
+	// row, so every later update from this machine writes the same document.
+	again, err := RefreshCredentialsServiceJobAccounts(got, narrow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != string(got) {
+		t.Errorf("a second refresh changed the document:\nfirst  %s\nsecond %s", got, again)
+	}
+
+	// The same defect one step earlier: the member is written for the FIRST
+	// time — a block that carries none, which is every installation on the
+	// release that first renders the name — by a machine that does not record
+	// the teammate's repository. The coding table keeps that repository's job
+	// (union), so the row has to name it too, and the merged table is where the
+	// refresh reads it.
+	fresh := credsVarsSpec()
+	fresh.SharedJobAccounts = nil
+	freshVars, err := SetCredentialsService([]byte(credsVarsDiscovered), fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = RefreshCredentialsServiceJobAccounts(freshVars, narrow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatalf("the result is not a tfvars document: %v\n%s", err, got)
+	}
+	have = nil
+	for _, r := range doc.CredentialsService.SharedJobAccounts {
+		if r.Profile == "apikey" {
+			have = r.Repos
+		}
+	}
+	haveSorted = slices.Clone(have)
+	slices.Sort(haveSorted)
+	if want := []string{"github/acme/narrow", "github/acme/webapp"}; !slices.Equal(haveSorted, want) {
+		t.Errorf("the apikey row a first render writes = %v, want %v: the coding table runs a job for the repository the machine's own config does not record, and a row that does not name it refuses that job's shared run", have, want)
+	}
+}
+
 // The release an image reference names is read by BOTH sides out of the same
 // string: this program, which decides whether the installation needs the
 // re-pin, and the module's credentials.tf (credentials_image_release), which

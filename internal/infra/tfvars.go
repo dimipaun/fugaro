@@ -1002,17 +1002,22 @@ func RefreshCredentialsServiceJobAccounts(vars []byte, lc *localcfg.Config) ([]b
 		})
 		svc["review_job_accounts"] = mergedReview
 	}
-	// The shared table, read and unioned by the same rules, with the one
-	// difference its own row shape gives: the repositories a row carries are
-	// not part of its identity (credentialsSharedJobKey), so a row the config
-	// still derives is taken from the config WHOLE — the profile's list has
-	// moved where it moved, and a carried row kept verbatim would hold an
-	// admission the config no longer states (a repository switched off stays
-	// served, or one added stays refused and its runs die at their first git
-	// command). A row the config no longer derives is carried as it is, which
-	// is the direction every table here is unioned in: a row for a job the
-	// installation still holds is a job the service must keep admitting, and
-	// dropping it would refuse a caller the deployment runs.
+	// The shared table, read and unioned by the same rules, with the two
+	// differences its own row shape gives. The first is that the repositories a
+	// row carries are not part of its identity (credentialsSharedJobKey), so a
+	// row the config still derives has its repositories taken from the config:
+	// the profile's own allow_repos has moved where it moved, and a carried row
+	// kept verbatim would hold an admission the config no longer states (a
+	// repository switched off stays served, or one added stays refused and its
+	// runs die at their first git command). What that replacement may NOT do is
+	// narrow a row derived through sharedJobRepos' fallback, because the
+	// fallback is the UPDATING machine's own record and not the installation's:
+	// there the derived repositories are unioned with the carried ones
+	// (sharedRowReposComeFromTheMachine, unionSharedRepos). A row the config no
+	// longer derives is carried as it is, which is the direction every table
+	// here is unioned in: a row for a job the installation still holds is a job
+	// the service must keep admitting, and dropping it would refuse a caller
+	// the deployment runs.
 	var foundShared []CredentialsSharedJob
 	if raw, ok := svc["shared_job_accounts"]; ok && raw != nil {
 		b, err := json.Marshal(raw)
@@ -1033,9 +1038,45 @@ func RefreshCredentialsServiceJobAccounts(vars []byte, lc *localcfg.Config) ([]b
 	for i, r := range mergedShared {
 		at[credentialsSharedJobKey(r)] = i
 	}
+	// The repositories the MERGED coding table above runs jobs for, by
+	// provider: the installation's own record of what it serves, every
+	// machine's entries in it, and the list a machine-fallback row is refreshed
+	// from.
+	providerRepos := map[string][]string{}
+	for _, j := range merged {
+		canonical, err := projectpolicy.Canonical(j.Provider, j.Repo)
+		if err != nil {
+			continue
+		}
+		if !slices.Contains(providerRepos[j.Provider], canonical) {
+			providerRepos[j.Provider] = append(providerRepos[j.Provider], canonical)
+		}
+	}
 	for _, r := range shared {
-		if i, ok := at[credentialsSharedJobKey(r)]; ok {
-			r.Repos = slices.Clone(r.Repos)
+		i, carried := at[credentialsSharedJobKey(r)]
+		r.Repos = slices.Clone(r.Repos)
+		// This machine's record is the fallback and never the whole of what
+		// the profile serves (sharedJobRepos), so a row derived through it is
+		// UNIONED with what the block carries and with the repositories the
+		// merged coding table runs jobs for, rather than written over them: an
+		// installation is updated from whichever machine runs the command, and
+		// a config that does not record a teammate's repository — while the
+		// coding table keeps that repository's job, unioned like every table
+		// here — would otherwise narrow the row and refuse the shared run of a
+		// repository the installation still runs jobs for. That is Check 580's
+		// 403 again, one axis over. The boundary is the published policy either
+		// way: projectpolicy.Admits is read by the service on every call
+		// (credsvc's pairShared), so a repository this installation no longer
+		// publishes is refused there whatever a row says.
+		pr, derived := lc.Profiles[r.Profile]
+		if derived && sharedRowReposComeFromTheMachine(pr) {
+			var held []string
+			if carried {
+				held = mergedShared[i].Repos
+			}
+			r.Repos = unionSharedRepos(r.Repos, slices.Concat(held, providerRepos[pr.Provider]))
+		}
+		if carried {
 			mergedShared[i] = r
 			continue
 		}
@@ -1174,6 +1215,12 @@ func CredentialsSharedJobAccounts(lc *localcfg.Config) ([]CredentialsSharedJob, 
 // The value is never nil: the member is REQUIRED and an empty one is the
 // deny-all profile, while a missing one is a document the service refuses to
 // read at all.
+//
+// The fallback above is this machine's record and not the installation's, so a
+// refresh may not write a row over a carried one with it:
+// sharedRowReposComeFromTheMachine is the predicate the refresh asks, and the
+// union it makes there is why a machine whose config does not name a
+// teammate's repository cannot narrow a row.
 func sharedJobRepos(lc *localcfg.Config, pr config.JobProfile) []string {
 	if len(pr.AllowRepos) > 0 {
 		return slices.Clone(pr.AllowRepos)
@@ -1193,6 +1240,41 @@ func sharedJobRepos(lc *localcfg.Config, pr config.JobProfile) []string {
 		}
 		out = append(out, canonical)
 	}
+	return out
+}
+
+// sharedRowReposComeFromTheMachine reports whether a shared row's repositories
+// are the machine-recorded fallback rather than the profile's own allow_repos:
+// it is sharedJobRepos' two branches, asked by the refresh, which may replace a
+// carried row's repositories with the config's own when they are the profile's
+// own statement and never when they are this machine's fallback.
+//
+// It is asked only of a profile the config still names: a carried row whose
+// profile the config no longer derives is kept whole like every other table's,
+// which is why the caller asks lc.Profiles for the profile and not this
+// predicate alone (a missing profile is the zero JobProfile, which this would
+// read as the fallback branch).
+func sharedRowReposComeFromTheMachine(pr config.JobProfile) bool { return len(pr.AllowRepos) == 0 }
+
+// unionSharedRepos is derived's entries followed by carried's that derived does
+// not already hold, sorted: the row repositories a refresh writes when the
+// fallback branch above is what derived them. The result is a superset of what
+// the block carried, so a second refresh of the same document derives the same
+// list and converges on it.
+//
+// Sorted rather than in either list's own order because the two lists belong to
+// two machines: one that recorded a repository the other did not derives a
+// different order for the same set, and a row whose content is the same but
+// whose bytes differ plans a service update — a new revision — for a
+// reordering an owner cannot see.
+func unionSharedRepos(derived, carried []string) []string {
+	out := slices.Clone(derived)
+	for _, repo := range carried {
+		if !slices.Contains(out, repo) {
+			out = append(out, repo)
+		}
+	}
+	slices.Sort(out)
 	return out
 }
 
