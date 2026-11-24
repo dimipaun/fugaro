@@ -118,6 +118,47 @@ func TestAnInstallationFromBeforeTheRecordConverges(t *testing.T) {
 	}
 }
 
+// TestTheRecordsWriteKeepsWhatTheRepositoryStageWrote: the record is one member
+// of a file more than one engine of a run writes, and the write may not be the
+// copy the converge started with. The repository stage resolves this checkout's
+// entry out of the checkout and writes it from the config IT read (init.go's
+// repoEngine, loadRepoConfig and writeRepoConfig): the base branch the checkout
+// is on, its workflows in the order the stage sorts them, the flags an earlier
+// run of the entry's own — and none of that reaches the installation engine's
+// own copy of the config, which was loaded before any of it. A record written
+// from that copy puts the entry back to what the run found, which is the whole
+// of the repository stage's work undone by a step whose business is one member.
+//
+// The fixture's entry is that earlier copy: it names the two workflows in the
+// order a person wrote them and carries no base branch at all, so the stage's
+// write and a rollback of it differ in both, and this test reads the file after
+// one `fugaro update` that wrote a record in the same run.
+func TestTheRecordsWriteKeepsWhatTheRepositoryStageWrote(t *testing.T) {
+	r := newConvergeRig(t, v3Node(nil))
+	previousVersionInstallation(t, r)
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	lc := updatedConfig(t)
+	if lc.Locations == nil {
+		t.Fatalf("this update wrote no locations record, so the write this test is about did not happen:\n%s", readFile(t, installationConfigPath()))
+	}
+	entry, ok := lc.Repos["acme/app"]
+	if !ok {
+		t.Fatalf("repos.acme/app is gone from the config the record's write produced:\n%s", readFile(t, installationConfigPath()))
+	}
+	// Both of these are the repository stage's answer and neither is in the
+	// fixture, so a value here is the stage's write surviving the record's.
+	if entry.BaseBranch != "main" {
+		t.Errorf("repos.acme/app.base_branch reads %q after the record's write, want main, the branch of the checkout the run read: the record's write put back the copy the run started with, so the repository stage's entry is what it rolled back:\n%s",
+			entry.BaseBranch, readFile(t, installationConfigPath()))
+	}
+	if want := []string{"api", "app"}; !slices.Equal(entry.Workflows, want) {
+		t.Errorf("repos.acme/app.workflows reads %v after the record's write, want %v, the checkout's own workflows as the repository stage sorts them: the record's write put back the copy the run started with:\n%s",
+			entry.Workflows, want, readFile(t, installationConfigPath()))
+	}
+}
+
 // previousVersionInstallation seeds the cloud as the release behind leaves it,
 // which is the state every installation made before this work is in: Fugaro's
 // own default region for the Firestore database setup created then, the

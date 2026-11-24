@@ -740,8 +740,10 @@ func (e *initEngine) recordLocations(ctx context.Context) {
 		return
 	}
 	// The file this machine's own config is in, as the converge wrote it
-	// (writeLocalConfig). A shared selection has none, and an installation
-	// reached through one has no record of its own to keep.
+	// (writeLocalConfig) — the path of the file the write below reads again,
+	// and not the converge's copy of what is in it. A shared selection has
+	// none, and an installation reached through one has no record of its own
+	// to keep.
 	path := r.res.Config
 	if path == "" || e.lc == nil || e.c == nil {
 		return
@@ -772,9 +774,8 @@ func (e *initEngine) recordLocations(ctx context.Context) {
 		r.warn(fmt.Sprintf("the locations record was not written: the installation's located things could not be read (%s), so the config keeps the record it has", safetext.FieldErr(err)))
 		return
 	}
-	next := *e.lc
-	next.Locations = recordedLocations(obs)
-	changed, err := r.writeRecordedLocations(&next, path)
+	record := recordedLocations(obs)
+	changed, err := r.writeRecordedLocations(record, path)
 	if err != nil {
 		r.warn(fmt.Sprintf("the locations record was not written: %s", safetext.FieldErr(err)))
 		return
@@ -786,28 +787,46 @@ func (e *initEngine) recordLocations(ctx context.Context) {
 	// list's line beside it does: the steps of the converge have all ended by
 	// here, so a stage's detail writer is no longer a place a person reads.
 	if changed {
-		if line := recordLine(next.Locations); line != "" {
+		if line := recordLine(record); line != "" {
 			fmt.Fprintf(r.w, "%s\n", line)
 		}
 	}
 }
 
-// writeRecordedLocations writes next — this machine's config carrying the
-// locations record the converge just read off the cloud — through the one
-// writer every local-config write goes through, and only when it changes the
-// file. It says whether it did, which is what the caller's line about the
-// record is owed to.
+// writeRecordedLocations writes the record the converge just read off the cloud
+// into this machine's config, through the one writer every local-config write
+// goes through, and only when it changes the file. It says whether it did, which
+// is what the caller's line about the record is owed to.
 //
-// The check is the writer's own, made here so that the ordinary case is silent:
-// an installation whose record this run rewrote with what it read is an
-// installation whose file does not change, and a converge that printed a diff
-// of the file twice for nothing would be noise on every update. It is the same
-// comparison writeLocalConfig makes, for the same reason.
-func (r *initRun) writeRecordedLocations(next *localcfg.Config, path string) (bool, error) {
+// The document is built from the file as it is at this moment and not from the
+// engine's own copy of the config, for the reason init_compute.go's batch block
+// is (the same read, the same parse, the same one member set): the file is
+// written by more than one engine of a run, and the other writers write from
+// copies that never reach this one. The repository stage resolves a checkout's
+// entry and writes it from the config IT read (init.go's repoEngine,
+// loadRepoConfig and writeRepoConfig — base_branch, the checkout's workflows,
+// the flags an earlier run of the entry's own), and refreshLocalOptIn writes
+// the batch block from a read of its own. initEngine's e.lc was loaded before
+// any of them, so a record written from it would put the whole entry back to
+// what the run found — silently undoing the repository stage's own write in the
+// same command. Reading here is what makes the step a writer of one member.
+//
+// The unchanged check is the writer's own, made here so that the ordinary case
+// is silent: an installation whose record this run rewrote with what it read is
+// an installation whose file does not change, and a converge that printed a
+// diff of the file twice for nothing would be noise on every update. It is the
+// same comparison writeLocalConfig makes, for the same reason.
+func (r *initRun) writeRecordedLocations(record *localcfg.Locations, path string) (bool, error) {
 	old, err := os.ReadFile(path)
 	if err != nil {
 		return false, err
 	}
+	cur, err := localcfg.Parse(old)
+	if err != nil {
+		return false, err
+	}
+	next := *cur
+	next.Locations = record
 	data, err := next.Marshal()
 	if err != nil {
 		return false, err
@@ -815,7 +834,7 @@ func (r *initRun) writeRecordedLocations(next *localcfg.Config, path string) (bo
 	if bytes.Equal(old, data) {
 		return false, nil
 	}
-	if err := r.writeLocalConfig(next, path, old, true); err != nil {
+	if err := r.writeLocalConfig(&next, path, old, true); err != nil {
 		return false, err
 	}
 	return true, nil
