@@ -8218,8 +8218,8 @@ The rigor mode decides how much review a run gets and what it costs.
 project layer file, and `--area <glob>` writes one rule of
 `defaults.rigor.areas` — the mode a run touching that glob is held to, which is
 the strictest of the rules that match it. `--repo <owner/name>` states one
-repository's level instead: `defaults.rigor.repos.<owner/name>`, or the member
-`--repo` and `--area` name of the rule `--name` gives. The file is the one
+repository's level instead: `defaults.rigor.repos.<owner/name>`, or — with
+`--area <glob> --name <name>` — a member of that named rule. The file is the one
 `fugaro update` publishes, and every write ends with `next: fugaro update`.
 
 A repository's own `fugaro.yaml` states neither key any more: since D3237 the
@@ -8508,10 +8508,10 @@ it either way. Without --area it writes `defaults.rigor.repos.<owner/name>` — 
 whole-repository level, which a project area naming the repository and the
 repository's own file both outrank. With `--area GLOB --name NAME` it writes one
 member of that rule: `{repo: <owner/name>, paths: [GLOB]}`, beside whatever else
-the rule is made of. The rule is addressed by its name, and the name is what
-identifies it across the project, so a rule the layer does not carry yet is added
-and a name already taken by a rule that names no member for this repository is
-refused.
+the rule is made of. The rule is addressed by its name — the name is what
+identifies it across the project — so a name the layer does not carry yet adds
+the rule, and GLOB is unioned into the paths of a member the rule already has
+for this repository.
 
 Neither key is a repository's own any more (D3237): a repository's `rigor.default`
 and `rigor.areas` are the project's, and `--layer repo` is refused for both with
