@@ -1,0 +1,31 @@
+{
+  "name": "fugaro-spike-733",
+  "version": "0.0.0",
+  "license": "SEE LICENSE IN ../LICENSE.md",
+  "private": true,
+  "type": "module",
+  "description": "The throwaway spike app Check 733 needs: one screen per open question of docs/mobile-identity-pairing -- U4 (provider tokens through Firebase's signInWithIdp, and two identities at once), U5 (the device signing key), U7 (the share route), U10 (the synced keychain). It is task M0 of that folder's implementation plan, it is not the product app, and it is deleted once the owner's readings are written.",
+  "main": "index.js",
+  "engines": {
+    "node": ">=22 <23",
+    "npm": ">=10"
+  },
+  "scripts": {
+    "test": "node --test \"src/**/*.test.js\"",
+    "start": "expo start --dev-client"
+  },
+  "dependencies": {
+    "@noble/curves": "2.4.0",
+    "expo": "^58.0.16",
+    "expo-apple-authentication": "~58.0.3",
+    "expo-auth-session": "~58.0.19",
+    "expo-clipboard": "~58.0.4",
+    "expo-constants": "~58.0.16",
+    "expo-crypto": "~58.0.8",
+    "expo-linking": "~58.0.17",
+    "expo-secure-store": "~58.0.2",
+    "expo-share-intent": "9.0.0",
+    "react": "19.3.0",
+    "react-native": "0.88.0"
+  }
+}
