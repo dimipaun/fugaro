@@ -1855,6 +1855,18 @@ func stubRemoteHasCommit(t *testing.T, found bool) {
 	t.Cleanup(func() { remoteHasCommit = was })
 }
 
+// stubRemoteUnreadable answers the remote half of the unpushed-commit check
+// with the error of a remote git cannot reach, which is inconclusive rather
+// than an answer about the commit.
+func stubRemoteUnreadable(t *testing.T) {
+	t.Helper()
+	was := remoteHasCommit
+	remoteHasCommit = func(context.Context, string, string, string) (bool, error) {
+		return false, errors.New("could not read from remote repository")
+	}
+	t.Cleanup(func() { remoteHasCommit = was })
+}
+
 // TestCatalogBuildRefusesACommitOnlyInTheCheckout: a build clones the commit
 // it is pinned to, so a checkout whose HEAD the remote does not have is
 // refused where that is known — before the entry's definition is copied, a
@@ -1900,6 +1912,27 @@ func TestCatalogBuildProceedsWhenTheRemoteHasTheCommit(t *testing.T) {
 	}
 	if n := buildPosts(fb); n != 1 {
 		t.Errorf("a commit the remote has submitted %d builds, want one", n)
+	}
+}
+
+// TestCatalogBuildProceedsWhenTheRemoteCannotBeRead: only a definite answer
+// refuses. A remote git cannot read — no network, a host that does not answer,
+// a credential that is not there — says nothing about the commit, and a build
+// refused over it would be one that would have worked, so today's behaviour
+// stands and the build is submitted.
+func TestCatalogBuildProceedsWhenTheRemoteCannotBeRead(t *testing.T) {
+	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
+	f.sm.AllowAccess()
+	putSecretID(t, f.sm, mustSlug(gitprov.KindBitbucket, "acme/app"), config.BitbucketSecret, []byte(catalogTokenPlaceholder))
+	stubRemoteUnreadable(t)
+	wipCommit(t)
+
+	if _, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1"); err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	if n := buildPosts(fb); n != 1 {
+		t.Errorf("a remote that could not be read submitted %d builds, want one", n)
 	}
 }
 
@@ -1957,8 +1990,9 @@ func TestCommitOnRemoteAnswersFromTheRefsAndThenTheRemote(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "app")
 	testutil.Git(t, filepath.Dir(dir), "clone", "--quiet", remote, dir)
 	ctx := context.Background()
-	if head := testutil.Git(t, dir, "rev-parse", "HEAD"); !commitOnRemote(ctx, dir, head) {
-		t.Errorf("the clone's own HEAD (%s) is not read as one the remote has", head)
+	head := testutil.Git(t, dir, "rev-parse", "HEAD")
+	if found, known := commitOnRemote(ctx, dir, head); !found || !known {
+		t.Errorf("the clone's own HEAD (%s) is read as found=%v known=%v, want both true", head, found, known)
 	}
 	// A commit pushed from elsewhere: the remote publishes it as a branch tip
 	// and this checkout holds no remote-tracking ref of that branch.
@@ -1968,8 +2002,8 @@ func TestCommitOnRemoteAnswersFromTheRefsAndThenTheRemote(t *testing.T) {
 	pushed := testutil.Git(t, dir, "rev-parse", "HEAD")
 	testutil.Git(t, dir, "push", "--quiet", "origin", "HEAD:refs/heads/elsewhere")
 	testutil.Git(t, dir, "update-ref", "-d", "refs/remotes/origin/elsewhere")
-	if !commitOnRemote(ctx, dir, pushed) {
-		t.Errorf("a commit the remote publishes (%s) is not read as one it has", pushed)
+	if found, known := commitOnRemote(ctx, dir, pushed); !found || !known {
+		t.Errorf("a commit the remote publishes (%s) is read as found=%v known=%v, want both true", pushed, found, known)
 	}
 	// A commit only this checkout has: nothing local contains it and the remote
 	// publishes no ref pointing at it.
@@ -1977,7 +2011,7 @@ func TestCommitOnRemoteAnswersFromTheRefsAndThenTheRemote(t *testing.T) {
 	testutil.Git(t, dir, "add", "c.txt")
 	testutil.Git(t, dir, "commit", "--quiet", "-m", "wip")
 	wip := testutil.Git(t, dir, "rev-parse", "HEAD")
-	if commitOnRemote(ctx, dir, wip) {
-		t.Errorf("the wip commit %s is read as one the remote has", wip)
+	if found, known := commitOnRemote(ctx, dir, wip); found || !known {
+		t.Errorf("the wip commit %s is read as found=%v known=%v, want found=false known=true", wip, found, known)
 	}
 }

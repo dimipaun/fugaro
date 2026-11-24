@@ -716,22 +716,26 @@ const commitCheckRemoteTimeout = 20 * time.Second
 // (CLAUDE.md, Fugaro asks for nothing): it names the commit and the two ways
 // out.
 func refuseUnpushedCommit(ctx context.Context, root, commit string) error {
-	if commitOnRemote(ctx, root, commit) {
+	// Only a definite no refuses: a remote this machine cannot read is not an
+	// answer about the commit, and refusing over it would refuse a build that
+	// would have worked.
+	if found, known := commitOnRemote(ctx, root, commit); !known || found {
 		return nil
 	}
 	return userErr("the commit %s exists only in this checkout, and a build clones the commit it is pinned to rather than a branch: push the branch, or switch to a pushed commit (git switch main && git pull --ff-only)", commit)
 }
 
 // commitOnRemote reports whether the checkout's remote has commit, so that a
-// clone of it can fetch the commit a build names.
+// clone of it can fetch the commit a build names, and whether the question was
+// answered at all.
 //
 // The checkout's own remote-tracking refs answer first, and without the
 // network: a commit one of refs/remotes/origin/* contains is on the remote
 // however far back in that branch's history it sits, and this is the state a
 // checkout it was pushed from is in.
-func commitOnRemote(ctx context.Context, root, commit string) bool {
+func commitOnRemote(ctx context.Context, root, commit string) (found, known bool) {
 	if out, err := gitRead(ctx, root, "branch", "-r", "--contains="+commit); err == nil && out != "" {
-		return true
+		return true, true
 	}
 	// Nothing local contains it, which is not an answer on its own: the branch
 	// it is on may have been pushed from another checkout, or fetched into this
@@ -741,7 +745,10 @@ func commitOnRemote(ctx context.Context, root, commit string) bool {
 	// the build to fail on its own terms rather than refusing one that would
 	// have worked.
 	found, err := remoteHasCommit(ctx, root, "origin", commit)
-	return err == nil && found
+	if err != nil {
+		return false, false
+	}
+	return found, true
 }
 
 // remoteHasCommit asks the remote itself whether it publishes commit as a ref
