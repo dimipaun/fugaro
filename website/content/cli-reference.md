@@ -9094,8 +9094,8 @@ is the window's, over everyone's runs, and is no more the caller's own than the
 truncation is. The rows come from the run index -- one page of entries for the
 window, and no run object read at all -- which index_complete reports: it is false
 while the index has not finished a walk, when the run records are read instead.
-Either way the document is built the same way -- the same fields, the same rows,
-totals and counts, from the same run records -- so a reader renders both alike, and
+Either way the document is built the same way -- the same fields, through the same
+aggregation, from the same run records -- so a reader renders both alike, and
 index_complete says only which read answered.
 
 --json prints {version, project, by, view, you, admin, since, until, max_runs,

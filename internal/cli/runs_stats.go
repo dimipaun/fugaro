@@ -223,8 +223,8 @@ func newRunsStatsCmd() *cobra.Command {
 			"truncation is. The rows come from the run index -- one page of entries for the\n" +
 			"window, and no run object read at all -- which index_complete reports: it is false\n" +
 			"while the index has not finished a walk, when the run records are read instead.\n" +
-			"Either way the document is built the same way -- the same fields, the same rows,\n" +
-			"totals and counts, from the same run records -- so a reader renders both alike, and\n" +
+			"Either way the document is built the same way -- the same fields, through the same\n" +
+			"aggregation, from the same run records -- so a reader renders both alike, and\n" +
 			"index_complete says only which read answered.\n\n" +
 			"--json prints {version, project, by, view, you, admin, since, until, max_runs,\n" +
 			"truncated, index_complete, rows[], totals[], unlaunched, notes}; rows and totals\n" +
@@ -575,9 +575,13 @@ func readRunObjects(ctx context.Context, env *cloudEnv, slugs []string, since, u
 // UpdatedAt: the record's finish where it has one), and the records by the run
 // id's mint time, the run's start (runstore.ListRunIDs). A run that started
 // before the window and finished inside it is therefore in the index's page and
-// not in the record read's listing. The claim that the two agree over the same
-// window ran ahead of that, which is why the help and §6.10 of the console
-// contract now say only what holds.
+// not in the record read's listing. A run whose launch.json the fold could not
+// read is the other case: the entry carries no launch, so with no record either
+// the index read counts it among the runs that never started, while the record
+// read returns it as a started run whose launcher nobody recorded (the corrupt
+// guard in readRunObjects). The claim that the two agree over the same window
+// ran ahead of that, which is why the help and §6.10 of the console contract
+// now say only what holds.
 func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since time.Time, max int) (userStatsRead, error) {
 	idx, err := runIndexReader(ctx, env)
 	if err != nil {
