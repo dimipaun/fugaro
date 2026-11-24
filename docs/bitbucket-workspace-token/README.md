@@ -81,7 +81,7 @@ superseded for 0.13.0 by that plan's "The re-planned Bitbucket S2".
 
 | Release | Tasks |
 | --- | --- |
-| **0.12.1** | Run **dc73** (the `allow_data_to` wildcard, D464) first. Then **T1.1** (docs and the `SECURITY.md` reach statement) and **T1.2** (CLI help text, comments and message wording), **both APPROVED 2026-10-27**, which launch after dc73 merges. Per-repository jobs are unchanged. Check 180 (T1.3, T1.4) stays owner-run and comes later: no Premium sandbox workspace is known |
+| **0.12.1** | Run **dc73** (the `allow_data_to` wildcard, D464) first. Then **T1.1** (docs and the `SECURITY.md` reach statement) and **T1.2** (CLI help text, comments and message wording), **both APPROVED 2026-10-27**, which launch after dc73 merges. Per-repository jobs are unchanged. Check 180 (T1.3, T1.4) stays owner-run and comes later — **the Premium sandbox workspace it runs on is the owner's `dimi_bmb`, settled 2026-11-23 (U6)** |
 | **0.13.0** | **T2.1–T2.11**: Bitbucket in shared project jobs, the node's derived Bitbucket block enforced by the runner and checked at publish and deploy, the doctor warning, the API-root pin (T2.8, on), the policy version 4 and its lockstep release notes (T2.11), the phase-3 docs and Check 181. None is approved. **T2.10 is off** (D476), and **T3.1 is superseded** by dc73 (D464) |
 
 The headline finding: storing one workspace or project token for many repositories **already
@@ -106,5 +106,5 @@ None.
 | Block | Use |
 | --- | --- |
 | **D460–D489** | **D460–D477** are written (all ruled 2026-10-27; D469–D472 are resolutions). **D478–D489** are reserved and unused. The block sits above the subscriptions work's D430–D459, on `main` and in every open PR |
-| **Checks 180–189** | **180–181** are proposed (owner-run, NOT RUN). **182–189** are reserved and unused. The block sits above Checks 170–179 |
+| **Checks 180–189** | **180–181** are written and registered (owner-run, NOT RUN); 181's run still waits for T2.6 and S5. **182–189** are reserved and unused. The block sits above Checks 170–179 |
 | **D1980–D1999** | **The block [reconciliation-secrets-brokering.md](reconciliation-secrets-brokering.md) takes** (2026-11-10), because D1959 is the highest decision on `main` and no open PR writes D1960 or above. **D1980–D1984** were answered there on 2026-11-10, all five as recommended; **D1985–D1999** are reserved and unused. It sits above this work's own D460–D489 and above the credentials folder's D1960–D1979, which the same reading takes |

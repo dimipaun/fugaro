@@ -671,6 +671,7 @@ var liveCheckScripts = []struct {
 	{"check148.sh", "check148_test.sh"},
 	{"check149.sh", "check149_test.sh"},
 	{"check180.sh", "check180_test.sh"},
+	{"check181.sh", "check181_test.sh"},
 	{"check190.sh", "check190_test.sh"},
 	{"check191.sh", "check191_test.sh"},
 	{"check193.sh", "check193_test.sh"},

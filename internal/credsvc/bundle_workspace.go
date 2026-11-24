@@ -73,7 +73,10 @@ func WorkspaceBundleSecretID(workspace string) string { return BundleSecretID(wo
 // WorkspaceShared is the workspace's offered pool: the credentials the
 // workspace holds AND declares shared, each with the member projects its
 // allow-list names (D1298) and, for a forge entry, the kind it is and the
-// repositories it reaches. It is the workspace's side of the intersection the
+// repositories it reaches. An entry offered to every member (D2977, C3's
+// `all_members`) is offered to each project the NODE declares, so what the
+// allow-list reads is the workspace's membership at the moment the node was
+// read, and the member's own policy is still asked on top of it (R5). It is the workspace's side of the intersection the
 // service then narrows by the member's own policy (Workspace.Shared), and it is
 // the ONLY reader of the pool: the declaration is one document (the bundle, for
 // the values and the tiers) and one node (the owner's shared list, for the
@@ -114,6 +117,17 @@ func WorkspaceShared(b *Bundle, node *projectpolicy.WorkspaceCredentials) []cred
 	}
 	out := make([]creds.Shared, 0, len(node.Shared))
 	for _, s := range node.Shared {
+		// Who the entry is offered to, as the member's-project list every reader
+		// of the pool intersects with the member's own policy (D1298, R5). An
+		// entry offered to every member carries no projects: it is offered to
+		// each member the node declares, so the list is read off the node's own
+		// member table here — the same table the service resolves a caller
+		// against, which is what makes "every member" mean the members the
+		// workspace really has, a member that joins later included.
+		projects := slices.Clone(s.Projects)
+		if s.AllMembers {
+			projects = workspaceMemberProjects(node)
+		}
 		if s.Kind == "" || s.Kind == projectpolicy.SharedKindModel {
 			// The model arm: the pool's own kind, and what a version-1 node's
 			// entry is (C3's rule 8 — the pool held model credentials and
@@ -126,7 +140,7 @@ func WorkspaceShared(b *Bundle, node *projectpolicy.WorkspaceCredentials) []cred
 			}
 			out = append(out, creds.Shared{
 				Credential: creds.Credential{Name: e.Name, Tier: e.Tier},
-				Projects:   slices.Clone(s.Projects),
+				Projects:   projects,
 			})
 			continue
 		}
@@ -136,11 +150,30 @@ func WorkspaceShared(b *Bundle, node *projectpolicy.WorkspaceCredentials) []cred
 		}
 		out = append(out, creds.Shared{
 			Credential: creds.Credential{Name: e.Name, Tier: e.Tier},
-			Projects:   slices.Clone(s.Projects),
+			Projects:   projects,
 			Kind:       s.Kind,
 			Covers:     slices.Clone(s.Covers),
 		})
 	}
+	return out
+}
+
+// workspaceMemberProjects is the node's member list as the projects a pool
+// entry offered to every member is offered to: each member the node declares,
+// in project-name order, which is what `all_members` means (D2977, C3's rule 5).
+//
+// It is read off the node and not off the workspace's record, because the node
+// is the document the resolver has already admitted the calling member against:
+// a pool expanded from a second copy of the membership could offer a credential
+// to a project the node that admitted the caller does not declare. A member the
+// node drops stops being offered the entry at the service's next read of the
+// node (R13), with no new revision and no rewrite of the entry.
+func workspaceMemberProjects(node *projectpolicy.WorkspaceCredentials) []string {
+	out := make([]string, 0, len(node.Members))
+	for _, m := range node.Members {
+		out = append(out, m.Project)
+	}
+	slices.Sort(out)
 	return out
 }
 

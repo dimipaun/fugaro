@@ -22,6 +22,7 @@ import (
 func seedRootRigor(t *testing.T, f *cloudFixture, id string, mode rigor.Rigor) {
 	t.Helper()
 	seedSpec(t, f, firstRunSpec(id), false)
+	seedTitleAwareImage(t, f)
 	rec := prRecord(id, "", 7, 1)
 	rec.StartedAt = time.Now().Add(-72 * time.Hour)
 	if mode != "" {
@@ -154,6 +155,10 @@ func TestStoredFollowUpKeepsAHotfixRequest(t *testing.T) {
 	writeBuildRecord(t, f, appSlug, "web", release0111)
 	fu := followUpSpec(fuID, rootID, rootID, 7)
 	fu.Rigor = rigor.Hotfix
+	// The launch reuses the stored task as it is, and no run is stored without a
+	// title: a fixture with none would be refused for that and never reach the
+	// rule this test is about.
+	fu.Title = "Follow-up of the fixture's chain"
 	seedSpec(t, f, fu, false)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID); err != nil {
 		t.Fatalf("a stored follow-up asking for hotfix was refused: %v", err)
@@ -243,6 +248,7 @@ func TestStoredFollowUpKeepsARaise(t *testing.T) {
 	writeBuildRecord(t, f, appSlug, "web", release0160)
 	fu := followUpSpec(fuID, rootID, rootID, 7)
 	fu.Rigor = rigor.Critical
+	fu.Title = "Follow-up of the fixture's chain"
 	seedSpec(t, f, fu, false)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID); err != nil {
 		t.Fatal(err)
