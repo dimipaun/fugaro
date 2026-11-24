@@ -554,7 +554,16 @@ run "a question is marked heard only when its announcement played out" \
   "      const marks = true;" \
   mobile/src/voice/dialogue.js src/voice/dialogue.test.js
 
-echo
+# 18. X1 (D2788): the one conversation holds what REACHED the session. The
+#     voice view records the owner's spoken words after the client accepted
+#     them and appends nothing when it refused them (D167 keeps the refused
+#     text in `unsent`), so a recording that runs first is a conversation
+#     holding words nobody was sent.
+run "a send the client refused is not a line in the one conversation" \
+  "    if (!sent.ok) return sent;" \
+  "    if (!sent.ok) { record(text); return sent; }" \
+  mobile/src/voice/screen.js src/voice/screen.test.js
+
 echo "guards proved: $killed killed, $survivors survived, $unapplied not applied"
 if [ "$survivors" -ne 0 ] || [ "$unapplied" -ne 0 ] || [ "$killed" -ne "$guards" ]; then
   echo "FAILED: a guard above is not proved by any test" >&2

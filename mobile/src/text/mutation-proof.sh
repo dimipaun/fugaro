@@ -10,8 +10,9 @@
 # command as text (D169), it must NOT confirm twice or past the deadline or
 # against a target that moved, and it must NOT draw one installation's
 # questions under another's name or a total across them (D170). Each mutation
-# below disables exactly ONE of those guards -- in `input.js` or in `screen.js`
-# -- and every one must make that guard's own suite fail. A guard whose mutation
+# below disables exactly ONE of those guards -- in `input.js`, in `screen.js`
+# or in `transcript.js`, X1's conversation (D2788) -- and every one must make
+# that guard's own suite fail. A guard whose mutation
 # survives is a guard no test defends.
 #
 #   mobile/src/text/mutation-proof.sh
@@ -398,7 +399,15 @@ run "a notice is drawn only when there is one" \
   "    if (typeof props.notice === 'string') {" \
   mobile/src/text/screen.js "$SCREEN_SUITE"
 
-echo
+# 11. X1 (D2788): one conversation, and the app's own refusal sentence is not
+#     one of its lines. The client says that sentence over the speaker port the
+#     transcript sits behind (S6.3) and marks it as what it is; a wrapper that
+#     records it anyway puts words in the agent's mouth.
+run "the app's own refusal sentence is not the agent's line" \
+  "      if (said !== null && typeof said === 'object' && said.ok === true && !isRefusal) {" \
+  "      if (said !== null && typeof said === 'object' && said.ok === true) {" \
+  mobile/src/text/transcript.js src/text/transcript.test.js
+
 echo "guards proved: $killed killed, $survivors survived, $unapplied not applied"
 if [ "$survivors" -ne 0 ] || [ "$unapplied" -ne 0 ] || [ "$killed" -ne "$guards" ]; then
   echo "FAILED: a guard above is not proved by any test" >&2
