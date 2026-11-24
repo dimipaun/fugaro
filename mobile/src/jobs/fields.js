@@ -20,10 +20,13 @@
 //
 // **What is deliberately NOT a field here.**
 //
-//   * **A run.** `agents/$slug/$run` carries no read for a user claim and
-//     `outcomes/**` carries none either, so no field of this table can come
-//     from a run: there is no run title, no stage, no deadline and no agent on
-//     this screen. `scope.test.js` greps the module for both family names.
+//   * **A run.** A run's own record and its registry entry (`agents/$slug/$run`)
+//     carry no read for a user claim, so no field of this table can come from a
+//     run: there is no run title, no stage, no deadline and no agent on this
+//     screen. The one node of the outcomes family a paired device reads
+//     (`outcomes/$day/$slug/$run`, J1; D2797) is a run's **state**, not a field
+//     of this table, and `running.js` is the file that reads it.
+//     `scope.test.js` greps the module for both family names.
 //   * **A repository.** `config/caps/repos/$slug` and `spend/$day/repos/$slug`
 //     *are* granted, and P3.2's document carries a `repos[]` block built from
 //     them -- but the resolution names repositories among the things the list

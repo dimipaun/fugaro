@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -21,8 +22,11 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	infraTF "github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
 // The credentials service's entry point (plan task C1.14) is not a command
@@ -1781,5 +1785,322 @@ func TestCredentialsServeRefusesHTTP2DebugStill(t *testing.T) {
 				t.Fatalf("err = %v, want the http2debug refusal: a process that serves the h2c path prints the frames of a call that carries a credential", err)
 			}
 		})
+	}
+}
+
+// The workspace's personal half (C2, WC14) is what a workspace-mode process
+// hands C1's resolver beside the front door, the node reader and the meter:
+// the reader of the workspace's OWN roster node, the launcher verifier that
+// roster admits its people with, and the slip store its own grants live in.
+// All three are built over the workspace's own database — the one
+// FUGARO_RTDB_URL names — and all three travel to the scope through C2's one
+// package variable, `credsvc.PersonScopeConfigForServe`, which the process sets
+// BEFORE the resolver is built (C2's "Two package-level variables are how the
+// sides meet").
+//
+// What these tests can and cannot see is worth stating, because WC4 (the scope
+// that reads the configuration) is written in parallel with this task and has
+// not landed: what they pin is the WIRING — the three readers, over which
+// database, and set before the resolver — which is the whole of what this task
+// produces. The scope's use of them is WC4's own tests'.
+
+// workspaceRosterDocument is a roster as C1's own encoder writes it: the
+// version this build reads, the service-account mechanism (which owns no folder
+// id), and the people and admins the caller names. It validates nothing itself,
+// so a test that means to publish a roster this build REFUSES publishes one —
+// which is exactly how the refusal is driven below.
+func workspaceRosterDocument(people []workspace.Person, admins []string) *workspace.Roster {
+	return &workspace.Roster{
+		Version:   workspace.RosterVersion,
+		Mechanism: workspace.MechanismSA,
+		People:    people,
+		Admins:    admins,
+	}
+}
+
+// publishRoster writes a roster into the workspace's own database at the node
+// C1's store reads, through C1's own encoder: the document the process decodes
+// is the one a `fugaro workspace` command writes, and not a shape these tests
+// invented.
+func publishRoster(t *testing.T, fake *gcpfake.RTDB, client *rtdb.Client, name string, people []workspace.Person, admins []string) {
+	t.Helper()
+	store, err := workspace.NewRosterStore(client, name)
+	if err != nil {
+		t.Fatalf("the roster store these tests publish through: %v", err)
+	}
+	raw, err := workspace.EncodeRoster(workspaceRosterDocument(people, admins))
+	if err != nil {
+		t.Fatalf("the roster these tests publish is not one C1's encoder writes, so they would prove nothing about the read: %v", err)
+	}
+	fake.Set(store.Path(), json.RawMessage(raw))
+}
+
+// TestWorkspaceModeIsHandedTheRosterAndItsSlips is WC14's acceptance: a
+// workspace-mode process builds the roster's reader, the launcher verifier and
+// a slip store over the workspace's own database, and hands them to the scope's
+// resolver through C2's configuration, before that resolver is built.
+//
+// The launcher class is the half a test cannot read off the configuration: the
+// verifier's account list is unexported, and verifying a caller would need a
+// Google ID token and Google's key set, neither of which is here. So the class
+// is observed from the other end, by what the process DOES with a roster — and
+// the two rosters below are the pair that pins it exactly:
+//
+//   - a roster naming a human AND a machine starts: the machine's address is
+//     one the class's own construction refuses (foldLauncherAccounts), so the
+//     process starting is what says the machine never reached it — R3's "people
+//     only" (F12).
+//   - a roster whose only person is a HUMAN with a service account's address
+//     starts too, and the person half is set. A human's address is held to the
+//     address grammar and not to its domain (workspace.CanonicalAddress), so
+//     C1's roster admits this document, and a class built straight off its
+//     people would have refused the whole deployment at the class's own
+//     construction. It starts because the list builder leaves the shape out
+//     (workspaceRosterLaunchers): one entry a member's roster could plant, or
+//     an operator could mis-kind, must not stop every member's routes, and an
+//     address of that shape could never be verified as a person anyway.
+func TestWorkspaceModeIsHandedTheRosterAndItsSlips(t *testing.T) {
+	const workspaceName = "aurora-ws"
+	// The configuration is the package's, and the process is one deployment:
+	// a test that left it set would hand the next test in this binary another
+	// workspace's launcher class.
+	before := credsvc.PersonScopeConfigForServe
+	t.Cleanup(func() { credsvc.PersonScopeConfigForServe = before })
+
+	t.Run("the roster's reader, launcher class and slips are the workspace's own", func(t *testing.T) {
+		for n, v := range workspaceServeEnv(workspaceName) {
+			t.Setenv(n, v)
+		}
+		fakeCredentialsService(t)
+		fake, client := fakeWorkspaceDatabase(t, workspaceName)
+		credentialsTest.database = func(context.Context, string, oauth2.TokenSource) (*rtdb.Client, error) {
+			return client, nil
+		}
+		publishRoster(t, fake, client, workspaceName, []workspace.Person{
+			// A machine of the workspace, and its address is one the launcher
+			// class refuses: it is here to prove the class never saw it.
+			{Address: workspaceServiceAccount, Kind: workspace.KindSA},
+			{Address: "person-1@example.com", Kind: workspace.KindHuman},
+		}, []string{"person-1@example.com"})
+
+		// The order C2 fixes, recorded where it can be seen: the configuration
+		// is what the scope reads when it is BUILT, so a resolver built over a
+		// configuration that arrived afterwards would serve every grant of this
+		// deployment with no launcher class and no slips.
+		var atBuild credsvc.PersonScopeConfig
+		credentialsWorkspaceTest = func(cfg credsvc.WorkspaceScopeConfig) (credsvc.ScopeResolver, error) {
+			atBuild = credsvc.PersonScopeConfigForServe
+			return credsvc.NewWorkspaceScopeResolver(cfg)
+		}
+		t.Cleanup(func() { credentialsWorkspaceTest = nil })
+
+		cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+		if err != nil {
+			t.Fatalf("credentialsServiceConfig with a roster published: %v", err)
+		}
+		if cfg.Resolver == nil {
+			t.Fatal("the workspace's configuration handed the Server no resolver")
+		}
+		if atBuild.Roster == nil || atBuild.Launchers == nil || atBuild.Slips == nil {
+			t.Fatalf("C1's constructor was handed Roster=%v Launchers=%v Slips=%v, and all three are set before it is built: the roster's reader, the verifier its people are admitted by, and the store this workspace's grants live in", atBuild.Roster != nil, atBuild.Launchers != nil, atBuild.Slips != nil)
+		}
+		person := credsvc.PersonScopeConfigForServe
+		if person.Roster == nil || person.Launchers == nil || person.Slips == nil {
+			t.Fatalf("the process left Roster=%v Launchers=%v Slips=%v for the scope to read", person.Roster != nil, person.Launchers != nil, person.Slips != nil)
+		}
+
+		// The reader is the workspace's own roster node, and it answers what is
+		// THERE: the scope re-reads through it on the sixty-second rule the
+		// published node has (C2's rule 3), so the person the owner removes is
+		// refused without this service restarting (R3, D3146) — which a
+		// snapshot taken at startup could not do.
+		rosterNode, found, err := person.Roster.Read(context.Background())
+		if err != nil {
+			t.Fatalf("the roster reader: %v", err)
+		}
+		if !found {
+			t.Fatal("the roster reader found no node at the path it answers, and this test published one there")
+		}
+		document, err := workspace.DecodeRoster(rosterNode.Raw)
+		if err != nil {
+			t.Fatalf("the document the roster reader answered is not one C1's reader reads: %v", err)
+		}
+		addresses := []string{}
+		for _, p := range document.People {
+			addresses = append(addresses, p.Address)
+		}
+		if !slices.Equal(addresses, []string{workspaceServiceAccount, "person-1@example.com"}) {
+			t.Fatalf("the roster reader answered the people %v, want the roster published at the workspace's own node", addresses)
+		}
+
+		// ... and it reads the node NOW: the same reader, over the node the
+		// owner has since moved.
+		publishRoster(t, fake, client, workspaceName, []workspace.Person{
+			{Address: "person-2@example.com", Kind: workspace.KindHuman},
+		}, []string{"person-2@example.com"})
+		rosterNode, found, err = person.Roster.Read(context.Background())
+		if err != nil || !found {
+			t.Fatalf("the second read of the roster: found=%v err=%v", found, err)
+		}
+		document, err = workspace.DecodeRoster(rosterNode.Raw)
+		if err != nil {
+			t.Fatalf("the second read's document: %v", err)
+		}
+		if len(document.People) != 1 || document.People[0].Address != "person-2@example.com" {
+			t.Fatalf("the roster reader answered %+v after the node moved: a reader that answered the roster it was built over would be a snapshot, and a person removed from the roster is refused within a minute (R3, D3146) by the read this one makes", document.People)
+		}
+
+		// The slips are the workspace's OWN database's, which is the database
+		// this process was handed and never a member's (R3): the grant writes
+		// here and the claim reads here, and a slip of a member's is another
+		// service's (WC8).
+		//
+		// What is asked of the store is only that it is a working store over
+		// THIS database, and neither question needs the slip half's own names:
+		// internal/creds' boundary test keeps `creds.Slip` and the rest out of
+		// every file of this package but the service's, and it is right to —
+		// no operator command grants, claims or ends a slip (G10). So the store
+		// is read through the interface the process handed the scope, and the
+		// database it reached is the one that answers: a read of an id nothing
+		// wrote answers "no such slip" out of the workspace's own fake, and the
+		// same read fails when that fake refuses every call.
+		if _, found, err := person.Slips.Slip(context.Background(), "slip-wc14"); err != nil {
+			t.Fatalf("the slip store the process handed the scope could not read the workspace's own database: %v", err)
+		} else if found {
+			t.Fatal("the slip store found a slip at an id nothing has written, and this workspace's database holds none")
+		}
+		fake.Refuse(http.StatusServiceUnavailable, "UNAVAILABLE", "", "the workspace's own database is out")
+		if _, _, err := person.Slips.Slip(context.Background(), "slip-wc14"); err == nil {
+			t.Error("the slip store answered while the workspace's own database refused every call: the store the process handed the scope is not this database's, and the workspace's slips are the workspace's own (R3)")
+		}
+		fake.Refuse(0, "", "", "")
+
+		// ... and the workspace's deployment is still the one Server (D2980):
+		// the personal half is additive and changes nothing about the
+		// installation's path (C2's rule 1).
+		if _, err := credsvc.NewServer(cfg); err != nil {
+			t.Fatalf("NewServer refused the workspace's configuration with a roster published: %v", err)
+		}
+	})
+
+	t.Run("a roster whose human is a service account still starts", func(t *testing.T) {
+		// A HUMAN with a service account's address: C1's roster admits the
+		// document (a person's address is held to the address grammar, and its
+		// domain is not the roster's business), and the launcher class would
+		// refuse it — so the process starting, with the class built and handed
+		// to the scope, is the observation that the list builder left the entry
+		// out rather than handing it on. A deployment stopped here would stop
+		// every member's model and forge routes over one entry that could never
+		// be verified as a person (C2's "not a failure to start").
+		const machine = "svc-1@proj-1234.iam.gserviceaccount.com"
+		for n, v := range workspaceServeEnv(workspaceName) {
+			t.Setenv(n, v)
+		}
+		fakeCredentialsService(t)
+		fake, client := fakeWorkspaceDatabase(t, workspaceName)
+		credentialsTest.database = func(context.Context, string, oauth2.TokenSource) (*rtdb.Client, error) {
+			return client, nil
+		}
+		publishRoster(t, fake, client, workspaceName, []workspace.Person{
+			{Address: machine, Kind: workspace.KindHuman},
+		}, []string{machine})
+
+		cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+		if err != nil {
+			t.Fatalf("credentialsServiceConfig with a roster whose only person is a human holding a service account's address: %v", err)
+		}
+		if cfg.Resolver == nil {
+			t.Fatal("the workspace's configuration handed the Server no resolver: this workspace's owner HAS published a roster, so the personal half is the workspace's own and a nil resolver would be the installation's")
+		}
+		person := credsvc.PersonScopeConfigForServe
+		if person.Roster == nil || person.Launchers == nil || person.Slips == nil {
+			t.Fatalf("the process left Roster=%v Launchers=%v Slips=%v: the half is set whether or not the roster named anybody this class can admit, and the class being BUILT and non-refusing is what says the service-account-shaped entry never reached it", person.Roster != nil, person.Launchers != nil, person.Slips != nil)
+		}
+		if _, err := credsvc.NewServer(cfg); err != nil {
+			t.Fatalf("NewServer refused the workspace's configuration: %v", err)
+		}
+	})
+
+	t.Run("a roster that cannot be read refuses the process", func(t *testing.T) {
+		// The roster lives in the same database as the published node this
+		// function read a moment earlier, so a read of it that fails is a
+		// deployment that cannot serve its people — and a process that started
+		// anyway would refuse every one of their grants while looking healthy
+		// (D143's fail-closed direction). The read that failed is an error and
+		// never "no roster" (C2's rule 3).
+		for n, v := range workspaceServeEnv(workspaceName) {
+			t.Setenv(n, v)
+		}
+		fakeCredentialsService(t)
+		fake, client := fakeWorkspaceDatabase(t, workspaceName)
+		credentialsTest.database = func(context.Context, string, oauth2.TokenSource) (*rtdb.Client, error) {
+			return client, nil
+		}
+		store, err := workspace.NewRosterStore(client, workspaceName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fake.DenyRead(store.Path())
+
+		_, err = credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+		if err == nil || ExitCode(err) != ExitRemoteError {
+			t.Fatalf("err = %v, want a remote error: a roster nobody could read has no people to serve, and a service that started anyway would answer every grant of this workspace with a refusal it cannot explain (the published node's own read above is refused the same way, out of the same database)", err)
+		}
+	})
+}
+
+// TestWorkspaceModeWithoutARosterGrantsNothing is the other half of WC14's
+// acceptance: a workspace whose owner has published no roster is a process that
+// STARTS and whose scope serves no grant and no personal candidate, which is
+// today's behaviour (C2's "What each side may rely on", WC14's paragraph). It
+// is not a failure to start, and it is not the same state as a roster that
+// cannot be read — the test above pins that one.
+//
+// The workspace's published credentials node IS there, so the process reaches
+// the personal half's own read rather than refusing on the node above it, and
+// the assertions WS5 makes about that node's half still hold: the resolver is
+// built and the Server accepts the configuration.
+func TestWorkspaceModeWithoutARosterGrantsNothing(t *testing.T) {
+	const workspaceName = "aurora-ws"
+	before := credsvc.PersonScopeConfigForServe
+	t.Cleanup(func() { credsvc.PersonScopeConfigForServe = before })
+	// A launcher class left over from another test would make this test pass
+	// for the wrong reason, so the variable is cleared before the process runs:
+	// what is asserted below is that THIS process left the zero configuration.
+	credsvc.PersonScopeConfigForServe = credsvc.PersonScopeConfig{}
+
+	for n, v := range workspaceServeEnv(workspaceName) {
+		t.Setenv(n, v)
+	}
+	fakeCredentialsService(t)
+	fake, client := fakeWorkspaceDatabase(t, workspaceName)
+	credentialsTest.database = func(context.Context, string, oauth2.TokenSource) (*rtdb.Client, error) {
+		return client, nil
+	}
+	// The database really is one the roster could have been published in, and
+	// the node this test does not publish is absent rather than unreadable: a
+	// test that proved "no roster" from a database that was never reachable
+	// would prove nothing.
+	store, err := workspace.NewRosterStore(client, workspaceName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fake.Value(store.Path()) != nil {
+		t.Fatalf("%s already holds a roster, and this test is about a workspace whose owner has published none", store.Path())
+	}
+
+	cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err != nil {
+		t.Fatalf("credentialsServiceConfig for a workspace with no roster node: %v (a workspace that published no roster is a state of the deployment and not a failure to start)", err)
+	}
+	if cfg.Resolver == nil {
+		t.Fatal("the workspace's configuration handed the Server no resolver: the personal half is additive, and a workspace with no roster still serves everything the node above it binds")
+	}
+	person := credsvc.PersonScopeConfigForServe
+	if person.Roster != nil || person.Launchers != nil || person.Slips != nil {
+		t.Fatalf("the process handed the scope Roster=%v Launchers=%v Slips=%v for a workspace with no roster node: C2's zero configuration is the state every deployment is in until one is wired, and half of one is a scope that would read a roster it was never handed", person.Roster != nil, person.Launchers != nil, person.Slips != nil)
+	}
+	if _, err := credsvc.NewServer(cfg); err != nil {
+		t.Fatalf("NewServer refused the configuration of a workspace with no roster node: %v", err)
 	}
 }
