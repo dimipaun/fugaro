@@ -487,10 +487,10 @@ directions.
 Section 6 is the group about the bounds. Most of its rows **move a comparison by
 one** — `> MAX` to `>= MAX`, and to `> MAX + 1` — because that, rather than a
 deleted check, is the mutation this module has actually been wrong about:
-seventeen of the twenty-two do it. Four more drop a term of a rule instead — the
+nineteen of the twenty-four do it. Four more drop a term of a rule instead — the
 carriage return from the line-break rule, DEL from each of the two character
 rules, and the second head-SHA length from the SHA rule, which is the same class
-of mistake one step further from the check's edge. The twenty-second does neither: it
+of mistake one step further from the check's edge. One more does neither: it
 replaces the SHA rule's equality test with a range test (`action: the head SHA
 may be any length from SHA_MIN to SHA_MAX`), and a refusal of a head SHA between
 the two lengths is what kills it. `repo.length > TARGET_MAX` narrowed to
