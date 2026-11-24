@@ -63,6 +63,16 @@ const (
 	mountedSecretValue = "mounted-workflow-secret-4a20"
 )
 
+// secondFileEnvVar and secondFileSecretValue are a second declaration of the
+// SAME logical secret, exposed as a file under its own variable with a value of
+// its own: two variables holding one name is a legal declaration (Validate
+// refuses a repeated env and nothing else), and a job that mounts both carries
+// a value under each.
+const (
+	secondFileEnvVar      = "FIXTURE_SECOND_FILE"
+	secondFileSecretValue = "mounted-second-secret-7b31"
+)
+
 // otherSecretName is a secret that is not the one a call asks for: what a
 // service answers when the answer belongs to another secret, which the run may
 // not read as the one it asked for.
@@ -271,6 +281,23 @@ func fileSecretsConfig(t *testing.T, extra string) string {
 func fileSecretsRun(t *testing.T, extra string, spec *task.Spec, svc *secretsService) *bk {
 	t.Helper()
 	return secretsRunConfig(t, fileSecretsConfig(t, extra), spec, svc)
+}
+
+// twoFileSecretsConfig is fileSecretsConfig with the SAME logical secret
+// declared a second time, under a second variable and exposed as a file too:
+// the declaration Validate admits (it refuses a repeated env, and this name is
+// declared twice under two), and the one a repository mounting one secret into
+// two tools writes.
+func twoFileSecretsConfig(t *testing.T, extra string) string {
+	t.Helper()
+	const declared = "      - { name: fixture-fails, env: FIXTURE_FAILS_FILE, file: true }"
+	cfg := fileSecretsConfig(t, extra)
+	second := "      - { name: " + secretName + ", env: " + secondFileEnvVar + ", file: true }"
+	out := strings.Replace(cfg, declared, declared+"\n"+second, 1)
+	if out == cfg {
+		t.Fatal("the fixture's declared file secret moved: this is not declaring it a second time")
+	}
+	return out
 }
 
 // secretsRun is the whole run these tests are about: the fixture repository's

@@ -156,6 +156,51 @@ func TestSecretFileRedactedBeforeWrite(t *testing.T) {
 	}
 }
 
+// TestTwoFileSecretsSharingANameGetTheirOwnFile: a workflow may declare the
+// same logical secret twice, under two variables (config's Validate refuses a
+// repeated env and no other repetition), and both entries may be exposed as
+// files -- one secret a repository mounts into two tools. The file a
+// declaration gets is the one its VARIABLE names, so each variable is the path
+// of a file holding its own value: keyed by the logical name instead, the
+// second write would meet the first's file and stop the run at bootstrap
+// (O_EXCL), and keyed by anything the two declarations share, one variable
+// would be handed the other's value.
+//
+// Hand mutation this fails on: keying the file by the secret's logical name (the
+// run stops on the second declaration and never reaches a stage), or writing
+// both declarations to one file (one variable reads the other's value).
+func TestTwoFileSecretsSharingANameGetTheirOwnFile(t *testing.T) {
+	secretFileTempDir(t)
+	svc := &secretsService{}
+	b := secretsRunConfig(t, twoFileSecretsConfig(t, "  first_line_review: off\n"), nil, svc)
+	// A job that mounts both variables: the values are the job's own, so the two
+	// files cannot be one file written twice with one value in it.
+	b.deps.Env = append(b.deps.Env, secretEnvVar+"="+mountedSecretValue, secondFileEnvVar+"="+secondFileSecretValue)
+
+	var first, second string
+	rec, err := b.run(t, func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		first = envValue(req.Env, secretEnvVar)
+		second = envValue(req.Env, secondFileEnvVar)
+		for _, c := range []struct{ env, path, want string }{
+			{secretEnvVar, first, mountedSecretValue},
+			{secondFileEnvVar, second, secondFileSecretValue},
+		} {
+			content, err := os.ReadFile(c.path)
+			if err != nil {
+				t.Fatalf("%s names %q, which cannot be read: %v", c.env, c.path, err)
+			}
+			if string(content) != c.want {
+				t.Errorf("%s reads %q, want the value the job mounted under that variable", c.env, content)
+			}
+		}
+		return implement("feature")(t, ctx, req)
+	}, review("ship", 0))
+	mustReady(t, rec, err)
+	if first == "" || second == "" || first == second {
+		t.Fatalf("%s=%q and %s=%q, want the path of a file each", secretEnvVar, first, secondFileEnvVar, second)
+	}
+}
+
 // TestSecretFileRemovedAtRunEnd: the run takes the file out of the temporary
 // directory when it ends, root and all (G3) -- a value a finished run left on
 // disk is one the next thing in that container can read.

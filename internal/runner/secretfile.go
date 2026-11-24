@@ -34,12 +34,18 @@ package runner
 //     under the temporary directory, so a path that is not this run's own is
 //     refused rather than having its parent taken with it.
 //
-// The name of the file is the secret's LOGICAL name (config.SecretNameRE:
-// lower-case letters, digits and dashes), which is not a path a declaration can
-// bend: nothing a repository's fugaro.yaml holds can name a file outside the
-// run's own directory.
+// The name of the file is the VARIABLE the declaration names (config's
+// envNameRE: upper-case letters, digits and underscores), which is not a path a
+// declaration can bend -- nothing a repository's fugaro.yaml holds can name a
+// file outside the run's own directory -- and which is the one field a
+// declaration cannot repeat: Validate refuses a workflow that names the same
+// env twice, while the same LOGICAL name under two variables is legal (one
+// secret exposed to two tools as two files). Keying the file by the name would
+// make the second declaration a collision at a path both variables point at,
+// and one variable would either abort the run or read the other's value.
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -96,7 +102,7 @@ func (r *run) exposeSecretFiles(declared []config.Secret) error {
 			// would say the same thing twice.
 			continue
 		}
-		path, err := r.writeSecretFile(s.Name, value)
+		path, err := r.writeSecretFile(s.Env, value)
 		if err != nil {
 			return fmt.Errorf("exposing workflow secret %s as a file: %w", s.Name, err)
 		}
@@ -106,13 +112,13 @@ func (r *run) exposeSecretFiles(declared []config.Secret) error {
 }
 
 // writeSecretFile registers value with the redactor and writes it to the file
-// the secret's name gives it, returning the path.
+// env names it, returning the path.
 //
 // The registration comes first and is not moved: everything the run publishes
 // is redacted of the values this list holds (runner.go's redact), and the write
 // is the first thing that puts the value anywhere a reader of the run's
 // container could find it.
-func (r *run) writeSecretFile(name, value string) (string, error) {
+func (r *run) writeSecretFile(env, value string) (string, error) {
 	r.addSecret(value)
 	if secretFileHook != nil {
 		secretFileHook(value, slices.Contains(r.secretList(), value))
@@ -121,22 +127,24 @@ func (r *run) writeSecretFile(name, value string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(root, name)
-	// O_EXCL: the name is the secret's, and a second one under it would be an
-	// answer to what the variable's path holds that no reader agrees on. The
-	// mode is set again after the open because the kernel masks it with the
-	// process's umask, which is not this run's to know.
+	path := filepath.Join(root, env)
+	// O_EXCL: a variable is declared once (config's envNameRE rule), so this
+	// name is a second writer only if something above it stopped holding that,
+	// and overwriting would leave two variables' worth of answers in one file.
+	// What failed is carried rather than swallowed: the reason names the path
+	// and never the value. The mode is set again after the open because the
+	// kernel masks it with the process's umask, which is not this run's to know.
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, secretFileMode)
 	if err != nil {
-		return "", fmt.Errorf("writing the value to a file of the run's own failed")
+		return "", fmt.Errorf("writing the value to a file of the run's own failed: %w", err)
 	}
 	_, werr := f.WriteString(value)
 	cerr := f.Close()
 	if werr != nil || cerr != nil {
-		return "", fmt.Errorf("writing the value to a file of the run's own failed")
+		return "", fmt.Errorf("writing the value to a file of the run's own failed: %w", errors.Join(werr, cerr))
 	}
 	if err := os.Chmod(path, secretFileMode); err != nil {
-		return "", fmt.Errorf("setting the mode of the run's own secret file failed")
+		return "", fmt.Errorf("setting the mode of the run's own secret file failed: %w", err)
 	}
 	return path, nil
 }
