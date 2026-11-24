@@ -190,9 +190,16 @@ func TestRunPromoteRefusesAJobImageThatPredatesTheBlock(t *testing.T) {
 // Mutation (drop the Promote block from finishLaunch's clone branch): the
 // launch goes through on an image whose runner refuses the whole task at
 // bootstrap, which is the failure the gate exists to prevent.
+//
+// The image is release0160 and not the older one the rigor test uses: the
+// area this launch resolves comes from the checkout's own `rigor:` block, and
+// a base older than rigorSince is refused by that block's gate before the
+// promote block is ever judged. 0.16.0 passes the config gates and the level-3
+// request, and is older than promoteSince — so the refusal below is the promote
+// block's and nothing else's.
 func TestRunPromoteIsGatedOnACloneWorkflow(t *testing.T) {
 	f := newCloudFixture(t)
-	f.appendConfig(t, "base_images: {base: ghcr.io/dimipaun/fugaro-base:0.7.5}\n")
+	f.appendConfig(t, "base_images: {base: "+release0160+"}\n")
 	testutil.IsolateGit(t)
 	other := mustSlug("github", "acme/other")
 	f.run.AddJob(gcp.JobName(other, "svc"), "2", "4Gi")
@@ -206,7 +213,7 @@ func TestRunPromoteIsGatedOnACloneWorkflow(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want the job image refused", err)
 	}
-	for _, want := range []string{"--promote ledger", "the promote block", "fugaro " + promoteSince + " or later", "ghcr.io/dimipaun/fugaro-base:0.7.5, release 0.7.5"} {
+	for _, want := range []string{"--promote ledger", "the promote block", "fugaro " + promoteSince + " or later", release0160 + ", release 0.16.0"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q:\n%v", want, err)
 		}

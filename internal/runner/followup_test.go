@@ -105,10 +105,15 @@ func (h *fuHarness) followUp(t *testing.T, id, previous, text string) {
 // followUpRecipe is followUp with the recipe the task INHERITS: a follow-up
 // carries the previous run's (task.json's recipe), never one chosen for it,
 // which is how a recipe can reach a follow-up that no one picked for it.
-func (h *fuHarness) followUpRecipe(t *testing.T, id, previous, text string, rcp *task.Recipe) {
+// edit, when given, adjusts the stored spec: a follow-up that is not an
+// ordinary one (a promote follow-up carries the promote block) says so here.
+func (h *fuHarness) followUpRecipe(t *testing.T, id, previous, text string, rcp *task.Recipe, edit ...func(*task.Spec)) {
 	t.Helper()
 	spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: h.first.Workflow, Task: text,
 		Branch: "fugaro/" + runID, PR: 1, PreviousRun: previous, Recipe: rcp}
+	for _, e := range edit {
+		e(spec)
+	}
 	store := runstore.Open(h.bucket, repoSlug, id)
 	if err := store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
