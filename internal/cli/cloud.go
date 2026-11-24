@@ -383,7 +383,18 @@ func openBudgetDB(ctx context.Context, o cloudOptions) (*localcfg.Config, *rtdb.
 }
 
 // budgetDBFor is openBudgetDB's second half, for a config already selected.
+//
+// D1541's fence is applied here as it is in openCloudFor, and for the same
+// reason: the budget database is the project's own store — its caps, its
+// counters, its kill switch, its orchestrator and its pairing record — so a
+// command that writes into it and is not managed-refused must not reach a
+// client at all. An exempt command is answered without a read
+// (requireManaged), which is what makes this safe to ask at a seam the
+// read-only commands open too.
 func budgetDBFor(ctx context.Context, lc *localcfg.Config) (*localcfg.Config, *rtdb.Client, error) {
+	if err := requireManaged(ctx, managedCommandFrom(ctx), lc); err != nil {
+		return nil, nil, err
+	}
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
 		return nil, nil, userErr("project %s has no Firebase budget backend (budget.rtdb_url is not set in its project config): an operator runs fugaro update --firebase-project %s --name %s", lc.Name, firebaseProjectIDWord(lc.GCPProject), lc.Name)
 	}

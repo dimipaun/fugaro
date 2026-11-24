@@ -188,6 +188,7 @@ var managedFencedCommands = map[string]string{
 	"creds set":              "nothing was stored: the credentials bundle is a Secret Manager secret of the project",
 	"image build":            "no build was submitted: a build spends the project's Cloud Build quota and writes its record into the project",
 	"image refresh":          "nothing was refreshed: a refresh pins, rebuilds and re-points the project's own images",
+	"issue dismiss":          "nothing was dismissed: an issue the project's store carries is set aside there as well as here, so the row that says so is written into the project",
 	"issue sync":             "nothing was uploaded: the project's issue store is in the project's runs bucket",
 	"managed apply":          "nothing was applied: a managed apply changes the project's own Terraform root",
 	"orchestrator import":    "nothing was loaded: the graph is written into the project's own orchestrator state",
@@ -204,6 +205,7 @@ var managedFencedCommands = map[string]string{
 	"restore":                "nothing was restored: a restore rebuilds a managed project",
 	"review":                 "no review was launched: it runs as a job of the project",
 	"run":                    "no run was launched: a run spends the project's budget and writes into its runs bucket",
+	"runs digest":            "nothing was resolved: the digest's issue pass writes the project's own store",
 	"secrets rm":             "nothing was withdrawn: the container is a Secret Manager secret of the project",
 	"secrets set":            "nothing was stored: the value is a new version of a Secret Manager secret of the project",
 	"secrets shared rm":      "nothing was removed: the secret is a Secret Manager secret of the project",
@@ -299,7 +301,6 @@ var managedExemptCommands = map[string]string{
 	"image survey":               "it only reads: a listing of the repositories and the image signals each carries",
 	"init":                       "it is retired: it refuses and names the two doors that replaced it",
 	"intake serve":               "the secrets intake's own image runs it: it stores the project's own secrets",
-	"issue dismiss":              "it writes this machine's own issue store, and nothing in the project",
 	"issue list":                 "it only reads: a listing of the issues saved on this machine",
 	"issue mine":                 "it only reads: a listing of the issues this user reported",
 	"issue show":                 "it only reads: one issue's text",
@@ -358,7 +359,6 @@ var managedExemptCommands = map[string]string{
 	"rigor security add":         "it writes the project layer's own file or the checkout's fugaro.yaml, and nothing in the project",
 	"rigor security rm":          "it writes the project layer's own file or the checkout's fugaro.yaml, and nothing in the project",
 	"rigor set":                  "it writes the project layer's own file on this machine, and nothing in the project",
-	"runs digest":                "it writes a closed period's report into the checkout's docs tree, and nothing in the project",
 	"runs ls":                    "it only reads: a listing of the runs with their status, stage, cost and PR",
 	"runs reports":               "the project's own reports job runs it: it writes the project's own stored reports",
 	"runs show":                  "it only reads: one run's chain and what is left of its limits",
@@ -410,9 +410,13 @@ var managedExemptCommands = map[string]string{
 // annotateManaged applies the classification to the tree as cobra annotations:
 // the fenced commands get the opening clause their refusal prints, and the
 // exempt ones get the reason they are exempt. A path that does not resolve is
-// skipped rather than fatal: the tables are checked by a test, and a command
-// whose annotation went missing still refuses an unmanaged project in
-// managedRequired's own words.
+// skipped rather than fatal, and the skip is a hole rather than a fallback:
+// the annotation IS the fence's trigger (managedFenced reads it and nothing
+// else), so a fenced command that lost its annotation is refused by nothing —
+// no seam would ask about it — and a command whose clause went missing would
+// refuse with managedRequired's generic sentence. What holds the tables
+// against the tree is TestEveryManagedCommandResolves, which walks every path
+// in both and fails on one that does not resolve.
 func annotateManaged(root *cobra.Command) {
 	for path, what := range managedFencedCommands {
 		annotateManagedPath(root, path, managedRequiresAnnotation, what)

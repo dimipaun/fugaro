@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/srctree"
 )
 
@@ -205,6 +206,52 @@ func TestFencedCommandRefusesUnmanaged(t *testing.T) {
 			}
 		})
 	}
+	// The rest of the fenced commands: the ones that open the project's own
+	// state through a seam openCloudFor does not cover — the budget database
+	// (budgetDBFor), the reaper's own project selection, and the project's
+	// issue store. The arm above calls openCloudFor itself, which is exactly
+	// why it cannot see these: it would answer a question the command never
+	// asks. So they are RUN here, against a world whose fakes record every
+	// call, and the refusal is the command's own.
+	t.Run("the seams outside openCloudFor", func(t *testing.T) {
+		world := newInitRig(t)
+		buildBudgetForRig(t, world)
+		t.Chdir(t.TempDir())
+		patch := patchFile(t, patchDoc(t, 0, orchestrator.Op{Op: orchestrator.OpFactSet,
+			Fact: &orchestrator.FactOp{Key: "branch", Value: "main"}}))
+		for _, tc := range []struct {
+			path string
+			args []string
+		}{
+			{"backlog add", []string{"--title", "a title", "--repo", "acme/app"}},
+			{"budget kill", []string{"--all"}},
+			{"budget resume", []string{"--all"}},
+			{"budget set", []string{"--global", "--per-run", "3"}},
+			{"issue dismiss", []string{"1"}},
+			{"issue sync", nil},
+			{"orchestrator import", []string{"-f", patch}},
+			{"orchestrator patch", []string{"-f", patch}},
+			{"pair", nil},
+			{"pair revoke", []string{"--uid", "m~a"}},
+			{"project sync", nil},
+			{"reaper", nil},
+			{"runs digest", nil},
+			{"user grant", []string{"user:me@example.com", "--role", "viewer", "--scope", "project"}},
+			{"user revoke", []string{"user:me@example.com", "--role", "viewer", "--scope", "project"}},
+		} {
+			t.Run(tc.path, func(t *testing.T) {
+				before := len(exemptWorldCalls(world))
+				_, _, err := executeStdin(t, "", append(strings.Fields(tc.path), tc.args...)...)
+				checkFenceRefusal(t, err, tc.path)
+				for _, req := range exemptWorldCalls(world)[before:] {
+					if req.Method != http.MethodGet {
+						t.Errorf("%s wrote through a seam the fence did not reach: %s %s", tc.path, req.Method, req.Path)
+					}
+				}
+			})
+		}
+	})
+
 	// `fugaro apply`, end to end: its fence is called where its own run starts,
 	// so the world is the one that command runs in — the installation, the
 	// record and the steps, with no mark on the project — and the proof is the
