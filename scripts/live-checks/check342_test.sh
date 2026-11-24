@@ -197,21 +197,38 @@ test_the_whole_check_passes() {
   expect_absent "$out" "not reached" "every row was reached"
 }
 
-test_fails_when_the_tables_differ() {
+test_fails_when_the_window_holds_fewer_runs_than_the_report() {
   reset_state
-  live tests_failed 5
+  live tests_failed 1
   run_check
-  expect_status "$status" 1 "a count the report does not carry is a finding"
+  expect_status "$status" 1 "the window has to account for every run the report counted"
   expect_contains "$out" "FACT compare: FAIL" "the row fails"
   expect_contains "$out" "tests_failed" "and names the class"
 }
 
-test_fails_when_the_class_is_absent_from_the_report() {
+test_fails_when_the_window_names_no_run_of_a_reports_class() {
   reset_state
   live branch_moved 1
   run_check
-  expect_status "$status" 1 "a class the report does not name is a finding"
+  expect_status "$status" 1 "a class the report counted and the window cannot see is a finding"
   expect_contains "$out" "FACT compare: FAIL" "the row fails"
+}
+
+test_a_class_the_window_holds_alone_is_not_a_finding() {
+  reset_state
+  # The window bounds by a run's start and the report by its finish, so the
+  # window holds the runs that have finished since the period closed too: a
+  # class only the window names is the window's own, not a disagreement.
+  python3 - "$state" <<'PY'
+import json,os,sys
+state=sys.argv[1]
+d=json.load(open(os.path.join(state,"live.json")))
+d["groups"].append({"class":"branch_moved","runs":1,"share":0.1,"spend_usd":0.1})
+json.dump(d,open(os.path.join(state,"live.json"),"w"))
+PY
+  run_check
+  expect_status "$status" 0 "a class the window holds alone is the window's own"
+  expect_contains "$out" "FACT compare: PASS" "the row passes"
 }
 
 test_fails_when_no_report_is_stored_for_the_period() {
@@ -306,8 +323,9 @@ t test_refuses_belong
 t test_refuses_another_installation
 t test_refuses_a_bad_period_key
 t test_the_whole_check_passes
-t test_fails_when_the_tables_differ
-t test_fails_when_the_class_is_absent_from_the_report
+t test_fails_when_the_window_holds_fewer_runs_than_the_report
+t test_a_class_the_window_holds_alone_is_not_a_finding
+t test_fails_when_the_window_names_no_run_of_a_reports_class
 t test_fails_when_no_report_is_stored_for_the_period
 t test_is_unverified_when_the_listing_does_not_answer
 t test_the_legacy_row_counts_the_classed_runs

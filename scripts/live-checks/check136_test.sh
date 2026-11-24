@@ -378,6 +378,29 @@ EOF
   expect_absent "$(calls)" "git fetch" "nothing was fetched"
 }
 
+test_refuses_without_the_t33_confirmation() {
+  reset_state
+  # The check runs unconfirmed unless CHECK136_AFTER_T33=yes is exported, and a
+  # runner built before T3.3's guard holds that guard for no pull request.
+  EXTRA_ENV=(CHECK136_AFTER_T33=)
+  run_check
+  unset EXTRA_ENV
+  expect_status "$status" 2 "an unconfirmed job image is a stop"
+  expect_contains "$err" "T3.3" "the refusal names the task"
+  expect_absent "$(calls)" "fugaro run --recipe" "nothing was launched"
+}
+
+test_preflight_blocks_without_the_t33_confirmation() {
+  reset_state
+  EXTRA_ENV=(CHECK136_AFTER_T33=)
+  run_check --preflight
+  unset EXTRA_ENV
+  expect_status "$status" 1 "a blocker exits non-zero"
+  expect_contains "$err" "BLOCKED t33" "the blocker is printed"
+  expect_contains "$err" "export CHECK136_AFTER_T33=yes" "with the fix"
+  expect_absent "$(calls)" "fugaro run --recipe" "nothing was launched"
+}
+
 test_preflight_passes_and_launches_nothing() {
   reset_state
   run_check --preflight
@@ -414,6 +437,8 @@ t test_fails_when_the_run_does_not_settle_ready
 t test_a_recipe_shadowed_by_a_repository_fails
 t test_the_fake_refuses_a_flag_the_cli_does_not_have
 t test_preflight_blocks_on_another_installation_and_writes_nothing
+t test_refuses_without_the_t33_confirmation
+t test_preflight_blocks_without_the_t33_confirmation
 t test_preflight_passes_and_launches_nothing
 
 if [ "$failures" -ne 0 ]; then

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Check 342 — the failures report reproduces a window a person built by hand: the
 # live `runs ls --group-by failure_class` table and the stored report's Failures
-# table name the same runs under the same classes. The classes a legacy reader
-# derived from `reason` (FC5) read as the same classes and cannot be told apart
-# through a read, so the check counts them in and says so.
+# table name the same classes, and the window the listing reads accounts for
+# every run the report counted. The classes a legacy reader derived from `reason`
+# (FC5) read as the same classes and cannot be told apart through a read, so the
+# check counts them in and says so.
 #
 # The periodic-reviews plan's §P8 and docs/failure-classes/design.md. It is the
 # one check that says whether the failure vocabulary means what the design says
@@ -242,8 +243,10 @@ print(parts[-2]+"/"+parts[-1] if len(parts)>=2 and parts[-2] and parts[-1] else 
 }
 
 # The period and the live listing's window: --since bounds a run's START while a
-# report buckets by the record's FINISH, so the default window is the period plus
-# the two days that gap can span. An owner who knows the window passes --since.
+# report buckets by the record's FINISH, so the default window reaches a month
+# back past the period's own start -- wide enough that every run the report
+# counted is in it, whatever its own length. An owner who knows the window
+# passes --since.
 resolve_window() {
   local derived
   [ -n "$KEY" ] || KEY=$(python3 -c 'import datetime; print((datetime.datetime.now(datetime.timezone.utc).date()-datetime.timedelta(days=1)).isoformat())')
@@ -251,17 +254,20 @@ resolve_window() {
 import datetime,sys
 key=sys.argv[1].strip()
 now=datetime.datetime.now(datetime.timezone.utc).date()
+# slack reaches back past the period's start so a run that began before it and
+# finished inside it is still in the window the listing reads.
+slack=30
 def days_ago(d): return (now-d).days
 try:
     if len(key)==10 and key[4]=="-":
-        d=datetime.date.fromisoformat(key); since=days_ago(d)+2; dim="day"
+        d=datetime.date.fromisoformat(key); since=days_ago(d)+slack; dim="day"
     elif "W" in key:
-        y,w=key.split("-W"); d=datetime.date.fromisocalendar(int(y),int(w),1); since=days_ago(d)+9; dim="week"
+        y,w=key.split("-W"); d=datetime.date.fromisocalendar(int(y),int(w),1); since=days_ago(d)+7+slack; dim="week"
     elif len(key)==7:
         y,m=key.split("-"); d=datetime.date(int(y),int(m),1)
-        nxt=datetime.date(int(y)+(m==12),1 if m==12 else m+1,1); since=days_ago(d)+(nxt-d).days+2; dim="month"
+        nxt=datetime.date(int(y)+(m==12),1 if m==12 else m+1,1); since=days_ago(d)+(nxt-d).days+slack; dim="month"
     elif len(key)==4:
-        since=days_ago(datetime.date(int(key),1,1))+368; dim="year"
+        since=days_ago(datetime.date(int(key),1,1))+368+slack; dim="year"
     else:
         print(""); sys.exit(0)
 except Exception:
@@ -335,13 +341,40 @@ PY
   fact classes INFO "$classed of the window's $n run(s) ended in a class of the vocabulary; a class the legacy reader derived from reason (FC5) reads as that same class and is not told apart by any read -- TestLegacyClassFromReasonTable pins the derivation"
 }
 
+# The two tables never hold quite the same runs: the listing bounds its window
+# by a run's START and the report buckets by its FINISH, so the window holds
+# every run of the period and, beside them, the runs that have finished since it
+# closed. The comparison is one way -- every class the report names has to be in
+# the window, with at least the runs the report counted -- and a class the
+# window holds on its own is the window's own business, named and not read as
+# agreement.
 step_compare() {
   [ "$LIVE_OK" = yes ] || { fact compare UNVERIFIED "the grouped listing did not answer, so there is nothing to compare it with"; return 0; }
   [ -s "${SCRATCH}/stored-table.txt" ] || { fact compare UNVERIFIED "the stored report names no failure, so there is nothing to compare"; return 0; }
-  if diff -u "${SCRATCH}/stored-table.txt" "${SCRATCH}/live-table.txt" >"${SCRATCH}/tables.diff" 2>&1; then
-    fact compare PASS "the stored Failures table and the live grouping name the same classes with the same counts"
+  local short
+  short=$(python3 - "${SCRATCH}/stored-table.txt" "${SCRATCH}/live-table.txt" <<'PY'
+import sys
+def read(p):
+    rows={}
+    for line in open(p,encoding="utf-8"):
+        if not line.strip(): continue
+        cls,n=line.rstrip("\n").split("\t")
+        rows[cls]=int(n)
+    return rows
+stored,live=read(sys.argv[1]),read(sys.argv[2])
+short=[]
+for cls,runs in sorted(stored.items()):
+    if cls not in live:
+        short.append("%s: the report names %d run(s), the window names none" % (cls,runs))
+    elif live[cls] < runs:
+        short.append("%s: the report names %d run(s), the window %d" % (cls,runs,live[cls]))
+print("; ".join(short))
+PY
+)
+  if [ -z "$short" ]; then
+    fact compare PASS "every class the stored report names is in the live window with the runs it counted: $(cut -f1 "${SCRATCH}/stored-table.txt" | tr '\n' ' ')"
   else
-    fact compare FAIL "the stored Failures table and the live grouping differ: $(grep -E '^[+-][^+-]' "${SCRATCH}/tables.diff" | tr '\n' ' ' | head -c 400)"
+    fact compare FAIL "the live window does not account for the stored report: $short"
   fi
   fact your-account INFO "the third table is yours: read the two above against the causes you know, and a class whose runs you would not put there is the finding"
 }

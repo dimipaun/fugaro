@@ -731,10 +731,10 @@ import (
 // deployed job was assigned, what a store missing a repository's report or a
 // period's aggregate reads, which principal may write under `reports/`, and
 // that the pause the check lifted is put back and the schedule reads PAUSED.
-// 342's are a fake `fugaro` and a fake `gcloud` over a stored failures report
-// and the window the check rebuilds, so a case says what a window whose class
-// counts disagree with the report's table reads, and that FC5's class marker
-// the store does not hold leaves the row UNVERIFIED rather than failing it.
+// 342's is a fake `fugaro` over a stored failures report and the grouped
+// listing, so a case says what a window that cannot account for a class the
+// report names reads, that a class only the window names is not a finding, and
+// that FC5's derivation is recorded rather than measured.
 // 343's are a fake `fugaro`, a fake `gcloud`, a fake `gh` and a fake `git`
 // over the designated mirror, so a case says which stored reports the commit
 // run had to add, what a file the checkout already held and the run rewrote

@@ -25975,8 +25975,9 @@ stored report that does not read back — the last of which is the reading that 
 
 **Restore.** `jobs.reports.paused` goes back to the value it had — `settings unset` when the layer did
 not carry the key, the value itself when it did — and `fugaro update` runs again, and the schedule is
-read back to confirm it reads PAUSED: that is the whole of putting it back, and the script does it on
-a stop as well as on a pass. The stored reports it wrote are ordinary reports in the
+read back to confirm it reads what that value means, PAUSED again or, for an owner whose reports were
+already running, ENABLED again: that is the whole of putting it back, and the script does it on a
+stop as well as on a pass. The stored reports it wrote are ordinary reports in the
 project's own `reports/` prefix and are meant to stay: the bucket's own 18-month rule reaps them, and
 removing them by hand would take the very reading this check exists to take. Nothing else is created:
 no account of the check's own, no binding and no credential.
@@ -26033,11 +26034,14 @@ and the account of the window is what only a person has.
 
 **Expected.** The two tables agree with each other and with the causes you know; the runs that
 predate the field sit in the class their `reason` implies rather than in a class of their own or in
-none; and the period's report and the live listing of the same period name the same runs under the
-same classes.
+none; and every class the period's report names is in the live listing of the window, with at least
+the runs the report counted. The two tables never hold quite the same runs: the listing's window is
+bounded by a run's start and the report buckets by its finish, so the window also holds the runs that
+have finished since the period closed, and that surplus is the window's own rather than a
+disagreement.
 
 **Refutation.** A class whose runs a person would not put there, a run that predates the field
-falling out of every class, the live table and the stored table disagreeing over the same period, or
+falling out of every class, a class the stored report names that the live window cannot account for, or
 a class the design names that no window ever produces — any of which is a reading about the
 **vocabulary**, and none of which the hermetic tests can take.
 
@@ -26049,18 +26053,20 @@ tables and the account of the window they are checked against.
 `scripts/live-checks/check342_test.sh` (run by `go test ./scripts`). It refuses a coding agent's
 session, another installation, `belong` and a checkout that names no repository; it takes `--key
 <period>` (the period of the stored report; default yesterday's day), `--repo <owner/name>` (default
-this checkout's origin), `--since <Nd>` (the live listing's window; default wide enough to cover the
-period) and `--preflight`, which reads every precondition and prints the blockers before either read.
+this checkout's origin), `--since <Nd>` (the live listing's window; the default reaches a month back
+past the period's own start, so the window holds every run the report counted) and `--preflight`,
+which reads every precondition and prints the blockers before either read.
 **The steps above are what it does**, and it prints five rows: the stored report it read back
 (`fugaro runs digest --stored`), the live grouping, the window's classed runs, the comparison between
 the two tables and the third table that is yours. **FC5 is recorded and not measured**: no read tells
 a class the legacy reader derived from a run's `reason` from a class the run carries, so the row says
 so in as many words (`TestLegacyClassFromReasonTable` pins the derivation) rather than reading as a
-class the check verified. Its exit status is the verdict: PASS (0), FAIL (1) when the two tables
-disagree, INCOMPLETE (2) for a stop and INCOMPLETE (3) when a read did not answer.
+class the check verified. Its exit status is the verdict: PASS (0), FAIL (1) when the live window
+does not account for the stored report, INCOMPLETE (2) for a stop and INCOMPLETE (3) when a read did
+not answer.
 
 **Paste back:** the window, the account of its causes, the two tables — the grouped listing and the
-stored report's Failures table — and where they disagreed, if they did.
+stored report's Failures table — and the classes the window could not account for, if there were any.
 
 ## Check 343: the opt-in commit into the designated repository (the designated repository's checkout, your own launcher account, never `belong`; run by you; NOT RUN)
 

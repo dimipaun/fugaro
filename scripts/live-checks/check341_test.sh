@@ -620,6 +620,19 @@ test_the_setting_the_layer_did_not_carry_is_unset_again() {
   expect_contains "$(calls)" "settings unset layer.jobs.reports.paused --layer project" "the key is removed, not written out"
 }
 
+test_a_layer_that_already_said_false_is_put_back_as_false() {
+  reset_state
+  # An owner whose reports schedule was already running: the check must put the
+  # false back, and the schedule reading ENABLED afterwards is the restore, not
+  # a failure to pause it again.
+  printf 'false\n' >"$state/paused"
+  run_check
+  expect_status "$status" 0 "a running reports schedule is not paused by having the check run"
+  expect_contains "$out" "FACT restore: PASS" "the row passes"
+  expect_contains "$out" "reads ENABLED again" "and says what it read back"
+  expect_absent "$(calls)" "layer.jobs.reports.paused true" "the check writes no true over the value it found"
+}
+
 test_a_schedule_that_stays_on_after_the_restore_is_a_finding() {
   reset_state
   # a schedule that answers ENABLED however the layer reads is what a restore
@@ -759,6 +772,7 @@ t test_a_write_that_does_not_land_is_a_finding
 t test_an_update_that_does_not_apply_is_a_finding
 t test_a_setting_that_cannot_be_read_is_a_stop
 t test_the_setting_the_layer_did_not_carry_is_unset_again
+t test_a_layer_that_already_said_false_is_put_back_as_false
 t test_a_schedule_that_stays_on_after_the_restore_is_a_finding
 t test_the_fake_refuses_a_flag_the_cli_does_not_have
 t test_the_gcloud_fake_refuses_a_command_its_allow_list_does_not_name

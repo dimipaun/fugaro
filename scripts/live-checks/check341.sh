@@ -759,10 +759,11 @@ PY
 # again: run from the exit trap, so a stop puts it back too.
 restore_now() {
   [ "$UNPAUSED" = yes ] || return 0
-  # Back to what the layer said and not merely to a true: a key the project
-  # layer did not carry before the check is unset again, not written out.
+  # Back to EXACTLY what the layer said and not merely to a true: a key the
+  # project layer did not carry before the check is unset again, and a layer
+  # that already said false is written false again -- an owner whose reports
+  # schedule was already running is not paused by having this check run.
   local prev=${PREVIOUS_PAUSED:-true} words
-  [ "$prev" = false ] && prev=true
   if [ "$PREVIOUS_WINS" = default ]; then
     RESTORE_WORDS=(settings unset layer.jobs.reports.paused --layer project)
   else
@@ -784,10 +785,21 @@ restore_now() {
   fi
   state=${line#*$'\t'}
   state=${state%%$'\t'*}
-  if [ "$state" = PAUSED ]; then
-    fact restore PASS "the layer is back as it was ($words) and $SCHED reads PAUSED again"
-  else
+  # The schedule must read back what the layer now says: a layer that said false
+  # before the check was reporting already, so ENABLED is the restore, not a
+  # failure to pause it again.
+  local want=PAUSED
+  if [ "$PREVIOUS_WINS" != default ] && [ "$prev" = false ]; then want=ENABLED; fi
+  if [ "$state" = "$want" ]; then
+    if [ "$want" = PAUSED ]; then
+      fact restore PASS "the layer is back as it was ($words) and $SCHED reads PAUSED again"
+    else
+      fact restore PASS "the layer is back as it was ($words) and $SCHED reads ENABLED again, as it did before the check"
+    fi
+  elif [ "$want" = PAUSED ]; then
     fact restore FAIL "$SCHED reads ${state:-nothing} after the restore, so the reports job keeps firing: run $words and fugaro update"
+  else
+    fact restore FAIL "$SCHED reads ${state:-nothing} after the restore, not the ENABLED the layer says now, so the schedule the owner had is not back: run $words and fugaro update"
   fi
 }
 
