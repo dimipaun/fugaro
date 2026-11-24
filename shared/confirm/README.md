@@ -277,7 +277,7 @@ where the plan requires the timeout to be named.
 
 ```sh
 cd shared && npm test                  # 585 tests, 585 pass, 0 fail (Node 22.14; on some Node versions shared/url has one known failure)
-shared/confirm/mutation-proof.sh       # 70 guards: 70 killed, 0 survived, 0 not applied
+shared/confirm/mutation-proof.sh       # 74 guards: 74 killed, 0 survived, 0 not applied
 ```
 
 The suite includes the task's own list, each as its own test: a **misrecognised "confirm"**
@@ -293,7 +293,11 @@ more than 500 probes).
 `mutation-proof.sh` disables one guard at a time and requires the suite to fail; it starts with
 the plan's named red step — **the replayed confirm against a machine with no confirmation-id
 ledger** — and it refuses to report anything unless the pristine suite passes with tests
-actually run and a `refuse()` that always succeeds is caught first.
+actually run and a `refuse()` that always succeeds is caught first. Four of its guards are
+D2786's: a start is read back exactly when the session calls its mode costly, a start's `mode`
+is read with the same reader every other string gets, `policy.js`'s unreadable list makes
+every start costly rather than none, and its switch is the only thing that asks for the
+biometric.
 
 **J3's red step**, recorded as it happened (2026-11-24): the vectors' costly-start case and
 `policy.test.js` were written against the module *before* D2786, and the machine of the time
@@ -347,8 +351,10 @@ drift without a test failing.
   the only thing standing between the action and a replay. Both are bounded (`now-jumped`,
   `replayed-confirmation`) and neither is a substitute for an honest clock.
 - **Nothing here is wired to a device or a runner.** No task of the mobile plan is approved,
-  and this module is not evidence that one is; it is logic with tests, and a consumer
-  (P6.7 in Go, and the app's voice path) is still to come.
-- **The Go parity test does not exist yet.** `vectors.json` is written for it (P6.7) and
-  replayed by the JS suite today; until P6.7 lands, nothing proves the two implementations of
-  D169 agree beyond the data being the same data.
+  and this module is not evidence that one is; it is logic with tests, and the app's voice
+  path is still to come.
+- **The Go port is held to this module by the data, and only by the data.** The consumer's
+  mirror (P6.7, `internal/mailbox/action.go`) is replayed against `vectors.json` by
+  `TestConfirmParityWithShared`, and `internal/mailbox`'s own test pins the constants it
+  spells — so the two implementations of D169 and D2786 agree on every case the vectors name,
+  and on nothing the vectors do not.
