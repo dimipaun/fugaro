@@ -109,7 +109,9 @@ fugaro workspace project add repo-a --workspace workspace-alpha \
   --firebase-project <the member's Firebase project id> --fp <the member's Fugaro project> \
   --exchange-url <the member's exchange endpoint> --job-service-account <the member's job account> \
   --job-repos <that account>=owner/repo-a --repo owner/repo-a --database-region <its database region>
-fugaro workspace share <credential> --workspace workspace-alpha --projects owner/repo-a,owner/repo-b
+fugaro workspace share <credential> --workspace workspace-alpha --projects repo-a
+fugaro workspace share <a forge credential> --workspace workspace-alpha --projects repo-a \
+  --covers owner/repo-a
 fugaro workspace cap set --workspace workspace-alpha --monthly <the group's ceiling>
 fugaro update
 ```
@@ -119,6 +121,10 @@ region, and so is `--repo` for a member that contributes none; `--job-repos` is 
 verified repository to the account that called (spec.md §8's residual risk 7, closed). A member
 declared here is adopted by the workspace once its owner links it (`fugaro workspace project
 link`, D2819), and the owner's `fugaro workspace project ls` and `status` read what the table holds.
+`--projects` names the members the entry is served to by their **project names** (`repo-a`, the name
+the declaration above used, never `owner/repo-a`), or `--all-members` offers it to every member;
+`--covers` is the repositories a **forge** entry reaches, and it is required for a `github` or
+`bitbucket` one.
 
 **On each member's own machine**, once, and again after the owner changes anything: pin what the
 member trusts, then converge. The pin is the member's own, so neither the exchange's issuer nor the
@@ -128,14 +134,23 @@ service account the grant is bound to is ever aimed by a value the workspace's r
 fugaro workspace add workspace-alpha --firebase-project <the workspace's Firebase project id> \
   --issuer https://securetoken.google.com/<the same id> --assertion-key <the pinned key> \
   --service-account <the workspace service account> --service-address <the service's address>
-fugaro update
+fugaro update --firebase-project <the member's own Firebase project id>
 ```
+
+**The Firebase flag is the one that binds.** The workspace's account is bound to the member's
+database by the Firebase root of the converge, and that stage runs only with `--firebase-project`
+(or where the member's config records no database yet): a plain `fugaro update`, which is what the
+join's handoff prints, publishes everything else and binds nothing, so the workspace's service cannot
+read that member's record and its workspace-served runs fail.
 
 A member that adds a repository of its own is the case above: the workspace owner declares it and
 converges first, and until then that repository's runs halt with a reason naming the step
 (F17, R16/R19). A member that uses an orchestrator, a coordinator or image builds **keeps its own
-forge credential**: the workspace's pool carries model credentials, and serving those three would
-need more table columns, grants and tasks than it has (D2988).
+forge credential**: a shared entry of the workspace's pool carries a forge credential too (its own
+kind, which is what a run's forge routes are served by), but the workspace's service admits a
+member's job accounts and the workspace owner's people and no other caller class, so the member's
+orchestrator, coordinator and image builds — different callers on different routes — keep calling
+their own project's service (D2988, F24).
 
 ## The owner's spec, and what was not recovered
 
