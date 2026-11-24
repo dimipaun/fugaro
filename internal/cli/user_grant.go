@@ -523,7 +523,7 @@ func userLastProjectAdmin(lc *localcfg.Config, grants, next []accesslib.Grant, i
 	}
 	remedy := "a project Owner can also do it from outside the grants node, or add themselves to terraform.budget_admins (fugaro update --budget-admin)"
 	if lc == nil {
-		remedy = "a workspace admin puts the admin who is to take over on it with " + installationMemberDoor("grant") + " (D2813, R11), and that member's own fugaro update applies it"
+		remedy = "a workspace admin puts the admin who is to take over on it with " + installationMemberDoor("grant") + " (D2813, R11), and the member's own update is what derives its IAM lists from the record it then holds"
 	}
 	return userErr("nothing was written: the grants node would hold no admin at project scope after this change — %s is the only member that carries it — and no owner, editor or terraform.budget_admin is named either, so the installation would have no project admin at all: nobody could grant a role, run its update or settle it. Add the admin who is to take over first, then make this change; %s", safetext.Field(member), remedy)
 }
