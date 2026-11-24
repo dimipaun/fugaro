@@ -53,22 +53,22 @@ func TestResolveRecipeOwnCopyFirst(t *testing.T) {
 	f := newCloudFixture(t)
 	copy, copyText := appCopy("team")
 	projectRecipesFixture(t, f, map[string]string{copy: copyText, "team": projectTeam})
-	appCopyCheckout(t, nil)
+	root := appCopyCheckout(t, nil)
 	env := fileEnv(t, f)
 	ctx, now := context.Background(), time.Now()
 
-	rr, err := resolveRecipe(ctx, env, "", "team", now, false)
+	rr, err := resolveRecipe(ctx, env, root, "team", now, false)
 	if err != nil || rr.Name != copy || rr.Source != recipe.SourceProject || string(rr.Text) != copyText {
 		t.Fatalf("the copy did not win: %+v, %v", rr, err)
 	}
 	// The copy by its own name, which is how fugaro run --recipe, recipes show
 	// and the run record name it.
-	rr, err = resolveRecipe(ctx, env, "", copy, now, false)
+	rr, err = resolveRecipe(ctx, env, root, copy, now, false)
 	if err != nil || rr.Name != copy || string(rr.Text) != copyText {
 		t.Fatalf("the copy by name: %+v, %v", rr, err)
 	}
 	// The copy name resolves to the flat name when the store has no copy.
-	rr, err = resolveRecipe(ctx, env, "", "solo", now, false)
+	rr, err = resolveRecipe(ctx, env, root, "solo", now, false)
 	if err != nil || rr.Name != "solo" || rr.Source != recipe.SourceCatalog {
 		t.Fatalf("solo: %+v, %v", rr, err)
 	}
@@ -76,28 +76,31 @@ func TestResolveRecipeOwnCopyFirst(t *testing.T) {
 
 // TestResolveRecipeIgnoresTheFolder: the checkout's .fugaro/recipes/ is not a
 // layer. Its file loses to the project's recipe of the same name, and a
-// catalog name it holds is still the catalog's.
+// catalog name it holds is still the catalog's. The repository is migrated --
+// it has a record, so D3308's refusal is not what is being asked here -- and
+// the file is on the default branch as well as in the working tree.
 func TestResolveRecipeIgnoresTheFolder(t *testing.T) {
 	f := newCloudFixture(t)
 	projectRecipesFixture(t, f, map[string]string{"team": projectTeam})
-	appCopyCheckout(t, map[string]string{
+	root := appCopyCheckout(t, map[string]string{
 		".fugaro/recipes/team.yaml": repoTeam,
 		".fugaro/recipes/solo.yaml": "version: 1\nname: solo\nsteps:\n  - review: { max_rounds: 3 }\n",
 	})
+	writeBucketFile(t, f, lift.RecordPath(appSlug), `{"version":1}`)
 	env := fileEnv(t, f)
 	ctx, now := context.Background(), time.Now()
 
-	rr, err := resolveRecipe(ctx, env, "", "team", now, false)
+	rr, err := resolveRecipe(ctx, env, root, "team", now, false)
 	if err != nil || rr.Source != recipe.SourceProject || string(rr.Text) != projectTeam {
 		t.Fatalf("the folder's team won: %+v, %v", rr, err)
 	}
 	catalog, _ := recipe.CatalogText("solo")
-	rr, err = resolveRecipe(ctx, env, "", "solo", now, false)
+	rr, err = resolveRecipe(ctx, env, root, "solo", now, false)
 	if err != nil || rr.Source != recipe.SourceCatalog || string(rr.Text) != string(catalog) {
 		t.Fatalf("the folder's solo won: %+v, %v", rr, err)
 	}
 	// A name only the folder has is unknown, not resolved.
-	if _, err := resolveRecipe(ctx, env, "", "mine", now, false); err == nil || !strings.Contains(err.Error(), "recipe mine is not in project aurora") {
+	if _, err := resolveRecipe(ctx, env, root, "mine", now, false); err == nil || !strings.Contains(err.Error(), "recipe mine is not in project aurora") {
 		t.Fatalf("a folder-only name resolved: %v", err)
 	}
 }
