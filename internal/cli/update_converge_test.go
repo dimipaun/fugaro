@@ -2233,3 +2233,106 @@ func TestUpdateRendersTheRostersPeopleIntoTheWorkspaceProjectsIntake(t *testing.
 		t.Fatalf("the intake's people are %v, want %v: the roster's humans, sorted and each once, and no machine — a service account's address is the one shape the launcher class refuses", got, want)
 	}
 }
+
+// seedConvergedInstallation writes the installation's tfvars in the state one
+// run of this release leaves behind: the credentials service's block with the
+// audience its own output reports (seedCredentialsService's seed) and the
+// secrets intake's block beside it, on the release's own image and with ITS
+// audience written — the two writes a later run of the same release has nothing
+// to fill.
+func seedConvergedInstallation(t *testing.T, r *convergeRig, image string) {
+	t.Helper()
+	seedCredentialsService(t, r.imagesRig, image)
+	path := filepath.Join(r.imagesRig.root(), infra.VarsFile)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vars, err := infra.SetIntake(b, infra.Intake(image))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vars, err = infra.SetIntakeURL(vars, intakeServiceURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, vars, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestUpdateLeavesTheIntakeAloneWhenTheRosterNamesOnlyALauncher is the roster
+// change the intake's fill must NOT write for: the workspace's roster names one
+// person, and that person is already on the installation's launcher list, so the
+// class the intake's revision is handed — the launchers and the roster's people
+// as one list (intake.tf's local.intake_accounts) — is byte for byte what it was
+// (infra.IntakeClass).
+//
+// The installation is converged: both audiences in the tfvars and an empty plan
+// at the installation root. Writing the block for that person anyway would leave
+// the apply with nothing to do, and the fill reads an empty plan as the module
+// not carrying the class onto the revision at all and refuses the run with the
+// audience's own sentence — a misleading failure over a roster update that
+// changed no class, which is the state this test pins.
+func TestUpdateLeavesTheIntakeAloneWhenTheRosterNamesOnlyALauncher(t *testing.T) {
+	r := wsOwnerConvergeRig(t, wsOwnerTable+wsOwnerCap)
+	seedConvergedInstallation(t, r, r.credentialsRefAt(convergeRelease))
+	// The installation root has nothing left to change, so the only plan the
+	// fill could read is one it made itself.
+	r.script["plan@installation"] = map[string]any{"exit": 0}
+	// The installation's own launcher list, as its IAM reports it back: the
+	// owner, who is the one person the roster names.
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service": credentialsServiceOutput(),
+		"intake":              intakeServiceOutput(),
+		"launchers":           []string{"user:test@example.com"},
+	})}
+	// The workspace's own root is converged too: its block carries the address
+	// Cloud Run assigned, which is the fact that stage fills (WS7).
+	wsSeedRecorded(t, initProjectName, r.credentialsRefAt(convergeRelease), wsServiceURL)
+	r.script["plan@workspace"] = map[string]any{"exit": 0}
+	r.script["output@workspace"] = map[string]any{
+		"stdout": `{"workspace_service_url":{"value":"` + wsServiceURL + `"}}`}
+	roster, err := workspace.EncodeRoster(&workspace.Roster{
+		Version:   workspace.RosterVersion,
+		Mechanism: workspace.MechanismSA,
+		People: []workspace.Person{
+			{Address: "test@example.com", Kind: workspace.KindHuman, External: true},
+		},
+		Admins: []string{"test@example.com"},
+	})
+	if err != nil {
+		t.Fatalf("encoding the roster: %v", err)
+	}
+	path, err := workspace.PathRoster(initProjectName)
+	if err != nil {
+		t.Fatalf("workspace.PathRoster: %v", err)
+	}
+	r.db.Set(path, json.RawMessage(roster))
+	r.save(t)
+
+	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	if strings.Contains(out, "plans nothing with credentials_service.url") {
+		t.Errorf("the update refused itself over the roster's own person, who is on the installation's launcher list already: the class the intake's revision is handed is the launchers and the people as ONE list, and this roster moved neither\n%s", out)
+	}
+	vars := r.tfvars(t)
+	raw, err := json.Marshal(vars)
+	if err != nil {
+		t.Fatal(err)
+	}
+	launchers, err := infra.LauncherAccountsOf(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"test@example.com"}; !slices.Equal(launchers, want) {
+		t.Fatalf("the installation's launcher_accounts are %v, want %v: the roster's person is the launcher this fixture is about, so a list without them would test something else", launchers, want)
+	}
+	spec, have, err := infra.IntakeOf(raw)
+	if err != nil || !have {
+		t.Fatalf("IntakeOf(vars) = %+v, %v, %v, want the intake's block", spec, have, err)
+	}
+	if got, want := infra.IntakeClass(launchers, spec.People), []string{"test@example.com"}; !slices.Equal(got, want) {
+		t.Errorf("the intake's class after the update is %v, want %v: the roster's only person is the installation's own launcher, so the class the revision is handed is one address — the launchers' — whatever the block's own list says", got, want)
+	}
+}

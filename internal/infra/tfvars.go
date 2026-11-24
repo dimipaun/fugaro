@@ -1351,6 +1351,27 @@ func IntakeURLOf(vars []byte) (string, error) {
 	return url, nil
 }
 
+// LauncherAccountsOf returns the launcher_accounts the installation root's
+// tfvars carry, and the empty list when they carry none — the module's own
+// default, which is also what the key's omitempty writes for an installation
+// whose launcher list names no `user:` member (InstallationSpec.LauncherAccounts,
+// InstallationVars).
+//
+// It is read beside IntakeOf's people because the intake's class is the two
+// TOGETHER: the block's people list is the roster's own, and whether it moves
+// the class the module reads depends on what the launchers already carry
+// (IntakeClass, intake.tf's local.intake_accounts).
+func LauncherAccountsOf(vars []byte) ([]string, error) {
+	if vars == nil {
+		return []string{}, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, err
+	}
+	return stringList(doc["launcher_accounts"]), nil
+}
+
 // SetIntakeURL returns vars with intake.url set to url and every other entry —
 // of the document and of the intake's own block — unchanged (the credentials
 // service's own read-modify-write, SetCredentialsServiceURL).

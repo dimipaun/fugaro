@@ -114,3 +114,26 @@ func IntakePeople(roster *workspace.Roster) []string {
 	slices.Sort(out)
 	return slices.Compact(out)
 }
+
+// IntakeClass is the class the intake's PROCESS reads and its invoker grant
+// names: the launchers and the roster's people as ONE list, sorted and each
+// once — the module's own expression (intake.tf's local.intake_accounts,
+// sort(distinct(concat(var.launcher_accounts, local.intake_people)))), restated
+// so a caller can ask whether a roster change moves the class at all.
+//
+// Why that question needs asking. A workspace's roster names its own launchers
+// too — the person who runs `fugaro workspace init` is on the installation's
+// launcher list and on the roster — so an address can be on both lists, and the
+// module's class is then one list with that address once. A roster that gained
+// or lost exactly that person changes var.intake.people and leaves the class the
+// revision is handed byte for byte what it was, so a caller that wrote the block
+// for it and then read the plan would find none — and an empty plan is
+// indistinguishable, from there, from the defect the fill's refusal names: a
+// class the module does not carry onto the revision at all.
+func IntakeClass(launchers, people []string) []string {
+	out := make([]string, 0, len(launchers)+len(people))
+	out = append(out, launchers...)
+	out = append(out, people...)
+	slices.Sort(out)
+	return slices.Compact(out)
+}

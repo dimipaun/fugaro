@@ -1844,8 +1844,16 @@ func (e *initEngine) fillCredentialsAudience(ctx context.Context) (bool, error) 
 // nobody, and keeping the grants of a roster that is gone would be the widening
 // nothing asks for.
 //
-// The write is omitted when the list already says this, so an ordinary update
-// of a workspace's project writes nothing and applies nothing here.
+// The write is omitted when the CLASS the module reads already says this: the
+// block's people list is only half of it, because the module composes the class
+// the revision is handed from the launchers and this list together
+// (infra.IntakeClass, intake.tf's local.intake_accounts). So a roster that
+// gained or lost a person the launchers already carry changes the list and not
+// the class, and writing the block for one would leave the apply with no plan to
+// make — which is the state the fill's own refusal reads as the module not
+// carrying the class onto the revision at all, and blames the audience for. An
+// ordinary update of a workspace's project writes nothing and applies nothing
+// here, and so does one whose roster moved only over a launcher.
 func (e *initEngine) renderIntakePeople(ctx context.Context, vars []byte) ([]byte, bool, error) {
 	if e.lc == nil || !workspaceDeclared(e.lc) {
 		return vars, false, nil
@@ -1859,7 +1867,11 @@ func (e *initEngine) renderIntakePeople(ctx context.Context, vars []byte) ([]byt
 		fmt.Fprintf(e.r.w, "the secrets intake's people were not read from the workspace's roster: %v\n", err)
 		return vars, false, nil
 	}
-	if slices.Equal(people, spec.People) {
+	launchers, err := infra.LauncherAccountsOf(vars)
+	if err != nil {
+		return vars, false, nil
+	}
+	if slices.Equal(infra.IntakeClass(launchers, people), infra.IntakeClass(launchers, spec.People)) {
 		return vars, false, nil
 	}
 	next, err := infra.SetIntakePeople(vars, people)

@@ -249,3 +249,72 @@ func TestRosterPeopleAreNotLaunchersOfTheWorkspaceProject(t *testing.T) {
 		t.Errorf("IntakeOf(none).People = %v, want none", spec.People)
 	}
 }
+
+// TestIntakeClassIsTheLaunchersAndThePeoplesListAsOne holds the second half of
+// what a fill of the intake's block has to know (WC3, R5): the class the
+// module's revision is handed is the launchers and the roster's people as ONE
+// list (intake.tf's local.intake_accounts), so a roster change that names only a
+// launcher moves var.intake.people and leaves that class exactly what it was.
+//
+// Two failures this decides between, and they are the same write: a caller that
+// compares the people list alone writes the block for the launcher the roster
+// gained, and the apply behind it has no plan to make — which is the state
+// `fugaro update` reads as the module not carrying the class onto the revision
+// at all and refuses the run over. The union is what tells the two apart, and
+// LauncherAccountsOf is where the other half of it is read from.
+func TestIntakeClassIsTheLaunchersAndThePeoplesListAsOne(t *testing.T) {
+	vars, err := InstallationVars(InstallationSpec{
+		Launchers: []string{"user:dev@example.com", "user:ops@example.com"},
+		Operators: []string{"user:owner@example.com"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vars, err = SetIntake(vars, Intake("us-east5-docker.pkg.dev/p/i/fugaro@sha256:"+strings.Repeat("a", 64)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	launchers, err := LauncherAccountsOf(vars)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"dev@example.com", "ops@example.com", "owner@example.com"}
+	if !slices.Equal(launchers, want) {
+		t.Errorf("LauncherAccountsOf(vars) = %v, want %v: the key is read as InstallationVars wrote it, operators merged in", launchers, want)
+	}
+
+	// The class of a roster whose only person is already a launcher is the
+	// launchers' own list: nothing of the roster's is added, and the sorted
+	// union is the same bytes for the empty list and for it.
+	roster := []string{"owner@example.com"}
+	if !slices.Equal(IntakeClass(launchers, roster), launchers) {
+		t.Errorf("IntakeClass(launchers, %v) = %v, want the launchers' own list %v: a person the launchers already carry is one entry, not two", roster, IntakeClass(launchers, roster), launchers)
+	}
+	if !slices.Equal(IntakeClass(launchers, roster), IntakeClass(launchers, nil)) {
+		t.Errorf("the class of a roster naming a launcher (%v) and of one naming nobody (%v) differ: the roster's own person is admitted either way, so the class the revision is handed is one list and the write is not one it can move", IntakeClass(launchers, roster), IntakeClass(launchers, nil))
+	}
+
+	// A person the launchers do NOT carry is the class's own entry, and the
+	// two lists' addresses come out sorted together rather than in the order
+	// the caller read them.
+	got := IntakeClass(launchers, []string{"ada@example.com", "dev@example.com"})
+	want = []string{"ada@example.com", "dev@example.com", "ops@example.com", "owner@example.com"}
+	if !slices.Equal(got, want) {
+		t.Errorf("IntakeClass = %v, want %v (sorted, each once, both lists)", got, want)
+	}
+
+	// And a document that carries no launcher_accounts at all — every
+	// installation whose launcher list names no `user:` member — reads as the
+	// empty list rather than an error, which is the module's own default.
+	bare, err := SetIntake([]byte(`{"project":"p"}`), Intake("us-east5-docker.pkg.dev/p/i/fugaro@sha256:"+strings.Repeat("a", 64)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	none, err := LauncherAccountsOf(bare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(none) != 0 {
+		t.Errorf("LauncherAccountsOf on a document with no key = %v, want none", none)
+	}
+}
