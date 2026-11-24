@@ -449,31 +449,32 @@ installed, nothing is fetched, and the entry point the phone loads imports nothi
 all. The tests are the plan's verification list (a missing
 id, a wrong type, an oversize body and an unknown field refused; a well-formed message
 accepted) plus the fail-closed families above and P6.3's kind, action, tag and
-canonical-byte cases: 62 tests across the module's two test files — the 58 in
+canonical-byte cases: 63 tests across the module's two test files — the 59 in
 `index.test.js`, and the four in `bounds.test.js`, which replays
 [`vectors.bounds.json`](vectors.bounds.json), the bound vectors **both** ends
 consume (`internal/mailbox`'s `TestTheSharedBoundVectorsHold` is the Go half).
 
-**Every guard is mutation-proved**, not merely covered — 113 mutations over `index.js`
+**Every guard is mutation-proved**, not merely covered — 121 mutations over `index.js`
 and `mac.js`: one for most guards, and two for the bounds that can be missed in
 either direction — a comparison narrowed by a code unit, and the same one widened:
 
 ```sh
 shared/mailbox-schema/mutation-proof.sh
-# control       the pristine suite passes, 521 tests, 0 failures
+# control       the pristine suite passes, 602 tests, 0 failures
 # killed        control: refuse() always succeeds (must be killed)
 # killed        not-an-object guard (null/array/primitive)
-# ...                                                       (112 more)
-# --- control killed; 113 guards: 113 killed, 0 survived, 0 not applied
+# ...                                                       (120 more)
+# --- control killed; 121 guards: 121 killed, 0 survived, 0 not applied
 ```
 
-That block is the run's own output with the middle elided: the harness prints **114**
+That block is the run's own output with the middle elided: the harness prints **122**
 `killed` lines — the negative control's, then one per guard — of which the two above
-are the first, so 112 follow. The script disables one guard at a time — the object check,
+are the first, so 120 follow. The script disables one guard at a time — the object check,
 the unknown-field check, each type check, each bound, each character rule, the surrogate
 and separator rules, the timestamp range, the ack's type check, the deep freeze and the
 copy, then P6.3's: the kind vocabulary and its (kind, field) table, the agent and
-option shapes, the action record's verbs and both target shapes, the argv alphabets and
+option shapes, the action record's verbs and both target shapes, the launch's mode and
+the shape a launch's target takes (O10), the argv alphabets and
 the head SHA, the required tag, the canonical serialisation — including the code-point
 sort and the strings it refuses — and, in `mac.js`, that the tag is computed over the
 canonical bytes and that `verifyMac` answers `false` rather than throwing. P5.2.1's
@@ -481,7 +482,7 @@ are the last twelve: the registration's required token and platform, the two-sid
 (kind, field) table, the platform vocabulary, the prefs' required set, their boolean
 type and their unknown-field guard, the window's closed field set and its
 completeness, the zone's shape and its segments (a segment of dots alone is a path
-step), the minute's range, and the two ends that must differ. Four more are section 6's, the token's and the zone's bounds, each in both
+step), the minute's range, and the two ends that must differ. Six more are section 6's, the token's, the zone's and O10's mode bound, each in both
 directions.
 
 Section 6 is the group about the bounds. Most of its rows **move a comparison by
