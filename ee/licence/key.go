@@ -123,8 +123,10 @@ type Keyring map[string]ed25519.PublicKey
 
 // productionKeyID is the id the owner's production signing key carries, and the
 // one entry productionKeyring holds (S3.8 created it, S2.9 published its public
-// half). It is spelled here as the key's own `kid` and nowhere else: the id is
-// what a key is looked up by, so a second spelling of it would be a second id.
+// half). It is spelled once per surface that needs it -- here, in the app's
+// ring, in the console's test, and in the minting side's Terraform and its test
+// -- and not twice in one: the id is what a key is looked up by, so a second
+// spelling of it in this package would be a second id.
 const productionKeyID = "fugaro-licence-production"
 
 // The production public half, published as a file and compiled in from it

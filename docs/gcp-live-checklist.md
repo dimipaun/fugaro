@@ -13038,7 +13038,9 @@ signing key (R5 as amended by D440).
 **NOT RUN.** Written by task **S3.6** of the subscriptions plan
 ([subscriptions/implementation-plan.md](subscriptions/implementation-plan.md), its "Checks this plan
 takes (170–179)"), and run by the owner in task **S3.7** once S3.8's key ring exists and S2.9's
-production public half is published in the three verifiers. Until the service is deployed, a key the
+production public half is published — in `ee/licence/keys/production.pub`, the CLI's ring built
+from it, and the app's ring; the ring the console verifies with is filled by the CLI release that
+takes the key back out of its own environment. Until the service is deployed, a key the
 owner mints by hand with S2.10's tool is the same format, and this check measures the same thing
 with it.
 
