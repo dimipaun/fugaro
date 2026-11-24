@@ -46,10 +46,16 @@ const (
 	maxKeySetBytes = 64 << 10
 )
 
-// heldSet is a key set that has been accepted: the signing keys it holds, and
-// the instant its own validity ends. Nothing about the envelope is kept, because
-// nothing else about it is read again.
+// heldSet is a key set that has been accepted: the signing keys it holds, the
+// sequence it was published at, and the instant its own validity ends. Nothing
+// about the envelope is kept, because nothing else about it is read again.
+//
+// The sequence is what lets a pinned key's verification tell a held set that is
+// the current one from a held set a later one has passed: the store is asked
+// with this number, and "nothing above it has been kept" is the answer that
+// means the pin can be checked against the set in hand without a read.
 type heldSet struct {
+	seq  int64
 	exp  time.Time
 	keys map[string]ed25519.PublicKey
 }
@@ -125,14 +131,19 @@ func newKeySetCache(pins Pins, client *http.Client, now func() time.Time, seq Se
 // makes this durable: a fresh instance whose cache is empty has to know that a
 // set above the build's floor has been kept somewhere, or it verifies with a
 // pinned key the project has withdrawn -- a leaked one included -- and never
-// looks. The store is asked with the build's own floor, so the answer "nothing
-// at or above this build's floor has been kept" is exactly "the pins are still
-// the whole story here", and offering the floor also seeds a node nothing has
-// written with the lowest sequence this build could accept. A store that cannot
-// answer is ErrStore and never a pin that stands: a key this verifier cannot
-// check must not verify. A set that cannot be read ends nothing, because the
-// refusal is conditioned on a set that omits the key id and a document nobody
-// could read is not one.
+// looks. The store is asked with the sequence of whichever set this process
+// would answer from, so "nothing above that has been kept" is exactly "the set
+// in hand is the current one, and the pins are the whole story here", and
+// offering the floor with nothing held also seeds a node nothing has written
+// with the lowest sequence this build could accept. A store that cannot answer
+// is ErrStore and never a pin that stands: a key this verifier cannot check
+// must not verify. A set that cannot be read ends nothing, because the refusal
+// is conditioned on a set that omits the key id and a document nobody could
+// read is not one.
+//
+// A read this path wants but does not need is never waited for (beginRead): the
+// set in hand answers whether the pin stands, and a wait here would spend O7's
+// "no fetch" on a socket a stranger chose.
 //
 // The answer does not lapse with the held set's validity. A set that was valid
 // when it was read said what the project published, and that a key is no longer
@@ -140,17 +151,50 @@ func newKeySetCache(pins Pins, client *http.Client, now func() time.Time, seq Se
 // the set cannot be *un*-seen, and the alternative -- trusting a withdrawn key
 // again because the endpoint went down -- is exactly what a rotation is for.
 func (c *keySetCache) endsPin(ctx context.Context, kid string) (bool, error) {
-	kept, err := c.seq.Observe(ctx, c.pins.SeqFloor)
+	held := c.heldSet()
+	// The store is asked about the set this process holds, and about the build's
+	// floor only when it holds none: either answer is "has anything above this
+	// been kept", and the held set's own sequence is the higher of the two
+	// questions. Asking about the floor while a set is in hand would answer "a
+	// rotation has happened" for every rotation this process has already read
+	// past, which is a read -- and, once a rotation has happened at all, a read
+	// per interval for as long as the build is deployed.
+	mark := c.pins.SeqFloor
+	if held != nil {
+		mark = held.seq
+	}
+	kept, err := c.seq.Observe(ctx, mark)
 	if err != nil {
 		return false, fmt.Errorf("%w: the key set's sequence could not be read before a pinned key was used: %v", ErrStore, err)
 	}
 	if !kept {
-		// A set above this build's floor has been kept, so a rotation has happened
-		// that this process has not seen: hold the set the project publishes now
-		// -- rate-limited like every other read -- and check the pin against it.
-		c.read(ctx, false)
+		if held == nil {
+			// A set above this build's floor has been kept and this process has
+			// nothing to answer from: hold the set the project publishes now --
+			// rate-limited like every other read -- before the pin is used, because
+			// a pin is not allowed to stand on a store that says a rotation has
+			// happened somewhere.
+			c.read(ctx, false)
+		} else {
+			// The set in hand is current by its own sequence and a set above *it*
+			// has been kept since: read and check the next pin against what the
+			// read lands, and answer this one from the set in hand. A caller that
+			// waited here would wait for an answer it does not need -- and that
+			// wait is a stranger's to start, by naming an unknown key id and
+			// leaving the read on a socket (beginRead).
+			c.beginRead(false)
+		}
 	}
 	return c.heldOmits(kid), nil
+}
+
+// heldSet is the set this process holds, and nil when it holds none. The set is
+// replaced and never amended, so the return is a snapshot a caller can read
+// without the mutex.
+func (c *keySetCache) heldSet() *heldSet {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.held
 }
 
 // heldOmits is endsPin's second half: whether the set this process holds omits
@@ -229,25 +273,46 @@ func (c *keySetCache) set(ctx context.Context) (*heldSet, error) {
 // verification in the process at one moment or another, and one hung connection
 // to the identity project's endpoint must not be one that stalls them all.
 //
-// The read itself is the cache's and not the reader's: it runs on a context of
-// its own (fetch), so the caller that triggered it giving up neither ends it nor
-// makes its failure the cache's, and the caller waits for it only as long as its
-// own context allows.
+// A caller that has a set of its own to answer from does not wait at all: it
+// asks for the read with beginRead and ignores the channel, because the read is
+// for the assertions after it and not for the one in hand.
 func (c *keySetCache) read(ctx context.Context, rotation bool) {
+	done := c.beginRead(rotation)
+	if done == nil {
+		// The interval refused this call a read, and none is in flight: there is
+		// nothing to wait for.
+		return
+	}
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+}
+
+// beginRead starts a read when one may start and none is in flight, and answers
+// the channel to wait on: the read this call started, the one that was already
+// under way, or nil when the interval refused this call a read.
+//
+// An in-flight read is answered before the interval is consulted: the interval
+// says "do not read", and a caller that finds one under way wants its answer --
+// the first read of a cold cache leaves every other caller in this process with
+// nothing to verify against until it lands.
+//
+// The read runs in its own goroutine and answers to the cache's clock and not
+// the caller's, because its answer is every caller's: a caller that goes away
+// mid-read -- an unauthenticated request whose connection dies, and the key is
+// looked up before any signature is checked, so that caller needs no credential
+// at all -- must not end a read the next caller needs, and must not leave the
+// failure of its own cancellation in c.err to refuse everyone inside the
+// interval. A caller that waits gives up on its own clock; the read carries on
+// either way.
+func (c *keySetCache) beginRead(rotation bool) chan struct{} {
 	c.mu.Lock()
 	now := c.now()
-	// A read in flight is waited for before the interval is consulted: the
-	// interval says "do not read", and a caller that finds one under way wants
-	// its answer -- the first read of a cold cache leaves every other caller in
-	// this process with nothing to verify against until it lands.
 	if c.reading != nil {
 		done := c.reading
 		c.mu.Unlock()
-		select {
-		case <-done:
-		case <-ctx.Done():
-		}
-		return
+		return done
 	}
 	gate := &c.lastRead
 	if rotation {
@@ -255,23 +320,18 @@ func (c *keySetCache) read(ctx context.Context, rotation bool) {
 	}
 	if !gate.IsZero() && now.Sub(*gate) < keySetMinReadInterval {
 		c.mu.Unlock()
-		return
+		return nil
 	}
 	*gate, c.lastRead = now, now
 	c.reading = make(chan struct{})
 	done := c.reading
 	c.mu.Unlock()
 
-	// The read runs in its own goroutine and answers to the cache's clock and
-	// not the caller's, because its answer is every caller's: a caller that goes
-	// away mid-read -- an unauthenticated request whose connection dies, and the
-	// key is looked up before any signature is checked, so that caller needs no
-	// credential at all -- must not end a read the next caller needs, and must
-	// not leave the failure of its own cancellation in c.err to refuse everyone
-	// inside the interval. This caller waits for the answer or gives up on its
-	// own clock, whichever comes first; the read carries on either way.
+	// The read is the cache's and not the reader's, so it runs on a context of
+	// its own: fetch bounds it by the cache's timeout and by nothing of any
+	// caller's.
 	go func() {
-		set, err := c.fetch(ctx)
+		set, err := c.fetch(context.Background())
 
 		c.mu.Lock()
 		if err != nil {
@@ -283,11 +343,7 @@ func (c *keySetCache) read(ctx context.Context, rotation bool) {
 		c.mu.Unlock()
 		close(done)
 	}()
-
-	select {
-	case <-done:
-	case <-ctx.Done():
-	}
+	return done
 }
 
 // fetch reads the pinned URL once and verifies what it finds. The error it
@@ -430,5 +486,5 @@ func parseKeySet(ctx context.Context, body []byte, pins Pins, now time.Time, seq
 		}
 		keys[key.Kid] = ed25519.PublicKey(raw)
 	}
-	return &heldSet{exp: exp, keys: keys}, nil
+	return &heldSet{seq: set.Seq, exp: exp, keys: keys}, nil
 }

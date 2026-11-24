@@ -259,6 +259,20 @@ func (s *keySetServer) fetchStarted(t *testing.T) {
 	}
 }
 
+// readsReach waits until the endpoint has been read that many times, so that a
+// case about what happens during a *particular* read waits for that read and not
+// for whichever one happened first.
+func (s *keySetServer) readsReach(t *testing.T, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for s.reads() < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("the key endpoint was read %d time(s), want %d", s.reads(), n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func (s *keySetServer) client() *http.Client { return &http.Client{Transport: s} }
 
 // memoryClaims is C1's ClaimStore as a test needs it: a value is claimed once,
@@ -295,11 +309,23 @@ type memorySeq struct {
 	mu   sync.Mutex
 	high int64
 	fail bool
+	// observes counts the calls, which is how a case says that a verification
+	// asked the store nothing: the store is a remote compare-and-set node, and
+	// which tokens reach it is a decision this package makes.
+	observes int
+}
+
+// observations is the number of times the store was asked, whatever it answered.
+func (m *memorySeq) observations() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.observes
 }
 
 func (m *memorySeq) Observe(_ context.Context, seq int64) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.observes++
 	if m.fail {
 		return false, errors.New("the store is down")
 	}
@@ -1002,6 +1028,151 @@ func TestVerifyDoesNotWaitForAFetchInFlight(t *testing.T) {
 	}
 	stop()
 	<-done
+}
+
+// The same rule once the project has rotated, which is the ordinary state of a
+// deployment that has outlived one release: the store's mark is above the
+// build's floor, and what this process holds is the set at that mark. A pinned
+// key's verification answers from that set without a read -- and without joining
+// a read in flight either, because the set in hand is what says whether the pin
+// stands and the read is for the assertions after it. The read in flight is one
+// a stranger can start, by naming an unknown key id and leaving it on a socket.
+func TestVerifyDoesNotWaitForAReadOnceAHeldSetIsCurrent(t *testing.T) {
+	rootPub, rootPriv := testKey(t)
+	buildPub, buildPriv := testKey(t)
+	otherPub, otherPriv := testKey(t)
+	srv := &keySetServer{}
+	// The set the project publishes now, above the floor this build pins, and it
+	// still holds the pinned key: the rotation that published it is the overlap
+	// O4 describes, so the pin stands and the set in hand is the current one.
+	// After the first rotation the held set's own sequence is what the store is
+	// asked about, and the answer is that nothing above it has been kept.
+	srv.set(keySetDoc(t, rootPriv, 8, validUntil(), jwkOf(testSignKID, buildPub), jwkOf(testOtherKID, otherPub)))
+	seq := &memorySeq{high: 8}
+
+	// A clock the case can move, so that the read interval -- a minute, and the
+	// reason a stray read is hard to see -- is not what is answering for the code
+	// under test: every pinned verification below happens with the interval long
+	// past, and the only thing that can refuse a read is the set in hand being
+	// current.
+	now := testNow
+	var mu sync.Mutex
+	v, err := New(newMemoryClaims(),
+		WithPins(pins(rootPub, 7, pinned(testSignKID, buildPub))),
+		WithHTTPClient(srv.client()),
+		WithClock(func() time.Time { mu.Lock(); defer mu.Unlock(); return now }),
+		WithSeqFloorStore(seq),
+	)
+	if err != nil {
+		t.Fatalf("building the verifier: %v", err)
+	}
+	advance := func(d time.Duration) { mu.Lock(); now = now.Add(d); mu.Unlock() }
+
+	// One claim set for each assertion below, because a jti is spent once.
+	claims := func(jti string) map[string]any {
+		c := goodClaims()
+		c["jti"] = jti
+		return c
+	}
+
+	// Holding the set: the assertion names a key the build does not pin.
+	if _, err := verify(t, v, signAssertion(t, otherPriv, testOtherKID, claims("test-jti-held"))); err != nil {
+		t.Fatalf("the fetched key's assertion was refused: %v", err)
+	}
+	if reads := srv.reads(); reads != 1 {
+		t.Fatalf("the key endpoint was read %d times, want 1", reads)
+	}
+
+	// A read is now in flight and held there. It is the read an unknown key id
+	// starts, so any caller can start one.
+	release := srv.holdNext()
+	held := make(chan error, 1)
+	go func() {
+		claims := goodClaims()
+		claims["jti"] = "test-jti-holding"
+		_, err := v.Verify(context.Background(), signAssertion(t, otherPriv, "signing-nobody", claims), mobilesession.Binding{Audience: testAudience, Challenge: testChallenge})
+		held <- err
+	}()
+	srv.readsReach(t, 2)
+
+	answered := make(chan error, 1)
+	go func() {
+		_, err := verify(t, v, signAssertion(t, buildPriv, testSignKID, claims("test-jti-pinned-hung")))
+		answered <- err
+	}()
+	select {
+	case err := <-answered:
+		if err != nil {
+			t.Fatalf("a pinned key's assertion was refused while a read hung: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		release()
+		t.Fatal("a pinned key's verification joined a read in flight: the set in hand is what says whether the pin stands, so the wait is one a stranger can start at this service's front door")
+	}
+	release()
+	<-held
+
+	// The same verification once the read interval has passed -- the interval is
+	// what the check above is blind to, because a read the interval refuses is no
+	// read at all -- with the store still above the floor and the set in hand
+	// still the one at that mark. No read: the set's own sequence is what the
+	// store is asked about, so "a rotation has happened" is the answer only for a
+	// rotation this process has not read past.
+	advance(90 * time.Second)
+	if _, err := verify(t, v, signAssertion(t, buildPriv, testSignKID, claims("test-jti-pinned-later"))); err != nil {
+		t.Fatalf("a pinned key was refused when the read interval had passed: %v", err)
+	}
+	if reads := srv.reads(); reads != 2 {
+		t.Errorf("the key endpoint was read %d times, want 2: the pinned path must neither read nor add to a read while the set in hand answers", reads)
+	}
+	srv.readsStay(t, 2)
+}
+
+// readsStay waits out the moment a read that a caller allowed would need to
+// reach the endpoint, and fails if one does. A read starts in a goroutine of its
+// own, so a case that must show that no read happened is a case about a window:
+// the window below is wide beside the goroutine a read would take, and waiting
+// it out cannot make the other direction flake, because a read that is never
+// started never arrives late.
+func (s *keySetServer) readsStay(t *testing.T, n int) {
+	t.Helper()
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if s.reads() > n {
+			t.Fatalf("the key endpoint was read %d time(s), want %d: a read this path did not need reached the endpoint", s.reads(), n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// The order the remote checks are made in: a pinned key id is looked up with no
+// read and no store call, so a token that names one and carries a signature of
+// its own is refused before anything leaves this process. The store is C1's
+// compare-and-set node and the key set is the pinned URL, and neither is
+// something a stranger's token gets to spend by naming a key id.
+func TestVerifyChecksAPinnedSignatureBeforeTheStore(t *testing.T) {
+	rootPub, rootPriv := testKey(t)
+	buildPub, _ := testKey(t)
+	_, impostorPriv := testKey(t)
+	srv := &keySetServer{}
+	srv.set(keySetDoc(t, rootPriv, 8, validUntil(), jwkOf(testSignKID, buildPub)))
+	seq := &memorySeq{high: 8}
+	v := newTestVerifier(t, pins(rootPub, 7, pinned(testSignKID, buildPub)), srv, newMemoryClaims(), seq)
+
+	// A token with the pinned key id and a signature by another key.
+	_, err := verify(t, v, signAssertion(t, impostorPriv, testSignKID, goodClaims()))
+	if err == nil {
+		t.Fatal("an assertion signed by a key the build does not pin was accepted for a pinned key id")
+	}
+	if field := refusalField(t, err); field != "signature" {
+		t.Errorf("the refusal names %q, want \"signature\"", field)
+	}
+	if n := seq.observations(); n != 0 {
+		t.Errorf("the sequence store was asked %d time(s) for a token whose signature does not hold, want 0: the store is a compare-and-set node, and a pinned key id is a string a stranger can send in the header of a token they cannot sign", n)
+	}
+	if reads := srv.reads(); reads != 0 {
+		t.Errorf("the key endpoint was read %d time(s) for a token whose signature does not hold, want 0", reads)
+	}
 }
 
 // The other half of the same bound: a fetch that never answers must not be a

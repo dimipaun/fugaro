@@ -365,7 +365,9 @@ func (v *Verifier) Pins() Pins { return v.pins }
 // claim set a stranger wrote. The jti is spent last, after everything else has
 // held: an assertion that is going to be refused anyway must not spend its id,
 // and an id spent before its signature verified would let a stranger burn
-// assertions it cannot sign.
+// assertions it cannot sign. The pinned key's own conditions come between the
+// signature and the claims for the same reason (pinStands): they are remote, and
+// a stranger's token is refused first.
 func (v *Verifier) Verify(ctx context.Context, assertion string, want mobilesession.Binding) (mobilesession.Claims, error) {
 	if want.Audience == "" {
 		return mobilesession.Claims{}, refuse("aud", "the caller asked for no audience: an expectation read off the assertion it judges is no check at all")
@@ -388,12 +390,27 @@ func (v *Verifier) Verify(ctx context.Context, assertion string, want mobilesess
 		return mobilesession.Claims{}, refuse("kid", "the assertion's header names no signing key")
 	}
 
-	key, err := v.keyFor(ctx, head.Kid)
-	if err != nil {
-		return mobilesession.Claims{}, err
-	}
-	if !ed25519.Verify(key, []byte(signing), sig) {
-		return mobilesession.Claims{}, refuse("signature", "the signature does not verify against the key this key id names")
+	// The pinned key's own conditions are consulted after the signature and not
+	// before it, which is the order the jti store is spent in and for the same
+	// reason: a pinned key id is a string any caller can send, and both of the
+	// things consulted for one are remote -- the compare-and-set store, and, once
+	// a set above the one in hand has been kept, the pinned URL.
+	pinned, isPinned := v.pinnedKey(head.Kid)
+	if isPinned {
+		if !ed25519.Verify(pinned.Key, []byte(signing), sig) {
+			return mobilesession.Claims{}, refuse("signature", "the signature does not verify against the key this key id names")
+		}
+		if err := v.pinStands(ctx, pinned); err != nil {
+			return mobilesession.Claims{}, err
+		}
+	} else {
+		key, err := v.keys.key(ctx, head.Kid)
+		if err != nil {
+			return mobilesession.Claims{}, err
+		}
+		if !ed25519.Verify(key, []byte(signing), sig) {
+			return mobilesession.Claims{}, refuse("signature", "the signature does not verify against the key this key id names")
+		}
 	}
 
 	claims, err := readClaims(payload)
@@ -434,41 +451,46 @@ func (v *Verifier) Verify(ctx context.Context, assertion string, want mobilesess
 	return claims, nil
 }
 
-// keyFor is the key a key id names: a pinned one if this build holds it, and
-// otherwise one from the pinned URL's signed set.
-//
-// The omitting set is consulted first, for the pinned kid too, because a pinned
-// key ends when a valid set at or above the floor no longer holds it: a rotation
-// is authority over the pin, and a build that kept verifying with a key the
-// project had withdrawn would be a build that cannot be recovered from a key
-// that leaked. A set is only ever known here when some other assertion made this
-// process read one, so a build that only ever sees pinned keys never reads
-// anything -- which is O7's whole point -- unless C1's compare-and-set store
-// says a set above the floor has been kept somewhere, which is a rotation this
-// process has not seen and cannot be allowed to ignore.
-func (v *Verifier) keyFor(ctx context.Context, kid string) (ed25519.PublicKey, error) {
+// pinnedKey is the key this build pins for a key id, and whether it pins one at
+// all. It reads nothing and asks nobody: it is the lookup that has to come
+// before a signature, and everything that can refuse a pinned key (pinStands)
+// comes after one.
+func (v *Verifier) pinnedKey(kid string) (PinnedKey, bool) {
 	for _, pinned := range v.pins.Keys {
-		if pinned.KID != kid {
-			continue
+		if pinned.KID == kid {
+			return pinned, true
 		}
-		// A pinned kid is checked against a set the verifier can hold before the
-		// pin is used: a set that omits it ends it. Only a kid this build pins is
-		// checked that way -- for any other kid the set is where the key comes
-		// from in the first place, and a set that does not hold it yet is the
-		// rotation this path is here to pick up.
-		ended, err := v.keys.endsPin(ctx, kid)
-		if err != nil {
-			return nil, err
-		}
-		if ended {
-			return nil, refuse("kid", "a valid key set at or above this build's sequence floor no longer holds this key id")
-		}
-		if !v.now().Before(pinned.NotAfter) {
-			return nil, refuse("kid", "the key pinned for this key id is past the not-after date this build carries")
-		}
-		return pinned.Key, nil
 	}
-	return v.keys.key(ctx, kid)
+	return PinnedKey{}, false
+}
+
+// pinStands is what a key id this build pins still has to pass once the
+// signature over it holds: the key set says the project has not rotated it out,
+// and the build's own not-after date has not passed.
+//
+// The omitting set is consulted here, for a pinned kid too, because a pinned key
+// ends when a valid set at or above the floor no longer holds it: a rotation is
+// authority over the pin, and a build that kept verifying with a key the project
+// had withdrawn would be a build that cannot be recovered from a key that
+// leaked. Both checks are remote -- the store is C1's compare-and-set node, and
+// a rotation this process has not read past makes it read the pinned URL -- so a
+// token that does not carry the pin's signature is refused before either is
+// reached, and a stranger cannot make this service pay a round trip by naming a
+// pinned key id. A set is read here only when the store says one above the set
+// in hand has been kept somewhere; a build that sees only pinned keys and has
+// read past every rotation therefore reads nothing, which is O7's whole point.
+func (v *Verifier) pinStands(ctx context.Context, pinned PinnedKey) error {
+	ended, err := v.keys.endsPin(ctx, pinned.KID)
+	if err != nil {
+		return err
+	}
+	if ended {
+		return refuse("kid", "a valid key set at or above this build's sequence floor no longer holds this key id")
+	}
+	if !v.now().Before(pinned.NotAfter) {
+		return refuse("kid", "the key pinned for this key id is past the not-after date this build carries")
+	}
+	return nil
 }
 
 // The header of an assertion, and nothing else: a JWS header may carry a key URL
