@@ -1905,7 +1905,6 @@ describe('no module under src/renderer writes an inline style', () => {
       'section.ts',
       'skeleton.ts',
       'stream.ts',
-      'stubs/bridge-stub.ts',
       'writes.ts',
     ])
   })

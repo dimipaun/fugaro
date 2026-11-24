@@ -339,13 +339,20 @@ func workspaceResourceBlocks(t *testing.T, text string) []workspaceBlock {
 // WS6 gave the root two more grants than the one above — the workspace's own
 // credentials service reaches the workspace's ONE bundle container as that same
 // account, and the member table's job accounts reach that service's front door
-// (D2980, F4, F17) — and neither of them is a grant on the database. The table
-// below is therefore the whole of the root's reach, one row per member resource
-// it may declare, and a grant the table does not know is refused rather than
-// counted: the workspace's own project holds the account, its one database
-// role, the database grant and the service's own two grants, and nothing else
-// (spec §9; internal/infra/tf's WorkspaceNotCovered is the plan-side half of
-// the same rule).
+// (D2980, F4, F17) — and none of them is a grant on the database. WC2 added the
+// two the roster needs (R6, D2971): one invoke grant per `human` of the
+// workspace's own roster, so a person reaches that service with their own
+// identity, and the ONE conditioned project-level accessor that same account
+// holds on a person's own Claude token container — its condition is what makes
+// it a name and not a project, and the root's own cover holds that condition
+// byte for byte (internal/infra/tf's WorkspaceNotCovered; deploy/terraform's
+// TestNoProjectLevelSecretAccessor is the tree-side half). The table below is
+// therefore the whole of the root's reach, one row per member resource it may
+// declare, and a grant the table does not know is refused rather than counted:
+// the workspace's own project holds the account, its one database role, the
+// database grant and the service's own four grants, and nothing else (spec §9;
+// internal/infra/tf's WorkspaceNotCovered is the plan-side half of the same
+// rule).
 func TestWorkspaceRulesAllowTheServicesOwnAccount(t *testing.T) {
 	// The document's half: no client token opens the family, so a caller
 	// reaches the workspace's database as the service or not at all.
@@ -374,18 +381,30 @@ func TestWorkspaceRulesAllowTheServicesOwnAccount(t *testing.T) {
 		"google_secret_manager_secret_iam_member.workspace_bundle": {
 			role:   `"roles/secretmanager.secretAccessor"`,
 			member: accountRef,
-			why:    "the workspace's service reads its ONE bundle container as its own account: a second reader of the workspace's model credentials, or a project-level accessor, is the pool disclosed to a principal the service did not choose (F4, Q6)",
+			why:    "the workspace's service reads its ONE bundle container as its own account: a second reader of the workspace's model credentials on that container, or an UNCONDITIONED project-level accessor, is the pool disclosed to a principal the service did not choose (F4, Q6; the one conditioned project accessor WC2 adds is the row below, and its condition is the whole of why it is not this)",
 		},
 		"google_cloud_run_v2_service_iam_member.workspace_invoker": {
 			role:   `"roles/run.invoker"`,
 			member: `"serviceAccount:${each.value}"`,
 			why:    "the member table's own job accounts are the only principals that reach that service, and the invoke grant is the ONE grant a member holds in the workspace's project (F17, F29)",
 		},
+		"google_cloud_run_v2_service_iam_member.workspace_person_invoker": {
+			role:   `"roles/run.invoker"`,
+			member: `"user:${each.value}"`,
+			why:    "a `human` of the workspace's own roster reaches that service with their own Google identity and with no other, one grant per address the roster names, so `fugaro update` takes the grant away when the roster stops naming them (R6, D2971, F25)",
+		},
+		"google_project_iam_member.workspace_person_token": {
+			role:   `"roles/secretmanager.secretAccessor"`,
+			member: accountRef,
+			why:    "the one project-level accessor of this root, and the whole of why it is safe is its condition: the per-person `fugaro_u_` prefix AND the one personal name the workspace serves, so a container of this project outside those two - the workspace's own bundle, a `fugaro_p_` entry, another project's naming - is not readable through it (R6, D2971; internal/infra/tf's WorkspaceNotCovered refuses a wider one)",
+		},
 	}
 	addrs := []string{
 		"google_project_iam_member.workspace_database",
 		"google_secret_manager_secret_iam_member.workspace_bundle",
 		"google_cloud_run_v2_service_iam_member.workspace_invoker",
+		"google_cloud_run_v2_service_iam_member.workspace_person_invoker",
+		"google_project_iam_member.workspace_person_token",
 	}
 	roleAttr := regexp.MustCompile(`(?m)^\s*role\s*=\s*(.+?)\s*$`)
 	memberAttr := regexp.MustCompile(`(?m)^\s*member\s*=\s*(.+?)\s*$`)

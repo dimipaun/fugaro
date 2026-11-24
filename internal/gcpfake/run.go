@@ -158,6 +158,7 @@ type RunCall struct {
 	Execution string // the short name, as Cloud Run hands CLOUD_RUN_EXECUTION to the container
 	Job       string
 	Env       map[string]string // the override's env
+	Args      []string          // the override's container args
 	Timeout   string            // the override's task timeout ("2820s"), empty when none
 }
 
@@ -948,7 +949,8 @@ func (f *Run) run(w http.ResponseWriter, r *http.Request, jp string, body []byte
 	var req struct {
 		Overrides struct {
 			ContainerOverrides []struct {
-				Env []struct{ Name, Value string } `json:"env"`
+				Env  []struct{ Name, Value string } `json:"env"`
+				Args []string                       `json:"args"`
 			} `json:"containerOverrides"`
 			Timeout string `json:"timeout"`
 		} `json:"overrides"`
@@ -958,12 +960,14 @@ func (f *Run) run(w http.ResponseWriter, r *http.Request, jp string, body []byte
 		return
 	}
 	env := map[string]string{}
+	var args []string
 	for _, c := range req.Overrides.ContainerOverrides {
 		for _, e := range c.Env {
 			env[e.Name] = e.Value
 		}
+		args = append(args, c.Args...)
 	}
-	call := RunCall{Job: job, Env: env, Timeout: req.Overrides.Timeout}
+	call := RunCall{Job: job, Env: env, Args: args, Timeout: req.Overrides.Timeout}
 	// A project job is shared by every repository admitted to its profile
 	// (design §4.1), so its name no longer says which run an execution is:
 	// the launcher must set FUGARO_RUN as an override, and nothing else can
