@@ -99,6 +99,23 @@ func TestProblems(t *testing.T) {
 		wantProblems(t, vertex, CodeNoSpelling)
 	})
 
+	t.Run("non_claude_through_a_provider", func(t *testing.T) {
+		// spec.md's own headline route: a vendor's model under a provider key.
+		// The map spells it as the ID it was written with — a non-Claude model
+		// has no route ID of the map's to be translated into — so what decides
+		// whether the source serves it is the provider entry's own claim (R2),
+		// and a model the entry claims is accepted as it stands.
+		in := checksFixture(Table{{Match: "deepseek/*", Chain: []Source{{Kind: KindProvider, Provider: "or"}}}},
+			"deepseek/deepseek-v4")
+		wantProblems(t, in)
+		// A model the entry does not claim reaches nothing there, and the
+		// refusal is reach's and not a spelling's: the source would be sent the
+		// model as written, and the key lists other models.
+		unclaimed := checksFixture(Table{{Match: "qwen/*", Chain: []Source{{Kind: KindProvider, Provider: "or"}}}},
+			"qwen/qwen3-coder")
+		wantProblems(t, unclaimed, CodeNoReach)
+	})
+
 	t.Run("claude_through_a_provider_before_check_50", func(t *testing.T) {
 		in := checksFixture(Table{{Match: "claude-*", Chain: []Source{{Kind: KindProvider, Provider: "or"}}}},
 			"claude-sonnet-5-5")
@@ -220,7 +237,7 @@ func TestProblems(t *testing.T) {
 func goodTable() Table {
 	return Table{
 		{Match: "claude-*", Chain: []Source{{Kind: KindLauncherPool}, {Kind: KindPool, Pool: "team"}, {Kind: KindAnthropic}}},
-		{Match: "deepseek/*", Chain: []Source{{Kind: KindPool, Pool: "routed"}}},
+		{Match: "deepseek/*", Chain: []Source{{Kind: KindProvider, Provider: "or"}}},
 	}
 }
 

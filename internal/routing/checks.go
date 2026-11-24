@@ -438,9 +438,10 @@ func sourceProblem(in Checks, i, j int, s Source, asked string) (Problem, bool) 
 		if !ok {
 			return Problem{}, false // chainProblems' own, reported once
 		}
-		// The claim is judged against what the provider would be SENT: a
-		// provider's models list carries the route's own IDs, which is the
-		// spelling the map just answered with.
+		// The claim is judged against what the provider would be SENT, which is
+		// the spelling the map just answered with: a provider entry's models list
+		// carries the route's own IDs, and for a vendor's model the route's own
+		// ID is the model's own, so one predicate answers for both.
 		if !p.Matches(spelling) {
 			return Problem{
 				Path:    at,
