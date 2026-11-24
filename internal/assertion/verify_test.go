@@ -28,6 +28,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -1085,6 +1086,36 @@ func TestVerifyBuildPinsAreUsable(t *testing.T) {
 	if u, err := url.Parse(p.JWKSURL); err != nil || u.Scheme != "https" {
 		t.Errorf("the pinned keys URL is %q: the set is fetched from a pinned https URL and from nowhere else", p.JWKSURL)
 	}
+}
+
+// The verifier is one value a whole service uses at once, so concurrency is a
+// claim the code has to carry: the key set cache and the two stores are shared
+// state, and this is the test that fails under -race the moment a lock or a copy
+// goes missing.
+func TestVerifyIsSafeForConcurrentUse(t *testing.T) {
+	rootPub, rootPriv := testKey(t)
+	signPub, signPriv := testKey(t)
+	srv := &keySetServer{}
+	srv.set(keySetDoc(t, rootPriv, 7, validUntil(), jwkOf(testSignKID, signPub)))
+	// The build pins one key and the set holds another, so every call below
+	// reads the set: the cache is shared state in the middle of this and not
+	// beside it.
+	buildPub, _ := testKey(t)
+	v := newTestVerifier(t, pins(rootPub, 7, pinned("signing-build", buildPub)), srv, newMemoryClaims(), &memorySeq{})
+
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			claims := goodClaims()
+			claims["jti"] = fmt.Sprintf("test-jti-concurrent-%d", i)
+			if _, err := verify(t, v, signAssertion(t, signPriv, testSignKID, claims)); err != nil {
+				t.Errorf("a concurrent verification was refused: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 // Every path P1 takes is one refusal type or another, and each of them says

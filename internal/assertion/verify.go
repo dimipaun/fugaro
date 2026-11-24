@@ -203,6 +203,11 @@ type Verifier struct {
 	keys   *keySetCache
 }
 
+// The one line that holds this package to C1: the interface P3 and K2 call is
+// the contract's, and a signature that drifted from it would otherwise fail in
+// their code rather than in this file.
+var _ mobilesession.Verifier = (*Verifier)(nil)
+
 // New builds the verifier this service verifies assertions with. It refuses a
 // claim store or a sequence store it does not have and a pin set it cannot use,
 // once, here, rather than at every sign-in: a verifier that cannot claim a jti
@@ -325,10 +330,11 @@ func (v *Verifier) keyFor(ctx context.Context, kid string) (ed25519.PublicKey, e
 		if pinned.KID != kid {
 			continue
 		}
-		// The omitting set is consulted only for a kid this build pins: for any
-		// other kid the set is where the key comes from in the first place, and
-		// a set that does not hold it yet is the rotation this path is here to
-		// pick up.
+		// A pinned kid is checked against the held set before the pin is used:
+		// a set that omits it ends it. Only a kid this build pins is checked
+		// that way -- for any other kid the set is where the key comes from in
+		// the first place, and a set that does not hold it yet is the rotation
+		// this path is here to pick up.
 		if v.keys.omitsPinned(kid) {
 			return nil, refuse("kid", "a valid key set at or above this build's sequence floor no longer holds this key id")
 		}
