@@ -283,7 +283,16 @@ func configSkewCheckout(t *testing.T, f *cloudFixture, repoYAML string) string {
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": repoYAML, "build.sh": "true\n", "test.sh": "true\n"})
+	body := anchoredText(repoYAML)
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": body, "build.sh": "true\n", "test.sh": "true\n"})
+	// The file's lifted keys are published as aurora's project layer, the place
+	// a run reads them now (S1, D3237): a checkout that named its role models
+	// resolves as it did, and a test that publishes a layer of its own over this
+	// one still has the last word. A head that names none — plain configSkewHead
+	// — publishes nothing.
+	if pinsLayer(body) != "" {
+		publishedLayer(t, f, layerPins(body))
+	}
 	commitRef(t, dir, "develop")
 	t.Chdir(dir)
 	return dir

@@ -139,7 +139,7 @@ func TestValidateReadsTheGatewayModeFromThePolicyNode(t *testing.T) {
 	// the node overlays, and a node without the list would be refused for that
 	// instead (TestValidateRefusesCascadeWithoutAllowList).
 	publishPolicy(t, f, cascadePolicyAllowList("observe"))
-	out, errOut, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+	out, errOut, err := execute(t, "validate", pinnedFile(t, cascadeCLI))
 	if err != nil {
 		t.Fatalf("a cascade file whose policy sets the mode was refused: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
 	}
@@ -164,7 +164,7 @@ func TestValidateRefusesCascadeWhenThePolicyNodeTurnsTheGatewayOff(t *testing.T)
 	// The list is published with the mode, so that the refusal this test reads
 	// is the gateway's and not the allow-list's.
 	publishPolicy(t, f, cascadePolicyAllowList("off"))
-	out, errOut, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+	out, errOut, err := execute(t, "validate", pinnedFile(t, cascadeCLI))
 	if err == nil {
 		t.Fatalf("a cascade file whose policy turns the budget off was admitted:\nstdout:\n%s\nstderr:\n%s", out, errOut)
 	}
@@ -197,7 +197,7 @@ func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
 	t.Run("a published policy without the switch", func(t *testing.T) {
 		f := newLaunchBudget(t, "observe")
 		publishPolicy(t, f, `{"version":`+fmt.Sprint(projectpolicy.Version)+`,"allow_repos":["*"]}`)
-		out, _, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+		out, _, err := execute(t, "validate", pinnedFile(t, cascadeCLI))
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("exit = %d, want %d (err %v, out %q)", ExitCode(err), ExitUserError, err, out)
 		}
@@ -218,7 +218,7 @@ func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
 		// no allow-list is refused below, by this rule, so the case that has to
 		// pass publishes both.
 		publishPolicy(t, f, cascadePolicyAllowList("observe"))
-		out, errOut, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+		out, errOut, err := execute(t, "validate", pinnedFile(t, cascadeCLI))
 		if err != nil {
 			t.Fatalf("validate: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
 		}
@@ -230,7 +230,7 @@ func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
 	t.Run("no policy published", func(t *testing.T) {
 		f := newLaunchBudget(t, "observe")
 		markRules(t, f, projectpolicy.RulesVersion)
-		out, _, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+		out, _, err := execute(t, "validate", pinnedFile(t, cascadeCLI))
 		if ExitCode(err) != ExitUserError || !strings.Contains(out, "routing.claude: {via: cascade}") {
 			t.Fatalf("an unpublished policy passed a cascade file: exit %d, out %q, err %v", ExitCode(err), out, err)
 		}
@@ -254,7 +254,7 @@ func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
 			t.Run(c.name, func(t *testing.T) {
 				f := newLaunchBudget(t, "observe")
 				publishPolicy(t, f, c.policy)
-				out, _, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+				out, _, err := execute(t, "validate", pinnedFile(t, cascadeCLI))
 				if ExitCode(err) != ExitUserError {
 					t.Fatalf("exit = %d, want %d (err %v, out %q)", ExitCode(err), ExitUserError, err, out)
 				}
@@ -280,7 +280,7 @@ func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
 		// for aurora, and there is none.
 		isolateProjects(t, t.TempDir())
 		cascadeOtherProject(t, "borealis", cascadePolicy())
-		out, _, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+		out, _, err := execute(t, "validate", pinnedFile(t, cascadeCLI))
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("another project's published switch admitted aurora's cascade file: exit = %d, want %d (err %v, out %q)", ExitCode(err), ExitUserError, err, out)
 		}
@@ -301,7 +301,7 @@ func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
 		markRules(t, f, projectpolicy.RulesVersion)
 		f.db.Set(projectpolicy.PathShared(), json.RawMessage(
 			`{"version":`+fmt.Sprint(projectpolicy.Version)+`,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}},"a_key_nobody_reads":1}`))
-		out, _, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+		out, _, err := execute(t, "validate", pinnedFile(t, cascadeCLI))
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("exit = %d, want %d (err %v, out %q)", ExitCode(err), ExitUserError, err, out)
 		}
@@ -342,7 +342,7 @@ func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
 		// state a repository's author is in on a machine that is not the
 		// operator's.
 		isolateProjects(t, t.TempDir())
-		out, _, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+		out, _, err := execute(t, "validate", pinnedFile(t, cascadeCLI))
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("exit = %d, want %d (out %q, err %v)", ExitCode(err), ExitUserError, out, err)
 		}
@@ -372,7 +372,7 @@ func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
 		// own line carries.
 		isolateProjects(t, t.TempDir())
 		projectRouting(t, routedSwitchBlock)
-		out, _, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+		out, _, err := execute(t, "validate", pinnedFile(t, cascadeCLI))
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("exit = %d, want %d (out %q, err %v)", ExitCode(err), ExitUserError, out, err)
 		}
@@ -416,7 +416,7 @@ func TestValidateRefusesCascadeWithoutPolicySwitch(t *testing.T) {
 func TestValidateRefusesCascadeWithoutAllowList(t *testing.T) {
 	f := newLaunchBudget(t, "observe")
 	publishPolicy(t, f, cascadePolicyWithMode("observe"))
-	out, _, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+	out, _, err := execute(t, "validate", pinnedFile(t, cascadeCLI))
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("a cascade file whose policy publishes no allow-list was admitted: exit = %d, want %d (err %v, out %q)", ExitCode(err), ExitUserError, err, out)
 	}
@@ -432,7 +432,7 @@ func TestValidateRefusesCascadeWithoutAllowList(t *testing.T) {
 	// The way out: the same file, the same installation, the node publishing
 	// the allow-list the ruling requires.
 	publishPolicy(t, f, cascadePolicyAllowList("observe"))
-	out, errOut, err := execute(t, "validate", writeConfig(t, cascadeCLI))
+	out, errOut, err := execute(t, "validate", pinnedFile(t, cascadeCLI))
 	if err != nil {
 		t.Fatalf("a cascade file whose policy publishes the allow-list was refused: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
 	}
@@ -445,7 +445,7 @@ func TestValidateRefusesCascadeWithoutAllowList(t *testing.T) {
 	// the node, and the file is refused just the same.
 	publishPolicy(t, f, cascadePolicyWithMode("observe"))
 	ceilingAllowList(t, f.cloudFixture)
-	out, _, err = execute(t, "validate", writeConfig(t, cascadeCLI))
+	out, _, err = execute(t, "validate", pinnedFile(t, cascadeCLI))
 	if ExitCode(err) != ExitUserError || !strings.Contains(out, "budget.allowed_models") {
 		t.Errorf("a cascade file whose ceiling publishes the allow-list and whose policy does not: exit = %d, out %q, err = %v, want the allow-list refusal (the ceiling never reaches the credentials service)", ExitCode(err), out, err)
 	}
@@ -475,7 +475,7 @@ func TestValidateCascadeReadsNoPolicyOffline(t *testing.T) {
 	publishPolicy(t, f, cascadePolicyAllowList("observe"))
 
 	before := len(f.db.Requests())
-	out, _, err := execute(t, "validate", "--offline", writeConfig(t, cascadeCLI))
+	out, _, err := execute(t, "validate", "--offline", pinnedFile(t, cascadeCLI))
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("a cascade file passed --offline validation: exit = %d, want %d (err %v, out %q)", ExitCode(err), ExitUserError, err, out)
 	}
@@ -494,7 +494,7 @@ func TestValidateCascadeReadsNoPolicyOffline(t *testing.T) {
 	// The control: without the flag the same file is judged against the same
 	// node, which is a read — so the counter above is measuring the call.
 	control := len(f.db.Requests())
-	if _, _, err := execute(t, "validate", writeConfig(t, cascadeCLI)); err != nil {
+	if _, _, err := execute(t, "validate", pinnedFile(t, cascadeCLI)); err != nil {
 		t.Fatalf("the control run (no --offline) refused the file: %v", err)
 	}
 	if got := len(f.db.Requests()); got == control {
@@ -555,7 +555,7 @@ func TestValidateRefusesCascadeWithBudgetOff(t *testing.T) {
 	// the refusal this test is about is the gateway's, and a policy that
 	// publishes no allow-list would add this file's own refusal to the report.
 	publishPolicy(t, f, cascadePolicyAllowList("off"))
-	path := writeConfig(t, strings.Replace(cascadeCLI, "workflows:", "budget: { mode: off }\nworkflows:", 1))
+	path := pinnedFile(t, strings.Replace(cascadeCLI, "workflows:", "budget: { mode: off }\nworkflows:", 1))
 	out, _, err := execute(t, "validate", path)
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit = %d, want %d (out %q, err %v)", ExitCode(err), ExitUserError, out, err)

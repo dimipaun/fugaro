@@ -38,7 +38,21 @@ workflows:
 // there before the warning the test is about.
 var cliPinnedYAML = strings.Replace(cliMinimalYAML, "workflows:", "agent:\n"+pinnedAgent+"\nworkflows:", 1)
 
+// writeConfig writes body as the fixture's fugaro.yaml, qualifying it first
+// (pinnedBody): the file keeps every line it wrote and gains the anchor a
+// project layer is matched against, and the keys a repository may no longer
+// decide — the ones config.LiftedKeys lists — are published as aurora's project
+// layer, which is where a run reads them (S1, D3237). A body that names none of
+// them is written exactly as it came.
 func writeConfig(t *testing.T, body string) string {
+	t.Helper()
+	return writeRawConfig(t, pinnedBody(t, body))
+}
+
+// writeRawConfig is writeConfig with the body written exactly as given: for a
+// fixture about the file's own bytes — a golden, a parse refusal, a file whose
+// keys are already in their final place.
+func writeRawConfig(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "fugaro.yaml")
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
@@ -282,19 +296,51 @@ func TestValidateHintNamesProject(t *testing.T) {
 
 // budgetProject makes aurora's project config with the given budget block
 // and returns a fugaro.yaml with agent as its agent block.
+//
+// The agent block's lifted keys do not stay in the file: they become aurora's
+// project layer, in a runs bucket this project config then points at.
+// testutil.TakeFilePins is the move the runner harnesses make, so a fixture
+// here and one there write the same layer — and they have to, because since S1
+// (D3237) config.Resolve drops every key config.LiftedKeys lists before the
+// merge: a fixture that left them in the file would be asking about a run that
+// names no model at all. What the caller wrote that is not lifted stays where
+// it was written, its auth above all, which is still a repository's to decide.
 func budgetProject(t *testing.T, budget, agent string) string {
 	t.Helper()
 	isolateProjects(t, t.TempDir())
 	path := writeProject(t, "aurora", "proj-1234")
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		t.Fatal(err)
+	appendProjectConfig(t, path, budget)
+	return pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:", "agent:\n"+agent+"\nworkflows:", 1))
+}
+
+// pinnedFile is writeConfig under the name the S1 sweep gave it: the same
+// qualification, kept so a fixture reads as what it is — a file whose model
+// lines are the project layer's.
+func pinnedFile(t *testing.T, body string) string {
+	t.Helper()
+	return writeConfig(t, body)
+}
+
+// pinnedBody is writeConfig's own half, for a fixture that writes its file
+// somewhere of its own (a checkout, a refused path): the body comes back
+// anchored, with the lifted keys it wrote published as aurora's project layer.
+//
+// The file is not rewritten: validate judges the file as its author wrote it —
+// release A refuses nothing a repository wrote, and a test about a pin the rules
+// refuse needs the pin still there — so what changes is only that the resolved
+// configuration has the values the file's own lines no longer decide.
+//
+// A file that names none of the lifted keys is returned as written: there is
+// nothing to publish, and a test of the pins rule is a test about a
+// configuration that names no model at all.
+func pinnedBody(t *testing.T, body string) string {
+	t.Helper()
+	layer := pinsLayer(body)
+	if layer == "" {
+		return body
 	}
-	defer f.Close()
-	if _, err := f.WriteString(budget); err != nil {
-		t.Fatal(err)
-	}
-	return writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", "agent:\n"+agent+"\nworkflows:", 1))
+	attachLayer(t, projectNamed(body), layer)
+	return anchoredText(body)
 }
 
 func validateProblems(t *testing.T, path string) (string, error) {
@@ -547,12 +593,15 @@ func TestValidateWarnsOnLooserThanCeiling(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatal(err)
 	}
-	// 5, not 3: workflows.app also warns that the image installs no
-	// language runtime (no mise.toml, .tool-versions or image.tools),
-	// unrelated to the ceiling checks this test is about, and the review-level
-	// resolver warns that the senior review names the coder's own model
-	// (pinnedAgent's model is both roles', L3.1/L3.2).
-	if !got.Valid || len(got.Problems) != 0 || len(got.Warnings) != 5 {
+	// 6, not 3: the project layer the fixture's pinned keys live in is named
+	// (S1, D3237: a repository's file decides none of them any more, so the
+	// models come from aurora's layer and the run is priced from there),
+	// workflows.app also warns that the image installs no language runtime
+	// (no mise.toml, .tool-versions or image.tools), unrelated to the ceiling
+	// checks this test is about, and the review-level resolver warns that the
+	// senior review names the coder's own model (pinnedAgent's model is both
+	// roles', L3.1/L3.2).
+	if !got.Valid || len(got.Problems) != 0 || len(got.Warnings) != 6 {
 		t.Fatalf("json = %+v", got)
 	}
 	// A tighter file says nothing about the ceilings. Three ceiling-unrelated
@@ -568,6 +617,14 @@ func TestValidateWarnsOnLooserThanCeiling(t *testing.T) {
 	stripped := strings.Replace(errOut, "note: agent.auth: "+anthropicKeyNeeded+"\n", "", 1)
 	stripped = strings.Replace(stripped, "warning: workflows.app: no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)\n", "", 1)
 	stripped = strings.Replace(stripped, "warning: agent.levels: l2: l2.model claude-sonnet-5-5 is the coder's own model: a review by the model that wrote the change is the first-line review's job, not the senior one\n", "", 1)
+	// And the line naming the fixture's own layer, whose sha256 is the
+	// fixture's: it is the same S1 noise as the count above, not a clamp.
+	for _, line := range strings.Split(stripped, "\n") {
+		if !strings.HasPrefix(line, "warning: project layer: ") {
+			continue
+		}
+		stripped = strings.Replace(stripped, line+"\n", "", 1)
+	}
 	if err != nil || strings.Contains(stripped, "warning") {
 		t.Fatalf("tightening warned: %v %q", err, stripped)
 	}
@@ -607,14 +664,17 @@ func TestValidateWithoutProjectConfigChecksShapeOnly(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	t.Chdir(t.TempDir())
 	// Nothing of the ceiling is known, so nothing is simulated: a clamp, a
-	// missing pin or an allow-list is not judged. Two lines do fire, both
-	// unrelated to the ceiling: cliMinimalYAML's workflow has no mise config,
-	// and the review-level resolver warns that the senior review names the
-	// coder's own model (one model serves both roles here, L3.1/L3.2).
+	// missing pin or an allow-list is not judged. One line fires, unrelated to
+	// the ceiling: cliMinimalYAML's workflow has no mise config. The file's
+	// agent.model is dropped before the merge (S1, D3237) and this world has no
+	// project layer to supply one, so no model resolves at all and the
+	// review-level resolver — which warns when the senior review names the
+	// coder's own model — has nothing to compare: the second line this test
+	// used to expect is the pins rule's own subject, and
+	// TestValidateLevelsSameModel covers it where a layer prices the run.
 	body := strings.Replace(cliMinimalYAML, "workflows:", "agent: { auth: api-key, model: sonnet }\nbudget: { mode: enforce, per_run_usd: 20, allowed_models: [claude-haiku-4-5] }\nworkflows:", 1)
 	out, errOut, err := execute(t, "validate", writeConfig(t, body))
-	want := "warning: workflows.app: no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)\n" +
-		"warning: agent.levels: l2: l2.model sonnet is the coder's own model: a review by the model that wrote the change is the first-line review's job, not the senior one\n"
+	want := "warning: workflows.app: no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)\n"
 	if err != nil || errOut != want {
 		t.Fatalf("no project config, nothing to simulate: %v %q %q", err, out, errOut)
 	}
@@ -650,8 +710,8 @@ func TestValidateNotOnDefaultBranchSaysSo(t *testing.T) {
 	// The file names its three role models: with the project's config in reach
 	// the price rules hold in every mode (AB3, D3020), so a file that names no
 	// model at all is refused before the note this test is about.
-	pinned := strings.Replace(cliMinimalYAML, "workflows:",
-		"agent:\n"+pinnedAgent+"\n  levels: { l2: { model: claude-opus-5-5 } }\nworkflows:", 1)
+	pinned := pinnedBody(t, strings.Replace(cliMinimalYAML, "workflows:",
+		"agent:\n"+pinnedAgent+"\n  levels: { l2: { model: claude-opus-5-5 } }\nworkflows:", 1))
 	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), pinned)
 	testutil.Git(t, root, "add", ".")
 	testutil.Git(t, root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
@@ -1230,7 +1290,7 @@ func TestValidateReportsAProjectConfigItCouldNotRead(t *testing.T) {
 	// wherever it runs.
 	isolateProjects(t, filepath.Join(t.TempDir(), strings.Repeat("deep-config-directory/", 8)))
 	projectRouting(t, routedSwitchBlock)
-	path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
+	path := pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
 	out, errOut, err := execute(t, "validate", path)
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit code = %d, want %d (err %v)\n%s", ExitCode(err), ExitUserError, err, out)
@@ -1252,7 +1312,7 @@ func TestValidateReportsAProjectConfigItCouldNotRead(t *testing.T) {
 	// The state that line is for: no project config at all is a note, and
 	// validate still passes the file (nothing here is wrong with it).
 	isolateProjects(t, t.TempDir())
-	path = writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
+	path = pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
 	out, errOut, err = execute(t, "validate", path)
 	if err != nil {
 		t.Fatalf("validate with no project config at all: %v\n%s", err, errOut)
@@ -1359,7 +1419,7 @@ func TestValidatePrintsUnresolvedOffline(t *testing.T) {
 	// No project config for this file's project: there is no switch to read,
 	// and the line says which it is.
 	isolateProjects(t, t.TempDir())
-	path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
+	path := pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
 	_, errOut, err := execute(t, "validate", path)
 	if err != nil {
 		t.Fatalf("validate: %v\n%s", err, errOut)
@@ -1387,7 +1447,7 @@ func TestValidatePrintsUnresolvedOffline(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	projectRouting(t, routedProjectBlock+routedSwitchBlock)
 	inCheckoutOf(t, "acme/sandbox")
-	path = writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", routed, 1))
+	path = pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:", routed, 1))
 	_, errOut, err = execute(t, "validate", path)
 	if err != nil {
 		t.Fatalf("validate: %v\n%s", err, errOut)
@@ -1420,7 +1480,7 @@ func TestValidateResolvesOverTheRoutesThisCheckoutCarries(t *testing.T) {
 	const budget = "budget: { mode: enforce, per_run_usd: 5 }\n"
 	const claude = "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
 	pinned := func() string {
-		return writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
+		return pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
 	}
 	// routedProjectBlock admits acme/sandbox only, and this checkout is
 	// acme/other: the run carries no route, so validate may not print one, and
@@ -1518,7 +1578,7 @@ func TestValidateDoesNotClaimAHaltWithoutAGateway(t *testing.T) {
 			isolateProjects(t, t.TempDir())
 			projectRouting(t, tc.budget+routedProjectBlock+tc.switchBlock)
 			inCheckoutOf(t, "acme/other")
-			path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", pin(tc.auth), 1))
+			path := pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:", pin(tc.auth), 1))
 			out, errOut, err := execute(t, "validate", path)
 			if err != nil {
 				t.Fatalf("validate refused a configuration whose runs do not reach the switch: %v\n%s%s", err, out, errOut)
@@ -1549,7 +1609,7 @@ func TestValidateDoesNotPrintARouteNoVertexRunTakes(t *testing.T) {
 	projectRouting(t, "budget: { mode: observe }\n"+routedProjectBlock+"routing:\n  claude:\n    via: auto\n    models: [claude-sonnet-5-5]\n")
 	inCheckoutOf(t, "acme/sandbox")
 	claude := "agent:\n  auth: vertex\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
-	path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
+	path := pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
 	out, errOut, err := execute(t, "validate", path)
 	if err != nil {
 		t.Fatalf("validate refused a Vertex run's configuration: %v\n%s%s", err, out, errOut)
@@ -1681,7 +1741,7 @@ func TestValidateJudgesTheSwitchOverTheModelsItNames(t *testing.T) {
 			isolateProjects(t, t.TempDir())
 			projectRouting(t, tc.project)
 			inCheckoutOf(t, "acme/sandbox")
-			path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", tc.agent, 1))
+			path := pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:", tc.agent, 1))
 			out, errOut, err := execute(t, "validate", path)
 			if !tc.halt {
 				if err != nil {
@@ -1746,7 +1806,7 @@ func TestValidatePointsAtAllowDataToWhenTheEntryIsThere(t *testing.T) {
 		isolateProjects(t, t.TempDir())
 		projectRouting(t, project)
 		inCheckoutOf(t, repo)
-		return execute(t, "validate", writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", agent, 1)))
+		return execute(t, "validate", pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:", agent, 1)))
 	}
 	out, _, err := run(t, "acme/app")
 	if ExitCode(err) != ExitUserError {
@@ -1821,7 +1881,7 @@ func TestValidateDoesNotJudgeTheSwitchOverARepositoryNobodyNamed(t *testing.T) {
 		isolateProjects(t, t.TempDir())
 		projectRouting(t, project)
 		checkout(t)
-		return execute(t, "validate", writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", agent, 1)))
+		return execute(t, "validate", pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:", agent, 1)))
 	}
 	// In the checkout the route is written for, the switch resolves: valid.
 	if out, errOut, err := run(t, func(t *testing.T) { inCheckoutOf(t, "acme/sandbox") }); err != nil || !strings.Contains(out, "is valid") {
@@ -1936,7 +1996,7 @@ routing:
 						isolateProjects(t, t.TempDir())
 						projectRouting(t, projectBlock(mode, via))
 						inCheckoutOf(t, "acme/sandbox")
-						path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", fmt.Sprintf(pins[pin], auth), 1))
+						path := pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:", fmt.Sprintf(pins[pin], auth), 1))
 						out, errOut, err := execute(t, "validate", path)
 						// The problems only: the keyless note quotes the halt
 						// phrase while saying which of the two runs halts, and
@@ -1973,7 +2033,7 @@ func TestValidateSaysWhichRunTheJobKeyDecides(t *testing.T) {
 	projectRouting(t, "budget: { mode: enforce, per_run_usd: 5 }\n"+routedProjectBlock+"routing:\n  claude:\n    via: auto\n    models: [claude-sonnet-5-5]\n")
 	inCheckoutOf(t, "acme/sandbox")
 	claude := "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
-	path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
+	path := pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
 	out, errOut, err := execute(t, "validate", path)
 	if err != nil {
 		t.Fatalf("validate refused a configuration whose runs depend on a key this command cannot read: %v\n%s%s", err, out, errOut)
@@ -2012,7 +2072,7 @@ func TestValidateSaysARoutedPinHaltsUnderAnObservingBudget(t *testing.T) {
 	projectRouting(t, "budget: { mode: observe }\n"+routedProjectBlock+routedSwitchBlock)
 	inCheckoutOf(t, "acme/sandbox")
 	claude := "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
-	path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
+	path := pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1))
 	out, errOut, err := execute(t, "validate", path)
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, want a user error: an observe-mode run of this configuration halts at its routed pin\n%s%s", ExitCode(err), out, errOut)
@@ -2071,7 +2131,7 @@ func TestValidateRefusesARoutedPinTheRunCannotPrice(t *testing.T) {
 			isolateProjects(t, t.TempDir())
 			projectRouting(t, enforce+unpriced+tc.switchBlock)
 			inCheckoutOf(t, "acme/sandbox")
-			out, errOut, err := execute(t, "validate", writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1)))
+			out, errOut, err := execute(t, "validate", pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1)))
 			if !tc.halt {
 				if err != nil {
 					t.Fatalf("validate refused a state whose halt hangs on the job's key: %v\n%s%s", err, out, errOut)
@@ -2172,7 +2232,7 @@ func TestValidateAgreesWithTheRunAboutTheRoutedPins(t *testing.T) {
 				isolateProjects(t, t.TempDir())
 				projectRouting(t, project)
 				inCheckoutOf(t, "acme/sandbox")
-				out, errOut, err := execute(t, "validate", writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1)))
+				out, errOut, err := execute(t, "validate", pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1)))
 				// The run halts in every state of this cell, so it is a problem
 				// where it halts every run, and a note where the run that halts
 				// is the keyless one (the via: auto rule).
@@ -2235,7 +2295,7 @@ func TestValidateJudgesTheAllowListOfThePinsTheRunHas(t *testing.T) {
 			isolateProjects(t, t.TempDir())
 			projectRouting(t, enforce+routedProjectBlock+"routing:\n  claude:\n    via: "+via+"\n    models: ["+canonical+"]\n")
 			inCheckoutOf(t, "acme/sandbox")
-			out, errOut, err := execute(t, "validate", writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1)))
+			out, errOut, err := execute(t, "validate", pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:", claude, 1)))
 			if err != nil {
 				t.Fatalf("validate refused a configuration the run admits (via: %s): %v\n%s%s", via, err, out, errOut)
 			}
@@ -2284,7 +2344,7 @@ func TestValidateNotesAClaudePinWithNoKeyAndNoSwitch(t *testing.T) {
 	const budget = "budget: { mode: enforce, per_run_usd: 5 }\n"
 	const claudePin = "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
 	pinned := func() string {
-		return writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claudePin, 1))
+		return pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:", claudePin, 1))
 	}
 	// The route claims the model and its allow_data_to is written; the switch
 	// does not name it, so the call goes direct and needs a key whenever the job
@@ -2347,7 +2407,7 @@ func TestValidateAsksWhetherAllowDataToWasWritten(t *testing.T) {
 	const budget = "budget: { mode: enforce, per_run_usd: 5 }\n"
 	const claudePin = "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
 	pinned := func() string {
-		return writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claudePin, 1))
+		return pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:", claudePin, 1))
 	}
 	// routedProjectBlock's route with its allow_data_to removed: the entry
 	// claims the model, admits every repository of the project (an absent
@@ -2410,7 +2470,7 @@ func TestValidatePrintsOneRoutingNotePerModel(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	projectRouting(t, budget+routedProjectBlock)
 	inCheckoutOf(t, "acme/sandbox")
-	out, errOut, err := execute(t, "validate", writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", shared, 1)))
+	out, errOut, err := execute(t, "validate", pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:", shared, 1)))
 	// The counts first: in the state this test is about — the line printed once
 	// per pin, with the same sentence each time — these are what fail.
 	for _, line := range []string{
@@ -2496,7 +2556,7 @@ func TestValidateJudgesProvidersOnlyWithAMatchingLocalConfig(t *testing.T) {
 	// No local config at all: neither half looks, so nothing is said -- not
 	// even the pin the runner would refuse on the next launch.
 	isolateProjects(t, t.TempDir())
-	fileOnly := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:",
+	fileOnly := pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:",
 		"agent:\n"+agent+"\nbudget: { mode: enforce, per_run_usd: 2 }\nworkflows:", 1))
 	out, errOut, err := execute(t, "validate", fileOnly)
 	if err != nil || !strings.Contains(out, "is valid") {
@@ -2570,6 +2630,11 @@ func TestValidateJudgesProvidersOnlyWithAMatchingLocalConfig(t *testing.T) {
 // run: `fugaro validate` judges the pins against the map the run will use,
 // so a pin the layer's claude_models claims passes here, and the very same
 // file without the claim is refused as it is today.
+//
+// The pins are the layer's and not the checkout file's (S1, D3237): the file
+// still writes them — release A refuses nothing a repository wrote — and the
+// layer this fixture publishes from them is where the run reads them, so the
+// claim and the pin are judged over the same map either way.
 func TestValidateSeesTheCheckoutLayer(t *testing.T) {
 	const id = "anthropic/claude-sonnet-5.5"
 	f := newCloudFixture(t)
@@ -2583,21 +2648,21 @@ func TestValidateSeesTheCheckoutLayer(t *testing.T) {
 		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 	layerCheckout(t, f, repo)
 	claim := "claude_models:\n  openrouter: [\"" + id + "\"]\n"
-	publishedLayer(t, f, testProjectLayer+claim)
+	publishedLayer(t, f, layerPins(repo)+claim)
 	if out, errOut, err := execute(t, "validate"); err != nil || !strings.Contains(out, "is valid") {
 		t.Fatalf("a layer-claimed pin was refused: %v\n%s%s", err, out, errOut)
 	}
 	// The same checkout, the claim dropped from the layer (the object
 	// republished without it): the refusal is back, before any run, naming
 	// the pin.
-	writeBucketFile(t, f, config.LayerKey, testProjectLayer)
+	writeBucketFile(t, f, config.LayerKey, layerPins(repo))
 	out, _, err := execute(t, "validate")
 	if ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.models.reviewer") || !strings.Contains(out, "no provider serves it") {
 		t.Fatalf("without the claim: exit %d, out %q", ExitCode(err), out)
 	}
 	// A claim naming a route the project config does not define is the
 	// layer's own problem, reported as the key names it.
-	writeBucketFile(t, f, config.LayerKey, testProjectLayer+"claude_models:\n  nosuch: [\""+id+"\"]\n")
+	writeBucketFile(t, f, config.LayerKey, layerPins(repo)+"claude_models:\n  nosuch: [\""+id+"\"]\n")
 	out, _, err = execute(t, "validate")
 	if ExitCode(err) != ExitUserError || !strings.Contains(out, "claude_models.nosuch") || !strings.Contains(out, "does not define") {
 		t.Fatalf("an unknown provider name: exit %d, out %q", ExitCode(err), out)
@@ -2626,7 +2691,7 @@ func TestValidateRefusesAClaimedPinTheAuthAndModeRulesRefuse(t *testing.T) {
 			"agent:\n  auth: " + auth + "\n  model: claude-sonnet-5-5\n  models: { reviewer: " + id + ", background: claude-haiku-4-5 }\n" +
 			"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 		layerCheckout(t, f, repo)
-		publishedLayer(t, f, testProjectLayer+"claude_models:\n  openrouter: [\""+id+"\"]\n")
+		publishedLayer(t, f, layerPins(repo)+"claude_models:\n  openrouter: [\""+id+"\"]\n")
 	}
 	t.Run("api-key and enforce: the claim is the pin's passage", func(t *testing.T) {
 		claimedCheckout(t, "api-key", "budget: { mode: enforce, per_run_usd: 2 }\n")
@@ -2726,7 +2791,7 @@ func TestValidateDoesNotPriceAClaimedIDFromTheCatalog(t *testing.T) {
 		"agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { reviewer: " + id + ", background: claude-haiku-4-5 }\n" +
 		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 	layerCheckout(t, f, repo)
-	publishedLayer(t, f, testProjectLayer+"claude_models:\n  openrouter: [\""+id+"\"]\n")
+	publishedLayer(t, f, layerPins(repo)+"claude_models:\n  openrouter: [\""+id+"\"]\n")
 	out, errOut, err := execute(t, "validate")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("a claimed ID the catalog alone could price: exit %d\n%s%s", ExitCode(err), out, errOut)
@@ -2792,7 +2857,7 @@ func TestValidateResolvesTheBackgroundAndTheKeyOverTheClaimedMap(t *testing.T) {
 			"agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { " + pins + " }\n" +
 			"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 		layerCheckout(t, f, repo)
-		publishedLayer(t, f, testProjectLayer+"claude_models:\n  openrouter: [\""+id+"\"]\n")
+		publishedLayer(t, f, layerPins(repo)+"claude_models:\n  openrouter: [\""+id+"\"]\n")
 		out, errOut, err := execute(t, "validate")
 		return out, errOut, err
 	}
@@ -2944,7 +3009,7 @@ func TestValidateResolvesARouteIDTheSameWayARunDoes(t *testing.T) {
 func TestValidateTellsAViaDirectSwitchFromAnUnnamedModel(t *testing.T) {
 	const claudePin = "agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }\nworkflows:"
 	pinned := func() string {
-		return writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", claudePin, 1))
+		return pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:", claudePin, 1))
 	}
 	// The switch names the coder pin and says it stays direct.
 	isolateProjects(t, t.TempDir())
@@ -2985,7 +3050,7 @@ func TestValidateTellsAViaDirectSwitchFromAnUnnamedModel(t *testing.T) {
 // Mutation (drop the review_levels check from the checks newValidateCmd runs):
 // this test fails, finding the same-model configuration valid.
 func TestValidateLevelsSameModel(t *testing.T) {
-	path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:",
+	path := pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:",
 		"agent: { auth: api-key, first_line_review: on, models: { coder: deepseek/deepseek-v4-flash, reviewer: deepseek/deepseek-v4-flash } }\nworkflows:", 1))
 	out, _, err := execute(t, "validate", path)
 	if ExitCode(err) != ExitUserError || !strings.Contains(out, "l2.model and l1.model are both deepseek/deepseek-v4-flash") {
@@ -3014,7 +3079,7 @@ func TestValidateLevelsSameModel(t *testing.T) {
 // Mutation (drop oneLine from the two messages in reviewLevelProblems): this
 // test fails, finding the escape byte in validate's output.
 func TestValidateLevelsRefusalIsSanitised(t *testing.T) {
-	path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:",
+	path := pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:",
 		"agent: { auth: api-key, first_line_review: on, models: { coder: \"a\\u001b[31mb\", reviewer: \"a\\u001b[31mb\" } }\nworkflows:", 1))
 	out, _, err := execute(t, "validate", path)
 	if ExitCode(err) != ExitUserError || !strings.Contains(out, "l2.model and l1.model are both") {
