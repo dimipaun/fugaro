@@ -416,7 +416,7 @@ func (s *Server) identityClaim(ctx context.Context, w http.ResponseWriter, r *ht
 		claimed.Claims.Slug != slug || claimed.Claims.Run != run ||
 		claimed.Job != rec.Job || claimed.JobID != rec.JobID {
 		s.refuseIdentityCall(ctx, w, run, slug, StatusUnverified, identitywire.RefusalIdentityRefused,
-			"the run's issuance record is not the one this claim read: it was replaced under the claim, so the ticket, the account it expects or the claims it holds are not the ones this claim was checked against, and the run must be launched again")
+			"the run's issuance record is not the one this claim read: it was replaced under the claim, so the ticket, the account it expects, the claims it holds or the job it names are not the ones this claim was checked against, and the run must be launched again")
 		return
 	}
 	signer, err := identitySignerFor(ctx, s.cfg.Identity.Signer)
