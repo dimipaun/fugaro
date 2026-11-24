@@ -147,6 +147,7 @@ test('gaugeLabel refuses what this module did not build', () => {
     { ...gauge, state: GAUGE_STATES.UNAVAILABLE, used: null, total: null, percent: null },
     { ...gaugeOf().gauge, reason: 'somewhere-else' },
     { ...gaugeOf().gauge, percent: 0 },
+    { ...gauge, [Symbol('extra')]: true },
   ];
   for (const bad of cases) {
     assert.equal(isGauge(bad), false, `${JSON.stringify(bad)} was accepted as a gauge`);

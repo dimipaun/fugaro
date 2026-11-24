@@ -182,6 +182,9 @@ export function contextGauge({ session, reading = null } = {}) {
  */
 export function isGauge(value) {
   if (!isNode(value)) return false;
+  // A symbol-keyed member has no name to check and would travel with the value:
+  // the port refuses one for the same reason.
+  if (Object.getOwnPropertySymbols(value).length > 0) return false;
   if (Object.getOwnPropertyNames(value).length !== GAUGE_FIELDS.length) return false;
   if (!GAUGE_FIELDS.every((field) => Object.hasOwn(value, field))) return false;
   if (typeof value.project_id !== 'string' || value.project_id.length === 0) return false;
