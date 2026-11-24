@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -233,6 +234,102 @@ func TestServeWithoutTheModeIsUnchanged(t *testing.T) {
 	if _, err := credsvc.NewServer(cfg); err != nil {
 		t.Fatalf("NewServer refused an installation's configuration: %v", err)
 	}
+}
+
+// TestServeAssignsTheOldRecordBridgeToAnInstallationOnly is MG3's release-1
+// seam read in both directions, because the guard that separates the two is a
+// security control and nothing else in the tree observes the assignment: the
+// chain walk that consults it (CS1) is not merged, so a mutant that drops the
+// guard — `if workspace == ""` becoming an unconditional assignment — leaves
+// every serve-path test green while a workspace deployment would answer a
+// member's older run out of the WORKSPACE's own database, which is the reach
+// the assignment's own comment calls serving a call off a reach nobody recorded
+// for it.
+//
+// Both halves are read off the bridge's OWN answer rather than off the type of
+// what was assigned — an installation's deployment must answer the record its
+// own database holds (found, one pool), and a workspace's must answer no record
+// at all — and the workspace's fake database is seeded with a record at the
+// very slug the installation's holds, so a dropped guard is not merely
+// unobserved here: it answers that record and fails the second assertion.
+//
+// What the bridge reads is creds' own record, written by creds' own writer, so
+// this pins the release-1 promise at the one place the deployment makes it.
+func TestServeAssignsTheOldRecordBridgeToAnInstallationOnly(t *testing.T) {
+	slug := mustSlug("github", "acme/webapp")
+	ctx := context.Background()
+	// One repository's record, as `fugaro update` writes it: an oauth
+	// repository, which is the record whose answer does not depend on the
+	// published policy the other modes are bounded by — so a difference between
+	// the two deployments below can only be the assignment itself.
+	writeRecord := func(t *testing.T, db *rtdb.Client) {
+		t.Helper()
+		rec := creds.RepoAuth{Version: creds.RepoAuthVersion, Auth: config.AuthOAuth, Accounts: []string{config.DefaultClaudeAccount}}
+		if err := creds.PutRepoAuth(ctx, db, slug, rec); err != nil {
+			t.Fatalf("writing %s: %v", creds.PathRepoAuth(slug), err)
+		}
+	}
+	// The seam that builds the process's own database client, which is what the
+	// bridge is handed: the fake is the deployment's database here, so the
+	// bridge's answer is a read of the database this deployment serves with.
+	withDatabase := func(t *testing.T, db *rtdb.Client) {
+		t.Helper()
+		fakeCredentialsService(t)
+		credentialsTest.database = func(context.Context, string, oauth2.TokenSource) (*rtdb.Client, error) { return db, nil }
+	}
+	// The seam survives the test: it is one process-wide variable and the walk
+	// that reads it is CS1's.
+	saved := credsvc.LegacyChain
+	t.Cleanup(func() { credsvc.LegacyChain = saved })
+
+	t.Run("an installation's deployment assigns it", func(t *testing.T) {
+		for n, v := range credentialsServeEnv {
+			t.Setenv(n, v)
+		}
+		fake := gcpfake.NewRTDB(t)
+		db, err := rtdb.New(fake.URL, rtdb.Auth{IDToken: func() string { return "" }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeRecord(t, db)
+		withDatabase(t, db)
+
+		if _, err := credentialsServiceConfig(ctx, os.Getenv, io.Discard); err != nil {
+			t.Fatalf("credentialsServiceConfig for an installation: %v", err)
+		}
+		sources, found := credsvc.LegacyChain.OldSources(slug)
+		if !found {
+			t.Fatalf("an installation's deployment left the seam answering no old record for %s: a run of that repository whose image predates the routing table carries no table, so the record is the only thing that can answer it, and the stub refuses it — the one thing the migration's first release promises not to do", creds.PathRepoAuth(slug))
+		}
+		if len(sources) != 1 || sources[0].Pool != config.DefaultClaudeAccount {
+			t.Errorf("the bridge answered %v, want the record's own account (%s) as one pool: the record is read from THIS deployment's database, which is the one `fugaro update` wrote it into", sources, config.DefaultClaudeAccount)
+		}
+	})
+
+	t.Run("a workspace's deployment keeps the stub", func(t *testing.T) {
+		const workspace = "aurora-ws"
+		for n, v := range workspaceServeEnv(workspace) {
+			t.Setenv(n, v)
+		}
+		_, db := fakeWorkspaceDatabase(t, workspace)
+		// The record the mutant would answer: the workspace's own database,
+		// holding the same slug, is exactly the reach a member's call must not
+		// be served off (another installation's record, where the workspace
+		// holds one).
+		writeRecord(t, db)
+		withDatabase(t, db)
+		credentialsWorkspaceTest = func(cfg credsvc.WorkspaceScopeConfig) (credsvc.ScopeResolver, error) {
+			return credsvc.NewWorkspaceScopeResolver(cfg)
+		}
+		t.Cleanup(func() { credentialsWorkspaceTest = nil })
+
+		if _, err := credentialsServiceConfig(ctx, os.Getenv, io.Discard); err != nil {
+			t.Fatalf("credentialsServiceConfig for a workspace: %v", err)
+		}
+		if sources, found := credsvc.LegacyChain.OldSources(slug); found {
+			t.Errorf("a workspace's deployment assigned the old-record bridge, and it answered %v out of the workspace's OWN database: a member's record lives in the MEMBER's database, read per call through the scope's own reader, so a process-wide bridge over this one answers a member's older run off a reach nobody recorded for it — an absent record where this database holds no such slug, and another installation's record where it does", sources)
+		}
+	})
 }
 
 // TestServeRefusesAHalfSetWorkspaceEnvironment is the fail-closed half of the

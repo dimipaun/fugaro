@@ -27,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -987,12 +988,18 @@ func runningEndings(runs []showRun) map[task.Ref]string {
 }
 
 func printShow(w io.Writer, d *budgetShowDoc, showCompute bool) {
-	mode := d.Mode
-	if mode == "" {
+	// The mode a run acts on is C1's reading of the stored word (D3009): a
+	// database still saying off acts as observe, and this line says what the
+	// runs do rather than print a word that is not a mode any more. --json keeps
+	// the stored value, which is the database's and never changes meaning.
+	mode := policy.Mode(d.Mode).Effective()
+	if d.Mode == "" {
 		mode = "not set (acts as observe)"
+	} else if policy.Mode(d.Mode).Removed() {
+		mode += " (the database says off, which is not a budget mode any more)"
 	}
 	fmt.Fprintf(w, "mode: %s\n", mode)
-	if d.Mode == budget.ModeEnforce {
+	if policy.Mode(d.Mode).Effective() == policy.ModeEnforce {
 		fmt.Fprintln(w, "  caps are enforced")
 	} else {
 		fmt.Fprintln(w, "  caps are advisory; kill switches and the reserve limit apply")
@@ -1179,6 +1186,14 @@ func parsePlan(cmd *cobra.Command, o *budgetSetOptions) (*setPlan, error) {
 		return nil, err
 	}
 	if fl.Changed("mode") {
+		// The word that was a mode is refused with the vocabulary's own text
+		// (AB3, D3009), the way every other door of this release refuses it: the
+		// flag says where it was written and policy.ModeOffRefusal says the rest,
+		// so this refusal and the file's, the node's and the publish's cannot
+		// drift (docs/always-a-budget/contract-mode.md).
+		if policy.Mode(o.mode).Removed() {
+			return nil, userErr("--mode: %s", policy.ModeOffRefusal)
+		}
 		if o.mode != budget.ModeObserve && o.mode != budget.ModeEnforce {
 			return nil, userErr("--mode %q: use observe or enforce", o.mode)
 		}
