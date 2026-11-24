@@ -29,6 +29,10 @@ const (
 	// moment.
 	runOne = "20261120-093000-a1b2"
 	runTwo = "20261120-101500-c3d4"
+	// runThree is older than both, and runGhost sits between them: a run
+	// directory a walk reaches and reads nothing from (RI5's failure test).
+	runThree = "20261120-080000-eeee"
+	runGhost = "20261120-090000-ffff"
 )
 
 var foldNow = time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)

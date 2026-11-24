@@ -129,6 +129,11 @@ func (f *Fold) Sweep(ctx context.Context) (SweepReport, error) {
 // taken at the last pass would step over and lose. A pass that does not reach
 // the end leaves its cursor in the lease and the walk to the next sweep; a
 // pass that does recomputes the summary from the documents and sets complete.
+//
+// A pass that fails leaves that same position behind rather than freeing the
+// node, which is the difference between a walk of a million runs that survives
+// a refused write and one that starts again from the top of history every time
+// (F39).
 func (f *Fold) Walk(ctx context.Context) (WalkReport, error) {
 	var rep WalkReport
 	if f.DB == nil || f.FS == nil || f.Bucket == nil {
@@ -191,6 +196,24 @@ func (f *Fold) Walk(ctx context.Context) (WalkReport, error) {
 
 	last, done, err := f.walk(ctx, cursor, &rep)
 	if err != nil {
+		// A pass that failed mid-walk must not take the walk's position with it:
+		// the position is the lease node's, and a release deletes the node. What
+		// is saved is the last run this pass upserted -- everything up to it is
+		// in the index and everything after it is not -- or, when the pass
+		// reached no run at all, the position it inherited. Only a pass that has
+		// nothing to save at all falls through to the release, which is the node
+		// it took.
+		pos := last
+		if pos == nil {
+			pos = cursor
+		}
+		if pos != nil {
+			stopped = true
+			rep.Cursor = pos
+			if serr := lease.Stop(ctx, claim.At, pos.Encode()); serr != nil {
+				f.warnf("the walk's position could not be left with the lease, so the next pass begins at the top of history: %v", serr)
+			}
+		}
 		return rep, err
 	}
 	if !done {
@@ -216,6 +239,12 @@ func (f *Fold) Walk(ctx context.Context) (WalkReport, error) {
 // walk is the pass itself: the bucket's repositories in order, their runs
 // newest first, and the cursor's own position skipped. It answers the position
 // it ended on, and whether it reached the end of the bucket.
+//
+// The position comes back on a failure too, and it is the last run the pass
+// upserted: the run that failed, and every run after it, is not in the index,
+// so a caller that saved the failing run's position would step over it for
+// ever. A failure before the first write answers nothing at all, which is what
+// tells the caller to keep the position it inherited (Walk).
 func (f *Fold) walk(ctx context.Context, cursor *Cursor, rep *WalkReport) (*Cursor, bool, error) {
 	slugs, err := runstore.ListSlugs(ctx, f.Bucket)
 	if err != nil {
@@ -228,7 +257,7 @@ func (f *Fold) walk(ctx context.Context, cursor *Cursor, rep *WalkReport) (*Curs
 		}
 		ids, err := runstore.ListRunIDs(ctx, f.Bucket, slug, time.Time{})
 		if err != nil {
-			return nil, false, err
+			return last, false, err
 		}
 		for _, id := range ids {
 			if cursor != nil && slug == cursor.Slug && id >= cursor.RunID {
@@ -236,14 +265,14 @@ func (f *Fold) walk(ctx context.Context, cursor *Cursor, rep *WalkReport) (*Curs
 			}
 			entry, err := f.read(ctx, runKey{slug: slug, run: id})
 			if err != nil {
-				return nil, false, err
+				return last, false, err
 			}
 			switch {
 			case entry == nil:
 				rep.Unreadable++
 			default:
 				if err := f.write(ctx, entry); err != nil {
-					return nil, false, err
+					return last, false, err
 				}
 				rep.Walked++
 			}
@@ -403,10 +432,16 @@ func (f *Fold) lease(ctx context.Context) (LeaseDoc, bool, error) {
 // It is the first half of both `fugaro update`'s step and `fugaro runs reindex`,
 // and it is what makes them work when the caller may not start the job at all
 // (O7): the walk the reset asks for is one every sweep of the history job
-// continues on its own, with no grant and no execution started. live is true
-// when an execution is already walking -- its own fresh claim was left alone --
-// and the caller then starts nothing, because the walk it would start is
-// already going.
+// continues on its own, with no grant and no execution started.
+//
+// The mark is written whether or not a writer holds the lease, and live is true
+// only for a walk that is already going: the claim carries an unfinished walk's
+// cursor, or the summary was incomplete before this reset. A fresh claim on its
+// own is not a walk -- the sweep's own fold holds this lease for as long as a
+// fold takes, and a claim a dead fold left stands for the lease's whole TTL --
+// and a rebuild asked for must not be turned away by one: the caller starts the
+// execution, which finds the claim in its way and leaves the walk to the next
+// sweep, and the mark is what makes that sweep walk.
 //
 // A summary that is not there at all is seeded: an installation whose index has
 // never been folded has no `complete` field to latch, and the reset is exactly
@@ -417,27 +452,63 @@ func ResetReindex(ctx context.Context, db *rtdb.Client, st Store, holder string,
 	if db == nil || st == nil {
 		return false, errors.New("runindex: a reindex reset needs the budget database and a Firestore client")
 	}
+	// What the summary said before the mark, which is half of what tells a walk
+	// in flight from a fold: a walk that is going has already latched the index
+	// incomplete (Walk.beginWalk).
+	sum, found, err := summaryDoc(ctx, st)
+	if err != nil {
+		return false, err
+	}
+	owed := !found || !sum.Complete
 	lease, err := NewLease(db, holder, db.ServerNow)
 	if err != nil {
 		return false, err
 	}
-	if _, live, err = lease.Reset(ctx); err != nil {
+	claim, held, err := lease.Reset(ctx)
+	if err != nil {
 		return false, err
-	}
-	if live {
-		return true, nil
 	}
 	if err := MarkIncomplete(ctx, st, now); err != nil {
 		return false, err
 	}
-	if _, found, err := summaryDoc(ctx, st); err != nil {
-		return false, err
-	} else if !found {
+	if !found {
 		if _, err := st.Patch(ctx, SummaryCollection, SummaryDocument, map[string]any{
 			"version": int64(Version), "complete": false, "updated_at": now.UTC(),
 		}); err != nil {
 			return false, err
 		}
 	}
-	return false, nil
+	if !held {
+		return false, nil
+	}
+	return claim.Cursor != "" || owed, nil
+}
+
+// WalkOwed reports whether the index is owed a walk: the summary says it is not
+// complete -- or is not there at all -- or the lease carries the cursor of an
+// unfinished walk (F39, D3215).
+//
+// It is what `fugaro update` asks before it starts the first reindex (RI5), so
+// an installation whose index is built and whose stamp is current is left
+// exactly as it is rather than walked over again: the walk reads every run in
+// the bucket, and an upgrade must not cost that on an installation that has
+// nothing to repair. `fugaro runs reindex` does not ask: a person who runs the
+// command wants the walk.
+func WalkOwed(ctx context.Context, db *rtdb.Client, st Store) (bool, error) {
+	if db == nil || st == nil {
+		return false, errors.New("runindex: whether a walk is owed needs the budget database and a Firestore client")
+	}
+	var cur LeaseDoc
+	found, err := db.Get(ctx, PathLease, &cur)
+	if err != nil {
+		return false, err
+	}
+	if found && cur.Cursor != "" {
+		return true, nil
+	}
+	sum, found, err := summaryDoc(ctx, st)
+	if err != nil {
+		return false, err
+	}
+	return !found || !sum.Complete, nil
 }

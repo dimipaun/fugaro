@@ -122,6 +122,50 @@ func TestRunsReindexStartsJob(t *testing.T) {
 	}
 }
 
+// TestRunsReindexOverAFoldClaimMarks is the lease's other holder (RI5, U3): the
+// writer lease is the sweep's own while the sweep folds, and a dead execution's
+// claim stands for its whole TTL. A person asking for a rebuild must not be
+// told "a reindex is already walking" by one of those -- the mark is what makes
+// the next sweep walk, and a rebuild turned away by a fold is a rebuild that
+// never happens.
+func TestRunsReindexOverAFoldClaimMarks(t *testing.T) {
+	f, fs := reindexRig(t)
+	at := time.Now().UTC()
+	f.budget.DB.Set(runindex.PathLease, map[string]any{
+		"holder":     "fugaro-history-fold1",
+		"at":         at.Format(time.RFC3339Nano),
+		"expires_at": at.Add(runindex.LeaseTTL).Format(time.RFC3339Nano),
+	})
+	fs.Set(runindex.SummaryCollection, runindex.SummaryDocument, map[string]any{
+		"version": int64(1), "complete": true, "folded_through": at, "updated_at": at,
+		"runs": int64(2), "states": map[string]any{"succeeded": int64(2)},
+		"spent_micros": int64(0), "notional_micros": int64(0),
+		"compute_runs": int64(0), "compute_not_estimated": int64(0),
+	})
+
+	out, stderr, err := execute(t, "runs", "reindex")
+	if err != nil {
+		t.Fatalf("err = %v, stderr = %q", err, stderr)
+	}
+	if strings.Contains(out, "already walking") {
+		t.Fatalf("a fold's claim was read as a reindex in flight: %q", out)
+	}
+	if !strings.Contains(out, "index: marked incomplete") || !strings.Contains(out, "index: reindexing now as ") {
+		t.Fatalf("the command did not mark and start: %q", out)
+	}
+	if sum, ok := fs.Value(runindex.SummaryCollection, runindex.SummaryDocument); !ok {
+		t.Fatal("the command left no summary")
+	} else if done, ok := sum["complete"].(bool); !ok || done {
+		t.Fatalf("the command left the index complete: %v", sum)
+	}
+	// The folding writer's claim is left exactly as it stands: it is a writer,
+	// and stamping over it would tell it its own lease had moved.
+	l, ok := f.budget.DB.Value(runindex.PathLease).(map[string]any)
+	if !ok || l["holder"] != "fugaro-history-fold1" {
+		t.Fatalf("the command stamped over a folding writer's claim: %#v", f.budget.DB.Value(runindex.PathLease))
+	}
+}
+
 // TestRunsReindexRefusedInAnAgentSession is U3: `fugaro runs reindex` starts a
 // job execution and writes the installation's index, which is what the update's
 // own job-starting step does -- and that step is not run from a coding agent's

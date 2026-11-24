@@ -192,11 +192,12 @@ func (l *Lease) Stop(ctx context.Context, at time.Time, cursor string) error {
 // Stop), so the execution the reset is followed by takes the node over rather
 // than waiting out a TTL on a claim nobody is using.
 //
-// A fresh claim is left exactly as it stands and returned with live=true: an
-// execution IS walking, that walk is the one the index is owed, and stamping
-// over a claim a running writer is using would tell it its own lease had
-// moved.
-func (l *Lease) Reset(ctx context.Context) (claim LeaseDoc, live bool, err error) {
+// A fresh claim is left exactly as it stands and returned with held=true:
+// stamping over a claim a running writer is using would tell it its own lease
+// had moved. held says the node was not rewritten, and nothing more: the
+// sweep's own fold holds this lease too, so which writer the claim belongs to
+// is the caller's to read from the summary (ResetReindex).
+func (l *Lease) Reset(ctx context.Context) (claim LeaseDoc, held bool, err error) {
 	var last error
 	for attempt := 0; attempt < leaseAttempts; attempt++ {
 		var cur LeaseDoc

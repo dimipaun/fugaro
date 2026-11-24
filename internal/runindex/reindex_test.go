@@ -283,6 +283,80 @@ func TestReindexResumesFromCursor(t *testing.T) {
 	}
 }
 
+// TestReindexFailedPassKeepsCursor is the walk's resumability across a failure
+// (F39): a pass over a bucket of a million runs meets a refused read or write
+// somewhere, and one that answers by releasing the lease would take the
+// position with it -- the lease node IS the cursor -- and the next pass would
+// start again from the top of history for ever. What survives is the last run
+// the pass upserted, which is the run the failing one comes after.
+func TestReindexFailedPassKeepsCursor(t *testing.T) {
+	e := newFoldEnv(t)
+	// Two runs to walk, newest first: runThree, and the ghost between them is a
+	// run directory with no records under it, which the walk reaches and reads
+	// nothing from.
+	e.objects(foldSlug, foldSpec(runTwo), foldLaunch(runTwo, foldNow.Add(-2*time.Hour)),
+		foldRecord(runTwo, runstore.StatusFailed, foldNow.Add(-2*time.Hour), foldCost(1.0, 0.0, 0.0, false)))
+	e.bucketWrite(t, foldSlug, runGhost, "note.txt")
+	e.objects(foldSlug, foldSpec(runThree), foldLaunch(runThree, foldNow.Add(-4*time.Hour)),
+		foldRecord(runThree, runstore.StatusSucceeded, foldNow.Add(-4*time.Hour), foldCost(2.0, 0.0, 0.0, false)))
+
+	// A pass cut off at its newest run: the cursor the failing pass inherits.
+	if _, err := e.walk(e.now); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.lease()["cursor"]; got != (&Cursor{Slug: foldSlug, RunID: runTwo}).Encode() {
+		t.Fatalf("the fixture left no cursor at runTwo: %v", got)
+	}
+
+	// The write of the run after the ghost is refused: the pass reaches the
+	// ghost, reaches runThree, and fails there.
+	e.fs.DenyNext(1)
+	rep, err := e.walk(time.Time{})
+	if err == nil {
+		t.Fatal("a refused write did not fail the pass")
+	}
+	if rep.Walked != 0 || rep.Unreadable != 1 {
+		t.Fatalf("report = %+v", rep)
+	}
+	l := e.lease()
+	if l == nil {
+		t.Fatal("a failed pass freed the lease and took the walk's position with it")
+	}
+	want := (&Cursor{Slug: foldSlug, RunID: runGhost}).Encode()
+	if l["cursor"] != want {
+		t.Fatalf("cursor = %v, want the last run the pass reached (%v)", l["cursor"], want)
+	}
+	if done, ok := e.summary()["complete"].(bool); !ok || done {
+		t.Fatalf("a failed pass marked the index complete: %v", e.summary())
+	}
+
+	// The pass behind it carries on from there and reaches the end: the run the
+	// refused write skipped is the one it writes.
+	rep, err = e.walk(time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.Done || rep.From == nil || rep.From.RunID != runGhost {
+		t.Fatalf("the pass after the failure did not resume from the position: %+v", rep)
+	}
+	if ids := e.fs.IDs(EntriesCollection); len(ids) != 2 {
+		t.Fatalf("the resumed pass wrote %v", ids)
+	}
+	if l := e.lease(); l != nil {
+		t.Fatalf("the walk left its lease behind: %v", l)
+	}
+}
+
+// bucketWrite puts one object under a run's directory without writing any of
+// the run's own records: the shape a run leaves when its objects are gone and
+// something else under its prefix is not.
+func (e *foldEnv) bucketWrite(t *testing.T, slug, run, name string) {
+	t.Helper()
+	if err := e.bucket.WriteAll(context.Background(), "runs/"+slug+"/"+run+"/"+name, []byte("x"), nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestSweepContinuesWalk is what makes the walk resumable without a second
 // execution (F9, F39): the history job's own sweep, with no flag and no
 // override, carries an unfinished walk further -- from the cursor the lease
@@ -404,19 +478,11 @@ func TestReindexResetIsWhatUpdateAndRunsReindexDo(t *testing.T) {
 	}
 
 	// A walk that IS going: its claim is left exactly as it stands, so the
-	// execution walking keeps the lease it is using.
+	// execution walking keeps the lease it is using, and the index is reported
+	// as owed a walk.
 	going := newFoldEnv(t)
 	gf := going.index()
-	claim, held, err := func() (LeaseDoc, bool, error) {
-		l, err := NewLease(gf.DB, "exec-walking", gf.DB.ServerNow)
-		if err != nil {
-			return LeaseDoc{}, false, err
-		}
-		return l.Acquire(context.Background())
-	}()
-	if err != nil || !held {
-		t.Fatalf("the fixture took no claim: held=%v err=%v", held, err)
-	}
+	claim := going.claim(t, gf, "exec-walking")
 	live, err = ResetReindex(context.Background(), gf.DB, gf.FS, "fugaro-cli", going.now)
 	if err != nil {
 		t.Fatal(err)
@@ -428,9 +494,48 @@ func TestReindexResetIsWhatUpdateAndRunsReindexDo(t *testing.T) {
 	if l["holder"] != "exec-walking" || l["at"] != claim.At.Format(time.RFC3339Nano) {
 		t.Fatalf("the reset stamped over a running writer's claim: %v", l)
 	}
-	if _, ok := going.fs.Value(SummaryCollection, SummaryDocument); ok {
-		t.Fatal("a reset that found a walk in flight wrote the summary")
+	if done, ok := going.summary()["complete"].(bool); !ok || done {
+		t.Fatalf("the reset left an index with a walk going complete: %v", going.summary())
 	}
+
+	// A fresh claim that is NOT a walk's: the sweep's own fold holds this lease
+	// while it folds, and a dead fold's claim stands for the whole TTL. A
+	// rebuild asked for must not be turned away by one -- the mark is what makes
+	// the next sweep walk -- and the fold's claim is still left alone.
+	folded := newFoldEnv(t)
+	ffold := folded.index()
+	foldClaim := folded.claim(t, ffold, "exec-folding")
+	folded.fs.Set(SummaryCollection, SummaryDocument, map[string]any{
+		"version": int64(Version), "complete": true, "folded_through": folded.now, "updated_at": folded.now,
+	})
+	live, err = ResetReindex(context.Background(), ffold.DB, ffold.FS, "fugaro-cli", folded.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live {
+		t.Fatal("a fold's fresh claim was reported as a walk in flight, so the rebuild never happens")
+	}
+	if l = folded.lease(); l["holder"] != "exec-folding" || l["at"] != foldClaim.At.Format(time.RFC3339Nano) {
+		t.Fatalf("the reset stamped over a folding writer's claim: %v", l)
+	}
+	if done, ok := folded.summary()["complete"].(bool); !ok || done {
+		t.Fatalf("the reset left the index complete: %v", folded.summary())
+	}
+}
+
+// claim takes the index's writer lease for holder, as a writer does, and
+// answers the claim it landed.
+func (e *foldEnv) claim(t *testing.T, f *Fold, holder string) LeaseDoc {
+	t.Helper()
+	l, err := NewLease(f.DB, holder, f.DB.ServerNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, held, err := l.Acquire(context.Background())
+	if err != nil || !held {
+		t.Fatalf("the fixture took no claim: held=%v err=%v", held, err)
+	}
+	return claim
 }
 
 // TestDeadLeaseLapses is the expiry's rule: a walk whose execution died leaves

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/runindex"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -20,6 +21,12 @@ import (
 // `fugaro update` runs, `fugaro runs reindex` asks for by hand, and -- because
 // the mark is what a walk is judged by -- the next sweep of the history job
 // continues on its own (F9, F39).
+//
+// It runs once and not once per upgrade: an index that is complete with no
+// unfinished walk is one this step leaves alone (runindex.WalkOwed), because
+// the walk reads every run in the bucket and the upgrade is not the place to
+// pay for a rebuild nobody asked for. An installation whose fold is behind, or
+// whose index was never built, is the one it starts.
 //
 // It is two halves, and the first is the one that must land. The mark
 // (runindex.ResetReindex): the writer lease loses its cursor and the summary
@@ -75,7 +82,25 @@ func (e *initEngine) reindexRunIndex(ctx context.Context) {
 		r.warn(why)
 		return
 	}
-	live, err := reindexReset(ctx, e.lc, db, reindexHolder(ctx, e.lc), time.Now().UTC())
+	fs, err := newReportFirestore(ctx, e.lc)
+	if err != nil {
+		r.warn(fmt.Sprintf("the run index was not marked for a rebuild: %s. `fugaro runs ls` reads the index as it stands until an update marks it", safetext.FieldErr(err)))
+		return
+	}
+	// The first reindex and not a reindex on every upgrade (RI5): an
+	// installation whose index is complete and whose lease carries no unfinished
+	// walk has nothing to repair, and walking a million runs into an index that
+	// already holds them is a cost an upgrade must not add. `fugaro runs reindex`
+	// is the command that asks for one by hand.
+	owed, err := runindex.WalkOwed(ctx, db, fs)
+	if err != nil {
+		r.warn(fmt.Sprintf("the run index was not marked for a rebuild: %s. `fugaro runs ls` reads the index as it stands until an update marks it, or `fugaro runs reindex` marks it by hand", safetext.FieldErr(err)))
+		return
+	}
+	if !owed {
+		return
+	}
+	live, err := runindex.ResetReindex(ctx, db, fs, reindexHolder(ctx, e.lc), time.Now().UTC())
 	if err != nil {
 		r.warn(fmt.Sprintf("the run index was not marked for a rebuild: %s. `fugaro runs ls` reads the index as it stands until an update marks it, or `fugaro runs reindex` marks it by hand", safetext.FieldErr(err)))
 		return

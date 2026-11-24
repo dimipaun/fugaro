@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -104,6 +105,73 @@ func TestUpdateStartsReindexWithRunInFlight(t *testing.T) {
 	// And the run in flight goes on: its lease, its ledger, its counters, its
 	// record and its review session all still land.
 	run.laterWrites(t, r)
+}
+
+// TestUpdateDoesNotReindexACompleteIndex is the first reindex and not one per
+// upgrade (RI5): the walk reads every run in the bucket, and an installation
+// whose index is complete with no unfinished walk has nothing for it to
+// repair. `fugaro update` leaves such an index exactly as it stands -- no
+// mark, no lease, no execution -- and `fugaro runs reindex` is the command
+// that asks for a rebuild by hand.
+func TestUpdateDoesNotReindexACompleteIndex(t *testing.T) {
+	r, fs := reindexConvergeRig(t)
+	at := time.Now().UTC()
+	fs.Set(runindex.SummaryCollection, runindex.SummaryDocument, map[string]any{
+		"version": int64(1), "complete": true, "folded_through": at, "updated_at": at,
+		"runs": int64(3), "states": map[string]any{"succeeded": int64(3)},
+		"spent_micros": int64(0), "notional_micros": int64(0),
+		"compute_runs": int64(0), "compute_not_estimated": int64(0),
+	})
+
+	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	if strings.Contains(out, "run index:") {
+		t.Fatalf("an update over a complete index said something about the run index:\n%s", out)
+	}
+	for _, c := range r.run.RunRequests() {
+		if c.Job == infra.HistoryJob {
+			t.Fatalf("an update over a complete index started the history job: %+v", c)
+		}
+	}
+	if got := r.db.Value(runindex.PathLease); got != nil {
+		t.Fatalf("an update over a complete index took the writer lease: %#v", got)
+	}
+	sum, ok := fs.Value(runindex.SummaryCollection, runindex.SummaryDocument)
+	if !ok {
+		t.Fatal("the step removed the summary")
+	}
+	if done, ok := sum["complete"].(bool); !ok || !done {
+		t.Fatalf("an update over a complete index latched it incomplete: %v", sum)
+	}
+	if sum["runs"] != int64(3) {
+		t.Fatalf("an update over a complete index rewrote the summary: %v", sum)
+	}
+}
+
+// TestUpdateReindexesAnIncompleteIndex is the other half of the same rule: the
+// index a fold has left incomplete -- or one whose lease still carries an
+// unfinished walk -- IS the installation the first reindex is for.
+func TestUpdateReindexesAnIncompleteIndex(t *testing.T) {
+	r, fs := reindexConvergeRig(t)
+	at := time.Now().UTC()
+	fs.Set(runindex.SummaryCollection, runindex.SummaryDocument, map[string]any{
+		"version": int64(1), "complete": false, "folded_through": at, "updated_at": at,
+	})
+
+	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	if !strings.Contains(out, "run index: marked incomplete and reindexing now as ") {
+		t.Fatalf("an update over an incomplete index did not reindex:\n%s", out)
+	}
+	var started int
+	for _, c := range r.run.RunRequests() {
+		if c.Job == infra.HistoryJob {
+			started++
+		}
+	}
+	if started != 1 {
+		t.Fatalf("the history job was started %d times, want one", started)
+	}
 }
 
 // TestUpdateReindexWritesNothingOutsideTheUpdateDoor: the step is `fugaro
