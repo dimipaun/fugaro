@@ -412,19 +412,27 @@ func (r *run) serviceModelPath() bool {
 // capped like a key's (D3174, CS4) — rather than this job's own GCP identity,
 // which nothing in this gateway can cap (D1626).
 //
-// The fact is the address the job carries (credentialsServiceURLEnv), which is
-// also what serviceUpstream builds this run's upstream from: a run whose calls
-// reach the service is a run whose every source the service serves, Vertex
-// included, so the two readers cannot disagree about where a Vertex call goes.
-// For a `vertex` auth it is the table's own fact: the release-1 bridge serves
-// api-key and oauth alone (ServiceSwitchedAuth, and infra's
-// CredentialsServiceServes answers false for vertex), so a vertex job that
-// carries the address is one a chain of the project's routing table may serve
-// (CredentialsServiceServesChains). An unmigrated repository's job carries
-// none, and its file's `auth: vertex` is the job's identity, as it was before
-// the table existed. A local run is never the service's (D149).
+// The fact is this run's model path (serviceModelPath), the predicate
+// gatewayUpstream builds the upstream from, and never the service's address
+// alone: the two cannot then disagree about where a Vertex call of this run
+// goes. The address is not that fact — a launch hands it to a job whose
+// document it could not read, judged on the repository's record or the deploy
+// root's tfvars (internal/cli's credentialsServiceLaunchEnv) — so a `vertex`
+// job can carry it while its Vertex calls are still the job's own identity
+// (gatewayUpstream's vertex arm), and reading the address here would lift both
+// refusals over exactly the uncapped path they exist for.
+//
+// For a `vertex` auth the predicate is false in this release, and that is what
+// D3174's dependency asks for: the release-1 bridge serves api-key and oauth
+// alone (ServiceSwitchedAuth) and a served project job admits a vertex run
+// without the service (projectjob's checkProjectJobServed, where Vertex is the
+// job's own identity and no mount), so nothing serves a vertex repository's
+// Vertex yet and the refusal holds. It goes when the served path does — CS6
+// spells the run's model path as the service's for a repository the table
+// serves, and CS10 hands that repository's job the address. A local run is
+// never the service's (D149).
 func (r *run) vertexServedByTheService() bool {
-	return !r.d.Local && envLookup(r.d.Env, credentialsServiceURLEnv) != ""
+	return r.serviceModelPath()
 }
 
 // servedAuth is the auth this run's model path is spelled as for the arms that
@@ -1512,7 +1520,7 @@ func (r *run) checkManagedDirWritable() error {
 // settings directory it can write.
 func (r *run) checkBudget(ctx context.Context) error {
 	auth, s := r.cfg.Agent.Auth, r.spend
-	// D3174: a run whose Vertex calls are the credentials service's is not
+	// D3174: a run whose model path is the credentials service's is not
 	// refused here — the service calls Vertex on its own identity, and the
 	// gateway prices and settles the call as it does a key's — while a run
 	// that authenticates as vertex itself spends the project's own GCP quota,

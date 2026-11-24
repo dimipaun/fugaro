@@ -410,10 +410,10 @@ func (r *run) poolStages() []string {
 // own words plus the reason (VertexPoolRefusal). "" is a run whose crafts name
 // no such pool, which is every run that names no pool at all.
 //
-// D3174's lift is read here too, and once for both refusals: a run whose
-// Vertex calls are the credentials service's has no uncapped path for this
-// refusal to be about, so its pool is judged by the stage checks alone
-// (vertexServedByTheService).
+// D3174's lift is read here too, and once for both refusals: a run whose model
+// path is the credentials service's has its Vertex calls made by the service,
+// so it has no uncapped path for this refusal to be about and its pool is
+// judged by the stage checks alone (vertexServedByTheService).
 func (r *run) vertexPoolRefusal(ctx context.Context) string {
 	if r.vertexServedByTheService() {
 		return ""

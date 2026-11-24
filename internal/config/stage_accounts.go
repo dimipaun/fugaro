@@ -477,7 +477,7 @@ func PoolMembers(p Pool, creds []Credential) []PoolMember {
 // service's rather than the job's, which is D3174's lift: the service calls
 // Vertex on its own identity and the call is priced and capped as a key's, so
 // there is no uncapped path to refuse (internal/runner's
-// vertexServedByTheService, where that run's fact is read).
+// vertexServedByTheService, which reads it off the run's model path).
 func PoolHasVertexMember(p Pool, creds []Credential) string {
 	for _, m := range PoolMembers(p, creds) {
 		if m.Type == CredentialTypeVertex {

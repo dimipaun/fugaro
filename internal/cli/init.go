@@ -6049,9 +6049,11 @@ func (r *initRun) gateWorkflowAB(o *initOptions, repo string, lc *localcfg.Confi
 // credentials service's or the job's own": a repository the table serves
 // reaches Vertex through the service, on the service's own identity and capped
 // as a key's, whatever its file still says, while a repository no chain admits
-// keeps its file's answer. The runner reads the same fact from the job it was
-// launched on (vertexServedByTheService); here there is no job, and the
-// document the answer comes from is this local config. A repository this
+// keeps its file's answer. The runner asks the same question of the path it is
+// on, the model path its gateway builds the upstream from
+// (vertexServedByTheService) — which a table-served repository reaches with
+// CS6 and CS10; here there is no job and no path yet, and the document the
+// answer comes from is this local config. A repository this
 // command cannot name, and one on an installation with no table, is not
 // served — the fail-closed direction, which leaves both refusals as they were.
 func servedByTheTable(lc *localcfg.Config, repo string) bool {
