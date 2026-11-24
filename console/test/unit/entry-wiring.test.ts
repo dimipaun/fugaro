@@ -8007,6 +8007,11 @@ describe('the Graph canvas read before its merge state', () => {
     // a screen that waited for up to thirty-two lookups. The plain read then
     // decorates that drawing: the same task loses its mark in the picture the
     // operator is already reading.
+    //
+    // The canvas read here is the prewarm's -- the queue that warms this tab at
+    // boot (`startPrewarm`) reads it with the same argv, so the visit itself is
+    // served from the session cache -- which is why the case asserts the shape of
+    // every read rather than the exact sequence of the two.
     const plain = holding()
     const { bridge, calls } = mergesGraphBridge({
       planStatus: (args) =>
@@ -8014,10 +8019,14 @@ describe('the Graph canvas read before its merge state', () => {
     })
     const document = await openGraph(bridge)
 
-    expect(calls.filter((call) => call.name === 'planStatus').map((call) => call.args)).toEqual([
-      { all: true, noMerges: true },
-      { all: true },
-    ])
+    // Every read of the canvas names the flag -- the tab's own read and the
+    // prewarm's are both this tab's first paint -- and the one read without it
+    // is the merge section, made after a canvas was read. Nothing reads the
+    // canvas with its merges in for a first paint.
+    const reads = calls.filter((call) => call.name === 'planStatus').map((call) => call.args)
+    expect(reads.filter((args) => (args as { noMerges?: boolean }).noMerges === true).length).toBeGreaterThan(0)
+    expect(reads.at(-1)).toEqual({ all: true })
+    expect(reads.slice(0, -1).every((args) => (args as { noMerges?: boolean }).noMerges === true)).toBe(true)
     // The canvas is up while the merge read is out, with the mark the canvas's
     // own document carries.
     expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
@@ -8066,10 +8075,13 @@ describe('the Graph canvas read before its merge state', () => {
       },
     })
     const document = await openGraph(bridge)
+    const painted = canvasReads
 
     ;(classed(panelOf(document), 'graph-refresh')[0] as FakeNode).click()
     await flush()
-    expect(canvasReads).toBe(2)
+    // The refresh painted the canvas again -- and the section had a read out, so
+    // it asked for no second one.
+    expect(canvasReads).toBe(painted + 1)
     expect(calls.filter((call) => call.name === 'planStatus').map((call) => call.args)).toEqual([
       { all: true, noMerges: true },
       { all: true },
