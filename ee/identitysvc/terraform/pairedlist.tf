@@ -128,14 +128,39 @@ resource "google_kms_key_ring_iam_member" "signer_seals" {
 
 # The service's read and write of the database the list lives in, and the other
 # half of "only the function decrypts and only for its owner": the rules above
-# deny every Firebase ID token, and an account holding the database's admin role
-# is not governed by the rules at all — which is the asymmetry, not an outage.
-# Realtime Database has no per-instance IAM resource in Terraform, so the grant
-# is made at the project; the identity project has exactly one database and it
-# is the one above.
+# deny every Firebase ID token, and an account that holds the database's data
+# permissions is not governed by the rules at all — which is the asymmetry, not
+# an outage. Realtime Database has no per-instance IAM resource in Terraform, so
+# the grant is made at the project; the identity project has exactly one database
+# and it is the one above.
+#
+# The role is a custom one carrying the database's two DATA permissions and
+# nothing else, never `roles/firebasedatabase.admin`: that predefined role adds
+# the instance lifecycle — create, delete, disable, reenable, undelete — beside
+# the list's read and write, so the account would be able to delete the store of
+# every person's paired list, and this account is the one the internet reaches
+# through the service's own public invoker. It is the same pair, for the same
+# reason, that the credentials service's database role is
+# (`fugaroCredentialsDatabase`, SECURITY.md and internal/infra/tf/cover.go's
+# CredentialsDatabaseRole, D6), and the same reason a predefined role is refused
+# here (`.claude/rules/terraform.md`). `instances.get` is the read of any node of
+# the instance and `instances.update` the write of any node of it: Realtime
+# Database IAM has no path-level scope, so the store's reach of one node per
+# person is the code's and not this role's, and the sealing key above is what
+# makes the tree a ciphertext to whoever holds it.
+resource "google_project_iam_custom_role" "pairedlist_database" {
+  project     = var.project
+  role_id     = var.pairedlist_database_role
+  title       = "Fugaro identity paired-list database"
+  description = "Reads and writes the nodes of the identity project's Realtime Database that hold the mobile app's sealed paired lists, and does nothing else with the instance. The signer service's account is its only holder (K1, D2796)."
+  permissions = ["firebasedatabase.instances.get", "firebasedatabase.instances.update"]
+
+  depends_on = [google_project_service.this]
+}
+
 resource "google_project_iam_member" "signer_reaches_pairedlist" {
   project = var.project
-  role    = "roles/firebasedatabase.admin"
+  role    = google_project_iam_custom_role.pairedlist_database.id
   member  = google_service_account.signer.member
 }
 
@@ -166,6 +191,12 @@ variable "pairedlist_sealer_role" {
   description = "The custom role the signer's account is granted on the paired-list key ring."
   type        = string
   default     = "fugaroIdentityPairedListSealer"
+}
+
+variable "pairedlist_database_role" {
+  description = "The custom role the signer's account is granted at the project for the paired-list database. It carries the instance's two data permissions and not the predefined admin role, whose instance lifecycle would let the account delete the store of every person's list."
+  type        = string
+  default     = "fugaroIdentityPairedListDatabase"
 }
 
 variable "pairedlist_rotation" {

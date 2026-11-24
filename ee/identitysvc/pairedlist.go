@@ -30,13 +30,12 @@ package identitysvc
 // token and the project's API key, and both are refused by those rules — the
 // instance's own default today, since nothing in this tree publishes the
 // document (a deferral recorded in pairedlist.tf; K1 keeps no command that
-// writes it). What
-// reaches a node is this service's own account, which holds the database role
-// the root grants it (pairedlist.tf) and so passes the rules rather than being
-// governed by them — which is what "only the function decrypts, and only for
-// its owner" comes to: the function is the only reader, and the uid it serves
-// is the one its caller's verified ID token attests, never one the caller
-// names.
+// writes it). What reaches a node is this service's own account, which holds the
+// database's two data permissions and nothing of its lifecycle (pairedlist.tf)
+// and so passes the rules rather than being governed by them — which is what
+// "only the function decrypts, and only for its owner" comes to: the function is
+// the only reader, and the uid it serves is the one its caller's verified ID
+// token attests, never one the caller names.
 //
 // **What this file does not decide.** The fingerprint's own format is O16's and
 // is carried by the pairing (P2) and the consumer's key (J6); K1 stores the

@@ -1030,8 +1030,9 @@ func TestInfraTheSigningKeyIsNonExportable(t *testing.T) {
 // a lifecycle without prevent_destroy, a rotation period nobody set, a second
 // database, a grant made at the project rather than at the ring, a permission
 // beyond seal and open, a second member on the grant, the Realtime Database API
-// dropped from the root's API set, and the instance's dependency on that
-// enablement removed.
+// dropped from the root's API set, the instance's dependency on that enablement
+// removed, and the database role given the instance lifecycle — a predefined
+// admin role, or a permission beyond the two data ones.
 func TestInfraThePairedListIsSealedUnderItsOwnKey(t *testing.T) {
 	db := tfBlock(t, `resource "google_firebase_database_instance" "pairedlist"`)
 	tfAttrsAre(t, db, "the paired-list database", []tfWant{
@@ -1117,12 +1118,25 @@ func TestInfraThePairedListIsSealedUnderItsOwnKey(t *testing.T) {
 	// client, and the service's own account is not governed by them. It is made
 	// at the project because Realtime Database has no per-instance IAM resource
 	// in Terraform, and the identity project has one database.
+	//
+	// The role is a custom one and not `roles/firebasedatabase.admin`: that
+	// predefined role carries the instance lifecycle beside the list's read and
+	// write, so the account the internet reaches through the service's public
+	// invoker could delete the store of every person's list. The two data
+	// permissions are the same pair, for the same reason, that the credentials
+	// service's database role is (SECURITY.md, cover.go's CredentialsDatabaseRole).
+	database := tfBlock(t, `resource "google_project_iam_custom_role" "pairedlist_database"`)
+	tfAttrsAre(t, database, "the paired-list database role", []tfWant{
+		{"role_id", "var.pairedlist_database_role"},
+		{"permissions", `["firebasedatabase.instances.get", "firebasedatabase.instances.update"]`},
+	}, "the store reads one node per person and writes it, and Realtime Database IAM has no path-level scope, so these two permissions are the whole of what it can be given: viewer is get+list and cannot write, and admin adds the instance lifecycle (create, delete, disable, reenable, undelete), which is the ability to delete every person's list (K1, D2796, .claude/rules/terraform.md)")
+
 	reach := tfBlock(t, `resource "google_project_iam_member" "signer_reaches_pairedlist"`)
 	tfAttrsAre(t, reach, "the paired-list database grant", []tfWant{
 		{"project", "var.project"},
-		{"role", `"roles/firebasedatabase.admin"`},
+		{"role", "google_project_iam_custom_role.pairedlist_database.id"},
 		{"member", "google_service_account.signer.member"},
-	}, "the store reads and writes the database with the service's own account, which is the only identity the deny-all rules let through — a grant to any other member is a client that can read the tree (K1, D2796)")
+	}, "the store reads and writes the database with the service's own account, which is the only identity the deny-all rules let through — a grant to any other member is a client that can read the tree, and a predefined role here is the lifecycle above (K1, D2796)")
 
 }
 
@@ -1233,7 +1247,8 @@ var tfSanctionedGrants = map[string]string{
 	`resource "google_cloud_run_v2_service_iam_member" "signer_public"`: "the signer's public invoker, which reaches no key at all",
 	`resource "google_project_iam_custom_role" "pairedlist_sealer"`:     "K1's paired-list role: seal and open the symmetric key and nothing else, which is nothing on an asymmetric key and no reach of the signing ring",
 	`resource "google_kms_key_ring_iam_member" "signer_seals"`:          "its one grant, to the signer's own account and on K1's own ring",
-	`resource "google_project_iam_member" "signer_reaches_pairedlist"`:  "the service's read of K1's database, which is what makes the deny-all rules an asymmetry rather than an outage",
+	`resource "google_project_iam_custom_role" "pairedlist_database"`:   "K1's database role: the instance's two data permissions and not its lifecycle, which is what makes the deny-all rules an asymmetry rather than an outage and keeps the account the internet reaches from deleting every person's list",
+	`resource "google_project_iam_member" "signer_reaches_pairedlist"`:  "its one grant, to the signer's own account and of that custom role",
 }
 
 // tfSignerRefs is every block of this root that may name the signer's account,
