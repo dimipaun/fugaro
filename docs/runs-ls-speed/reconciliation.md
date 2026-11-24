@@ -18,7 +18,7 @@ Decisions **D2960–D2967** are taken as recommendations (the owner approved the
 | The cache | `internal/runcache`: lists every object of the repository to compare generations, then reads only what changed |
 | The live notion | the PR-state fold in `loadRows` (the review row going on a pull request makes it live) and `internal/runview` |
 | A launch claim | `runstore.Store.Claim`: `runs/<slug>/<run>/launching`, present between `task.json` and the launch |
-| Who writes where | the job account writes `runs/<slug>/` only (a project job account every slug); a launcher writes `runs/`, `tokens/`, `issues/` ([bucket-iam §2.1, §3](../design/bucket-iam.md)); the runs bucket ages `runs/` out at 90 days, the same window as `prLookback` |
+| Who writes where | the job account writes `runs/<slug>/` only (a project job account every slug); a launcher writes `runs/`, `tokens/`, `issues/` ([bucket-iam §2.1, §3](../bucket-iam/spec.md)); the runs bucket ages `runs/` out at 90 days, the same window as `prLookback` |
 
 ## Findings
 

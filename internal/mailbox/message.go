@@ -1,7 +1,7 @@
 // Package mailbox holds the consumer side of the phone's mailbox: the Go
 // binding of the contracts both ends of the wire already agree on.
 //
-// This is task T1 of docs/plans/2026-10-18-mobile-mailbox-consumer.md (mobile
+// This is task T1 of docs/mobile/mailbox-consumer-plan.md (mobile
 // P4.1) and it lands the message binding and nothing else: the strict decoder,
 // the validator and the canonical serialisation, each held to the merged
 // shared/mailbox-schema by its committed vectors.json. The tag over those bytes
@@ -111,7 +111,7 @@ const KindMessage = "message"
 // module's order.
 var (
 	// Kinds is every kind of message the schema names.
-	Kinds = []string{"message", "prompt", "answer", "action", "registration"}
+	Kinds = []string{"message", "prompt", "answer", "action", "registration", "stop"}
 	// Actions is every verb an action record may carry.
 	Actions = []string{"cancel", "merge", "confirm"}
 	// Platforms is every platform a push registration may name.
@@ -1062,6 +1062,10 @@ var (
 		"answer":       {"reply_to": true},
 		"action":       {"action": true, "reply_to": true},
 		"registration": {"token": true, "platform": true, "prefs": true},
+		// The phone's stop request (P5.1g, Q10's answer (c)) carries nothing but
+		// its sentence: it is never executed, so it has no action record, no
+		// verb and no confirmation for anything to run.
+		"stop": {},
 	}
 	kindRequired = map[string][]string{
 		"message":      {},
@@ -1069,6 +1073,7 @@ var (
 		"answer":       {"reply_to"},
 		"action":       {"action"},
 		"registration": {"token", "platform"},
+		"stop":         {},
 	}
 )
 

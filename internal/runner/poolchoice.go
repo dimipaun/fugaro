@@ -286,9 +286,18 @@ func (r *run) poolMemberHeld(m config.PoolMember) bool {
 		if !ok {
 			return false
 		}
-		// The key's presence is the question, and ProviderCredential is what
-		// answers it for a route (providerkey.go): a member whose key is not
-		// mounted is not a member this job can serve.
+		if r.providerKeysThroughService() {
+			// R12's fact, and what holds the member where it is set (KS5):
+			// the key is the credentials service's, so this container holds
+			// none and the member is available by the fact — asking the
+			// environment here would refuse a stage the run can be served by
+			// (the job mounts no key for a served provider at all).
+			return true
+		}
+		// On the mount path the key's presence is the question, and
+		// ProviderCredential is what answers it for a route (providerkey.go):
+		// a member whose key is not mounted is not a member this job can
+		// serve.
 		_, _, err := ProviderCredential(r.d.Env, p)
 		return err == nil
 	case config.CredentialTypeVertex:

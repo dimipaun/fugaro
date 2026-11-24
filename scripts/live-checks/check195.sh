@@ -647,8 +647,21 @@ step_caller() {
 
   # The grant this check exists for: on the SERVICE, never on the project, and
   # read back from the service's own policy just below.
-  if ! gcloud run services add-iam-policy-binding "${SVC:?}" --project="${P:?}" --region="${L:?}" \
-    --member="serviceAccount:${CALLER_EMAIL}" --role=roles/run.invoker --quiet >&2 2>"$SCRATCH/invoker.err"; then
+  # A service account that was just created is not yet visible to every IAM
+  # front end: the grant answers "does not exist" for a few seconds. That answer
+  # is waited out and retried; any other refusal (a denied setIamPolicy) is not.
+  local grant_try=0 grant_ok=no
+  while [ "$grant_try" -lt 8 ]; do
+    grant_try=$((grant_try + 1))
+    if gcloud run services add-iam-policy-binding "${SVC:?}" --project="${P:?}" --region="${L:?}" \
+      --member="serviceAccount:${CALLER_EMAIL}" --role=roles/run.invoker --quiet >&2 2>"$SCRATCH/invoker.err"; then
+      grant_ok=yes
+      break
+    fi
+    grep -q 'does not exist' "$SCRATCH/invoker.err" || break
+    sleep_bg "${CHECK195_GRANT_RETRY_SECONDS:-5}"
+  done
+  if [ "$grant_ok" != yes ]; then
     fact invoker-grant FAIL "${CALLER_EMAIL} could not be granted roles/run.invoker on ${SVC}: $(last_lines "$SCRATCH/invoker.err")"
     stop "${CALLER_EMAIL} could not be granted roles/run.invoker on this check's own service ${SVC}, so the build's step would be refused at the front end and nothing about the grant could be measured. YOUR account needs run.services.setIamPolicy on it (an Owner has it). Nothing was built; the account and the service are deleted by this run's Restore"
   fi

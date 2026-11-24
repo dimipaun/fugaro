@@ -304,7 +304,7 @@ func TestMigrationDocCitationIsExactAndSectioned(t *testing.T) {
 }
 
 // migrationDocCitationRE finds every "(docs/....md)" citation in a chunk of
-// text, the shape every refusal message in design/base-image.md section 10
+// text, the shape every refusal message in docs/base-image/spec.md section 10
 // uses to name the migration doc.
 var migrationDocCitationRE = regexp.MustCompile(`\(docs/[a-zA-Z0-9/_.-]+\.md\)`)
 
@@ -335,7 +335,7 @@ var migrationRefusalSections = []struct {
 }
 
 // TestDesignRefusalsCiteTheExactMigrationDocAndItsSections covers every
-// removed-base-setting refusal design/base-image.md section 10 (D2, the
+// removed-base-setting refusal docs/base-image/spec.md section 10 (D2, the
 // hard cut) describes, not just the one config.Parse can trigger today:
 // every "(docs/....md)" citation in that section must name exactly
 // config.MigrationDoc (not merely an existing file), and
@@ -343,21 +343,21 @@ var migrationRefusalSections = []struct {
 // about. A section 10 bullet whose citation drifted to another doc, or
 // whose heading the migration doc dropped or renamed, fails here.
 func TestDesignRefusalsCiteTheExactMigrationDocAndItsSections(t *testing.T) {
-	design := readDoc(t, "docs/design/base-image.md")
+	design := readDoc(t, "docs/base-image/spec.md")
 	start := strings.Index(design, "## 10. Migration: a hard cut")
 	end := strings.Index(design, "## 11. Bring your own image")
 	if start < 0 || end < 0 || end <= start {
-		t.Fatal("docs/design/base-image.md's migration section (## 10 ... ## 11) was renamed or reordered; update this test's markers")
+		t.Fatal("docs/base-image/spec.md's migration section (## 10 ... ## 11) was renamed or reordered; update this test's markers")
 	}
 	section := design[start:end]
 	cites := migrationDocCitationRE.FindAllString(section, -1)
 	if len(cites) == 0 {
-		t.Fatal("design/base-image.md section 10 names no (docs/....md) citation to check")
+		t.Fatal("docs/base-image/spec.md section 10 names no (docs/....md) citation to check")
 	}
 	want := "(" + config.MigrationDoc + ")"
 	for _, c := range cites {
 		if c != want {
-			t.Errorf("design/base-image.md section 10 cites %q, want %q (config.MigrationDoc)", c, want)
+			t.Errorf("docs/base-image/spec.md section 10 cites %q, want %q (config.MigrationDoc)", c, want)
 		}
 	}
 
@@ -427,7 +427,7 @@ func TestDocsBaseImageStatesWhatACatalogImagesEnvDoes(t *testing.T) {
 	// One statement, not two: the design's allowlist sentence has to point at
 	// the file that states what an image's ENV does, so the two cannot drift
 	// into contradicting each other (F2).
-	designPath := "docs/design/base-image.md"
+	designPath := "docs/base-image/spec.md"
 	design := flattenDoc(docSection(t, designPath, readDoc(t, designPath), "## 6. Agent harnesses"))
 	for _, want := range []string{"allowlist", "docs/base-image.md"} {
 		if !strings.Contains(design, want) {

@@ -27,7 +27,7 @@ import (
 
 // Object is the record's object in the runs bucket. It sits beside
 // fugaro/config.yaml, under the prefix the update door may write and a
-// launcher may only read (docs/design/bucket-iam.md).
+// launcher may only read (docs/bucket-iam/spec.md).
 const Object = "fugaro/installed.json"
 
 // Format is the record's format number, the one this build reads and

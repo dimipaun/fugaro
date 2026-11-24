@@ -61,7 +61,7 @@ func TestDocsDesignDocPinsTheHostOfThePRStateLookup(t *testing.T) {
 		t.Fatalf("gh was asked for %q: the repository must carry its host (github.com/acme/app), not resolve against GH_HOST", repo)
 	}
 
-	doc := readDoc(t, "docs/design/generic-tool.md")
+	doc := readDoc(t, "docs/generic-tool/spec.md")
 	line := docLine(doc, "gh pr view")
 	if line == "" {
 		t.Fatalf("the design doc no longer documents the gh call:\n%s", docLineish(doc))
@@ -108,7 +108,7 @@ func docLine(doc, want string) string {
 // a docs test file of its own because the tree's docs pin census counts the
 // internal/cli/docs_*_test.go files, so a folder of its own would move a number
 // the design promises not to move (D1462).
-const fcDoc = "docs/design/failure-classes.md"
+const fcDoc = "docs/failure-classes/design.md"
 
 // fcClassRowRE is one row of the design's vocabulary table: a class name in
 // backticks in the first cell. A snake_case name is the only shape that matches

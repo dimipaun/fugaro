@@ -16,7 +16,7 @@ import (
 func TestRunsLSChangedFilesReachTheDocument(t *testing.T) {
 	rows := []runview.Row{
 		{Run: "acme-app/20261007-100000-abcd", Status: "succeeded",
-			ChangedFiles: runstore.NewChangedFiles([]string{"internal/cli/runs.go", "docs/design/desktop-console-v2.md"})},
+			ChangedFiles: runstore.NewChangedFiles([]string{"internal/cli/runs.go", "docs/desktop-console-v2/spec.md"})},
 		{Run: "acme-app/20261007-110000-abcd", Status: "running"},
 	}
 	var b strings.Builder

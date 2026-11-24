@@ -53,8 +53,9 @@ import (
 // rule of the shape rather than a property of the two implementations: a scope
 // that names no caller, serves no route, accepts no slip, holds no repository
 // table and answers refusing readers is a scope a route can be handed without
-// anything being served by accident. The stub (scope_stub.go) is exactly that
-// scope, and TestStubScopeRefusesEveryCall holds every accessor of it to it.
+// anything being served by accident. WS1's
+// TestARouteTheScopeDoesNotServeIsRefused is the case that holds the gate to it:
+// a scope that serves nothing reaches no handler and no reader.
 //
 // **Meter is the one exception, and it is named here rather than left to be
 // inferred.** Every other accessor's zero answer refuses a call; Meter's nil
@@ -500,21 +501,20 @@ type WorkspaceScopeResolverFunc func(cfg WorkspaceScopeConfig) (ScopeResolver, e
 // NewWorkspaceScopeResolver builds the workspace's resolver.
 //
 // **It is a variable and not a function, and that is the contract's own
-// shape.** WS5 builds a workspace-mode process through this constructor while
-// WS2 — which owns the implementation, in scope_workspace.go — is still being
-// written, so the signature has to exist before its body does; and Go has no
-// way to declare a function in one file of a package and define it in another,
+// shape.** WS5 built a workspace-mode process through this constructor while
+// WS2 — which owns the implementation, in scope_workspace.go — was still being
+// written, so the signature had to exist before its body did; and Go has no way
+// to declare a function in one file of a package and define it in another,
 // because two definitions of one name are a compile error whichever file they
-// are in. So the name is a variable of the constructor's signature, and the
-// two sides assign it from init: scope_stub.go assigns a resolver whose scope
-// refuses every call, and WS2's scope_workspace.go assigns the real one. The
-// toolchain presents a package's files in name order, so scope_stub.go is
-// initialized first and WS2's assignment is what answers from the moment WS2
-// lands — which is also why I1's deletion of the stub is a deletion and not an
-// edit, and why nothing outside the package may assign this.
+// are in. The two sides assigned it from init while the scaffold was up, and
+// I1 deleted the stub's assignment rather than editing it, which is what leaves
+// the name a variable with one writer.
 //
-// A caller does not have to consider any of that: it calls the constructor, and
-// what it gets is either the workspace's resolver or a refusal, never a nil.
+// Nothing outside the package may assign this: a service whose resolver was
+// replaced after it was built would be a deployment served under a scope its
+// configuration never named. scope_workspace.go's init is the only assignment,
+// so a caller does not have to consider any of it: it calls the constructor and
+// gets the workspace's resolver.
 var NewWorkspaceScopeResolver WorkspaceScopeResolverFunc
 
 // WorkspaceKeepWarmPath is the keep-warm route's path: where a run that routed

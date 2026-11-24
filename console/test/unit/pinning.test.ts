@@ -10,9 +10,11 @@
 // (design section 5.2).
 //
 // It holds one more pin that is not a specifier: `engines.node`, which is the
-// version CI installs for the console job (Task 1.4) and is therefore an exact
-// version here too, with its own table of refusals ("*", "latest", ">=0",
-// ">=22.12.0"). A range there would have been the one float left.
+// version CI installs for the console job (Task 1.4), and it is a **bounded
+// range** -- a floor and the next major as its ceiling -- with its own table of
+// refusals ("*", "latest", ">=0", ">=22.12.0", a ceiling that is not the next
+// major). It was an exact version until 2026-11-22; the field's own comment
+// below says what made that a failure rather than a preference.
 //
 // The runtime `dependencies` section holds one package, and that is asserted
 // below, twice over. Task 1.0 pinned electron-updater there for Task 4.4's
@@ -114,46 +116,67 @@ export function pinViolation(specifier: string): string | null {
   return null
 }
 
-// enginesNodeRE is an exact Node version and nothing else: three dotted numbers,
-// no operator, no wildcard, no tag, no whitespace. It is deliberately narrower
-// than the semver `engines.node` normally carries -- ">=22.12.0" is a perfectly
-// ordinary engines field -- because this field is what CI's `actions/setup-node`
-// installs from (Task 1.4) and a range there means the tests run on whichever
-// Node the range happened to resolve to, which is the float this whole task
-// exists to refuse.
-const enginesNodeRE = /^\d+\.\d+\.\d+$/
+// enginesNodeRE is a bounded range: a floor of three dotted numbers, a space,
+// and the next major as the ceiling -- ">=22.23.3 <23", which is what
+// console/package.json carries.
+//
+// This field was an exact version until 2026-11-22, and the reason it changed is
+// the failure that pin caused rather than a preference: `console/.npmrc` sets
+// `engine-strict=true`, so Node 22.23.5 -- the next patch of the very line this
+// toolchain was tested on -- made `npm ci` refuse with EBADENGINE, and the fix a
+// reader reached for was to install an older Node rather than to run the tests.
+// What is still refused is the float the exact pin existed for: no wildcard, no
+// tag, no caret or tilde, no floor with no ceiling (">=22.12.0" would float
+// across majors, which is what CI's `actions/setup-node` would then resolve from
+// this file, Task 1.4), and no ceiling other than the floor's own next major.
+const enginesNodeRE = /^>=(\d+)\.(\d+)\.(\d+) <(\d+)$/
 
 /**
- * enginesNodeViolation says why engines.node is not an exact pin, or null when
- * it is one. A non-empty string is not enough: "*", "latest", ">=0" and ">=20"
- * are all non-empty strings, and all four are exactly what a pinned toolchain
- * must refuse.
+ * enginesNodeViolation says why engines.node is not a bounded range, or null
+ * when it is one. A non-empty string is not enough: "*", "latest", ">=0" and
+ * "22.23.3" are all non-empty strings, and all four are exactly what a pinned
+ * toolchain must refuse.
  */
 export function enginesNodeViolation(value: unknown): string | null {
   if (typeof value !== 'string' || value === '') return 'not a non-empty string'
   if (value.trim() !== value) return 'padded with whitespace'
   if (value.includes('*')) return 'a wildcard'
   if (/(^|[^0-9A-Za-z-])latest([^0-9A-Za-z-]|$)/.test(value)) return 'the "latest" tag'
-  if (!enginesNodeRE.test(value)) return 'not an exact dotted version'
+  const m = enginesNodeRE.exec(value)
+  if (m === null) return 'not a floor and a ceiling'
+  // The ceiling is what keeps this a pin on the line the toolchain was tested
+  // on rather than on "Node, at least this new": a floor of 22 with a ceiling of
+  // 30 is a field that says 29.0.0 is supported, and nothing here ran on it.
+  if (Number(m[4]) !== Number(m[1]) + 1) return 'a ceiling that is not the next major'
   return null
 }
 
 describe('the engines.node rule itself', () => {
   // The probe, mutation by mutation, because the assertion it guards used to be
   // "engines.node is a non-empty string" -- which "*", "latest" and ">=0" all
-  // satisfied inside the suite whose subject is refusing floats.
+  // satisfied inside the suite whose subject is refusing floats. The exact
+  // version is in the refused table now, on purpose: it is the shape this field
+  // had until 2026-11-22, and the table is what says the rule refuses it rather
+  // than that nobody thought about it.
   const refused: ReadonlyArray<readonly [string, string]> = [
     ['*', 'a wildcard'],
     ['latest', 'the "latest" tag'],
-    ['>=0', 'not an exact dotted version'],
-    ['>=20', 'not an exact dotted version'],
-    ['>=22.12.0', 'not an exact dotted version'],
-    ['^22.12.0', 'not an exact dotted version'],
-    ['~22.23.3', 'not an exact dotted version'],
-    ['22.x', 'not an exact dotted version'],
-    ['22', 'not an exact dotted version'],
-    ['22.23', 'not an exact dotted version'],
-    ['22.23.3 || 24.0.0', 'not an exact dotted version'],
+    ['>=0', 'not a floor and a ceiling'],
+    ['>=20', 'not a floor and a ceiling'],
+    ['>=22.12.0', 'not a floor and a ceiling'],
+    ['>=22.12.0 <23.0.0', 'not a floor and a ceiling'],
+    ['^22.12.0', 'not a floor and a ceiling'],
+    ['~22.23.3', 'not a floor and a ceiling'],
+    ['22.x', 'not a floor and a ceiling'],
+    ['22', 'not a floor and a ceiling'],
+    ['22.23', 'not a floor and a ceiling'],
+    ['22.23.3', 'not a floor and a ceiling'],
+    ['22.23.3 || 24.0.0', 'not a floor and a ceiling'],
+    ['>=22.23 <23', 'not a floor and a ceiling'],
+    ['>=22.23.3 <=23.0.0', 'not a floor and a ceiling'],
+    ['>=22.23.3 <24', 'a ceiling that is not the next major'],
+    ['>=22.23.3 <22', 'a ceiling that is not the next major'],
+    ['>=22.23.3 <99', 'a ceiling that is not the next major'],
     [' 22.23.3', 'padded with whitespace'],
     ['', 'not a non-empty string'],
   ]
@@ -162,9 +185,12 @@ describe('the engines.node rule itself', () => {
     expect(enginesNodeViolation(value)).toBe(why)
   })
 
-  it.each(['22.23.3', '20.0.0', '24.1.0'])('accepts the exact version %s', (value) => {
-    expect(enginesNodeViolation(value)).toBeNull()
-  })
+  it.each(['>=22.23.3 <23', '>=22.12.0 <23', '>=20.0.0 <21', '>=24.1.0 <25'])(
+    'accepts the bounded range %s',
+    (value) => {
+      expect(enginesNodeViolation(value)).toBeNull()
+    },
+  )
 
   it('refuses a field that is not a string at all', () => {
     expect(enginesNodeViolation(undefined)).toBe('not a non-empty string')
@@ -221,13 +247,13 @@ describe('console/package.json', () => {
     expect(pkg.private).toBe(true)
   })
 
-  it('pins the Node the toolchain runs on, exactly', () => {
+  it('pins the Node the toolchain runs on: a floor and the next major as its ceiling', () => {
     // Design section 5.2 and Task 1.4: the console job takes its Node version
     // from this field, so a field that says "anything" would be a job that runs
-    // on whatever the runner happens to ship -- and this is the one field in
-    // the manifest a reader expects to be a range. It is an exact version here
-    // like every other pin, which the table above proves the checker can tell
-    // apart from a range.
+    // on whatever the runner happens to ship -- and this is the one field in the
+    // manifest a reader expects to float. It is a bounded range here and not an
+    // exact version (2026-11-22, above), which the table above proves the
+    // checker can tell apart from a pin, an open range and a wider ceiling.
     const why = enginesNodeViolation(pkg.engines?.node)
     expect(why, `engines.node is ${JSON.stringify(pkg.engines?.node)}: ${why}`).toBeNull()
   })

@@ -267,7 +267,7 @@ describe('the Graph and the feed', () => {
     // said, in words and not in a tone alone (H10). "Dimmed" is the console's own
     // word and the `data-kept` hook here -- no theme rule selects either yet, and
     // giving them a tone means a rule in `screens.css` plus its §2.11 inventory
-    // line in `docs/design/console-styling.md`, two files outside this task's
+    // line in `docs/console-styling/spec.md`, two files outside this task's
     // budget. The words carry the fact either way, which is the channel H10 asks
     // for; the rule is a follow-up's.
     expect(keys(drawn)).toEqual([PULL, TASK, TASK_TWO])

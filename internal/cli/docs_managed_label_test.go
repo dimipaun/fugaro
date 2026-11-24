@@ -35,7 +35,7 @@ func TestDocsGCPManagedLabelSaysItsClaims(t *testing.T) {
 	// The commands that write the marks, the backfill a project marked before
 	// the label needs, and the fact that the backfill is unverified: all four
 	// are the design of record's, and none of them is a command the agent runs.
-	const design = "docs/design/managed-projects.md"
+	const design = "docs/managed-projects/spec.md"
 	doc := readDoc(t, design)
 	for _, want := range []string{
 		"fugaro managed flag",

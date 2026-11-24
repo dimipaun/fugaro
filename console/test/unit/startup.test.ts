@@ -1078,6 +1078,50 @@ describe('the entry point puts the surface on ipcMain, and only when it may', ()
     expect(activate).not.toContain('registerHandlers')
   })
 
+  it('registers no channel for a refused console, the console improvements’ nine included', () => {
+    // The one registration site lives **inside** `registerHandlers`, and
+    // `registerHandlers` is called from exactly one place -- `onDecided`, after
+    // its refused return. A refused console therefore has no channel behind
+    // *any* of the surface's rows, and the nine operations the console
+    // improvements' plan adds (`runs.stream`, `spend.stream`, `budget.stream`,
+    // `whoami`, `image.catalog.ls`, `recipes.ls`, `setup.plan`, `setup.apply`
+    // and `settings.editor.open`) are rows of `gated` like every other: no
+    // second place they could be registered exists to open a channel for them
+    // on a window that may draw nothing.
+    const register = bodyOf('function registerHandlers()')
+    expect(register).toContain('registerConsoleHandlers(')
+    expect(indexSource.match(/registerConsoleHandlers\(/g) ?? []).toHaveLength(1)
+    // The declaration is at column 0 and the one call is indented: the pattern
+    // below matches the call and not the `function registerHandlers():`.
+    expect(indexSource.match(/^\s+registerHandlers\(\)$/gm) ?? []).toHaveLength(1)
+    const onDecided = bodyOf('function onDecided(')
+    expect(onDecided).toContain('registerHandlers()')
+    expect(onDecided.indexOf("'refused'")).toBeLessThan(onDecided.indexOf('registerHandlers()'))
+    // The nine arrive through **one spread of `handlers.ts`'s table** (I-OPS):
+    // they were stubs named one by one here, and they are now the real rows, so
+    // what keeps this claim true is that the key is not in `gated` at all --
+    // every one of them is a row of the table the spread carries, and a row of
+    // `gated` is what the two gates below wrap. `ops-contract.test.ts` is the
+    // file that holds that table's row set to the surface's own names, and its
+    // cases read the table this import resolves to.
+    const gated = bodyOf('const gated: ConsoleHandlers = {')
+    expect(gated).toContain('...newOperations.rows')
+    // The table's own prose names several of the nine (`setup.apply` is the one
+    // a lapsed installation meets the gate on), so the negative is taken over
+    // the table's **keys**: the comment lines go, and what is left is the
+    // entries.
+    const entries = gated
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//'))
+      .join('\n')
+    expect(entries).not.toMatch(/'?(runs\.stream|spend\.stream|budget\.stream|whoami|image\.catalog\.ls|recipes\.ls|setup\.plan|setup\.apply|settings\.editor\.open)'?:/)
+    // ...and the spread is the one place those rows are built, from the one
+    // call to the handler table: a second `newOperationHandlers(` would be a
+    // second table the contract test does not read.
+    expect(indexSource.match(/newOperationHandlers\(/g) ?? []).toHaveLength(1)
+    expect(indexSource).toMatch(/const newOperations = newOperationHandlers\(/)
+  })
+
   it('joins in the one handler `source.ts` leaves out, which is the half it names', () => {
     // `CliBackedHandlers` in `src/source/source.ts` is the surface *minus*
     // `startup.compatibility`, and its comment says the entry point joins that

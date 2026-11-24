@@ -472,8 +472,8 @@ check. LM18 is the removal one release later.
   narrowed to operators and the service, not closed (O13); the orchestrator design records O14; `budget-token-channel.md`, `roles.md` and the
   orchestrator design say the same; the release notes' `### For operators` is "run
   `fugaro update`" plus what it will say (R10).
-- Files: `SECURITY.md`, `website/content/security.md`, `docs/design/budget-token-channel.md`,
-  `docs/design/roles.md`, `docs/mobile/design/always-on-orchestrator.md`, and the release's notes
+- Files: `SECURITY.md`, `website/content/security.md`, `docs/budget-token-channel/spec.md`,
+  `docs/roles/spec.md`, `docs/mobile/design/always-on-orchestrator.md`, and the release's notes
   under `docs/releases/`.
 - Interfaces: none.
 - Tests: the Docs filter and the website check.

@@ -44,7 +44,7 @@ type SealKey struct {
 // -- not a peer run (its account holds only agentReporter and logWriter). What
 // that carrier adds is a standing copy in the job resource, and the reaper as
 // a reader: the launchers are already in the Cloud Run override's audience in
-// kind, and docs/design/budget-token-channel.md calls the seal itself "a
+// kind, and docs/budget-token-channel/spec.md calls the seal itself "a
 // capability, not a boundary: it removes the value of what a peer can reach;
 // it does not narrow what a peer can reach".
 //
@@ -74,5 +74,5 @@ func (b *Backend) sealedVars(full string, entries []backend.EnvVar) (map[string]
 		return nil, nil
 	}
 	kv := entries[0]
-	return nil, fmt.Errorf("launching %s: the launch carries %s as a secret (the budget token's seal key), and a Batch job has no per-execution override: its variables are the job's definition, which every launcher the Fugaro job-name condition admits and the reaper can read back for as long as the job is kept, so the key is not put there and nothing was created; this refusal is deliberate, and it is the documented limit (docs/design/budget-token-channel.md, \"The Batch backend refuses a sealed launch\"): every launch of an installation that mints is sealed, so an installation that mints budget tokens — a budget database with budget mode on, or a published policy — cannot launch any run on Batch, and such an installation has to stay on backend: cloud-run", full, kv.Name)
+	return nil, fmt.Errorf("launching %s: the launch carries %s as a secret (the budget token's seal key), and a Batch job has no per-execution override: its variables are the job's definition, which every launcher the Fugaro job-name condition admits and the reaper can read back for as long as the job is kept, so the key is not put there and nothing was created; this refusal is deliberate, and it is the documented limit (docs/budget-token-channel/spec.md, \"The Batch backend refuses a sealed launch\"): every launch of an installation that mints is sealed, so an installation that mints budget tokens — a budget database with budget mode on, or a published policy — cannot launch any run on Batch, and such an installation has to stay on backend: cloud-run", full, kv.Name)
 }

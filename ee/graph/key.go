@@ -5,9 +5,9 @@ package graph
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -50,18 +50,20 @@ func (s Scope) String() string {
 	return string(s.Kind) + ":" + s.ID
 }
 
-// scopeIDPattern is H1's id: one lower-case letter or digit, then up to 39 more
-// of those or a hyphen. It is anchored, so nothing before or after it gets in:
-// not a leading `-` (which would reach argv as a flag), not a path separator,
-// not an uppercase letter, not whitespace.
-var scopeIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
-
 // ParseScope reads a `--source` value. `all` and `coordinator` stand alone;
-// `orchestrator:<id>` and `local:<id>` carry an id matching the closed pattern
-// of H1. Anything else — an empty value, an unknown kind, an id with a leading
-// hyphen, a path separator, an uppercase letter, whitespace, or one longer than
-// 40 characters — is refused, so a string the renderer supplied never reaches a
-// path or another flag.
+// `orchestrator:<id>` and `local:<id>` carry an orchestrator id — the project's
+// name for the project's default orchestrator, or `<project>~<name>` for a
+// named one (D3207, F40). The rule is C-ORCH's and not a second one here
+// (ValidScopeID is ValidOrchestratorID): the console's own pattern and this one
+// have to admit the same ids, and a scope may not name an orchestrator the rest
+// of the tree refuses.
+//
+// It is deliberately narrow, so a value that reaches argv from the renderer
+// never reaches a path or another flag: anything else — an empty value, an
+// unknown kind, an id no orchestrator node may be keyed by (a leading hyphen,
+// which would reach argv as a flag, a path separator, an uppercase letter,
+// whitespace, a second `~`), or one longer than a project name and a name
+// together — is refused here, before anything is read.
 func ParseScope(s string) (Scope, error) {
 	switch s {
 	case string(ScopeAll):
@@ -78,8 +80,8 @@ func ParseScope(s string) (Scope, error) {
 	default:
 		return Scope{}, unknownScope(s)
 	}
-	if !scopeIDPattern.MatchString(id) {
-		return Scope{}, fmt.Errorf("graph: source %q names no valid id: an id is 1 to 40 characters of a-z, 0-9 and -, starting with a letter or a digit", safetext.Field(s))
+	if !orchestrator.ValidScopeID(id) {
+		return Scope{}, fmt.Errorf("graph: source %q names no valid id: an id is a project name, or <project>%s<name>, each half 1 to %d characters of a-z, 0-9 and -, starting with a letter or a digit", safetext.Field(s), orchestrator.NameSeparator, orchestrator.MaxOrchestratorNameLength)
 	}
 	return Scope{Kind: ScopeKind(kind), ID: id}, nil
 }

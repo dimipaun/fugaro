@@ -8,7 +8,7 @@
       "title": "Dated amendment notes in the console designs",
       "run": null,
       "version": null,
-      "footprint": {"prediction": true, "paths": ["docs/design/desktop-console-v2.md", "docs/design/desktop-console.md", "docs/design/console-styling.md", "docs/plans/2026-10-15-desktop-console-v2.md"]}
+      "footprint": {"prediction": true, "paths": ["docs/desktop-console-v2/spec.md", "docs/desktop-console/spec.md", "docs/console-styling/spec.md", "docs/desktop-console-v2/implementation-plan.md"]}
     },
     {
       "id": "GV1.1",
@@ -113,7 +113,7 @@
       "title": "Drag, preview, confirm, undo",
       "run": null,
       "version": null,
-      "footprint": {"prediction": true, "paths": ["console/src/renderer/screens/graph.ts", "console/src/renderer/graph/move.ts", "console/src/main/ipc.ts", "console/src/main/spawn.ts", "console/src/preload/index.ts", "console/src/source/cli.ts", "console/test/unit/graph-move.test.ts", "console/test/unit/ipc.test.ts", "console/test/unit/spawn.test.ts", "docs/design/desktop-console-v2.md"]}
+      "footprint": {"prediction": true, "paths": ["console/src/renderer/screens/graph.ts", "console/src/renderer/graph/move.ts", "console/src/main/ipc.ts", "console/src/main/spawn.ts", "console/src/preload/index.ts", "console/src/source/cli.ts", "console/test/unit/graph-move.test.ts", "console/test/unit/ipc.test.ts", "console/test/unit/spawn.test.ts", "docs/desktop-console-v2/spec.md"]}
     },
     {
       "id": "GV4.1",

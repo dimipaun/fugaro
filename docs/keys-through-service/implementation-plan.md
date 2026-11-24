@@ -22,9 +22,11 @@ and deletes the old secrets (KS11, KS13 to KS16). KS13 is not launched before re
 otherwise stop it.
 
 **Three tasks wait on another plan.** KS13 is not launched before
-[credentials belong to models](../credentials-belong-to-models/README.md)' release 1 is
-integrated: KS6, KS9 and KS10, which it waited on, are withdrawn and replaced by that plan's
-CM16 and CM15, CM6, and CM9 (F48, F49). KS14 and KS15 are not launched before the plan that
+[model credentials routing](../model-credentials-routing/README.md)'s release 1 is integrated:
+KS6, KS9 and KS10, which it waited on, are withdrawn and replaced by credentials belong to models'
+CM16 and CM15, CM6, and CM9 (F48, F49), and those tasks are themselves withdrawn with every task
+of that plan that is not merged (2026-11-22, that plan's D3170), so the wait is on model
+credentials routing's I1 (its A1). KS14 and KS15 are not launched before the plan that
 removes budget mode off has merged its removal (R13). Until then a budget-off repository keeps its
 mounted keys. **KS6, KS9 and KS10 are withdrawn, and KS7 and KS8 are dropped** with D3002 and
 D3004 (F48); their numbers are not reused.
@@ -121,7 +123,11 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
 nodes from its graph. They planned a check by a repository's auth mode and a stage account served
 beside it, and the plan this one is amended by — credentials belong to models — retires the auth
 mode itself: **KS6 is replaced by that plan's CM16 and CM15**, **KS9 by its CM6**, **KS10 by its
-CM9**, and **KS13 waits on its I1 in their place** (F49).
+CM9**, and **KS13 waits on its I1 in their place** (F49). **Amended 2026-11-22:** credentials
+belong to models is itself superseded in part by
+[model credentials routing](../model-credentials-routing/README.md) (its D3170), which withdraws
+the CM16, CM15, CM6 and CM9 that replaced them, with every other task of that plan that is not
+merged, so **KS13 now waits on model credentials routing's I1** (its A1).
 
 ### KS1: named provider entries in the bundle
 - Acceptance: the bundle decodes and serves one key per repository and named provider credential,
@@ -331,9 +337,11 @@ CM9**, and **KS13 waits on its I1 in their place** (F49).
 - Depends on: KS5 and KS12 (kept, behaviour: a mount may go only once every path
   serves that credential and its value is in the bundle); KS19 (kept: both edit `infra/spec.go`
   and `init_credentials.go`); KS2 (kept: both edit `recipes_skew.go`). **Not launched before
-  release A is cut, and not before credentials belong to models' I1 has merged** (F49): KS6, KS9
-  and KS10 are withdrawn, replaced by that plan's CM16 and CM15, CM6, and CM9, and a mount may go
-  only once their work is in the tree.
+  release A is cut, and not before model credentials routing's I1 has merged** (F49, amended
+  2026-11-22 by its D3170): KS6, KS9 and KS10 are withdrawn, replaced by credentials belong to
+  models' CM16 and CM15, CM6, and CM9, and those tasks are themselves withdrawn with every task of
+  that plan that is not merged and carried by model credentials routing's tasks, so a mount may go
+  only once their work is in the tree, at that plan's I1.
 - Commit: `infra: no model key is mounted where the bundle is ready (KS13, R5, R10)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -385,7 +393,7 @@ CM9**, and **KS13 waits on its I1 in their place** (F49).
   `internal/cli/init_retire.go`, `internal/cli/init_retire_test.go`,
   `internal/cli/update_delete_keys_test.go` (new), `internal/cli/update_converge_test.go`,
   `internal/cli/update_in_flight.go` with `docs/design/update-in-flight.md`,
-  `docs/design/config-transitions.md`, and the operator line of the release notes that carry it.
+  `docs/config-transitions/spec.md`, and the operator line of the release notes that carry it.
   It is past five files because a deletion is state, API and discovery together.
 - Interfaces: none.
 - Tests: `TestOnlyACopiedUnmountedModelContainerIsDeleted`, `TestAnOperatorsUpdateDeletesNothing`,
@@ -503,7 +511,7 @@ repository's mode is `startup`.
 | 0 | C1, KS17 |
 | 1 | KS1, KS2, KS3, KS5, KS19 |
 | 2 | KS4, KS12, KS20 (after the owner has run Check 50) |
-| 3 | KS13 (after release A is cut and credentials belong to models' I1), I1 |
+| 3 | KS13 (after release A is cut and model credentials routing's I1), I1 |
 | 4 | KS11, KS18 |
 | 5 | KS14 (after the plan that removes budget mode off) |
 | 6 | KS15 |
@@ -519,7 +527,8 @@ so KS1 and KS19, which build C1's other sides, carry no edge to C1 in the graph 
 reads them as ready at once, in level 0 with C1. This table does not: each starts after C1 merges,
 so it puts them in level 1, beside KS2, KS3 and KS5, which wait only on C1. The graph also cannot
 hold the five outside waits: the owner's run of Check 50 before KS20, the release before KS13,
-credentials belong to models' I1 before KS13 (F49), the other plan before KS14, and B5.7 before KS16.
+model credentials routing's I1 before KS13 (F49, amended 2026-11-22), the other plan before KS14,
+and B5.7 before KS16.
 
 **Edges broken by C1 and rejoined in I1.** KS2, KS3, KS4 and KS12 after KS1: each needs the entry's
 naming rule and the accessor's signature, not the bundle's code. KS5 after KS4: the gateway needs
@@ -530,7 +539,7 @@ that records it.
 KS14 after KS13 and KS11; KS15 after KS12 and KS14; KS16 after KS15; KS20 after KS17; I1 after
 KS20), a shared file (KS4 and KS20 after KS3; KS11 after KS1 and KS2; KS12 after KS2; KS13 after
 KS2 and KS19; KS16 after KS14), and something outside the plan (KS20 after the owner's run of
-Check 50; KS13 after credentials belong to models' I1; KS14 after the removal of budget mode off;
+Check 50; KS13 after model credentials routing's I1; KS14 after the removal of budget mode off;
 KS16 after B5.7).
 
 **Shared files.** No level holds two writers of one file.
@@ -579,7 +588,7 @@ As `fugaro plan graph --plan docs/keys-through-service/implementation-plan.md` p
 
 It is informational and reserves no budget: it is what the tasks' tiers and this machine's history
 predict, and it moves as runs finish. It does not count the owner's run of Check 50, the release
-before KS13, the wait for credentials belong to models' I1, the wait for the
+before KS13, the wait for model credentials routing's I1, the wait for the
 plan that removes budget mode off, or the wait for B5.7. The graph counts one node more than this
 plan's 17 runs: the contract change of §7, which runs only if raised.
 

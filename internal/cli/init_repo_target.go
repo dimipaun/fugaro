@@ -263,7 +263,7 @@ type defaultBranchResult struct {
 // defaultBranchParse is the checkout's default branch's fugaro.yaml
 // (origin/HEAD, main or master, as last fetched), read from git and
 // resolved over the selected project config, with no cloud call besides
-// reading the project layer (docs/design/layered-config.md). Memoized per
+// reading the project layer (docs/layered-config/spec.md). Memoized per
 // command invocation (checkoutParseCache.defaultBranch, cloud.go):
 // resolveRepoTarget and defaultBranchConfig (initsecrets.go) both read
 // this exact file, and the converge calls them up to three times in one run.
@@ -295,7 +295,7 @@ func defaultBranchParse(ctx context.Context, root string) defaultBranchResult {
 
 // resolveRepoTarget finds the checkout (the working directory's) and its
 // default branch's fugaro.yaml, with no cloud call besides reading the
-// project layer (docs/design/layered-config.md). It returns the target
+// project layer (docs/layered-config/spec.md). It returns the target
 // when the stage applies, else the status that says why (skipped, or
 // needs-you when the user has something to fix); project "" does not check
 // the file's project.

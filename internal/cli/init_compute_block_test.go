@@ -1,6 +1,10 @@
 package cli
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"strings"
 	"testing"
 
@@ -149,6 +153,114 @@ func TestComputeStageLeavesAFieldTheOwnerWroteAlone(t *testing.T) {
 	if b.BootImage == "" || b.Network == "" || b.Subnetwork == "" || b.ServiceAccount == "" {
 		t.Errorf("the fields the owner left empty were not filled: %+v", b)
 	}
+}
+
+// TestComputeStageKeepsTheBlocksTwoIdentityFacts: the opt-in fact and the key
+// fact are the installation's own -- an operator writes the first by selecting
+// the backend, `fugaro update` writes the second (R2, R13, R16) -- and the
+// stage forms its block out of the root's outputs alone, so it has no answer
+// for either. A converge that recorded its own block without carrying them
+// through would delete both from this machine's file and from the published
+// copy, which is the one thing these two fields may not suffer.
+func TestComputeStageKeepsTheBlocksTwoIdentityFacts(t *testing.T) {
+	r := computeBlockRig(t)
+	version, publicKey := sealKeyFact(t)
+	r.appendConfig(t, "batch:\n  image: us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro:9\n  opt_in: in\n"+
+		"  seal_key:\n    version: "+version+"\n    public_key: |\n"+indentLines(publicKey, "      "))
+	out, err := provisionBatch(t, r)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	b := localBatchBlock(t, r)
+	if b == nil {
+		t.Fatalf("the provisioning dropped the owner's block:\n%s\n%s", readFileString(t, r.cfg), out)
+	}
+	if b.OptIn != localcfg.BatchOptInOn {
+		t.Errorf("batch.opt_in = %q, want %q: the converge dropped the operator's fact", b.OptIn, localcfg.BatchOptInOn)
+	}
+	if b.SealKey == nil {
+		t.Fatalf("the converge dropped the key fact:\n%s", readFileString(t, r.cfg))
+	}
+	if b.SealKey.Version != version {
+		t.Errorf("batch.seal_key.version = %q, want %q", b.SealKey.Version, version)
+	}
+	key, err := localcfg.ParseSealKeyPublicKey(b.SealKey.PublicKey)
+	if err != nil {
+		t.Fatalf("the kept public key does not parse: %v", err)
+	}
+	if got := key.N.BitLen(); got != 2048 {
+		t.Errorf("the kept public key is %d bits, want the 2048 the envelope is sized for", got)
+	}
+	// The fields a root output answers are still filled, the fields no output
+	// answers are still left out rather than guessed, and the owner's own value
+	// for the image is still the one that stays.
+	if b.BootImage == "" || b.Network == "" || b.Subnetwork == "" || b.ServiceAccount == "" {
+		t.Errorf("the fields the owner left empty were not filled: %+v", b)
+	}
+	if b.MachineType != "" || b.SocketGID != 0 {
+		t.Errorf("the stage wrote a field no output answers: %+v", b)
+	}
+	if b.Image != "us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro:9" {
+		t.Errorf("batch.image = %q, want the image the owner recorded", b.Image)
+	}
+}
+
+// TestSameBatchComparesTheTwoIdentityFacts: two blocks that differ in either
+// fact are not the same block, so the stage's own "already what this run would
+// write" answer cannot be reached by ignoring them -- a comparison that did
+// would let a converge report a block unchanged while the file it holds says
+// something else about the installation's identity.
+func TestSameBatchComparesTheTwoIdentityFacts(t *testing.T) {
+	key := &localcfg.BatchSealKey{Version: "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1", PublicKey: "PUBLIC KEY"}
+	base := localcfg.Batch{Image: "image", OptIn: localcfg.BatchOptInOn, SealKey: key}
+	same := base
+	other := localcfg.Batch{Image: "image", OptIn: localcfg.BatchOptInOn,
+		SealKey: &localcfg.BatchSealKey{Version: key.Version, PublicKey: "ANOTHER PUBLIC KEY"}}
+	withdrawn := localcfg.Batch{Image: "image", OptIn: localcfg.BatchOptInWithdrawn, SealKey: key}
+	absent := localcfg.Batch{Image: "image", SealKey: key}
+	if !sameBatch(&base, &same) {
+		t.Error("two blocks carrying the same facts are not the same block")
+	}
+	if sameBatch(&base, &other) {
+		t.Error("two blocks naming different public keys are the same block")
+	}
+	if sameBatch(&base, &withdrawn) {
+		t.Error("an opted-in block and a withdrawn one are the same block")
+	}
+	if sameBatch(&base, &absent) {
+		t.Error("a block carrying the opt-in fact and one that carries none are the same block")
+	}
+}
+
+// sealKeyFact is a key fact for a test config: a throwaway 2048-bit RSA public
+// key generated here -- public by construction and nobody's (Convention 2) --
+// and the version line `fugaro update` writes beside it.
+func sealKeyFact(t *testing.T) (version, publicKey string) {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	version = "projects/" + initProject + "/locations/us-central1/keyRings/fugaro-batch/cryptoKeys/seal-key/cryptoKeyVersions/1"
+	return version, string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+}
+
+// indentLines prefixes every non-blank line, so a PEM lands in the block scalar
+// at the indentation the key fact's `public_key` field carries.
+func indentLines(s, prefix string) string {
+	var b strings.Builder
+	for _, line := range strings.SplitAfter(s, "\n") {
+		if strings.TrimSpace(line) == "" {
+			b.WriteString(line)
+			continue
+		}
+		b.WriteString(prefix + line)
+	}
+	return b.String()
 }
 
 // TestComputeStageRerunRecordsNothing: a second --provision-batch over an

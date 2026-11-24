@@ -45,7 +45,7 @@ func TestProjectSecretCoverageProjectCopyIsNotMissing(t *testing.T) {
 // and the fix names the project-wide command -- the bare one, since D2 made
 // project scope the default store (`--project-wide` is a synonym) -- never a
 // repository copy, which would then win forever over the project's (the
-// silent precedence flip, design docs/design/project-secrets.md §5).
+// silent precedence flip, design docs/project-secrets/spec.md §5).
 func TestProjectSecretCoverageDisabledProjectVersionIsMissing(t *testing.T) {
 	ctx := context.Background()
 	f := newCloud(t)

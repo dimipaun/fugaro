@@ -39,8 +39,8 @@
 #     exists today, and a claim with no path behind it is a claim the page cannot back.
 version: 1
 as_of:
-  cli: v0.26.1
-  console: v0.124.0
+  cli: v0.28.0
+  console: v0.125.0
 never_say:
   - "any model"
   - "via MCP"
@@ -94,7 +94,7 @@ groups:
         status: supported
         edition: subscription
         note: "The console runs on top of the CLI and inherits its identity; there is no separate console login."
-        evidence: "docs/design/desktop-console.md"
+        evidence: "docs/desktop-console/spec.md"
   - id: mobile
     title: "Mobile app"
     rows:
@@ -120,7 +120,7 @@ groups:
         status: roadmap
         edition: core
         note: "No Codex code exists; it is a non-goal of the multi-model design."
-        evidence: "docs/design/m10-multi-model.md"
+        evidence: "docs/m10-multi-model/spec.md"
       - name: "Others"
         status: not-planned
         edition: core
@@ -157,7 +157,7 @@ groups:
         status: roadmap
         edition: core
         note: "The token name is reserved in the OAuth-token design; no code."
-        evidence: "docs/design/project-named-oauth-tokens.md"
+        evidence: "docs/project-named-oauth-tokens/spec.md"
       - name: "Vertex AI"
         status: supported
         edition: core
@@ -264,7 +264,7 @@ groups:
         status: supported
         edition: core
         note: "The CLI and the console; there is no separate Fugaro login."
-        evidence: "docs/design/desktop-console.md"
+        evidence: "docs/desktop-console/spec.md"
       - name: "Google identity with email or domain allowlists"
         status: supported
         edition: core
@@ -283,7 +283,7 @@ groups:
         status: coming-soon
         edition: core
         note: "The three roles the CLI, console and docs name; enforcement is design only."
-        evidence: "docs/design/roles.md"
+        evidence: "docs/roles/spec.md"
       - name: "Device management (CLI)"
         status: supported
         edition: core

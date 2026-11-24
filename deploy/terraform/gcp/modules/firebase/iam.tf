@@ -146,12 +146,67 @@ locals {
 # The viewers are deliberately not among them: this is the grant that would
 # let a viewer mint the identity of anyone in the project, which is F44's
 # problem and the reason roles.md §4 forbids it.
+#
+# It is behind var.people_minter (launcher-does-not-mint plan task LM11,
+# D3121), and the switch is ON: the row is exactly what this module has always
+# planned, so an installation taking this change plans nothing new. What turns
+# it off is `fugaro update`, in the one plan that removes the row once the
+# credentials service has proved it signs as this signer (LM14, R8) — the
+# removes-the-row half of ask 1, which takes the way to mint an identity off
+# every launcher and operator.
 resource "google_service_account_iam_member" "minter" {
-  for_each = local.people
+  for_each = var.people_minter ? local.people : toset([])
 
   service_account_id = google_service_account.signer.name
   role               = google_project_iam_custom_role.token_minter.name
   member             = each.value
+}
+
+# The issuer's own row (launcher-does-not-mint plan task LM11; D3121, F7, F8):
+# the credentials service's account, which mints a run's identity once the
+# people's row above is gone. It is the ONE row this design adds, and the row
+# that makes a launcher's own credentials unable to produce a run's token: no
+# launcher, operator or group holds it, and a launch asks the service instead
+# (internal/credsvc's launcher class). What it costs is stated where it is
+# decided and not softened here: iam.serviceAccounts.signJwt signs ANY claim
+# set for ANY uid as the account it is on, so the service becomes the identity
+# that mints every run's and every launcher's token — the honest size of the
+# amendment to `.claude/rules/credentials-service.md`'s sentence on this
+# account's grants (F7, F8), and a single point of every launch.
+#
+# Why the account and the role are written out rather than read off the two
+# resources beside them. `google_service_account.signer.name` and
+# `google_project_iam_custom_role.token_minter.name` are COMPUTED, so a grant
+# written with them reaches a plan as an unknown string: a principal and a
+# role no review screen can read. iam.serviceAccounts.signJwt on an account IS
+# that account (orchestrator.tf calls it the widest grant in the design's
+# table), so that is the one row of this file whose signer may never be an
+# unknown. The refusal that shape needs is not in the tree yet: the cover's
+# fugaroTokenMinter cell admits people, the resident orchestrator and the
+# mobile service, and `issuerMinterGrant` — the rule beside `mobileMinterGrant`,
+# which holds the devices' row to this run's own signer — is the one LM13 adds
+# to name the account THIS row may be on. Until it lands, this row is one the
+# tables warn about and apply (D1545: a tripwire, not a fence), and what holds
+# its spelling to the signer and the role it stands for is deploy/terraform's
+# TestIssuerMinterIsOneSpelling. The account is spelled the way this module
+# creates it (google_service_account.signer's account_id,
+# var.names.signer_account_id) and the role is the ID this file declares
+# (role_id, var.names.minter_role_id): a literal of the plan, held to both
+# resources by that test, which is what a literal costs and what keeps the plan
+# readable.
+#
+# It is created exactly when an account is named (var.issuer_account, empty
+# until the update that passes the credentials service's own account): a row
+# naming nobody is a row IAM refuses, and an installation whose issuer is not
+# named yet is one whose runs are still minted the old way.
+resource "google_service_account_iam_member" "issuer_minter" {
+  count = var.issuer_account == "" ? 0 : 1
+
+  service_account_id = "projects/${var.project}/serviceAccounts/${var.names.signer_account_id}@${var.project}.iam.gserviceaccount.com"
+  role               = "projects/${var.project}/roles/fugaroTokenMinter"
+  member             = "serviceAccount:${var.issuer_account}"
+
+  depends_on = [google_service_account.signer, google_project_iam_custom_role.token_minter]
 }
 
 # ... and read the database (fugaro watch, budget show).

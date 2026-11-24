@@ -320,6 +320,10 @@ func TestDocsWorkspacesNamesWhatItDesigns(t *testing.T) {
 		"**The rollup becomes a reconciliation alarm**",
 		"**The overshoot is bounded by the reservation, and the bound is stated.**",
 		"**A settle that fails refuses**",
+		// The exception the rule above needs: the rule is about the answers the
+		// service still holds, and a streamed one has already reached the run.
+		"**Except where the answer is already the run's**",
+		"the reservation stands until it ages out (`budget.WorkspaceReservationTTL`)",
 		"**The service's second grant, on each member's runs bucket, is gone**",
 		"**What that read reaches, stated node by node, and what the write would have reached**",
 		"`config/caps/global`",

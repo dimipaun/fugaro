@@ -171,10 +171,27 @@ func TestNamesAlphabetical(t *testing.T) {
 			t.Errorf("refusal = %v, want the repeated name refused", err)
 		}
 	})
+	t.Run("the alphabet starts again after Z", func(t *testing.T) {
+		if _, err := parseFixture(rewrite(t, "names: [Badger, Camel, Dolphin]", "names: [Badger, Camel, Zebra, Aardvark]")); err != nil {
+			t.Errorf("a name starting the alphabet again after a Z name was refused: %v", err)
+		}
+	})
+	t.Run("starting again before Z", func(t *testing.T) {
+		_, err := parseFixture(rewrite(t, "names: [Badger, Camel, Dolphin]", "names: [Badger, Camel, Aardvark]"))
+		if err == nil || !strings.Contains(err.Error(), "not in alphabetical order") {
+			t.Errorf("refusal = %v, want a restart before Z refused", err)
+		}
+	})
+	t.Run("a name repeated in a later cycle", func(t *testing.T) {
+		_, err := parseFixture(rewrite(t, "names: [Badger, Camel, Dolphin]", "names: [Badger, Camel, Zebra, Badger]"))
+		if err == nil || !strings.Contains(err.Error(), "twice") {
+			t.Errorf("refusal = %v, want the repeated name refused", err)
+		}
+	})
 	t.Run("the shipped file", func(t *testing.T) {
 		for _, s := range shipped(t).Streams {
 			for i := 1; i < len(s.Names); i++ {
-				if s.Names[i] <= s.Names[i-1] {
+				if s.Names[i] <= s.Names[i-1] && s.Names[i-1][0] != 'Z' {
 					t.Errorf("the %s stream's names are %v: %q is not after %q, and the list is the order the names are spent in",
 						s.Name, s.Names, s.Names[i], s.Names[i-1])
 				}

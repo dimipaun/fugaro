@@ -437,7 +437,7 @@ than when it was written: nothing else in the tree will ever take those two entr
 - **A user who never installs the plugin at user scope gets no skills in an interactive session**, where
   today a committed pin gives them to anyone who trusts the folder. The nudge is the answer, and it is a
   sentence in a skill — not a boundary. An agent that ignores its skill's first instruction is not
-  stopped by anything here, which is the same honesty `docs/design/upgrade.md` states about its own
+  stopped by anything here, which is the same honesty `docs/upgrade/spec.md` states about its own
   three-command rule.
 - **`--local`'s removal takes away a mode some notes use.** A document that says `fugaro upgrade --local`
   becomes `fugaro update` (or `fugaro doctor --offline` where it was asking a question), and the census in
@@ -511,7 +511,7 @@ make the one command true for this reader, and both are U8:
    plugin stage to just after `installation`** (`init_stages.go:170`) — a smaller diff, and it is not the
    recommendation: a plugin stage that returns needs-you would then end the run *before* the images,
    secrets and repository work the owner's own run does today, and the stage order is what the plan view
-   and `docs/design/upgrade.md`'s step list show every reader. **The cost of the recommendation**: the
+   and `docs/upgrade/spec.md`'s step list show every reader. **The cost of the recommendation**: the
    loop's "nothing after it runs" gains one exception, and the marker's rule has to stay true by hand —
    a marked stage reads no cloud and writes nothing outside the machine.
 2. **D955 — the user-scope install stops asking about the repository.** The plugin stage consults the

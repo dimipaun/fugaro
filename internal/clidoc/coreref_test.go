@@ -4,7 +4,7 @@ package main
 //
 // website/content/cli-reference.md is generated from the *tagged* command tree
 // by `go run ./ee/clidoc`, because one binary ships and the page describes that
-// binary (design docs/design/ee-boundary-moves.md §9). The core cannot render
+// binary (design docs/ee-reorg/boundary-moves.md §9). The core cannot render
 // that tree -- the registrations live under ee/, and nothing outside ee/ may
 // import them -- so the whole-file check lives with the tagged generator
 // (ee/clidoc/cliref_test.go's TestCliReferenceIsCurrent) and this is the

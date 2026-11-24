@@ -23,7 +23,7 @@ import (
 
 // This file is the retirement: the one flow in fugaro that deletes a cloud
 // resource fugaro itself created and that Terraform can no longer delete
-// (docs/design/config-transitions.md §3.2, §3.3, §4.2).
+// (docs/config-transitions/spec.md §3.2, §3.3, §4.2).
 //
 // It is a destructive flow and it is written to be read as one. Three rules
 // hold everywhere below, and every guard the design names is kept:

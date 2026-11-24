@@ -1,7 +1,7 @@
 # Every name and member arrives from fugaro update's terraform.tfvars.json.
 # The validation blocks check shapes only; nothing here derives a name. The
 # module is the Batch backend's installation-level provisioning (design
-# docs/design/compute-backend.md §3.2, §3.7, §8.1 task 6): the two APIs, the
+# docs/compute-backend/spec.md §3.2, §3.7, §8.1 task 6): the two APIs, the
 # service accounts and their IAM, the NAT the no-external-IP VMs egress
 # through, and the preloaded boot image the runs start from.
 

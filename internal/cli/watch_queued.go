@@ -26,7 +26,7 @@ import (
 
 // `fugaro watch` shows queued runs (launched, or about to be, but with no
 // registry entry yet) from the same runs bucket ls reads (design
-// docs/design/watch-queued.md): never the backend, and never a new object.
+// docs/watch-queued/spec.md): never the backend, and never a new object.
 // Only someone who can read the runs bucket (a launcher or an operator)
 // sees them; a plain Firebase Viewer always gets the one-line "queued runs
 // unavailable" note instead (gcp-setup.md "the runs bucket's Viewer

@@ -210,7 +210,7 @@ func TestInstallationScopeIsTodaysBehaviour(t *testing.T) {
 // was.
 func TestARouteTheScopeDoesNotServeIsRefused(t *testing.T) {
 	t.Run("a scope that serves nothing refuses every route", func(t *testing.T) {
-		s := newSvcWith(t, func(_ *svc, cfg *Config) { cfg.Resolver = StubScopeResolver() })
+		s := newSvcWith(t, func(_ *svc, cfg *Config) { cfg.Resolver = unservedResolver{} })
 		for _, path := range []string{MessagesPath, SignPath, VerifyPath, BitbucketProxyPrefix + "acme/aurora.git/info/refs"} {
 			resp, body := s.postRaw(t, http.MethodPost, path, func(r *http.Request) {
 				r.Header.Set("Authorization", "Bearer "+s.jobToken())
@@ -225,8 +225,8 @@ func TestARouteTheScopeDoesNotServeIsRefused(t *testing.T) {
 				t.Errorf("POST %s is refused with %q, want %q", path, e.Error, ErrorUnverifiedJobIdentity)
 			}
 		}
-		// The stub scope verified no caller, so the refusal is the service's own
-		// and writes no audit line: the rule is about a refusal taken with an
+		// This scope verified no caller, so the refusal is the service's own and
+		// writes no audit line: the rule is about a refusal taken with an
 		// identity in hand (audit.go).
 		if lines := s.auditLines(t); len(lines) != 0 {
 			t.Errorf("a refusal written with no verified caller wrote %d audit lines: %v", len(lines), lines)
@@ -336,6 +336,38 @@ func TestAScopeThatAcceptsNoSlipRefusesOne(t *testing.T) {
 	resp2, body2 := s.call(t, callBody("ws1-no-slip-absent"))
 	if resp2.StatusCode != http.StatusOK {
 		t.Fatalf("a slip-less call is answered %d: %s", resp2.StatusCode, body2)
+	}
+
+	// And the fence covers the WORKSPACE's own two headers (F13): a call that
+	// presents the slip of the other deployment — the one a person's run holds
+	// — is refused here for the same reason and with the same sentence, so a
+	// run can never have one service read a slip the other granted and serve
+	// the credential it names.
+	saw := len(s.up.Seen())
+	for _, tc := range []struct {
+		name  string
+		value string
+	}{
+		{"a workspace slip id", creds.PersonSlipHeader},
+		{"a workspace claim secret", creds.PersonSlipClaimHeader},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, body := s.callPath(t, MessagesPath, callBody("ws1-person-slip"), func(r *http.Request) {
+				r.Header.Set(tc.value, "a-workspace-slip-this-service-did-not-grant")
+			})
+			if resp.StatusCode != StatusUnverified {
+				t.Fatalf("a call presenting %s to an installation's service = %d, want %d: %s", tc.name, resp.StatusCode, StatusUnverified, body)
+			}
+			e := refusal(t, resp.StatusCode, body)
+			if e.Error != ErrorUnverifiedRunIdentity {
+				t.Errorf("the refusal is %q, want %q", e.Error, ErrorUnverifiedRunIdentity)
+			} else if !strings.Contains(e.Message, "carries no slip") {
+				t.Errorf("the refusal's sentence is %q, want the one that says a call to this service carries no slip", e.Message)
+			}
+			if got := len(s.up.Seen()); got != saw {
+				t.Errorf("the upstream saw %d calls, want the %d it had seen: the call was refused before any handler", got, saw)
+			}
+		})
 	}
 }
 
@@ -572,7 +604,7 @@ func TestTheCraftsNeverWidenTheScopesPool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the resolver refused a call of its own run: %v", err)
 	}
-	cands, _, skipped, err := s.server.candidates(withScope(ctx, sc), sc.Caller(), testRepo, s.policy.shared, b)
+	cands, _, _, skipped, err := s.server.candidates(withScope(ctx, sc), sc.Caller(), testRepo, s.policy.shared, b)
 	if err != nil {
 		t.Fatalf("candidates: %v", err)
 	}
@@ -742,6 +774,27 @@ func (r faultResolver) Resolve(ctx context.Context, req *http.Request) (Scope, e
 	id := sc.Caller()
 	return nil, &ScopeFault{What: r.fault.What, Err: r.fault.Err, Caller: &id}
 }
+
+// unservedResolver is a deployment whose resolver serves no route and verifies
+// nobody: the answer the front door's own gate is asked about, and the one the
+// stub this package shipped while WS1 and WS2 were being written used to give
+// (I1 deletes the stub and keeps the case).
+//
+// It is deliberately not a scope of its own. The gate may ask a scope it
+// refuses two things and no more — whether it serves this route, and who the
+// caller is — so the Scope embedded below is nil on purpose: a gate that reached
+// a reader of a scope that serves nothing panics here rather than passing.
+type unservedResolver struct{}
+
+func (unservedResolver) Resolve(context.Context, *http.Request) (Scope, error) {
+	return unservedScope{}, nil
+}
+
+type unservedScope struct{ Scope }
+
+func (unservedScope) Serves(string) bool { return false }
+
+func (unservedScope) Caller() Identity { return Identity{} }
 
 // resolverWithout is an installation's resolver answering its scope with one of
 // eight answers changed, and the two groups are the two things a scope can

@@ -63,12 +63,13 @@ var (
 	// granted these two" instead of a bare HTTP 403.
 	//
 	// Granting them is the owner's, on the App's settings page and accepted
-	// on each installation: Check 231 of docs/gcp-live-checklist.md, which is
-	// B2 of docs/forge-authorship-images/implementation-plan.md — a gated
-	// task that also widens tokenPermissions and RequiredPermissions. E8's own
-	// plan says "config: none", so this call reports the gap rather than
-	// pre-empting that task and making every installation's doctor report a
-	// missing permission for a read nothing calls yet.
+	// on each installation: Check 231 of docs/gcp-live-checklist.md, still NOT
+	// RUN. The widening it waits on is unwritten: B2 of
+	// docs/forge-authorship-images/implementation-plan.md planned it, and B2 was
+	// closed as superseded by E8 on 2026-11-21 with E8's own plan saying
+	// "config: none". So this call reports the gap rather than widening
+	// tokenPermissions and RequiredPermissions on E8's behalf and making every
+	// installation's doctor report a missing permission no plan has granted.
 	ErrChecksPermission = errors.New("this credential does not hold the permission the host needs to report a commit's checks")
 	// ErrMintNotApplicable is a provider's own answer to where its ready and
 	// merge calls take their credential from: the provider's own installation

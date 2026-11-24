@@ -1025,11 +1025,12 @@ auth_record() { # auth_record SLUG OUT
 # step_switch: each of the two repositories is ON the credentials-service switch,
 # which is three facts and the reason the block reads them together (B2.3,
 # D2071): the parameter is handed to its jobs at all (the URL in a job's env,
-# which is the one thing a launcher writes and nothing else can), the budget
-# mode is not `off` (the mode is read at `update` and a job that holds no mount
-# is only reachable while it is not off), and the service the URL names is the
-# installation's own. A repository off the switch would make every row below a
-# row about nothing.
+# which is the one thing a launcher writes and nothing else can), the published
+# budget mode is one the gateway exists in — `observe` or `enforce` (off is not
+# a mode any more, D3009: the mode is read at `update` and a job that holds no
+# mount is only reachable while the gateway exists) — and the service the URL
+# names is the installation's own. A repository off the switch would make every
+# row below a row about nothing.
 step_switch() {
   local listed=$SCRATCH/jobs.json got n
   gcloud run jobs list --project="$P" --region="$L" --format=json >"$listed" 2>"$SCRATCH/jobs.err" || {
@@ -1054,9 +1055,10 @@ step_switch() {
     say "${repo}: $(field_of urls "$got") of ${n} job(s) carry the credentials service's URL"
   done
   # The read's own status and never `|| true`: a failed read leaves an empty
-  # document, the reader answers `mode=None` for it, and `None` is not `off` —
-  # so the row below would PASS D2071's third leg on a mode nobody read. A
-  # switch row read off a policy this check never got is a PASS on nothing, and
+  # document, the reader answers `mode=None` for it, and `None` is not a mode
+  # the gateway exists in — so the row below would PASS D2071's third leg on a
+  # mode nobody read. A switch row read off a policy this check never got is a
+  # PASS on nothing, and
   # the rows below it (and, in the flip mode, the two throwaway runs) would be
   # rows about a state nobody settled. check420.sh and check421.sh treat this
   # same call as one their rows could not be measured from; check191.sh as a
@@ -1065,31 +1067,26 @@ step_switch() {
   got=$(fugaro project policy show --project fugaro --json 2>"$SCRATCH/policy.err") || rc=$?
   printf '%s\n' "$got" >"$SCRATCH/policy.json"
   if [ "$rc" -ne 0 ]; then
-    unmeasured switch "both repositories are on the switch (a job of each carries FUGARO_CREDENTIALS_SERVICE_URL), and 'fugaro project policy show --project fugaro --json' exited ${rc}: $(last_lines "$SCRATCH/policy.err"). D2071's third leg — the published budget mode, which 'update' reads and which must not be off — is NOT measured by that read, and the runs below are not launched on a switch nobody settled. Read the policy yourself ('fugaro project policy show --project fugaro --json') and run this check again"
+    unmeasured switch "both repositories are on the switch (a job of each carries FUGARO_CREDENTIALS_SERVICE_URL), and 'fugaro project policy show --project fugaro --json' exited ${rc}: $(last_lines "$SCRATCH/policy.err"). D2071's third leg — the published budget mode, which 'update' reads and which must be one the gateway exists in, observe or enforce — is NOT measured by that read, and the runs below are not launched on a switch nobody settled. Read the policy yourself ('fugaro project policy show --project fugaro --json') and run this check again"
     SWITCH_STOP=yes
     return 0
   fi
   mode=$(reader policy "$SCRATCH/policy.json" "$REPO_ONE" | sed -n 's/^mode=//p')
   case "$mode" in
-  off)
-    fact switch FAIL "the installation's budget mode is 'off' and both repositories are switched: the mode is read at 'fugaro update', and a switched repository whose mode is off is one whose jobs hold no mount and whose runs have nothing to be served from. Raise it ('fugaro project policy publish', observe or enforce) and run this check again"
-    SWITCH_STOP=yes
-    return 0
-    ;;
   # A mode the document does not carry: the reader answers `None` for a policy
   # with no budget block — an installation with nothing published, a document
   # read from a `show` that printed no policy — and `-` for an empty one. A row
-  # that read either as "not off" would PASS this leg on a value nobody
-  # published, which is the same mistake as the failed read above, one step
-  # further in. Every other value that reaches here IS a published mode, and it
-  # is `off` above that the row is about.
+  # that read either as a mode would PASS this leg on a value nobody published,
+  # which is the same mistake as the failed read above, one step further in.
+  # Every other value that reaches here IS a published mode, and a mode that is
+  # not observe or enforce never gets this far: the CLI refuses to load it.
   None|-|'')
-    unmeasured switch "both repositories are on the switch (a job of each carries FUGARO_CREDENTIALS_SERVICE_URL), and the policy 'fugaro project policy show --project fugaro --json' printed carries no budget mode (the mode reads '${mode:-<none>}'), so D2071's third leg — the mode 'update' reads, which must not be off — is NOT measured: a mode the document does not carry is not a mode that is not off. Publish the project policy so it carries one ('fugaro project policy publish', observe or enforce) and run this check again"
+    unmeasured switch "both repositories are on the switch (a job of each carries FUGARO_CREDENTIALS_SERVICE_URL), and the policy 'fugaro project policy show --project fugaro --json' printed carries no budget mode (the mode reads '${mode:-<none>}'), so D2071's third leg — the mode 'update' reads, which must be one the gateway exists in, observe or enforce — is NOT measured: a mode the document does not carry is neither. Publish the project policy so it carries one ('fugaro project policy publish', observe or enforce) and run this check again"
     SWITCH_STOP=yes
     return 0
     ;;
   esac
-  fact switch PASS "both repositories are on the switch (a job of each carries FUGARO_CREDENTIALS_SERVICE_URL) and the published budget mode is '${mode:-<none>}' (D2071: the mode is what 'update' reads, and the switch needs one that is not off)"
+  fact switch PASS "both repositories are on the switch (a job of each carries FUGARO_CREDENTIALS_SERVICE_URL) and the published budget mode is '${mode:-<none>}' (D2071: the mode is what 'update' reads, and the gateway exists in observe and enforce)"
 }
 
 # step_records: the auth each repository's own record names, and the assignment
@@ -1545,9 +1542,10 @@ step_inflight() {
 # ---------------------------------------------------------------------- 193
 run_193() {
   step_switch
-  # A switch that is off, unread, or on an installation whose budget mode is off
-  # is a state this check cannot read a served run out of, and each run it
-  # launches commits to a sandbox repository and opens a pull request: the rows
+  # A switch that is off, unread, or on an installation whose budget mode is not
+  # one the gateway exists in is a state this check cannot read a served run out
+  # of, and each run it launches commits to a sandbox repository and opens a
+  # pull request: the rows
   # below read `not reached` rather than costing two of them.
   [ -z "$SWITCH_STOP" ] || return 0
   step_records
@@ -1589,7 +1587,7 @@ run_193_flip() {
 print_plan() {
   say "dry run: NOTHING below was run, and no tool was called at all — not gcloud, not fugaro, not curl. A real run would first check that this is the fugaro-dev installation (fugaro doctor --project fugaro --all, and that fugaro version is not a development build), then read the installation's Realtime Database URL out of the local config, then:"
   say "  [network] gcloud run jobs list --project=${P} --region=${L} --format=json  (a job of each repository, matched by its own FUGARO_REMOTE, that carries FUGARO_CREDENTIALS_SERVICE_URL)"
-  say "  [network] fugaro project policy show --project fugaro --json  (the budget mode must not be off, D2071)"
+  say "  [network] fugaro project policy show --project fugaro --json  (the budget mode must be one the gateway exists in, observe or enforce, D2071)"
   say "  [network, read only] gcloud auth print-access-token, then GET ${RTDB:-<budget.rtdb_url>}/creds/repoauth/<slug>.json for each repository — the slug being the repository's own task slug ('<readable>-<16 hex>'), which the check reads off its jobs' 'fugaro_repo' label and never spells out of the repository's name — the record 'fugaro update --repo' writes; READ, never written, the check narrows no record"
   if [ "$MODE" = flip ]; then
     say "  [network] gcloud run jobs list … (each job's container: no ANTHROPIC_API_KEY, no CLAUDE_CODE_OAUTH_TOKEN, no env fed from anthropic-api-key or claude-oauth-token*)"

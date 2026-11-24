@@ -69,7 +69,7 @@ type ModelProvider struct {
 	// AllowDataTo are the repositories (owner/name) whose code may be sent
 	// here. Absent (the zero value) or ["*"] mean every repository (owner
 	// ruling, 2026-10-13 and its follow-ups, design
-	// docs/design/project-secrets.md §3a); a list written with no
+	// docs/project-secrets/spec.md §3a); a list written with no
 	// repositories in it -- [] , or the key with nothing under it at all --
 	// is refused by ValidateModelProviders as ambiguous.
 	AllowDataTo []string `yaml:"allow_data_to,omitempty" json:"allow_data_to,omitempty"`
@@ -191,7 +191,7 @@ func (p ModelProvider) Matches(model string) bool {
 // AllowsData reports whether repo (owner/name) may send code to p: true for
 // every repository when AllowDataTo is nil (the key is absent -- never
 // written at all), or when it contains the literal entry "*" (owner ruling,
-// 2026-10-13, and its follow-ups, design docs/design/project-secrets.md
+// 2026-10-13, and its follow-ups, design docs/project-secrets/spec.md
 // §3a). A list written with no repositories in it -- [] , or a null key,
 // which the unmarshaller marks with allowDataToWritten -- is refused by
 // ValidateModelProviders before this method is ever called on valid config.
@@ -681,7 +681,7 @@ var ModelSecretsServedValues = []string{ModelSecretServedAll, ModelSecretServedA
 //     the RUNNER hands straight to Anthropic and the run's gateway never sees,
 //     so the service serves no call of theirs and the mount stays — with it
 //     the job account's accessor (B0's ruling of 2026-11-04,
-//     docs/design/mixed-credentials.md §11; WorkflowSpec.StageAccount is the
+//     docs/mixed-credentials/spec.md §11; WorkflowSpec.StageAccount is the
 //     fact, and it is api-key's alone: under oauth the account's token is the
 //     run's own credential and IS served).
 //   - none — a repository the switch holds off: nothing, so every mount stays.
@@ -853,6 +853,108 @@ func BuildServesClass(class string) bool {
 	return slices.Contains(BuildServedSecretClasses, class)
 }
 
+// SharedJobClassModel names the one class of secret the credentials service
+// serves to a SHARED project job: D145's first family — the model credentials,
+// which are identified by the variable each is mounted as and not by a logical
+// name (IsModelSecretEnv).
+const SharedJobClassModel = "model"
+
+// SharedJobServedClasses are the classes of secret the credentials service
+// SERVES to a SHARED project job (B5.7, the S5 flip; D505, D2078): a class
+// listed here is served, so a switched profile's shared job mounts none of that
+// class's credentials (projectJobMounts, projectAccountMount, and the module's
+// own two clauses) and its account keeps no secretAccessor on them
+// (modules/project/sa.tf) — and the profile's every account job gives up its
+// own account's token with them, which is the mount the class is mostly made of
+// on this side.
+//
+// G22's shape, one list at a time, exactly as VaultFetchedSecretClasses and
+// BuildServedSecretClasses are: it says nothing about ServiceHeldSecretNames
+// (the GitHub App's key, whose drop is its own flip, #907), ProxiedGitSecretNames
+// (a proxied repository's git credential), ServiceServedAuths or the two lists
+// above, and which profiles are switched at all is
+// projectJobServesTheCredentialsService' answer, read where the drop happens.
+//
+// The carrying class is the model credentials, and it is the WHOLE class on a
+// shared job: a profile's repositories are served as a profile rather than one
+// by one (B5.1, B5.2), so there is no per-repository auth arm here as
+// ModelSecretServedAll/Anthropic/None is for a repository's own job, and no
+// stage-account exception either — the stages that reach Anthropic on their own
+// job's token are a repository's, and a shared job mounts the token of the
+// ACCOUNT its name carries, which is the run's own credential on every stage.
+//
+// The App key is deliberately not here, and that is G22 rather than an
+// oversight: it is ServiceHeldSecretNames' own name, its drop is that list's
+// flip (#907, C2.3) and a job that gave it up before the runner stopped reading
+// it is a job whose every GitHub run dies in the credential. Filling this list
+// moves no accessor and no mount of the App key — TestFilledSharedJobListKeepsTheAppKey
+// pins exactly that.
+//
+// The class is filled whole and the drop is not: IsSharedJobServedModelEnv
+// holds a provider's key back, because nothing serves one yet — see that
+// function, and the keys-through-service plan's KS16 for the drop that follows
+// there.
+//
+// The class list is a list rather than a boolean so a class can be added or
+// held back one at a time, and it carries the model class since the flip's
+// second commit filled it — the state this release, 0.27.0, ships, one release
+// after the address did (B5.2). The inert state is the empty list: with it
+// empty neither side drops anything, and the tree plans and runs what the
+// release before this one did (D147's "with it off nothing changes"). Filled,
+// what it moves is the model mounts of one profile's jobs — every job of it,
+// one per (profile, provider, account) — and only for a profile whose own
+// switch is on, so a profile the switch holds off keeps every mount and every
+// accessor, before and after (G9, D147).
+//
+// The order is what keeps the fill from stranding a run: the profile's
+// repositories are admitted to the service (B5.1) and its jobs' accounts may
+// invoke it (B5.2, the release the address landed in), which is G17's rule that
+// no mount is lost before the service serves that credential to the image the
+// job runs. The owner gave the go on 2026-11-18 with the other three flips of
+// the chain, waiving B5.6's PASS and moving Check 197's owner-run checks to
+// after the flip (B5.8); removing the class is the owner's go read backwards.
+//
+// Terraform cannot ask Go, so the same class is a literal in
+// modules/project/sa.tf's shared_job_served_secret_classes, held to this list
+// by deploy/terraform's TestSharedJobServedClassesMatchTheModule, and the two
+// are filled in one commit.
+var SharedJobServedClasses = []string{SharedJobClassModel}
+
+// SharedJobServesClass reports whether the credentials service serves the
+// secrets of this class to a shared project job. A class this release does not
+// know answers false, which is the same answer an empty list gives: the job
+// mounts the credential and its account keeps the accessor.
+func SharedJobServesClass(class string) bool {
+	return slices.Contains(SharedJobServedClasses, class)
+}
+
+// IsSharedJobServedModelEnv reports whether a shared job's variable carries a
+// mount the credentials service serves that job: one of the two NAMED model
+// credentials (ModelSecretEnvs — the Claude account token and the Anthropic
+// key), while the class list above names "model".
+//
+// A provider's key is deliberately not dropped here, although it is a model
+// credential everywhere else (IsModelSecretEnv): nothing serves one yet. The
+// runner reads a provider's key from its own environment (internal/runner's
+// ProviderCredential) and the gateway sends a routed call to the provider with
+// the job's own key, so a shared job that gave the key up would have no model
+// credential at all for a provider-model run. Serving one is the work of the
+// keys-through-service plan: KS5 wires the provider route through the service,
+// and the drop follows in KS16, whose acceptance, red step and file list are
+// written for exactly this state ("the shared job still mounts the profile's
+// provider key", docs/keys-through-service/implementation-plan.md, which names
+// this flip as what it waits on). Till then a shared job keeps every provider
+// key it mounted, and its account keeps the accessor that reads it (R6, D1634).
+//
+// It is the one predicate both halves of the deployer's drop read
+// (projectJobMounts for the profile's own mounts, projectAccountMount for the
+// account's token), and the module's own per-mount local is its mirror: the two
+// have to answer the same per variable, because a mount the job's account keeps
+// no accessor on is a job Cloud Run refuses to create (C2.3).
+func IsSharedJobServedModelEnv(env string) bool {
+	return SharedJobServesClass(SharedJobClassModel) && slices.Contains(ModelSecretEnvs, env)
+}
+
 // ProxiedGitSecretNames are the git credential logical names a job gives up
 // once its repository is a PROXIED one: the published node's block admits the
 // repository with `proxy: true`, the credentials service fetches the
@@ -999,7 +1101,7 @@ func conventionUsable(name string) bool {
 // a configured provider's key. It is both halves of what
 // infra.SecretMounts refuses when a job is built, in the same order, because
 // the two names are two different collisions — and the second is the one
-// docs/design/project-secrets.md §3 names as needing exactly this pair of
+// docs/project-secrets/spec.md §3 names as needing exactly this pair of
 // documents, "a provider's .Secret is an operator-chosen, open-ended string
 // config.Validate ... has no way to know about — only SecretMounts, which has
 // both w.Secrets and lc.Providers in scope, can catch that one":
@@ -1098,7 +1200,7 @@ var ClaudePatterns = []string{"claude-*", "anthropic/*"}
 // CheckClaudeClaim is the rule for a route entry that overlaps a Claude
 // pattern: the problem, or "" when the entry is the one shape a route may
 // claim -- an explicit "anthropic/<id>", and nothing else under that prefix
-// (design docs/design/mixed-credentials.md §4, owner ruling 2026-10-14). The
+// (design docs/mixed-credentials/spec.md §4, owner ruling 2026-10-14). The
 // claim is the entry itself, so this is the whole permission: no separate
 // list, no switch. A wildcard ("anthropic/*"), a bare "claude-*" spelling, a
 // ":" variant, a "[1m]" spelling or a name the provider-ID grammar rejects is
@@ -1184,7 +1286,7 @@ func checkProviderURL(s string) error {
 // credentials and leaves this function's answer unchanged: an api-key run
 // may declare one stage-scoped Claude OAuth account for its review and
 // adversarial stages, beside the provider key its coder runs on
-// (docs/design/mixed-credentials.md §11). That account is not a provider's
+// (docs/mixed-credentials/spec.md §11). That account is not a provider's
 // key and it sits under the value this function admits before it reads
 // anything, so every refusal below still stands for the auth values it names.
 //
@@ -1338,7 +1440,7 @@ func claimed(providers map[string]ModelProvider, model string) bool {
 // the route, exactly as the gateway decides it (internal/gateway/route.go): a
 // model no allowed provider claims goes direct. So a Claude pin, or a model no
 // route serves, needs the key, and a repository whose pins are all served by
-// providers it may send code to does not (design docs/design/project-centric.md
+// providers it may send code to does not (design docs/project-centric/spec.md
 // §6.1). repo "" is an unknown repository, which no provider may serve.
 //
 // A review level's own model is a pin of its own (agent.levels.lN.model,

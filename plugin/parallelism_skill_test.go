@@ -2,7 +2,7 @@ package plugin_test
 
 // The parallelism skill's graph example, held to the CLI's own schema (console
 // v2 plan V2.8.1, design D25/D28 and the graph section of
-// docs/design/desktop-console-v2.md).
+// docs/desktop-console-v2/spec.md).
 //
 // The skill tells a planner what to write into `<plan>.graph.json`, and
 // `fugaro plan graph` refuses a document it does not understand rather than

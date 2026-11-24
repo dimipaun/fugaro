@@ -24,15 +24,14 @@ const (
 	FromRepo Layer = "repo"
 	// FromArea is a rigor.areas rule the run's paths matched.
 	FromArea Layer = "area"
-	// FromRequest is the run's own request, which may raise and never lower
-	// (D6): fugaro run --mode, carried in the task and handed to Resolve as
-	// Request.Level by the runner. A first run that passes no flag sends none,
-	// so a record says this when a launch asked for more than its
-	// configuration did — and a --pr follow-up's launcher writes the request
-	// itself, so a record of one says this for the level that follow-up keeps
-	// from its pull request when it passed no flag at all (T5.2, D6, F14:
-	// followUpRigor, internal/cli). The record cannot tell the two apart, and
-	// neither can this layer's word.
+	// FromRequest is the run's own request: fugaro run --mode, carried in the
+	// task and handed to Resolve as Request.Level by the runner. A first run
+	// that passes no flag sends none, so a record says this when a launch
+	// asked for a level of its own — and a --pr follow-up's launcher writes
+	// the request itself, so a record of one says this for the level that
+	// follow-up keeps from its pull request when it passed no flag at all
+	// (T5.2, D6, F14: followUpRigor, internal/cli). The record cannot tell the
+	// two apart, and neither can this layer's word.
 	FromRequest Layer = "request"
 	// FromReached is the level this run had already reached at an earlier
 	// moment, kept because a level never falls within a run (D22). It is not
@@ -58,7 +57,8 @@ var Layers = []Layer{FromArea, FromRepo, FromProject, FromDefault, FromRequest, 
 func KnownLayer(l Layer) bool { return slices.Contains(Layers, l) }
 
 // Config is the rigor configuration of one run: the two layers that may set
-// a level (D20), each with its own area list.
+// a level (D20), each with its own area list, and the project layer's map of
+// one level per repository of the project.
 //
 // The two area lists are kept apart rather than merged into one because both
 // are in effect at once (D20c): a repository rule and a project rule that
@@ -70,6 +70,15 @@ type Config struct {
 	Project Rigor
 	// ProjectAreas is defaults.rigor.areas; nil sets none.
 	ProjectAreas []Area
+	// ProjectRepos is defaults.rigor.repos: the level the project layer sets
+	// for one repository of the project, by the "owner/name" a run's own
+	// repo carries. nil sets none. It is the project's own answer for a
+	// whole repository, beside the areas that answer for parts of them, and
+	// it is keyed by a repository name the layer cannot check against the
+	// published allow_repos — the shape is checked where the layer is
+	// written, and `fugaro doctor` warns about a name the policy does not
+	// admit.
+	ProjectRepos map[string]Rigor
 	// Repo is fugaro.yaml's rigor.default; "" sets none.
 	Repo Rigor
 	// RepoAreas is fugaro.yaml's rigor.areas; nil sets none.
@@ -81,19 +90,20 @@ type Config struct {
 }
 
 // Configured reports whether a repository opted in to rigor levels: its
-// fugaro.yaml has a rigor: block, or the project layer sets a rigor default
-// or area. An unconfigured repository still resolves Default (D19), which the
-// budget fraction reads, but it files no backlog item (the owner's ruling of
-// 2026-10-24): filing is opt-in, so a repository that never named a level
-// gains no docs/backlog/ it did not ask for.
+// fugaro.yaml has a rigor: block, or the project layer sets a rigor default,
+// area or per-repository level. An unconfigured repository still resolves
+// Default (D19), which the budget fraction reads, but it files no backlog item
+// (the owner's ruling of 2026-10-24): filing is opt-in, so a repository that
+// never named a level gains no docs/backlog/ it did not ask for.
 func (c Config) Configured() bool {
-	return c.RepoBlock || c.Repo != "" || len(c.RepoAreas) > 0 || c.Project != "" || len(c.ProjectAreas) > 0
+	return c.RepoBlock || c.Repo != "" || len(c.RepoAreas) > 0 || c.Project != "" || len(c.ProjectAreas) > 0 || len(c.ProjectRepos) > 0
 }
 
-// Areas is every rule in effect, the project layer's first. The order
-// carries no meaning: Select orders the matches by level, and D23 is what
-// makes that enough (a project rule and a repository rule that both match
-// resolve to one answer whatever order they were read in).
+// Areas is every rule in effect, the project layer's first. It is the list a
+// record is read from (D24) and not what decides a level: Resolve reads the
+// two lists apart, at the two ranks D20 as amended gives them, so a
+// repository's own rule may lower a project area's level. What Select adds
+// here is the dedupe and the order a record carries.
 func (c Config) Areas() []Area {
 	if len(c.ProjectAreas) == 0 {
 		return c.RepoAreas
@@ -110,8 +120,10 @@ func (c Config) Areas() []Area {
 // what its configuration says.
 type Request struct {
 	// Level is the level the run's own task asks for (fugaro run --mode); ""
-	// asks for none. It may raise and never lower (D6, F14): the fail-closed
-	// direction, kept for every run kind.
+	// asks for none. It is the narrowest rank of all: it settles the level
+	// whether it raises or lowers one a layer set (the owner's LD3), and only
+	// a floor, which is outside every layer, holds it back (LF5) — unless it
+	// was carried rather than asked for (Carried below).
 	//
 	// Hotfix is the one level the request takes a run to outright rather than
 	// by outranking what the layers resolved (Rigor.PerRun): it is off the
@@ -124,17 +136,34 @@ type Request struct {
 	//
 	// The floors stay outside every layer and are applied over this
 	// resolution, not by it, and they are keyed by the level the run is at
-	// (config.LevelInputs.Floor). A request raises a level and never lowers a
-	// floor (D8, LF5), so moving the level may not move the run off a floor: a
-	// run a PerRun request takes to hotfix is held to hotfix's row *and* to
-	// the row the layers resolved for it, which is what LayersRigor answers and
-	// what the two readers of a floor hand to
-	// policy.Effective.ReviewFloorFor. An owner who wants hotfix runs floored
-	// says so for hotfix as well: `fugaro rigor floor set hotfix l2,l3`. What
-	// no level reaches is the security-sensitive diff's own escalation, which
-	// turns the adversarial pass on for the run whatever level it is at
-	// (internal/runner/plan.go).
+	// (config.LevelInputs.Floor). A request lowers a level and never a floor
+	// (D8, LF5), so a run the request took below the layers is held to the row
+	// the layers resolved for it, which is what LayersRigor answers and what
+	// the two readers of a floor hand to policy.Effective.ReviewFloorFor. A run
+	// the request took to hotfix is held to hotfix's own row and to nothing
+	// beside it (the owner's ruling of 2026-11-20), and an owner who wants
+	// hotfix runs floored says so for hotfix: `fugaro rigor floor set hotfix
+	// l2,l3`. What no level reaches is the security-sensitive diff's own
+	// escalation, which turns the adversarial pass on for the run whatever
+	// level it is at (internal/runner/plan.go).
 	Level Rigor
+	// Carried marks a Level the launch took from a record rather than one its
+	// caller typed on this run: the level a --pr follow-up keeps from its pull
+	// request, and the parent run's own answer a task filed from one carries
+	// (internal/task's Spec.RigorCarried, T5.2, F14, D1844). A carried level
+	// may raise the level the layers resolve and never lower it (LF5 §3a), so
+	// a record older or weaker than the configuration it is read under leaves
+	// the run where the configuration put it: the carry is a starting point
+	// and not a request this run's caller made.
+	Carried bool
+	// Repo is the repository the run is for, in the "owner/name" spelling a
+	// task's own Repo carries; "" for a caller that has none. It is what the
+	// project layer's members are matched on (LD4) and what
+	// Config.ProjectRepos is read by, so a resolution for a run that names
+	// no repository falls back to what the layers set for the project and
+	// for the paths alone — which is what every caller resolved before
+	// members and the per-repository map existed.
+	Repo string
 	// Paths are the paths the run touches, matched against the area rules
 	// (D20c): the paths a caller declared at bootstrap, and the run's own
 	// measured diff at finalize (D22).
@@ -148,23 +177,37 @@ type Request struct {
 
 // LayersRigor is the level the layers alone resolve for req — the run's own
 // request left out of the resolution — given the answer an earlier moment gave
-// for it (reached, "" for the first), and "" when the request asks for no level
-// a run takes whole (Rigor.PerRun). For every other request the layers' answer
-// is the level the run is at, since a request may only raise it, and there is
-// no second row for a reader of the floors to hold beside the first.
+// for it (reached, "" for the first), and "" when the layers' answer is not
+// one a reader of the floors has to hold: the request did not take the run
+// below them, or it took the run to a level that reads a floor row of its own
+// (Rigor.PerRun, hotfix).
 //
-// It is the level whose floor holds beside the requested one's (D8, LF5: a
-// request raises a level and never lowers a floor), which is why the two
-// readers of an owner's floor — internal/runner's resolveLevelsForcing and the
-// launcher's copy in internal/cli — ask it and hand the answer to
+// It answers exactly when the request lowered the level below what the layers
+// set, because that is the one shape in which a floor written for the layers'
+// level could be left behind (D8, LF5: a request lowers a default and never a
+// floor). A request that raised the level, or that asked for the level the
+// layers already set, leaves the run at or above them, and there is no second
+// row to read. A request a launch carried (Request.Carried) never lowers at
+// all, so it leaves no row behind either. Hotfix is the owner's ruling of
+// 2026-11-20: a hotfix run is held to hotfix's own row and nothing beside it,
+// so a floor written for pro or critical does not reach it, and the answer
+// here is none.
+//
+// It is the level whose floor holds beside the requested one's, which is why
+// the two readers of an owner's floor — internal/runner's resolveLevelsForcing
+// and the launcher's copy in internal/cli — ask it and hand the answer to
 // policy.Effective.ReviewFloorFor. reached folds the way Resolve's own
 // Reached does, so a caller asking at each of D22's moments keeps the
 // strictest answer its layers have given.
 func LayersRigor(cfg Config, req Request, reached Rigor) Rigor {
-	if !req.Level.PerRun() {
+	if !Known(req.Level) || req.Level.PerRun() || req.Carried {
 		return ""
 	}
-	return Resolve(cfg, Request{Paths: req.Paths, Reached: reached}).Level
+	layers := Resolve(cfg, Request{Repo: req.Repo, Paths: req.Paths, Reached: reached}).Level
+	if req.Level.Rank() < layers.Rank() {
+		return layers
+	}
+	return ""
 }
 
 // Resolved is one resolution (D24): the level, the layer that won, and every
@@ -183,48 +226,79 @@ type Resolved struct {
 	Areas []Area
 }
 
-// Resolve is the one resolver (D6): the narrowest layer that sets the level
-// wins — an area the run's paths match, then the repository's own value,
-// then the project default, then Fugaro's own default — and on top of that
-// the run's own request may raise and never lower it, except for Hotfix,
-// which the request takes whole (Rigor.PerRun).
+// Resolve is the one resolver (D6, D20 as amended, LD3): the order is stated
+// once, here, weakest first —
 //
-// A narrower layer may set a *lower* level than a wider one (D21): the order
-// is a precedence, not an only-tightens rule — that is what a default is
-// for, and a project that wants a floor says so with a floor rather than
-// with a default. The only-tightens rule the levels do share belongs to the
-// floors, which are outside every layer and which this function does not
-// carry.
+//	Fugaro's own default (D19: Pro)
+//	the project layer's default
+//	a project area rule the run's repository and paths match
+//	the project layer's own entry for the run's repository
+//	the repository's own default (its fugaro.yaml)
+//	a rule of the repository's own areas
+//	the run's own request
 //
-// It is the only place any of that is decided: no other package orders
-// levels, and this function is what docs/project-layer.md §2's one rule
-// states for a reader.
+// — and the narrowest rank of them that sets a level wins. Every rank replaces
+// what the ones above it said, in either direction (D21): the order is a
+// precedence and not an only-tightens rule, which is what a default is for.
+// Within one rank the strictest rule that matched decides (D23), and the two
+// area lists are read at their own ranks rather than as one set — which is
+// what lets a repository's own rule lower a project area's level for its own
+// paths (D20 as amended), and what keeps a project area from outranking the
+// project's answer for a whole repository (LD4, LF4).
+//
+// Two things sit outside the order and are applied over it rather than by it:
+// the owner's floors, which no layer may lower — the run's own request
+// included, which is why the level the layers alone resolve is kept beside a
+// request that went below them (LayersRigor) — and D22's reached value, which
+// holds the level a run has already been at.
+//
+// The request is the strongest rank for every level a run may ask for
+// (Rigor.PerRun says which those are), and it is so for a level its caller
+// typed on this run. A level a launch carried from a record instead
+// (Request.Carried: a --pr follow-up's, a filed task's) may only raise the
+// level the layers resolved and never lower it (LF5 §3a, T5.2, D1844), so a
+// carried level the layers already reach or outrank leaves the rank that set
+// it named. A request that names no level, or the very level the order already
+// resolved, leaves that rank named too: the narrower reason for the same
+// answer.
+//
+// It is the only place any of that is decided: no other package orders levels,
+// and this function is what docs/project-layer.md §2's one rule states for a
+// reader.
 func Resolve(cfg Config, req Request) Resolved {
 	level, from := Default, FromDefault
 	if Known(cfg.Project) {
 		level, from = cfg.Project, FromProject
 	}
+	if matched := Select(cfg.ProjectAreas, req.Repo, req.Paths); len(matched) > 0 {
+		level, from = Strictest(RigorsOf(matched)...), FromArea
+	}
+	// The project layer's own answer for one repository of the project sits
+	// above its areas, which answer for parts of repositories, and below the
+	// repository's own file, which answers for itself (LD4, LF4).
+	if req.Repo != "" {
+		if lvl, ok := cfg.ProjectRepos[req.Repo]; ok && Known(lvl) {
+			level, from = lvl, FromProject
+		}
+	}
 	if Known(cfg.Repo) {
 		level, from = cfg.Repo, FromRepo
 	}
-	var areas []Area
-	if matched := Select(cfg.Areas(), req.Paths); len(matched) > 0 {
-		// An area replaces the value below it whole, in either direction
-		// (D21), and the rules are kept whatever the level turns out to be
-		// (D23: the record lists every area that matched).
+	if matched := Select(cfg.RepoAreas, req.Repo, req.Paths); len(matched) > 0 {
 		level, from = Strictest(RigorsOf(matched)...), FromArea
-		areas = matched
 	}
-	if Known(req.Level) && (req.Level.PerRun() || req.Level.Rank() > level.Rank()) {
-		// Raise-only for every on-axis level: a request equal to the resolved
-		// level leaves the layer that already set it named, since that is the
-		// narrower answer. Hotfix is not raised to and not compared at all —
-		// it is taken whole, so a request for it decides whether the layers
-		// resolved pro or critical (Rigor.PerRun).
+	// A carried request is the one that may only raise: it decides when it is
+	// a level a request takes whole (Rigor.PerRun) or when it outranks what
+	// the layers resolved, and is left out when they reach or outrank it.
+	if Known(req.Level) && req.Level != level &&
+		(req.Level.PerRun() || !req.Carried || req.Level.Rank() > level.Rank()) {
 		level, from = req.Level, FromRequest
 	}
 	if Known(req.Reached) && req.Reached.Rank() > level.Rank() {
 		level, from = req.Reached, FromReached
 	}
-	return Resolved{Level: level, From: from, Areas: areas}
+	// The rules are kept whatever the level turns out to be (D23: the record
+	// lists every area that matched), in the one order the record reads them
+	// in.
+	return Resolved{Level: level, From: from, Areas: Select(cfg.Areas(), req.Repo, req.Paths)}
 }

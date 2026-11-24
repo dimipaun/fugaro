@@ -1,21 +1,21 @@
 # OpenRouter snapshots for the generator
 
-These are saved responses from OpenRouter's public API, read on **2026-10-23**.
+These are saved responses from OpenRouter's public API, read on **2026-11-21**.
 They are the generator's input on the test path: `gencatalog`'s tests and
 `TestGeneratedFileMatchesSnapshots` regenerate `catalog.json` from them, so the
 checked-in file can be reproduced without the network, and a diff of these
 files shows what a regeneration would change.
 
-They are **trimmed**, not full responses. The live API returned 468 models in
-`/api/v1/models` and 1060 endpoint rows over 376 models in
+They are **trimmed**, not full responses. The live API returned 476 models in
+`/api/v1/models` and 936 endpoint rows over 366 models in
 `/api/v1/endpoints/zdr` on that date; the snapshots keep only what the
 generator reads:
 
 | file | kept | of what |
 |---|---|---|
-| `models.json` | the 5 allowlisted models | 468 models |
-| `models_<id>_endpoints.json` | every endpoint row of those 5 models | one file per model, of 468 |
-| `zdr.json` | the 81 rows whose `model_id` is one of the 5 | 1060 rows over 376 models |
+| `models.json` | the 5 allowlisted models | 476 models |
+| `models_<id>_endpoints.json` | every endpoint row of those 5 models | one file per model, of 476 |
+| `zdr.json` | the 74 rows whose `model_id` is one of the 5 | 936 rows over 366 models |
 
 Within a row, only the fields the generator reads are kept. **This list is
 machine-read**: `TestSnapshotsAreTrimmedToTheDocumentedFields` strips the
@@ -51,7 +51,7 @@ The generator takes a directory of snapshots instead of the network, so a
 regeneration from these files needs no credentials and no API key:
 
 ```
-scripts/gen-price-catalog.sh -from internal/pricing/catalog/testdata/openrouter -date 2026-10-23
+scripts/gen-price-catalog.sh -from internal/pricing/catalog/testdata/openrouter -date 2026-11-21
 ```
 
 `-date` is explicit because the generator never reads the wall clock: the same

@@ -432,7 +432,7 @@ func TestWebsiteInstallFactsMatchTheRepository(t *testing.T) {
 
 	// What the file must never carry: a download URL (the site links the
 	// Releases page) and the marketplace commands, which live in
-	// docs/design/upgrade.md and docs/design/m11-setup-and-skills.md rather
+	// docs/upgrade/spec.md and docs/m11-setup-and-skills/spec.md rather
 	// than in README.md, so the plugin path leaves them out instead of
 	// widening this test's source list to internal design documents.
 	for _, banned := range []string{

@@ -94,10 +94,28 @@ const (
 	// F21: this one's registry owner names a family, and the family does not
 	// write it, so the reason says which family and what it writes instead.
 	reasonBatchSecrets = "a key of the local config's `batch` block naming the Secret Manager secrets a batch job mounts: the `secrets` family writes secret expiry and rotation and no key of this block, so a batch installation states it as the backend is provisioned"
+	// R2 and R16: the opt-in fact is an operator's own, and the two commands
+	// that write it are the selection of the backend and the explicit opt-out —
+	// C1 lands the fact and BR18 and BR20 land the writers, which then register
+	// them and are why this label is not a claim that no command ever will.
+	reasonBatchOptIn = "a key of the local config's `batch` block stating whether the installation has opted in to Batch: an operator writes it by selecting the backend and by opting out (R2, R16), and no settings command writes it"
+	// R13: the key fact is `fugaro update`'s alone, and the reason says why that
+	// is a rule and not a column — a key fact a settings command could write is
+	// a substituted public key, and a substituted one hands its holder every
+	// seal key wrapped to it.
+	reasonBatchSealKey = "a key of the local config's `batch` block: `fugaro update` writes it from the compute root's own output (R13), and no settings command writes it, because a substituted public key would open every seal key wrapped to it"
 	reasonBuild        = "a key of the local config's `build` block: no command writes one, and a person states where the installation's images are built"
 	reasonPrice        = "a key of the local config's `compute_prices` block: no command writes one, and it overrides a region's Compute Engine list prices"
 
 	reasonTerraform = "`fugaro setup` writes it from its flags as it applies the installation's root: a Terraform input of the installation"
+
+	// LD4's two shapes (docs/rigor-modes, plan LV3.1): what a project area is
+	// made of, and the level of one repository the project names by itself. The
+	// project layer is published from a file a person writes, and no command
+	// names a member or a per-repository entry — `fugaro rigor set --area`
+	// writes a rule's glob, name and level, which are the rows beside these.
+	reasonRigorMembers = "a member of a project layer's rigor area: the layer is published from a file a person writes, and no command names the repositories and paths an area is made of"
+	reasonRigorRepos   = "the project layer's per-repository rigor levels: the layer is published from a file a person writes, and a repository's own level is its rigor.default, which `fugaro rigor set --layer repo` writes"
 
 	// The locations record: `fugaro setup` and `fugaro update` write the
 	// block from what the cloud holds, after the last apply (LP14 of
@@ -105,6 +123,13 @@ const (
 	// thing that exists is read, never chosen (R5, D3088). So the row is the
 	// converge's bookkeeping and not an editor's.
 	reasonLocations = "`fugaro setup` and `fugaro update` write the record from what the cloud holds as they converge the installation: where one of the installation's located things is"
+
+	// RT2's block (docs/model-credentials-routing/, D3182): the project's
+	// routing table. `fugaro update`'s migration writes a project's first table
+	// (MG2) and `fugaro routing set` edits one after that (RT5), which then
+	// registers these patterns and is why this label is not a claim that no
+	// command ever will.
+	reasonModelRouting = "a key of the local config's `model_routing` block: `fugaro update`'s migration writes a project's first table (MG2) and `fugaro routing set` edits one after that (RT5), and no settings command writes an entry"
 )
 
 // settingsLabelRows is the table: every row this file answers for. It is
@@ -121,6 +146,9 @@ var settingsLabelRows = []settingsLabelRow{
 	{"batch.socket_gid", labelFile, reasonBatch},
 	{"batch.subnetwork", labelFile, reasonBatch},
 	{"batch.task_timeout", labelFile, reasonBatch},
+	{"batch.opt_in", labelFile, reasonBatchOptIn},
+	{"batch.seal_key.public_key", labelFile, reasonBatchSealKey},
+	{"batch.seal_key.version", labelFile, reasonBatchSealKey},
 	{"bucket_url", labelFile, "the bucket address a run's task is written to, stated in the local config: `fugaro setup` writes runs_bucket and no command writes this one"},
 	{"build.machine_type", labelFile, reasonBuild},
 	{"build.region", labelFile, reasonBuild},
@@ -158,10 +186,17 @@ var settingsLabelRows = []settingsLabelRow{
 	{"locations.log_bucket", labelPlumbing, reasonLocations},
 	{"locations.rtdb", labelPlumbing, reasonLocations},
 	{"locations.secrets", labelPlumbing, reasonLocations},
+	{"model_routing.*.chain.*.admit", labelPlumbing, reasonModelRouting},
+	{"model_routing.*.chain.*.kind", labelPlumbing, reasonModelRouting},
+	{"model_routing.*.chain.*.model", labelPlumbing, reasonModelRouting},
+	{"model_routing.*.chain.*.pool", labelPlumbing, reasonModelRouting},
+	{"model_routing.*.chain.*.provider", labelPlumbing, reasonModelRouting},
+	{"model_routing.*.match", labelPlumbing, reasonModelRouting},
 	{"name", labelPlumbing, "`fugaro setup` writes it when it creates the file: the installation's project name, which is never renamed"},
 	{"region", labelPlumbing, "`fugaro setup` writes it when it creates the file: the installation's GCP region"},
 	{"registry", labelFile, "the legacy shared registry's address, stated in the local config: no command writes it"},
 	{"registry_host", labelPlumbing, "`fugaro setup` writes it from the apply's outputs as it installs: the registry's host"},
+	{"rigor.repos", labelFile, reasonRigorRepos},
 	{"rigor_pending", labelPlumbing, "`fugaro setup` writes the wizard's rigor answer into it, and the layer stage clears it once the project layer carries the mode: the answer a run that stopped before its Layer stage left for the next one"},
 	{"runs_bucket", labelPlumbing, "`fugaro setup` writes it from the apply's outputs as it installs: the bucket a run's task is written to"},
 	{"scheduler_region", labelPlumbing, "`fugaro setup` writes it as it installs: the region the installation's Cloud Scheduler job runs in"},

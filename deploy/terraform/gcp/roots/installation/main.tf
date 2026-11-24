@@ -33,6 +33,7 @@ module "installation" {
   state_bucket              = var.state_bucket
   names                     = var.names
   log_bucket_description    = var.log_bucket_description
+  log_bucket_location       = var.log_bucket_location
   bucket_lifecycle          = var.bucket_lifecycle
   enable_vertex             = var.enable_vertex
   manage_apis               = var.manage_apis
@@ -60,9 +61,10 @@ module "installation" {
   project_secrets           = var.project_secrets
   managed_deployer_scoped   = var.managed_deployer_scoped
   orchestrator              = var.orchestrator
+  people_minter             = var.people_minter
 }
 
-# The shared project jobs (design docs/design/project-centric.md §4.1): one
+# The shared project jobs (design docs/project-centric/spec.md §4.1): one
 # Cloud Run job and one job service account per (profile, provider,
 # account), from the local config's profiles. The key is absent for an
 # installation that names no profile, and the module then creates nothing.

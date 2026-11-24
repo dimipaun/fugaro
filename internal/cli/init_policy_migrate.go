@@ -887,6 +887,28 @@ func (m *policyMigration) refuseRunsInFlight(ctx context.Context, yes bool, answ
 // node: the migration, the publish, or both in one write.
 func (m *policyMigration) writesNode() bool { return m.moved != nil || m.pub != nil }
 
+// raisesVersion is whether the write this run holds moves the published node's
+// version: the walk across versions does, and the step that runs at a version
+// rather than across two — AB8a's rewrite of a budget mode the vocabulary
+// dropped — does not. The two credentials rules around the write are what ask
+// it (credentialsMoveHeld, credentialsResolveBeforeRaise): they exist because
+// the node's version and the process reading it move together, and a node
+// rewritten at the version it already has asks no service to be replaced for
+// it, which is the whole of what D3025 buys (no bump, no image rebuilt).
+func (m *policyMigration) raisesVersion() bool {
+	return m.moved != nil && m.from != projectpolicy.Version
+}
+
+// sameVersion is whether this run's write is the one step that runs at a
+// version rather than across two (projectpolicy.Migrate's own answer for a node
+// at this version whose budget mode says the word the vocabulary dropped). It
+// is read off the node's version and not off the changes, because the version
+// is what the write is: a node already at this version can only change through
+// that step, so the number and the write are one fact.
+func (m *policyMigration) sameVersion() bool {
+	return m.moved != nil && m.from == projectpolicy.Version
+}
+
 // admitsNoRepository is whether the document this publish would write admits no
 // repository at all, which is the node that stops every run of the project
 // before it starts. It is asked of the built publish and not of the local
@@ -927,12 +949,16 @@ func (m *policyMigration) doneDetail() string {
 	switch {
 	case m.firstPublish:
 		return "published the project's first policy node, carrying what the local config states"
+	case m.sameVersion() && m.pub != nil:
+		return "rewrote the published policy node in place, with what the local config states"
 	case m.moved != nil && m.pub != nil:
 		return fmt.Sprintf("migrated the published policy from version %d to %d in place, with what the local config states", m.from, projectpolicy.Version)
 	case m.pub != nil:
 		return "published the node the local config states"
 	case m.generations != nil:
 		return fmt.Sprintf("re-seeded %s from the published policy node", m.path)
+	case m.sameVersion():
+		return fmt.Sprintf("rewrote the published policy node in place: %s", m.changes[0].Changed)
 	case m.writesNode():
 		return fmt.Sprintf("migrated the published policy from version %d to %d in place", m.from, projectpolicy.Version)
 	case len(m.importCloneURLs) > 0:
@@ -1060,6 +1086,7 @@ const (
 	bitbucketTokenKey    = "bitbucket_token"
 	bitbucketAPIRootsKey = "bitbucket_api_roots"
 	verifierAccountsKey  = "verifier_accounts"
+	mobileKey            = "mobile"
 	policyMigrationWhat  = "this rewrites the published policy node in place"
 	policyPublishWhat    = "this rewrites the published policy node in place, from your local config"
 	policyReseedWhat     = "this re-seeds your local config from the published policy node"
@@ -1145,6 +1172,27 @@ func withDerivedMembers(raw []byte, lc *localcfg.Config, identities map[string]s
 			return raw, userErr("carrying %s's %s verifier list into the policy: %v", lc.Name, verifierAccountsKey, err)
 		}
 	}
+	// The mobile block is carried for the reason the policy stage compares it:
+	// a node this migration writes without one reads as mobile disabled and is
+	// then a difference the very next run publishes, so a migrated node states
+	// the defaults a publish would (MobileForPublish).
+	if !carries(mobileKey) {
+		var err error
+		if node, err = patchPolicyJSON(node, mobileKey, projectpolicy.DefaultMobile()); err != nil {
+			return raw, userErr("carrying the policy's %s block into %s: %v", mobileKey, lc.Name, err)
+		}
+	}
+	// The app's crash-report switch travels beside the block for the same
+	// reason (D731, D738): a node this migration writes without the key is a
+	// difference the very next run publishes, and until that run the switch
+	// reads off (MobileCrashReportsOn), so a migrated node states the default a
+	// publish would (MobileCrashReportsForPublish).
+	if !carries(projectpolicy.MobileCrashReportsKey) {
+		var err error
+		if node, err = patchPolicyJSON(node, projectpolicy.MobileCrashReportsKey, projectpolicy.MobileCrashReportsForPublish(nil)); err != nil {
+			return raw, userErr("carrying the policy's %s key into %s: %v", projectpolicy.MobileCrashReportsKey, lc.Name, err)
+		}
+	}
 	return node, nil
 }
 
@@ -1198,10 +1246,24 @@ func (m *policyMigration) writeName() string {
 // than worded a second time here).
 func (m *policyMigration) print(w io.Writer) {
 	if m.moved != nil {
-		fmt.Fprintf(w, "%s: published (version %d) and rewritten in place as version %d; nothing is removed\n",
-			projectpolicy.PathShared(), m.from, projectpolicy.Version)
+		if m.sameVersion() {
+			// The step runs at the version rather than across two (AB8a): the
+			// node's number does not move, so a line naming two versions would
+			// be a diff of a change that is not there.
+			fmt.Fprintf(w, "%s: rewritten in place at version %d; nothing is removed\n",
+				projectpolicy.PathShared(), m.from)
+		} else {
+			fmt.Fprintf(w, "%s: published (version %d) and rewritten in place as version %d; nothing is removed\n",
+				projectpolicy.PathShared(), m.from, projectpolicy.Version)
+		}
 		for _, ch := range m.changes {
-			fmt.Fprintf(w, "  %d to %d: %s\n", ch.From, ch.To, ch.Changed)
+			head := fmt.Sprintf("%d to %d: %s", ch.From, ch.To, ch.Changed)
+			if ch.From == ch.To {
+				// The step that runs at a version says what it changed without
+				// the two numbers that would read as a version move (AB8a).
+				head = ch.Changed
+			}
+			fmt.Fprintf(w, "  %s\n", head)
 			kept := make([]string, 0, len(ch.Kept))
 			for _, name := range ch.Kept {
 				if !slices.Contains(m.derived, name) {
@@ -1394,7 +1456,7 @@ func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error)
 	// Bitbucket-proxied call until a later update succeeds
 	// (init_stages.go's credentialsMoveHeld has the whole argument).
 	var held string
-	if m != nil && m.moved != nil {
+	if m != nil && m.raisesVersion() {
 		held = s.e.credentialsMoveHeld()
 	}
 	switch {
@@ -1425,6 +1487,12 @@ func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error)
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published policy node carries a clone_urls block this machine's config file does not: this run imports it into %s", m.path)}, nil
 	case m.moved == nil:
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the local config states what the published policy does not carry: %s", memberListText(m.drift))}, nil
+	}
+	if m.sameVersion() {
+		// The node's number does not move, so the line for a version the node
+		// is behind would say the version twice (AB8a). What this run does is
+		// the step, and the step's own sentence is the detail.
+		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published policy is version %d and this run rewrites it in place: %s", m.from, m.changes[0].Changed)}, nil
 	}
 	return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published policy is version %d and this Fugaro writes version %d", m.from, projectpolicy.Version)}, nil
 }
@@ -1477,6 +1545,10 @@ func (m *policyMigration) planDetail() string {
 		return fmt.Sprintf("import the published policy node's clone_urls block into %s, after your confirmation", m.path)
 	case m.moved == nil:
 		return "publish the node the local config states, after your confirmation"
+	case m.sameVersion() && m.pub == nil:
+		return "rewrite the published policy node in place, after your confirmation"
+	case m.sameVersion():
+		return "rewrite the published policy node in place and publish what the local config states, in one write, after your confirmation"
 	case m.pub == nil:
 		return fmt.Sprintf("migrate the published policy from version %d to %d in place, after your confirmation", m.from, projectpolicy.Version)
 	default:
@@ -1534,7 +1606,7 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 	// run cannot make fails the run with the node exactly where it was
 	// (credentialsResolveBeforeRaise; a run that replaces nothing at all never
 	// reaches this line, Check having held the stage back).
-	if m.moved != nil {
+	if m.raisesVersion() {
 		if err := s.e.credentialsResolveBeforeRaise(ctx); err != nil {
 			return initflow.Outcome{}, err
 		}
@@ -1612,9 +1684,9 @@ func (s *policyMigrateStage) inflightAnswer() inflightAnswer {
 // Verify reads the node back: a write that claims a version it did not land is
 // a policy this Fugaro would keep rewriting on every run.
 //
-// The version is not the whole of the answer. Migrate short-circuits on a node
-// already at this version (from == Version), so it never reaches the reader
-// gate it ends its walk with — and that gate judged the document the walk was
+// The version is not the whole of the answer. A node already at this version
+// whose one step changes nothing comes back byte for byte and is never judged
+// by the reader gate — and that gate judged the document the migration was
 // about to write, not the bytes the database now holds. Decode is that gate,
 // called here on what was read back: a node at this version that the current
 // reader refuses is a write that landed a policy no run of the project can
@@ -1643,6 +1715,12 @@ func (s *policyMigrateStage) Verify(ctx context.Context) error {
 		return err
 	}
 	if len(changes) > 0 {
+		if ch := changes[0]; ch.From == ch.To {
+			// The step that runs at a version rather than across two: the number
+			// a version-move refusal names would be the one the node already
+			// had, which reads as a node that converged when nothing landed.
+			return fmt.Errorf("the published policy was written but the migration's step at version %d is still owed for it, so the run would rewrite the node again", ch.From)
+		}
 		return fmt.Errorf("the published policy is still version %d", changes[0].From)
 	}
 	p, _, err := projectpolicy.Decode(raw)

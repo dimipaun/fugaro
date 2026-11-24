@@ -26,6 +26,7 @@
 // reaching into the shell.
 
 import type { TextClass } from '../../shared/sanitize'
+import type { GateAction } from '../gating'
 
 /**
  * MANAGE_GROUPS is the spec's section 5 grouping, in the order the Project tab
@@ -133,13 +134,64 @@ export interface OpenViewAction {
 }
 
 /**
- * ManageAction is what a kind offers beside a row. A **write** action -- a
- * console control that runs a command itself rather than copying it -- is added
- * by the task that admits it (MW1's `models add` window, MW2's `image add`),
- * together with its own review; the first pass has these two and nothing else, so
- * this union is the whole of the action vocabulary today.
+ * WriteField is one value a write action's form collects, before any child
+ * exists: the key the operation's own payload carries it under (`id`, `route`,
+ * `priceIn`), and the console's own label for the box. Every one of them is
+ * **text the operator types**, so there is no class here and nothing to
+ * sanitize: a value a document sent never reaches this shape, and `main` holds
+ * each of them to its own grammar before it builds an argv (`.claude/rules/
+ * console.md`: a new argument is security-sensitive, and the grammars are
+ * `ipc.ts`'s).
+ *
+ * `required` is what the form's own button is drawn on: a required box that is
+ * empty leaves the submit disabled, and an optional one that is empty sends no
+ * member at all rather than an empty string. It is a **pre-check for the
+ * button** and never the decision -- the CLI refuses what it refuses, and its
+ * sentence is what the operator reads (`confirm.ts`'s argument for R5 is the
+ * same one).
  */
-export type ManageAction = CopyCommandAction | OpenViewAction
+export interface WriteField {
+  readonly key: string
+  readonly label: string
+  readonly required: boolean
+}
+
+/**
+ * WriteAction is a write the console performs itself, and it is the one action
+ * that opens SU1's window. The task that admits a write adds one of these to its
+ * kind (MW1's `models add`, MW2's `image add`; the plan's MWR), together with its
+ * own review.
+ *
+ * **The action carries no command and no consequence**, unlike
+ * `CopyCommandAction`: the console runs this one, so the argv is main's, built
+ * from the values this form collected and frozen in the window instance that
+ * showed it (`src/main/modelsadd.ts`). A descriptor that spelled the line would
+ * be a second answer to what is spawned, and rule 11's promise is that the
+ * window shows the argv rather than a description of it.
+ *
+ * **`plan` is the operation the form submits to**, and it is the *plan* one
+ * (`models.add.plan`): the window the operator confirms is opened by main from
+ * the dry run's own document, and the write that follows is main's on the
+ * window's own yes -- a renderer cannot reach it. `gate` is the action RB4 gates
+ * it by, asked at drawing time, and `fields` is the form the values are typed
+ * into.
+ */
+export interface WriteAction {
+  readonly kind: 'write'
+  readonly plan: string
+  readonly label: string
+  readonly gate: GateAction
+  readonly fields: readonly WriteField[]
+}
+
+/**
+ * ManageAction is what a kind offers beside a row: a command to copy, a view to
+ * open, or a write the console performs behind SU1's window. A kind below the
+ * floor of a write's own CLI shows the Copy-command instead of the write, and
+ * that is the kind's own decision at the moment it is built -- the action it
+ * hands the shell is one or the other, never both.
+ */
+export type ManageAction = CopyCommandAction | OpenViewAction | WriteAction
 
 /**
  * ManageKind is one list the Manage section draws. `source` is the console

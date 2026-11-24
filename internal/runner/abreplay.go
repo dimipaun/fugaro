@@ -33,7 +33,7 @@ import (
 // into the ordinary loop:
 //
 //   - It is untrusted. Any launcher, and the champion's own job agent, can write
-//     that object (docs/design/bucket-iam.md §10 L3), so the arm reads it
+//     that object (docs/bucket-iam/spec.md §10 L3), so the arm reads it
 //     bounded at the size the runner stores one at, refuses the paths that would
 //     make it configuration of this run — a hook, an instruction file, a tool
 //     setting — and applies it with git apply, which runs no hook and no script.

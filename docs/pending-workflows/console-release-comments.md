@@ -1,4 +1,4 @@
-# `console-release.yml`: the comments the 2026-11-07 change invalidated
+# `console-release.yml`: the comments two changes invalidated
 
 **Status: staged, comment-only, not applied.** `.github/workflows/console-release.yml`
 and its byte-identical staged twin `docs/pending-workflows/console-release.yml`
@@ -8,6 +8,14 @@ job for the owner's approval click, and the applied file's first line still says
 owner removed the required reviewer on **2026-11-07**. This file holds the
 corrected comment text. **No executable line changes**, and the check below
 proves it.
+
+**Two more of this file's comments are stale for a change of 2026-11-22**
+(`#3566`): both `actions/setup-node` steps' comments say `console/package.json`'s
+`engines.node` is a field `test/unit/pinning.test.ts` keeps an exact pin, and the
+field is a **range** — `>=22.23.3 <23`, a floor and the next major as its
+ceiling — which that test's `enginesNodeRE` carves out of the exact-pin rule.
+They are replacements 7 and 8 below, the same pair `console-tests-comments.md`
+stages for its file's comment.
 
 It is a `.md` file rather than a `.yml` one (a `console-release-comments.yml`
 would be enumerated as a pending workflow and would break the byte-identity
@@ -44,12 +52,12 @@ git rm docs/pending-workflows/console-release-comments.md
 This fragment is named in that page's opening line, in its section `## The
 comment-only fragments`, and in the dated note at the top of the page, and that
 section writes the three edits out as exact text — including that the fragment
-applied **last**, whichever of the four it is, is the one that deletes the
+applied **last**, whichever of the six it is, is the one that deletes the
 section. Do them in the same commit: no test can see a dangling reference here, because the fragments are
 `.md` and neither `internal/cli`'s docs tests nor `website/test/readme.mjs`
 enumerates them.
 
-`docs/design/desktop-console.md` §9.4 and `docs/release.md` ("What fences a
+`docs/desktop-console/spec.md` §9.4 and `docs/release.md` ("What fences a
 release now") carry the same correction in prose, and the latter gives the one
 `gh api` call that restores the click.
 
@@ -200,3 +208,45 @@ release now") carry the same correction in prose, and the latter gives the one
       # was removed on 2026-11-07. The full history is why the checkout asks for
       # depth 0.
 ```
+
+## 7. The `release` job's setup-node comment
+
+**before**:
+
+```
+      # The Node version comes from console/package.json's `engines.node`, the
+      # field test/unit/pinning.test.ts keeps an exact pin. No step has held a
+      # secret yet. No `cache:`: a restored cache is written by other runs, and
+      # this job signs what it builds.
+```
+
+**after**:
+
+```
+      # The Node version comes from console/package.json's `engines.node`, the
+      # field test/unit/pinning.test.ts holds to a floor and the next major as
+      # its ceiling. No step has held a secret yet. No `cache:`: a restored
+      # cache is written by other runs, and this job signs what it builds.
+```
+
+## 8. The `linux` job's setup-node comment
+
+**before**:
+
+```
+      # The Node version comes from console/package.json's `engines.node`, the
+      # field the console's own pinning test keeps an exact pin.
+```
+
+**after**:
+
+```
+      # The Node version comes from console/package.json's `engines.node`, the
+      # field the console's own pinning test holds to a floor and the next major
+      # as its ceiling.
+```
+
+Both sentences keep their work and lose one claim: they say where the Node
+version comes from and why it is not written into the workflow a second time,
+and `actions/setup-node` still reads the field through `node-version-file` —
+only its shape changed, an exact version to a floor and a ceiling.

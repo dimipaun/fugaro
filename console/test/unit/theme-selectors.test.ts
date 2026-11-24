@@ -15,7 +15,7 @@
 // second copy of §2 in this file would be a list that drifts from the one a
 // reader checks, and the licence rule would then be enforced against the copy
 // rather than against the design. So the document is read from the repository
-// root (`docs/design/console-styling.md`), its §2 is taken whole, and every
+// root (`docs/console-styling/spec.md`), its §2 is taken whole, and every
 // backticked token in it is read: `div.console-rail-head` names the class
 // `console-rail-head`, `data-installation="chosen"` names the attribute
 // `data-installation`, and a token that is neither (`console/src/renderer/
@@ -64,7 +64,7 @@ const CONSOLE_ROOT = join(__dirname, '..', '..')
  * repository root. It is the one file this suite reads from outside the console,
  * and it is read because §2's tables **are** the licence: a copy of them here
  * would be a copy, and the copy is what would be enforced. */
-const DESIGN_DOCUMENT = join(CONSOLE_ROOT, '..', 'docs', 'design', 'console-styling.md')
+const DESIGN_DOCUMENT = join(CONSOLE_ROOT, '..', 'docs', 'console-styling', 'spec.md')
 
 /** INVENTORY_HEADING and NEXT_SECTION bound §2 in the design document. */
 const INVENTORY_HEADING = '## 2. Screen inventory'

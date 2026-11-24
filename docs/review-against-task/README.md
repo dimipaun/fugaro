@@ -1,6 +1,6 @@
 # Reviews check the pull request against its task
 
-**Status: plan only; nothing is implemented; no task approved.** This folder is documents only: it adds no code, no schema and no workflow, and outside it, it adds one row to [docs/status.md](../status.md) (a spec's row moves when its plan is written) and one sentence to [bucket-iam](../design/bucket-iam.md) §10 naming the residual the owner accepted (O3).
+**Status: plan only; nothing is implemented; no task approved.** This folder is documents only: it adds no code, no schema and no workflow, and outside it, it adds one row to [docs/status.md](../status.md) (a spec's row moves when its plan is written) and one sentence to [bucket-iam](../bucket-iam/spec.md) §10 naming the residual the owner accepted (O3).
 
 **Spec owner:** the owner, who agreed the spec in conversation on 2026-11-18 after finding that no review stage sees the task a pull request was written for. Every review stage is to check the change against its task by default; `--code-only` keeps today's diff-only review, and `--spec FILE` supplies a spec by hand.
 
@@ -17,4 +17,4 @@ Decisions **D2930 to D2939** (D2930 to D2935 used), checks **750 to 759** (750 u
 
 ## What waits on something external
 
-The owner's explicit go for every task (O1–O3 are answered: both amendments confirmed, the bucket residual accepted and documented in [bucket-iam](../design/bucket-iam.md) §10); and Check 750, owner-run after the release that carries RA10 (not a gate).
+The owner's explicit go for every task (O1–O3 are answered: both amendments confirmed, the bucket residual accepted and documented in [bucket-iam](../bucket-iam/spec.md) §10); and Check 750, owner-run after the release that carries RA10 (not a gate).

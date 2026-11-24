@@ -665,7 +665,7 @@ func TestReviewPRRange(t *testing.T) {
 	}
 }
 
-// --- mode: artifact (0.8.0, docs/design/artifact-runs.md §3) ---------------
+// --- mode: artifact (0.8.0, docs/artifact-runs/spec.md §3) ---------------
 //
 // The third Recipe.Mode: a run that renders files into the run's bucket and
 // opens no pull request. Parse takes only bytes, so nothing here knows where

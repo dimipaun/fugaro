@@ -11,7 +11,7 @@ import (
 
 // PutFile and create write through gocloud's WriteAll directly, so without
 // routing through blobx a GCS 403 would come back unclassified (gocloud
-// maps it to NotFound), not blobx.ErrForbidden (docs/design/bucket-iam.md
+// maps it to NotFound), not blobx.ErrForbidden (docs/bucket-iam/spec.md
 // §2.3).
 func TestWritesClassifyForbidden(t *testing.T) {
 	fake := gcpfake.NewGCS(t)

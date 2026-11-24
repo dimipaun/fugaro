@@ -30,7 +30,7 @@
 //     sentences a person acts on, and one of the CLI's fixes names
 //     `roles/run.invoker` -- which the free-text `sentence` class draws as
 //     `[redacted]`. So they go through `sanitizeRefusal`, the door the design
-//     keeps for a CLI sentence (`docs/design/desktop-console.md` §6.3, the door
+//     keeps for a CLI sentence (`docs/desktop-console/spec.md` §6.3, the door
 //     `degraded.ts`, `managed.ts`, `projects.ts` and `accountkeys.ts` all use),
 //     and the case below asserts a role name and a `fugaro creds set NAME` are
 //     drawn character for character. The sibling policy section (`policynotes.ts`,

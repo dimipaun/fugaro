@@ -28,11 +28,12 @@
 # every permission beyond that is one the design has not priced.
 #
 # The switch. `var.orchestrator` is null by default and this file creates
-# NOTHING when it is — an installation that has not opted in plans exactly what
-# it planned before this file existed, which is what makes the update that
-# carries this file a no-op for every installation that has not asked for a
-# resident orchestrator (docs/design/update-in-flight.md's row for the
-# installation step). It is credentials_service.tf's and intake.tf's shape,
+# NOTHING when it is — an installation that carries no block plans exactly what
+# it planned before this file existed. `fugaro update` writes the block for an
+# installation that can carry one (the owner's ruling of 2026-11-20), so the
+# block is the installation's record that the update ran, and the account holds
+# iam.serviceAccounts.signJwt on the budget signer from then on
+# (docs/design/update-in-flight.md's row for the installation step). It is credentials_service.tf's and intake.tf's shape,
 # one file over.
 #
 # The member string is WRITTEN OUT in every binding below rather than read off
@@ -57,10 +58,16 @@
 # update` applies the installation root BEFORE it applies Firebase. On an
 # installation that already exists the signer is there and the binding is
 # created; on an installation opting in on its very first apply the account
-# does not exist yet and this binding fails that apply. Nothing can opt in
-# today (the variable has no CLI writer, below), and the release that adds one
-# either orders the two steps or moves this binding into modules/firebase,
-# which is where the role it names is declared.
+# does not exist yet and this binding fails that apply. The writer orders the
+# two steps rather than this file: `fugaro update` writes var.orchestrator in
+# the credentials-service stage, which runs AFTER the Firebase root
+# (internal/cli's ensureOrchestratorBlock), and only for an installation whose
+# config records the Firebase backend — so the block reaches this root only
+# once the signer and its role exist, and an installation whose Firebase root
+# has never been applied has no budget block and no Firebase outputs either,
+# which is what the writer leaves it off for, with one printed line. The other way out
+# stays open: moving this binding into modules/firebase, where the role it
+# names is declared.
 #
 # What the account may never do is the design's section 6 and it is not
 # expressible as a comment here: no IAM (nothing this file creates carries
@@ -103,6 +110,15 @@ locals {
   # because the URI is composed from the service's own URL, and it is pinned in
   # internal/infra/tf's cover_test.go against the route the case accepts.
   orchestrator_tick_path = "/tick"
+
+  # The service's deterministic URL, <service>-<project number>.<region>.run.app,
+  # which Cloud Run answers on beside the `.uri` attribute's
+  # <service>-<hash>-<region code>.a.run.app form and accepts as an ID token's
+  # audience. The tick is written from this one rather than from `.uri` because
+  # the managed gate's cover can read a project number and a region out of this
+  # form and nothing out of the hash (internal/infra/tf's orchestratorTickURI).
+  # The audience is the URL without the route.
+  orchestrator_url = local.orchestrator_on ? "https://${var.orchestrator.service}-${data.google_project.this[0].number}.${var.region}.run.app" : ""
 }
 
 # The identity itself. Nothing is granted actAs on it: executing the service
@@ -293,8 +309,22 @@ resource "google_storage_bucket_iam_member" "orchestrator_runs_reader" {
 # var.orchestrator's own fields rather than being derived here, because a name
 # this module invented would be a second spelling of one `fugaro update`
 # already computes.
+#
+# It is ALSO the one row in this file on a second switch, var.people_minter
+# (launcher-does-not-mint plan task LM12, D3121, R8). That switch is the
+# FIREBASE root's own name for the people's row — the launchers' and the
+# operators' grant on this same signer (LM11) — and it is one name in both roots
+# because the plan that moves minting to the credentials service turns both off
+# at once: `fugaro update` applies both roots with the switch off once the
+# service has proved it signs as this signer (LM14), and the people's row and
+# this one are gone together. ON by default, so an installation that has not
+# been asked to move its grant plans exactly what it planned before this switch
+# existed; and it never gates the ISSUER's row, which is the plan's other half
+# (modules/firebase/iam.tf's issuer_minter) — a switch that took that row away
+# too would leave nobody able to mint a run's identity, which is the failure R8
+# exists to avoid.
 resource "google_service_account_iam_member" "orchestrator_token_minter" {
-  count = local.orchestrator_on ? 1 : 0
+  count = local.orchestrator_on && var.people_minter ? 1 : 0
 
   service_account_id = "projects/${var.orchestrator.firebase_project}/serviceAccounts/${var.orchestrator.signer_account_id}@${var.orchestrator.firebase_project}.iam.gserviceaccount.com"
   role               = "projects/${var.orchestrator.firebase_project}/roles/fugaroTokenMinter"
@@ -521,15 +551,12 @@ resource "google_cloud_run_v2_service_iam_member" "orchestrator_credentials_invo
 #
 # It is an HTTP target on the service's own URL, not the run API: a Cloud Run
 # *service* is invoked through its URL, and that URL is what Cloud Run's IAM
-# check reads `roles/run.invoker` against. `.uri` is a computed attribute, so
-# this is the one place in this module where a scheduler job's URI is read off
-# the resource it calls rather than written from var.project and the resource's
-# name — and it is deliberate: the URL is assigned by Cloud Run and no expression
-# can spell it (coordinator.tf writes the run API's path because a job's location
-# and name ARE knowable), so writing it out would be a second spelling of a name
-# only Cloud Run has. The audience is that same URL and not a second copy of it:
-# Cloud Run refuses an ID token whose audience is not the service's own URL, so
-# the two are one expression or the job authenticates against nothing.
+# check reads `roles/run.invoker` against. The URL is the deterministic one
+# (local.orchestrator_url, whose comment says why it is not the `.uri`
+# attribute). The audience is that same URL without the route and not a second
+# spelling of it: Cloud Run refuses an ID token whose audience is not the
+# service's own URL, so the two come from one expression or the job
+# authenticates against nothing.
 #
 # The token is an OIDC ID token, where every other tick in this tree carries an
 # OAuth access token: the run API takes an access token, and a run.app URL takes
@@ -561,13 +588,46 @@ resource "google_cloud_scheduler_job" "orchestrator_tick" {
 
   http_target {
     http_method = "POST"
-    uri         = "${google_cloud_run_v2_service.orchestrator[0].uri}${local.orchestrator_tick_path}"
+    uri         = "${local.orchestrator_url}${local.orchestrator_tick_path}"
 
     oidc_token {
       service_account_email = google_service_account.scheduler.email
-      audience              = google_cloud_run_v2_service.orchestrator[0].uri
+      audience              = local.orchestrator_url
     }
   }
 
   depends_on = [google_cloud_run_v2_service_iam_member.orchestrator_invoker]
+}
+
+# The operators' impersonation of the daemon's account, which is what lets the
+# orchestrator daemon run on an operator's own machine. The daemon presents the
+# credentials service with an ID token minted AS this account
+# (internal/cli/orchestrator_identity.go: `gcloud auth print-identity-token
+# --impersonate-service-account`), and minting it needs
+# iam.serviceAccounts.getOpenIdToken on the account, which
+# roles/iam.serviceAccountTokenCreator carries. Without this binding the daemon
+# on the operator's machine is refused at its first call and the owner is told
+# to grant it by hand, a second operator step that CLAUDE.md's HARD RULE forbids.
+#
+# What it lets an operator do, stated plainly: act as this account, which holds
+# iam.serviceAccounts.signJwt on the budget signer and so may mint any identity
+# in the installation (docs/mobile/design/always-on-orchestrator.md section 4.3,
+# E4). The operators already hold the same signJwt themselves (the token-minter
+# row on the people list), so the grant adds the account's other reaches, the
+# launcher's grants and the pairing key's accessor, to what an operator can be.
+#
+# It is the verifier's and the deployer's shape: the account is the literal path
+# built from var.project, because the resource's own attribute is unknown at plan
+# time and a grant whose account nobody can name is one nobody can check. It is
+# made to var.operators and to nobody else; the account itself is never added to
+# any people list (orchestrator_test.go's TestOrchestratorIsNeverALauncher, which
+# admits this one for_each and no other use of var.operators).
+resource "google_service_account_iam_member" "fugaro_orchestrator_token_creator" {
+  for_each = local.orchestrator_on ? toset(var.operators) : toset([])
+
+  service_account_id = "projects/${var.project}/serviceAccounts/fugaro-orch@${var.project}.iam.gserviceaccount.com"
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = each.value
+
+  depends_on = [google_service_account.orchestrator]
 }

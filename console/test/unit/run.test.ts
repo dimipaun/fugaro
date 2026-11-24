@@ -28,7 +28,6 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { UNAVAILABLE_MARK, estimated, measured, notional, unavailable } from '../../src/shared/availability'
-import { ADDRESS_PLACEHOLDER } from '../../src/shared/sanitize'
 import {
   RUN_LOGS_BUSY,
   RUN_RECORD_BUSY,
@@ -320,11 +319,11 @@ describe('renderRun: the header', () => {
     expect(one(tree, 'run-recipe').textContent).toBe('review')
     expect(one(tree, 'run-branch').textContent).toBe('main')
     // The account is an identity and goes through the `person` class, the class
-    // the wire key carries: an address is the console's marker rather than
-    // itself, here as in the requester cell beside it (`degraded-run-account`
-    // is drawn the same way).
-    expect(one(tree, 'run-account').textContent).toBe(ADDRESS_PLACEHOLDER)
-    expect(drawn(tree)).not.toContain('ops@example.test')
+    // the wire key carries: a person's own address is not a credential, so it is
+    // drawn as the record wrote it (D3213), here as in the requester cell beside
+    // it.
+    expect(one(tree, 'run-account').textContent).toBe('ops@example.test')
+    expect(drawn(tree)).toContain('ops@example.test')
   })
 
   it('draws an absent column as the mark with its reason, never as a blank cell', () => {

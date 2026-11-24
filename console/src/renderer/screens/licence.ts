@@ -26,7 +26,7 @@
 // project's own (the plan's own rule for this task), and the two operations
 // behind this section read and write the console's own store rather than
 // reaching anything. An installation with no key is a state and not an error
-// (`docs/design/lapse-read-only.md` section 2), so the section offers the box
+// (`docs/lapse-read-only/spec.md` section 2), so the section offers the box
 // and says nothing about an address.
 //
 // **The screen is never gated, and this module knows nothing about a lapse.**

@@ -3,14 +3,14 @@
 **Status (2026-11-07): the decisions D1450–D1469 are answered 2026-11-07 and all tasks are approved
 2026-11-07 (owner: "All tasks approved. Jobmax"); of them, FC1–FC8 are built on `main` and
 FC9 is not started.** This is a plan for the owner to read. The design it reads is already merged
-(`docs/design/failure-classes.md`, pull request **#1746**, docs only) and already pinned; what this
+(`docs/failure-classes/design.md`, pull request **#1746**, docs only) and already pinned; what this
 folder adds is the reconciliation of that design against the code on `main`, the reader census it
 needs and does not carry, and a plan sliced so the tasks can run in parallel. It adds no code, no
 schema, no config key, no command and no Terraform; it edits no file outside `docs/`; and **every task
 in [implementation-plan.md](implementation-plan.md) is approved** — the owner answered the decisions
 below and approved them all on 2026-11-07 (owner: "All tasks approved. Jobmax"), so no gate here is
 still open, and the tasks are still built one at a time, in the order that file's §1 fixes. **The
-design's own decisions stay the design's:** §8 D1–D9 and §9 O1–O6 of `docs/design/failure-classes.md`
+design's own decisions stay the design's:** §8 D1–D9 and §9 O1–O6 of `docs/failure-classes/design.md`
 are the owner's and this folder answers none of them — its decisions are D1450–D1469; the design's
 status line records that FC1–FC8 of its §10 have shipped, which is what its pin holds.
 
@@ -32,7 +32,7 @@ the digest. `reason` keeps its meaning byte for byte; the field is additive, so 
 
 | File | What it is |
 | --- | --- |
-| [spec.md](spec.md) | `docs/design/failure-classes.md` **as it stood at `56c91f66`**, byte for byte, with a header naming the owner by role, the pull request that merged it and the fact that the copy is dated. Where this file and the others disagree about what the design *says*, this file wins — and the design has moved since the copy: its status line now records that FC1–FC8 shipped, its §1 states the one writer `recordEnd`, its §3 names `failure.Classes()` and its §4.2's classes are passed by the site that already knows why the run is stopping, all of which the copy predates |
+| [spec.md](spec.md) | `docs/failure-classes/design.md` **as it stood at `56c91f66`**, byte for byte, with a header naming the owner by role, the pull request that merged it and the fact that the copy is dated. Where this file and the others disagree about what the design *says*, this file wins — and the design has moved since the copy: its status line now records that FC1–FC8 shipped, its §1 states the one writer `recordEnd`, its §3 names `failure.Classes()` and its §4.2's classes are passed by the site that already knows why the run is stopping, all of which the copy predates |
 | [reconciliation.md](reconciliation.md) | Every claim of the design against the code on `main`, read by path and symbol: how the record and its five readers work today (§2: `result.json` and the schema, `runs ls --json`, `diagnose`, the console, the phone, the history census, the plugin and `watch`), where a failure reason is produced today (§3: `internal/runner`, `internal/runstore`, `internal/cli`'s `diagnose`), the findings **F1–F36** (Wrong / Exists / Gap / Rule / Open), the closed-field rule applied (§5), the decisions **D1450–D1469** with **the owner's answer of 2026-11-07 each** (§6), the number block and how it was read (§7), the **UNVERIFIED** section (§8) and the owner's **Open items** (§9). **Where it disagrees with [spec.md](spec.md) about the code, it wins** |
 | [implementation-plan.md](implementation-plan.md) | The **six levels** and the tasks **FC1–FC9**, each with its files, its interfaces, its named tests **and the command that runs them**, what it depends on, its **red step**, its **reviewer tier**, whether it is owner-run and whether it is SEC, and its commit; the levels and the **critical path** (§1), the **shared-files table that holds no two writers of one file in a level** (§2), what is deliberately not in the plan (§4), the release slot the owner named (§5), the owner-run live check **Check 350** (§6) and the gates a task may not start without (§7) |
 | `README.md` | This file: the status, the asker, the shape in one paragraph, the numbers, and what a reader should not take from here |

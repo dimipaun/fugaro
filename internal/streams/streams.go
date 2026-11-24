@@ -12,12 +12,12 @@
 // release notes, and the graph and the release script are the two places a name
 // or a version is spent.
 //
-// The file is untrusted in the sense docs/design/desktop-console.md §5.1 gives
+// The file is untrusted in the sense docs/desktop-console/spec.md §5.1 gives
 // the word: a contributor's branch writes it, and what it carries is compared
 // against a release and put on a screen. So Read and Parse refuse rather than
 // repair — a symlink, a file over MaxBytes, YAML anchors and aliases, a key this
 // build does not know, a stream that is not one of the three, a theme or a tag
-// prefix that is not the stream's own, a name out of alphabetical order or in
+// prefix that is not the stream's own, a name out of alphabetical order (the alphabet starts again only after a Z name, and no name repeats) or in
 // two lists, a next name that is not the first one the stream's version has not
 // spent, and a console version below the one the console has already shipped.
 package streams
@@ -336,11 +336,11 @@ func validate(path string, list []Stream) error {
 			if !nameRE.MatchString(name) {
 				return refuse(path, "the %s stream's name %q is not a release name: one word, a capital letter and then lower-case letters", s.Name, name)
 			}
-			switch {
-			case i > 0 && name == s.Names[i-1]:
+			if slices.Contains(s.Names[:i], name) {
 				return refuse(path, "the %s stream names %q twice", s.Name, name)
-			case i > 0 && name < s.Names[i-1]:
-				return refuse(path, "the %s stream's names are not in alphabetical order: %q comes after %q, and the list is the order they are spent in", s.Name, name, s.Names[i-1])
+			}
+			if i > 0 && name < s.Names[i-1] && s.Names[i-1][0] != 'Z' {
+				return refuse(path, "the %s stream's names are not in alphabetical order: %q comes after %q, and the list is the order they are spent in; only a name after one that starts with Z may start the alphabet again", s.Name, name, s.Names[i-1])
 			}
 			if other, taken := owner[name]; taken && other != s.Name {
 				return refuse(path, "%q names the %s and the %s streams: a release name belongs to one stream", name, other, s.Name)

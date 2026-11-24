@@ -20,8 +20,8 @@
 #               --repo <owner/name>=<checkout path> \
 #               --repo <owner/name>=<checkout path> \
 #               --probe-repo <owner/name> \
-#               [--new-token-file <path>] [--source <fugaro checkout>] [--merge]
-#               [--gcloud-config <dir>]
+#               [--workspace <workspace>] [--new-token-file <path>]
+#               [--source <fugaro checkout>] [--merge] [--gcloud-config <dir>]
 #             --dry-run  prints the plan and touches nothing.
 #             The token file holds the project access token and nothing else —
 #             one line, no quotes, no JSON — at mode 0600. It is the ONE place
@@ -35,6 +35,14 @@
 #             Bitbucket PROJECT afterwards, which is what makes U3 a reading of
 #             the token rather than of a list of names: create it before the
 #             run, and do NOT add it to `project_secrets`.
+#             --workspace is the sandbox Bitbucket workspace all three
+#             repositories live in, and every one of them has to: this check
+#             stores a token project-wide and runs on the repositories the
+#             block names, so a repository from another workspace is a run
+#             measuring something else. It defaults to `dimi_bmb`, the owner's
+#             own Premium sandbox workspace — the one U6 of the reconciliation
+#             left unknown until 2026-11-23 — and is overridden only if the
+#             sandbox workspace moves.
 #             --new-token-file is the token created in step 8's rotation (F3).
 #             Without it the rotation's own row reads UNVERIFIED and names what
 #             to pass, and the block's last line says INCOMPLETE. With it, the
@@ -67,7 +75,10 @@
 #             installed and nothing is fetched.
 # Where:      a SANDBOX installation and a sandbox Bitbucket workspace only, and
 #             never `belong`: this check refuses `belong` by name, as the
-#             installation, as a repository's workspace and as `--project`.
+#             installation, as a repository's workspace and as `--project`. The
+#             workspace is `--workspace`, defaulting to `dimi_bmb` (the owner's
+#             Premium sandbox workspace), and every repository named has to be
+#             in it.
 # Costs:      one run per repository (two, plus one after the rotation), an
 #             approve and, with --merge, a merge on sandbox repositories; a few
 #             API calls and two `gcloud secrets` reads. Every one of them is
@@ -361,9 +372,10 @@ lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
 guard_belong() {
   local what value
-  for what in installation project repo-a repo-b probe-repo; do
+  for what in installation workspace project repo-a repo-b probe-repo; do
     case "$what" in
     installation) value=$INSTALLATION ;;
+    workspace) value=$WORKSPACE ;;
     project) value=$PROJECT_NAME ;;
     repo-a) value=$REPO_A ;;
     repo-b) value=$REPO_B ;;
@@ -375,6 +387,27 @@ guard_belong() {
       die "Check 180 refused: '$value' (the $what) names 'belong', the installation and workspace this check must never touch. Nothing was sent anywhere"
       ;;
     esac
+  done
+}
+
+# guard_workspace: every repository this check is pointed at has to be in the
+# sandbox workspace it was given. A repository from another workspace is a
+# repository the token's block cannot name — the block is read for the
+# installation, and its entries are the repositories the check stores for — so
+# a run over one would be a run measuring something other than the workspace it
+# claims to be on.
+guard_workspace() {
+  local what name owner
+  for what in repo-a repo-b probe-repo; do
+    case "$what" in
+    repo-a) name=$REPO_A ;;
+    repo-b) name=$REPO_B ;;
+    probe-repo) name=$PROBE_REPO ;;
+    esac
+    [ -n "$name" ] || continue
+    owner=${name%%/*}
+    [ "$owner" = "$WORKSPACE" ] && continue
+    die "Check 180 refused: the $what '$name' is in the workspace '$owner', not in '${WORKSPACE}', the sandbox workspace this check runs on (--workspace). Nothing was sent anywhere"
   done
 }
 
@@ -1413,6 +1446,7 @@ This is the PLAN. --dry-run touches nothing: no installation is read, no secret 
 stored, no run is launched, no request is made and no credential is written.
 
   installation   ${INSTALLATION}
+  workspace      ${WORKSPACE}   (every repository below has to be in it; --workspace)
   repositories   ${REPO_A} (checkout ${PATH_A})
                  ${REPO_B} (checkout ${PATH_B})
   probe repo     ${PROBE_REPO}   (added to the same Bitbucket project afterwards)
@@ -1455,11 +1489,12 @@ PLAN_EOF
 }
 
 # ----------------------------------------------------------------------- main
-USAGE="check180.sh --installation <sandbox> --token-file <path> --repo <owner/name>=<checkout> --repo <owner/name>=<checkout> --probe-repo <owner/name> [--new-token-file <path>] [--source <path>] [--gcloud-config <dir>] [--merge] [--dry-run]"
+USAGE="check180.sh --installation <sandbox> --token-file <path> --repo <owner/name>=<checkout> --repo <owner/name>=<checkout> --probe-repo <owner/name> [--workspace <workspace>] [--new-token-file <path>] [--source <path>] [--gcloud-config <dir>] [--merge] [--dry-run]"
 
 parse_args() {
   INSTALLATION=""
   TOKEN_FILE=""
+  WORKSPACE=${CHECK180_WORKSPACE:-dimi_bmb}
   NEW_TOKEN_FILE=""
   PROBE_REPO=""
   SOURCE=""
@@ -1497,6 +1532,11 @@ parse_args() {
     --probe-repo)
       [ $# -ge 2 ] || die "--probe-repo needs owner/name. usage: $USAGE"
       PROBE_REPO=$2
+      shift 2
+      ;;
+    --workspace)
+      [ $# -ge 2 ] || die "--workspace needs a workspace. usage: $USAGE"
+      WORKSPACE=$2
       shift 2
       ;;
     --source)
@@ -1585,6 +1625,7 @@ main() {
   REPO_A_URL="https://bitbucket.org/${REPO_A}.git"
   if [ "${CHECK180_DRY_RUN:-}" = yes ]; then DRY_RUN=yes; fi
   guard_belong
+  guard_workspace
 
   if [ "$DRY_RUN" = yes ]; then
     print_plan

@@ -7,17 +7,17 @@
     ],
     "total": 1
   },
-  "config_sha256": "7930a55060121a690077fd5af19e42785539a0baf2d853cdc60bcb9dc225a91c",
+  "config_sha256": "3d2cab421e44197b179b39e2aa04ac4b2178b2852004a5c71ed3cd1e9986bbe3",
   "cost": {
     "compute_estimated": false,
     "compute_usd": 0,
     "estimate": true,
     "model_basis": "api-list",
-    "model_source": "claude-code",
-    "model_usd": 1.5,
-    "total_usd": 1.5
+    "model_source": "gateway",
+    "model_usd": 0,
+    "total_usd": 0
   },
-  "cost_usd": 1.5,
+  "cost_usd": 0,
   "deadline": "<time>",
   "finalize_reserve_s": 30,
   "finished_at": "<time>",
@@ -56,6 +56,7 @@
       },
       "findings": 0,
       "head": "<sha>",
+      "model": "claude-opus-5",
       "round": 1,
       "verdict": "ship"
     }
@@ -72,8 +73,9 @@
   "stages": [
     {
       "agents": 0,
+      "calls": 0,
       "duration_s": 0,
-      "model_usd": 1,
+      "model": "claude-sonnet-5-5",
       "name": "implement",
       "repeats": 0,
       "served_by": "api-key",
@@ -81,8 +83,9 @@
     },
     {
       "agents": 0,
+      "calls": 0,
       "duration_s": 0,
-      "model_usd": 0.5,
+      "model": "claude-opus-5",
       "name": "review",
       "repeats": 0,
       "served_by": "api-key",

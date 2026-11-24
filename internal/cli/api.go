@@ -157,6 +157,15 @@ func (c *Cloud) ReviewLevels(ctx context.Context, spec *task.Spec, cfg *config.C
 	return levels, err
 }
 
+// ImplicitAdmins are the implicit project admins this machine can read: the
+// terraform.budget_admins of its own config, as members. The GCP project's
+// owners and editors are implicit admins too (F17.3) and are not here — they
+// live in its IAM policy, which no command here reads. It is what the core's
+// own gates build their access.Input with, and a moved command that builds one
+// — ee/register's `fugaro licence seats ls`, which places the seat holders —
+// takes the same list, so the two cannot disagree about who holds admin.
+func ImplicitAdmins(lc *localcfg.Config) []string { return userImplicitAdmins(lc) }
+
 // BudgetDB is the project's budget database, checked to be the database of the
 // project the cloud was opened with: a config whose budget.rtdb_url points at
 // another project's database is refused, exactly as it is on the paths that
@@ -203,7 +212,7 @@ func ClipRunes(s string, n int) string { return clipRunes(s, n) }
 // PaidCommandNames are the command names whose code the owner moves out of the
 // core. A reader, not a seam: the commands a build holds are its own business,
 // so there is no setter and a caller cannot change the list the stubs are built
-// from (design docs/design/ee-boundary-moves.md §9, D536).
+// from (design docs/ee-reorg/boundary-moves.md §9, D536).
 //
 // The core's skill checks read it to tell a name the released binary answers to
 // — the core command today, a registration after the move, the stub in a build

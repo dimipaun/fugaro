@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/backend"
@@ -315,14 +316,16 @@ func (r *run) checkJobClass(id jobTriple) error {
 		gcp.ProjectJobName(id.Profile, id.Provider, id.Account), id.Profile)
 }
 
-// jobName is the name of the Cloud Run job this run is in, "" when the run has
-// no Cloud Run execution.
+// jobName is the name of the deployed job this run is a run of — the one name
+// the run is placed by (matchJobName) and the one it reports to the credentials
+// service (serviceIdentities) — and "" when the run has no job to name at all,
+// which is the local invocation alone.
 //
-// It is read from the platform's own report of the run's execution
+// On Cloud Run it is read from the platform's own report of the run's execution
 // (Deps.Execution, which internal/cli fills from backend.ExecutionFromEnv) and
 // not from the environment: a launcher can override any job env var, and the
-// job's name is the one thing about the job a launcher cannot write (finding
-// 4, 12a item 1). Deps.Execution carries the name the platform returned, and
+// job's name is the one thing about the job a launcher cannot write (finding 4,
+// 12a item 1). Deps.Execution carries the name the platform returned, and
 // ExecutionFromEnv refuses an empty CLOUD_RUN_JOB before any of this runs
 // (internal/backend's codec), so "no name" here means "not on Cloud Run" — and
 // "not on Cloud Run" is local only when the invocation said so (Deps.Local).
@@ -330,6 +333,44 @@ func (r *run) checkJobClass(id jobTriple) error {
 // closed) and has no job name to place, so it can neither adopt a project
 // job's identity nor be told apart from one: it halts here, before any git
 // credential (review C2).
+//
+// On Batch the platform reports no deployed job. A Batch job is created per run
+// and named after the run (batch.JobID, design compute-backend.md §2.4), so the
+// name such a report carries — FUGARO_BATCH_JOB, written by the launch
+// (internal/backend/batch/env.go) — is one no deployer and no policy ever
+// computed, and a run placed by it would end at cannotPlaceJob (F9). What a
+// Batch job carries instead is the name of the deployed job its run stands in
+// for (backend.DeployedJobEnv, R6): the very name CLOUD_RUN_JOB carries for a
+// run on Cloud Run — gcp.JobName(slug, gcp.WorkflowVariant(workflow, token)) of a
+// per-repository job, gcp.ProjectJobName(profile, provider, account) of a
+// shared one — because the deployed job is the job the run's identity, its
+// admission and its clone URL are all read from, and on Batch the launch is
+// what knows which one that is (BR8 writes it). The name is therefore
+// launcher-forgeable, exactly like FUGARO_RUN and FUGARO_BATCH_JOB, where the
+// Cloud Run name is not, and the difference is deliberate rather than
+// overlooked: everything this name decides is what the run believes about
+// itself, while what bounds a Batch run is the job it is really on — whose
+// service account the credentials service verifies every call by, reading no
+// header for it (auth.go's verifyJob, C3.9), and whose container the platform
+// mounts before the run starts.
+//
+// The backend is the one the platform's own signal claims, asked through
+// backend.DetectPlatform: Cloud Run's CLOUD_RUN_EXECUTION first, Batch's
+// BATCH_TASK_INDEX and BATCH_TASK_COUNT second, and neither for a process no
+// platform claims. It is never a FUGARO_* variable, and never the shape of the
+// name the run was handed. Both of those are the launcher's: FUGARO_BACKEND is
+// written into the job definition, and Deps.Execution is composed by the codec
+// out of FUGARO_GCP_PROJECT and FUGARO_REGION beside the platform's own
+// CLOUD_RUN_JOB and CLOUD_RUN_EXECUTION, so a launcher that wrote a slash into
+// the project or the region leaves a name that does not parse as a Cloud Run
+// execution at all. A branch that read either of those would let that launcher
+// take the Batch path on Cloud Run and choose the run's identity — its
+// provider, its admission, its clone URL (finding 4, 12a item 1). Asking Cloud
+// Run first is what closes it:
+// a Cloud Run job whose definition also carries the Batch pair is placed by the
+// job the platform put it in, and a Batch task whose launcher wrote
+// CLOUD_RUN_EXECUTION into it stops on its own job id (cannotPlaceJob) rather
+// than adopting an identity.
 func (r *run) jobName() (string, error) {
 	if r.d.Execution == "" {
 		if r.d.Local {
@@ -337,9 +378,38 @@ func (r *run) jobName() (string, error) {
 		}
 		return "", fmt.Errorf("this run reports no Cloud Run execution and is not a local invocation (fugaro exec --task-file): a process no backend claims is in the cloud, and with no job name it cannot be placed in the job it is in, so it adopts no identity and is not admitted. The run stops before any git credential is requested; check that the job's environment carries the platform's own variables (CLOUD_RUN_JOB, CLOUD_RUN_EXECUTION)")
 	}
+	// The Batch branch is taken on the platform's own signal alone — the pair
+	// Batch injects into every task — and Cloud Run's is asked first, so a Cloud
+	// Run job whose definition also carries that pair is still placed by the job
+	// the platform put it in (the paragraph above). On Batch the name the
+	// platform reports is the run's own job id, which is not an identity
+	// (batchDeployedJob).
+	if backend.DetectPlatform(r.jobEnv).Backend() == backend.CloudBatch {
+		return r.batchDeployedJob()
+	}
 	job, err := backend.JobOf(r.d.Execution)
 	if err != nil {
 		return "", fmt.Errorf("the execution this run reports (%s) cannot be read back into a job name: %w", r.d.Execution, err)
+	}
+	return job, nil
+}
+
+// batchDeployedJob is the deployed job a Batch run stands in for, read from the
+// job's own environment (backend.DeployedJobEnv): the name the launch wrote
+// there because nothing else on the VM names it (jobName's third paragraph).
+//
+// An environment that carries none is refused rather than placed: with no name
+// the run cannot be told which job's identity it may adopt, and a run that
+// placed itself some other way — by its own Batch job id, by its slug — would
+// be taking a provider, an admission list and a clone URL from a name nobody
+// wrote (R2-5). The state it names is a launch older than the release that
+// writes the variable, which is why the fix is an update rather than anything
+// the run can read.
+func (r *run) batchDeployedJob() (string, error) {
+	job := r.jobEnv(backend.DeployedJobEnv)
+	if job == "" {
+		return "", fmt.Errorf("this run's job is on the cloud-batch backend (%s is %q) and its environment names no deployed job (%s is not set): a Batch job is created per run and named after the run, so nothing on its VM names the job the run stands in for, and with no name the run cannot be placed in the job it is in — it adopts no identity and is not admitted. The launcher writes that name (batch-run-identity R6); a launch older than the release that writes it carries none, so update the Fugaro that launches this repository's runs (brew upgrade dimipaun/tap/fugaro, then fugaro update) and launch it again. The run stops before any git credential is requested",
+			backend.BackendEnv, backend.CloudBatch, backend.DeployedJobEnv)
 	}
 	return job, nil
 }
@@ -990,6 +1060,16 @@ func (r *run) checkProjectJobAccount(ctx context.Context, auth string) error {
 		// (implicitReviewCandidates).
 		return r.checkProjectReviewJobAccount(job)
 	}
+	if r.projectJobServed() {
+		// The arm of a job whose model credentials the credentials service
+		// serves. It is asked after the review arm and never before it: the
+		// review arm's check is what keeps a coding run out of a review
+		// container, and the review variant's environment is its coding job's
+		// (internal/infra's reviewVariant clones it), so a served profile's
+		// review job carries this fact too — an arm asked first would admit
+		// the very run the review arm exists to refuse.
+		return r.checkProjectJobServed(job)
+	}
 	p, found, err := r.projectPolicy(ctx)
 	if err != nil {
 		return err
@@ -1095,6 +1175,88 @@ func (r *run) checkProjectReviewJobAccount(job jobTriple) error {
 			gcp.ProjectJobName(job.Profile, job.Provider, job.Account))
 	}
 	return nil
+}
+
+// projectJobServed reports whether this run's job is one whose model
+// credentials the credentials service serves: the fact the deployer plans into
+// the job's own environment (config.CredentialsServedEnv, C1 (h)) exactly when
+// the class's mounts are gone from it (internal/infra's ProjectJobs).
+//
+// It is read from the execution's environment and from nothing else, the way
+// the service's address is (credentialsServiceURLEnv): both are the deployer's
+// own statements about the container this run is in. What it is NOT is a claim
+// a run makes about itself — the value is a constant, and the reader asks the
+// environment it was started with.
+//
+// The second clause is the container's own answer and not a restatement of the
+// first: the fact is an environment entry, which a launch override can write as
+// readily as the deployer's job definition can, while the mount it is about is
+// the deployer's — internal/infra's sharedJobServedEnv moves the two together,
+// and this is where they are held to each other. So a container that still
+// carries one of the class's mounts is not a served job whatever its
+// environment says, and the run in it meets the coding arm — the account and
+// its allow_repos list — rather than being let past the door holding a token
+// nobody bounded (D3).
+func (r *run) projectJobServed() bool {
+	return envLookup(r.d.Env, config.CredentialsServedEnv) == config.ServedValue && !mountedModelEnv(r.d.Env)
+}
+
+// mountedModelEnv reports whether env carries one of the model credentials a
+// served class drops (config.ModelSecretEnvs) — the mount side of the fact
+// config.CredentialsServedEnv states, asked of the container rather than taken
+// on the environment's word. A bare name counts as carried, since exec reads it
+// as the parent's value.
+func mountedModelEnv(env []string) bool {
+	for _, entry := range env {
+		if name, _, _ := strings.Cut(entry, "="); slices.Contains(config.ModelSecretEnvs, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkProjectJobServed is checkProjectJobAccount's arm for a job whose model
+// credentials the credentials service serves (projectJobServed).
+//
+// The coding arm's three rules are each refused for a reason that does not hold
+// here, and the first is what this arm exists for:
+//
+//   - The job holds no Claude token, so the account axis has nothing to be
+//     about. The axis is a statement about the token a job mounts
+//     (config.ProjectJobTokenAccount), and the class's mounts are exactly what
+//     the service took away — so comparing the run's own credential against
+//     the job's account would refuse every run of a job that is doing what it
+//     was deployed to do, and admitting the comparison would be reading an
+//     account name to choose a credential the container does not hold. Which
+//     credential serves a call is the credentials service's answer now, walked
+//     from the project's routing table (R2: the in-job gateway holds no key and
+//     no table), and this door reads neither agent.auth nor an account name to
+//     choose one.
+//   - The account's allow_repos list is not read either, for the same reason:
+//     it is the bound on a token's blast radius (D3), and there is no token
+//     here. Which repositories may reach which credential is the table's
+//     admissions, which the service refuses a call by.
+//   - What is left is the one thing that can still be wrong, and the one thing
+//     this arm refuses over: a run with no way to a model at all. The job holds
+//     no credential, so a run whose model path reaches neither the credentials
+//     service nor a credential that is not a mount would die at its first model
+//     call with nothing to fall back on (G17, D143). The refusal names the job
+//     and the run's own auth and is the launcher's to fix, because what decides
+//     whether a job is served at all is the profile's switch — one repository
+//     cannot take a shared job off it.
+//
+// A run whose auth is vertex is admitted without the service and is not an
+// exception to the rule above: Vertex is the installation's own identity, the
+// job's GCP service account, and it is no mount — the class never took it away
+// and the service serves no such credential (config.IsSharedJobServedModelEnv
+// holds a provider's key back for the same reason, and Vertex is not even a
+// key).
+func (r *run) checkProjectJobServed(job jobTriple) error {
+	if r.serviceModelPath() || r.modelAuth() == "vertex" {
+		return nil
+	}
+	return fmt.Errorf("this run is in the project job %s, which the credentials service serves: its container mounts none of the model credentials that class covers, so a run of it reaches a model through the service or not at all, and this run's model path reaches neither — agent.auth is %q, and the execution's environment carries no %s for the service. The fix is the launcher's: a run on a served job is handed the service's address, and which profiles are served at all is the deployer's own answer for the profile (B5.7), read from the repositories' records and not from this run. The run stops before the agent starts rather than reaching its first model call with no credential",
+		gcp.ProjectJobName(job.Profile, job.Provider, job.Account), r.modelAuth(), credentialsServiceURLEnv)
 }
 
 // allowReposSource is where an account's policy list is derived from at publish

@@ -90,7 +90,7 @@ in `console/src/main/spawn.ts`; `createBoundSource`), so an installation with no
 per-plan progress at all.
 
 **F11. `runs stats` is not a fleet summary.** It is the closest thing to one, and it is scoped to
-the caller: `docs/design/desktop-console.md` §2.1 records that "an operator of the installation sees
+the caller: `docs/desktop-console/spec.md` §2.1 records that "an operator of the installation sees
 every user, a plain launcher sees their own row alone". A launcher reading their own row would draw
 a fleet total that is one person's. The fleet's run figures therefore come from the coordinator
 document's records, or from a `runs ls` the operator asked for — never from `runs stats`.
@@ -113,7 +113,7 @@ value reaches it** — `--from-store` and `--all` are words of the row and not a
 `CONSOLE_OPERATIONS` (`console/src/main/ipc.ts`) lists the matching operation, and
 `assertSpawnSurface` fails a table where either side is missing an entry. `.claude/rules/console.md`
 makes every new command, flag or argument security-sensitive: an independent review, a pinning test
-in `console/test/unit/`, and the §5.1 table in `docs/design/desktop-console.md` updated in the same
+in `console/test/unit/`, and the §5.1 table in `docs/desktop-console/spec.md` updated in the same
 change.
 
 **F15. The console's one write is rule 11's launch, word for word.** The `run.launch` row is `run

@@ -199,7 +199,7 @@ operators` section:
 - [docs/dogfooding.md](../dogfooding.md) — the practice the modes automate
   (F30). The modes are a formalisation of sentences the owner already wrote, and
   the document the backlog ruling's practice sentence lands in (D32, T4.7).
-- [docs/plans/2026-10-17-managed-projects-review-follow-ups.md](../plans/2026-10-17-managed-projects-review-follow-ups.md)
+- [docs/managed-projects/review-follow-ups.md](../managed-projects/review-follow-ups.md)
   — the deferral practice the backlog replaces (F46), and what D32's sweep would
   convert into items.
 - [docs/credentials-service/implementation-plan.md](../credentials-service/implementation-plan.md)

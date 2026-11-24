@@ -407,7 +407,7 @@ either way).
 
 **The numbering is deliberately not `C4.x`.** `C0`–`C3` are [implementation-plan.md](implementation-plan.md)'s
 slices and `CSR1`–`CSR13` are the cloud senior review's; a third stream taking `C4` would collide with
-the C-numbers of four other plans in this repository (`docs/design/budget-token-channel.md`,
+the C-numbers of four other plans in this repository (`docs/budget-token-channel/spec.md`,
 `docs/forge-authorship-images/`, `docs/project-image-catalog/`, `docs/console-coordinator-v2/`). `DON` is
 this file's own prefix and collides with nothing.
 

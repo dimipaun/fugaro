@@ -418,7 +418,7 @@ func TestNeedsBuildSkipsClone(t *testing.T) {
 
 // With a named Claude account configured, spec.Workflows holds one entry
 // per account ("web" and "web_acme-personal", design
-// docs/design/named-oauth-tokens.md §4): they share one image, so
+// docs/named-oauth-tokens/spec.md §4): they share one image, so
 // NeedsBuild must report the logical workflow name once, not the variant
 // key, and the named account's own secret (not yet stored) must not block
 // the shared build, which is gated on the default account's secrets only

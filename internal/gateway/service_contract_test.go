@@ -134,6 +134,11 @@ func TestServiceConstantsMirrorCredsvc(t *testing.T) {
 		{"the probe's header", gateway.HeaderProbe, credsvc.HeaderProbe},
 		{"the slip's header", gateway.HeaderSlip, credsvc.HeaderSlip},
 		{"the claim secret's header", gateway.HeaderSlipClaim, credsvc.HeaderSlipClaim},
+		// The owner's header is a mirror like the rest, but the RULE it carries is not:
+		// gateway.ValidCredentialOwner is the one definition of it, and credsvc's
+		// validSlipOwner and maxLauncherSubDigits delegate to it rather than respelling
+		// it (the service imports the gateway; the gateway cannot import the service, F26).
+		{"the credential owner's header", gateway.HeaderCredentialOwner, credsvc.HeaderCredentialOwner},
 	}
 	for _, h := range headers {
 		if h.gateway != h.wire {

@@ -40,7 +40,7 @@ import (
 //   - It is the only holder of the signer permission. It mints the run's
 //     Firebase custom token after winning the launch claim and leaves it in
 //     the runs bucket, sealed under a key it draws for this launch alone
-//     (docs/design/budget-token-channel.md §7.1); the runner takes it. The
+//     (docs/budget-token-channel/spec.md §7.1); the runner takes it. The
 //     token is never in the jobs.run request (the request reaches audit
 //     logs), an env var, an error or a message.
 //   - The seal key is not the token and grants nothing by itself: it opens
@@ -483,7 +483,7 @@ type chainLimitPolicy struct {
 // the run will read (launchLevelsConfig), which is never nil: a launcher with
 // no checkout of the repository merges the project layer the task carries.
 func chainLimitPolicyOf(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config) chainLimitPolicy {
-	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{Level: rigor.Rigor(spec.Rigor), Paths: spec.Paths}).Level
+	mode := rigor.Resolve(cfg.RigorConfig(), spec.RigorRequest(spec.Paths)).Level
 	c := chainLimitPolicy{
 		ceiling: modeScaledCeiling(ceilingLayer(env.lc), mode),
 		under:   []policy.Layer{defaultBranchPolicyLayer(ctx, spec.Repo), runner.FileLayer(cfg)},

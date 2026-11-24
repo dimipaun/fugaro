@@ -228,9 +228,13 @@ func TestRepoScopeSecretsCommandsAnswerTheNotice(t *testing.T) {
 	// The control: the ruling is about the secrets a repository declares in its
 	// own fugaro.yaml, and the delivery of an operator's own credential is not
 	// one of those. A provider's key — the local config's, with this repository
-	// in its reach — and a name the platform reserves still store their
-	// repository copy with the door on, and neither answers the notice.
+	// in its reach — and a name the platform reserves still take the value with
+	// the door on, and neither answers the notice. The provider's key goes where
+	// every writer of one puts it since KS2 (R2, D1670 reversed): C1's entry for
+	// the repository the flag named, in the credentials service's bundle, and no
+	// container of its own.
 	projectSecretFixture(t, noListProvider)
+	bundleID := bundleFixtureFor(t, sm, "aurora", nil)
 	t.Run("a provider's key is still stored", func(t *testing.T) {
 		out, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "openrouter-api-key", "--repo", "acme/app")
 		if err != nil {
@@ -239,8 +243,11 @@ func TestRepoScopeSecretsCommandsAnswerTheNotice(t *testing.T) {
 		if strings.Contains(out, config.RepoSecretsDisabledNotice) {
 			t.Fatalf("a provider's key answered the ruling's notice, which is about a repository's own declared secrets:\n%s", out)
 		}
-		if got := string(sm.Latest(gcp.SecretID(appSlug, "openrouter-api-key"))); got != tokenValue {
-			t.Fatalf("stored %q, want the repository's copy of the provider's key", got)
+		if entry := bundleEntry(t, sm, bundleID, appSlug, "openrouter"); entry.Value() != tokenValue {
+			t.Fatalf("the bundle's entry for acme/app holds %q, want the value the command read", entry.Value())
+		}
+		if id := gcp.SecretID(appSlug, "openrouter-api-key"); sm.Latest(id) != nil {
+			t.Fatalf("%s holds %q: a provider's key writes no container of its own any more", id, sm.Latest(id))
 		}
 	})
 	t.Run("a reserved name is still stored", func(t *testing.T) {

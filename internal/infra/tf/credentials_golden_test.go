@@ -251,7 +251,9 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 	// it), so the plan alone no longer spells the allow-list: the plan plus
 	// that one name is what the cover holds. FUGARO_LAUNCHER_ACCOUNTS was the
 	// entry before it, and left the list in the change that made
-	// credentials.tf render the name (DS2.2).
+	// credentials.tf render the name (DS2.2), as the identity half's three did
+	// in LM12's change — which is why the names below and not that list spell
+	// them now.
 	names := slices.Sorted(maps.Keys(want))
 	allowed := slices.Clone(credentialsServiceEnv)
 	slices.Sort(allowed)
@@ -263,20 +265,31 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 	}
 	names = append(names, pending...)
 	// ... and the third kind of name the allow-list holds: one the module DOES
-	// render, on an installation this golden is not. The daemon's own class
-	// (F19, O2) is gated on var.orchestrator, and every fixture here runs the
-	// credentials service with no resident orchestrator — the daemon is the
-	// owner's opt-in of its own, and no golden turns it on — so this plan
-	// carries no such entry while credentials.tf does set it. A name is only
+	// render, on an installation this golden is not. Two of them are here. The
+	// daemon's own class (F19, O2) is gated on var.orchestrator, and every
+	// fixture here runs the credentials service with no resident orchestrator —
+	// the daemon is the owner's opt-in of its own, and no golden turns it on —
+	// so this plan carries no such entry while credentials.tf does set it. The
+	// identity half's three (LM12) are the other: credentials.tf renders each
+	// only where the credentials_service block carries a value for it, and no
+	// fixture here names a signer account, a roster service account or an
+	// implicit admin, so the plan carries none of them either. A name is only
 	// admitted on this list if the module's own source is checked for it
 	// below, which is the same tripwire the awaiting list carries in the other
 	// direction: a name here that the module does not set would be a cover
-	// admitting an entry nothing writes. The value the entry carries on an
-	// installation that runs the daemon is pinned by internal/infra's
+	// admitting an entry nothing writes. The value the daemon's entry carries on
+	// an installation that runs the daemon is pinned by internal/infra's
 	// TestOrchestratorDaemonIsTheCredentialsServicesOwnCallerClass, which
-	// plans that installation with the module itself.
+	// plans that installation with the module itself, and the identity three's
+	// values by the installation root's own tftest and by
+	// TestCredentialsServiceEnvIsTheDeploymentsOwn.
 	module := moduleSource(t, "credentials.tf")
-	for _, n := range []string{"FUGARO_ORCHESTRATOR_ACCOUNTS"} {
+	for _, n := range []string{
+		"FUGARO_ORCHESTRATOR_ACCOUNTS",
+		"FUGARO_SIGNER_ACCOUNT",
+		"FUGARO_ROSTER_SERVICE_ACCOUNTS",
+		"FUGARO_IMPLICIT_ADMINS",
+	} {
 		if slices.Contains(names, n) {
 			// A fixture renders it now, so it is an ordinary name above and
 			// nothing here may exempt it.

@@ -40,6 +40,7 @@ module "firebase" {
   source = "../../modules/firebase"
 
   project             = var.project
+  database_region     = var.database_region
   fugaro_project      = var.fugaro_project
   names               = var.names
   manage_apis         = var.manage_apis
@@ -52,6 +53,14 @@ module "firebase" {
   history_account     = var.history_account
   coordinator_account = var.coordinator_account
 
+  # The issuer's own row and the switch that gates the people's
+  # (launcher-does-not-mint plan task LM11): the credentials service's account,
+  # which `fugaro update` passes once the installation root has created it, and
+  # the switch it leaves on until the plan that moves the grant off the people
+  # (LM14).
+  issuer_account = var.issuer_account
+  people_minter  = var.people_minter
+
   # The public mobile service's runtime account, when the installation runs that
   # service: the module creates the device-only signer and grants it signJwt
   # (iam.tf, mobile_token_minter).
@@ -62,4 +71,10 @@ module "firebase" {
   # project's database (docs/workspaces/spec.md §5, W7). Internal to the pin:
   # the workspace's published record names no service account.
   workspace_service_account = var.workspace_service_account
+
+  # Whether the FP's Firestore database is there, as `fugaro update` read it:
+  # the module's firestore_indexes.tf applies the run index's composite indexes
+  # only under a database that exists, and `fugaro update` creates that database
+  # AFTER this root (RI2, D3027).
+  firestore_database_exists = var.firestore_database_exists
 }

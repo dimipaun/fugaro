@@ -100,7 +100,7 @@ func newReaperCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reaper",
 		Short: "Sweep the Batch jobs and VMs a run has leaked",
-		Long: "One pass of the reaper (docs/design/compute-backend.md §3.4): delete the Batch jobs\n" +
+		Long: "One pass of the reaper (docs/compute-backend/spec.md §3.4): delete the Batch jobs\n" +
 			"that are stuck or queued past their deadline, and the Compute Engine instances of runs\n" +
 			"no Batch job accounts for, in this project and region.\n\n" +
 			"The reaper holds five permissions and creates nothing (SECURITY.md). Every deletion\n" +

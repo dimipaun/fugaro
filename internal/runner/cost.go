@@ -7,7 +7,9 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -23,7 +25,7 @@ import (
 // case and the one that is about the stage rather than about the run (P11):
 // the gateway is on for the run and saw none of this stage's calls, so its
 // figure is Claude Code's own result event and all of it is notional, with no
-// call count and the credential that says so (docs/design/mixed-credentials.md
+// call count and the credential that says so (docs/mixed-credentials/spec.md
 // §5). Asking the run instead — `r.gw != nil`, true for every mixed run — would
 // give the stage r.lastStage's figure, which is the PREVIOUS stage's.
 //
@@ -45,7 +47,17 @@ import (
 // gateway stage may also have made background-model calls: both are inside
 // this stage's ModelUSD, so it is the stage's spend, not the pinned model's.
 func (r *run) stageTiming(name string, started time.Time, claudeUSD float64, subAgents, repeats int) runstore.StageTiming {
+	// The stage's chain facts, taken and cleared here because this row is
+	// their only place (C1, CS8): which source the credentials service served
+	// the stage's calls from and whether any of them came from a source that
+	// is not the chain's first. The next stage starts with none of this
+	// one's.
+	source, fallback := r.chainStage()
 	st := runstore.StageTiming{
+		// The source and the flag are the service's answers about the stage's
+		// own calls, nil and false for every stage it never answered one of.
+		Source:    source,
+		Fallback:  fallback,
 		Name:      name,
 		StartedAt: started.UTC(),
 		DurationS: r.d.Now().Sub(started).Seconds(),
@@ -107,6 +119,55 @@ func (r *run) stageTiming(name string, started time.Time, claudeUSD float64, sub
 	return st
 }
 
+// chainAnswered folds one call's answer into the stage running now: the source
+// the credentials service served that call from, and whether it was a fallback
+// (C1's ChainAnswer, CS8).
+//
+// It is the run's hook -- a gateway.ChainAnswerFunc the run's gateway is given
+// when the credentials service serves its calls (CS2's wiring) -- and it is
+// called from the gateway's own goroutines, once per call the service answered,
+// with no lock of either side held: everything it touches is under r.mu. What
+// it keeps is exactly what the contract leaves to the step's record and no more
+// than one stage's worth, because the gateway holds no per-stage figure at all
+// -- it does not know where a stage begins or ends. The flag is folded, so the
+// stage is a fallback stage once ANY of its calls came from a source that is
+// not the chain's first, and the source is the last answered call's, which is
+// the one the stage ended on.
+// The hook's shape is the contract's: held here at compile time, so a change to
+// C1's ChainAnswerFunc fails in this package rather than in the wiring that
+// hands the run's hook to its gateway.
+var _ gateway.ChainAnswerFunc = (&run{}).chainAnswered
+
+func (r *run) chainAnswered(a gateway.ChainAnswer) {
+	source := a.Source
+	r.mu.Lock()
+	r.chainSource = &source
+	if a.Fallback {
+		r.chainFallback = true
+	}
+	r.mu.Unlock()
+}
+
+// chainStage is what the service's answers said about the stage that has just
+// ended, taken once by that stage's row and cleared so the next stage starts
+// with none of it. A stage the service answered no call of gets an absent
+// source and a false flag, which is the same thing the record carries for a
+// run whose calls do not go through the service at all.
+//
+// Clearing with the row is what makes the fold a stage's rather than the run's,
+// and it is where a late answer goes: a call that settled after its stage's row
+// was taken -- the case closeGateway records money for -- can name the next
+// stage's source. Nothing is decided by the figure, it is a name the run's own
+// record carries, and naming the next stage's source is the direction to keep
+// against dropping a stage's source altogether.
+func (r *run) chainStage() (source *routing.SourceName, fallback bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	source, fallback = r.chainSource, r.chainFallback
+	r.chainSource, r.chainFallback = nil, false
+	return source, fallback
+}
+
 // updateCost refreshes the record's cost breakdown from the model spend so
 // far and the elapsed compute time at list price.
 func (r *run) updateCost() {
@@ -146,6 +207,11 @@ func (r *run) updateCost() {
 		// "unattributed" residual (modelByUSD) that attributes them to
 		// nobody (P12).
 		model := r.gwUsed + r.gwNotional + r.direct
+		// The real money the run's fallback calls spent (C1, CS8, D140), the
+		// ledger's figure. It is a part of model_usd above and of nothing
+		// else: the calls are charged like the calls they fell back from, so
+		// adding this figure to the run's totals would charge them twice.
+		c.FallbackUSD = r.gwFallback.USD()
 		c.Unreconciled = r.unreconciled.USD()
 		c.ModelBy = modelByUSD(r.modelBy, model)
 		c.ReportedUSD = r.reported.USD()

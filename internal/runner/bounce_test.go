@@ -7,7 +7,7 @@ import (
 )
 
 // standardBounceRecipe is a custom repo recipe shaped like the design's
-// "standard" catalog recipe (docs/design/generic-tool.md §3.5): first_line
+// "standard" catalog recipe (docs/generic-tool/spec.md §3.5): first_line
 // then review: {bounce: first_line}, with no max_rounds of its own, so
 // agent.first_line_rounds and agent.review_rounds (the knobs, G6) decide.
 const standardBounceRecipe = "version: 1\nname: standard-bounce\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n"

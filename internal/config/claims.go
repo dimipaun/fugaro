@@ -6,7 +6,7 @@ import (
 )
 
 // ApplyClaudeClaims merges a project layer's claude_models into the owner's
-// providers (design docs/design/mixed-credentials.md §4, the owner's ruling
+// providers (design docs/mixed-credentials/spec.md §4, the owner's ruling
 // of 2026-10-14): the claims are the layer's way of saying which Claude
 // model each route the owner already defined also serves. The result is a
 // copy of providers whose named routes have the claimed IDs appended, in

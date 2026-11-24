@@ -24,11 +24,12 @@
 // test that read the plan back would only be asserting that the console is
 // self-consistent, and the plan is the thing that can be wrong.
 //
-// **The person view is off by default** (design D15), and the two consequences
-// are asserted here rather than in `spend.test.ts`, which owns the drawing:
-// while the knob is off, no spawn carries `--by person`, and the screen refuses
-// to build one even if the switch is asked for `person`. The mutation these two
-// tests are written against is a default of `on`.
+// **The person view is on by default** (D3214, amending design D15), and the
+// two consequences are asserted here rather than in `spend.test.ts`, which owns
+// the drawing: while the knob is on, the by-person read is made and its spawn
+// carries `--by person`; turned off, no spawn carries it and the screen refuses
+// to build one even if the switch is asked for `person`. The mutation these
+// tests are written against is a default of `off`.
 
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -380,13 +381,14 @@ async function readWith(console: Wired, controls: SpendControls) {
 // ---------------------------------------------------------------------------
 
 describe('the spend controls', () => {
-  it('opens on the recent week by day, with the person view off', () => {
+  it('opens on the recent week by day, with the person view on', () => {
     // The owner's choice for console 0.118.0: the screen opens on `--since 7d`
     // rather than on the 30 days `report`'s own `--since` defaults to, because
     // the recent week is what an operator looking at spend today is asking
     // about. The read itself is still `report`'s, built from these controls and
-    // carrying no flag `report` does not take, and the person view is off (D15).
-    expect(SPEND_DEFAULT_CONTROLS).toEqual({ since: '7d', until: null, by: 'day', persons: false })
+    // carrying no flag `report` does not take, and the person view is on
+    // (D3214, amending D15).
+    expect(SPEND_DEFAULT_CONTROLS).toEqual({ since: '7d', until: null, by: 'day', persons: true })
     // `until` is left to the CLI on purpose: it defaults to today in UTC, and
     // this console does not know what today is -- a date it invented would be a
     // day nobody measured.
@@ -515,21 +517,22 @@ describe('the spend controls', () => {
   // The person view (D15).
   // -------------------------------------------------------------------------
 
-  itHostRoute('carries no --by person, and draws no person row, until the operator turns the knob on', async () => {
-    // The mutation this test is written against, named: a default of `on`.
-    expect(SPEND_DEFAULT_CONTROLS.persons).toBe(false)
+  itHostRoute('opens on the day grouping, and carries no --by person until the person tab is pressed', async () => {
+    // The mutation this test is written against, named: a default of `off` on
+    // the knob, and a read that asks for the person grouping because of it. The
+    // knob being on by default (D3214) is about the by-person **panel**; the
+    // report's own `--by` is still the operator's pick and opens on `day`.
+    expect(SPEND_DEFAULT_CONTROLS.persons).toBe(true)
 
     const console = await wired(WEEK_DOCUMENT)
-    const off = await read(console, SPEND_DEFAULT_CONTROLS)
-    expect(off.args['by']).toBe('day')
-    expect(off.model.persons).toEqual({ enabled: false, withheld: false })
-    // No row of the screen is a person, and no address is anywhere on it.
-    expect(drawnRows(off.model).map((row) => row.key)).not.toContain('ada@example.com')
+    const open = await read(console, SPEND_DEFAULT_CONTROLS)
+    expect(open.args['by']).toBe('day')
+    expect(open.model.persons).toEqual({ enabled: true, withheld: false })
     expect(reportSpawns(console.logPath).map((line) => flagsOf(line.argv)['--by'])).toEqual(['day'])
     expect(JSON.stringify(reportSpawns(console.logPath))).not.toContain('person')
 
-    // The knob on: the same read with `by person` and nothing else, and the
-    // document that answers it is the one whose rows are drawn.
+    // The person tab, pressed: the same read with `by person` and nothing else,
+    // and the document that answers it is the one whose rows are drawn.
     console.stub.write({ commands: { report: { stdout: json(PERSON_DOCUMENT) } } })
     const on = await read(console, personView(SPEND_DEFAULT_CONTROLS, true))
     expect(on.args).toEqual({ by: 'person', since: '7d' })
@@ -543,8 +546,9 @@ describe('the spend controls', () => {
     expect(changedFlags(first.argv, second.argv)).toEqual(['--by'])
 
     // And the knob off again leaves no read that asks for a person breakdown:
-    // the switch's own word goes back to a breakdown that is on.
-    const back = personView(personView(SPEND_DEFAULT_CONTROLS, true), false)
+    // the switch's own word goes back to the day grouping, and the panel is
+    // gone -- the one state the off case draws (D3214 keeps it reachable).
+    const back = personView(SPEND_DEFAULT_CONTROLS, false)
     expect(back.persons).toBe(false)
     expect(back.by).toBe('day')
     expect(spendArguments(back)).toEqual({ ok: true, args: { by: 'day', since: '7d' } })
@@ -554,12 +558,12 @@ describe('the spend controls', () => {
     // The other half of the same rule: the switch offering `person` while the
     // knob is off is a state the screen must not be able to turn into a read,
     // however the state was reached.
-    const decision = spendArguments({ ...SPEND_DEFAULT_CONTROLS, by: 'person' })
+    const decision = spendArguments({ ...SPEND_DEFAULT_CONTROLS, persons: false, by: 'person' })
     expect(decision.ok).toBe(false)
-    expect(decision.ok ? '' : decision.reason).toContain('off by default')
+    expect(decision.ok ? '' : decision.reason).toContain('off')
 
     const console = await wired(PERSON_DOCUMENT)
-    const outcome = await readSpend(console.read, { ...SPEND_DEFAULT_CONTROLS, by: 'person' }, null)
+    const outcome = await readSpend(console.read, { ...SPEND_DEFAULT_CONTROLS, persons: false, by: 'person' }, null)
     expect(outcome.ok).toBe(false)
     expect(outcome.ok ? null : outcome.args).toBeNull()
     expect(reportSpawns(console.logPath)).toEqual([])
@@ -577,9 +581,11 @@ describe('the spend controls', () => {
   itHostRoute('spawns no by-person read at all while the knob is off', async () => {
     // The mutation this is written against: a read made whatever the knob says,
     // or a panel built from a read the operator never asked for. With the knob
-    // off the screen spawns the report once and nothing else.
+    // off the screen spawns the report once and nothing else -- which is the
+    // state the operator reaches by pressing the switch, since it opens on
+    // (D3214).
     const console = await wired()
-    const outcome = await readWith(console, SPEND_DEFAULT_CONTROLS)
+    const outcome = await readWith(console, personView(SPEND_DEFAULT_CONTROLS, false))
     expect(outcome.model.people).toBeNull()
     expect(statsSpawns(console.logPath)).toEqual([])
     expect(spawns(console.logPath).map((line) => line.argv.slice(1, 3))).toEqual([
@@ -792,75 +798,92 @@ describe('the spend controls', () => {
         expect(['true', 'false'], `${hook} aria-pressed`).toContain(one.getAttribute('aria-pressed'))
       }
     }
-    // The one word this console may not show is not a button at all: a control
-    // that cannot be pressed is not drawn as one.
+    // No word is withheld on the opening state: the person tab is pressable
+    // because the breakdown beside it is on by default (D3214), and a control
+    // that cannot be pressed would be the only one drawn as a `span`.
     const disabled = all(tree, 'spend-dim').filter((one) => one.getAttribute('data-enabled') === 'false')
-    expect(disabled.map((one) => one.tag)).toEqual(['span'])
-    expect(disabled.map((one) => one.textContent)).toEqual(['person'])
+    expect(disabled.map((one) => one.textContent)).toEqual([])
     // The window's own word is the whole of its text, which is what the wiring
     // reads back.
     expect(all(tree, 'spend-window').map((one) => one.textContent)).toEqual(['7d', '30d', '90d', '12w'])
   })
 
-  it('says the same true thing everywhere about the person knob: off by default, this session only, not remembered', async () => {
+  it('says the same true thing everywhere about the person knob: this session only, not remembered', async () => {
     // D15 asks for a per-installation setting, but nothing persists the knob
     // (it is renderer session state; persisting it needs a write channel this
     // console does not have). So no sentence may claim an installation.
-    const off = renderSpend(factory, buildSpendModel(PERSON_DOCUMENT, null), 'light', SPEND_DEFAULT_CONTROLS)
+    const off = renderSpend(
+      factory,
+      buildSpendModel(PERSON_DOCUMENT, null, { persons: false }),
+      'light',
+      personView(SPEND_DEFAULT_CONTROLS, false),
+    )
     const on = renderSpend(
       factory,
       buildSpendModel(PERSON_DOCUMENT, null, { persons: true }),
       'light',
-      personView(SPEND_DEFAULT_CONTROLS, true),
+      SPEND_DEFAULT_CONTROLS,
     )
-    const refusal = spendArguments({ ...SPEND_DEFAULT_CONTROLS, by: 'person' })
+    const refusal = spendArguments({ ...SPEND_DEFAULT_CONTROLS, persons: false, by: 'person' })
     const sentences = [
       texts(off, 'spend-persons-note')[0] ?? '',
       texts(on, 'spend-persons-note')[0] ?? '',
       refusal.ok ? '' : refusal.reason,
     ]
     for (const sentence of sentences) {
-      expect(sentence).toContain('off by default')
       expect(sentence).toContain('this session only')
-      expect(sentence).toContain('not remembered')
       expect(sentence).not.toContain('installation')
     }
-    // And the behaviour is what the sentences say: a fresh state is off.
-    expect(SPEND_DEFAULT_CONTROLS.persons).toBe(false)
+    // The two claims that differ are the ones about which state each sentence
+    // is describing, and each says its own: the off note and the refusal are
+    // the operator's own turn-off, and only the on note names the default.
+    expect(sentences[0]).toContain('off for this session only')
+    expect(sentences[0]).toContain('not remembered')
+    expect(sentences[1]).toContain('on by default')
+    expect(sentences[1]).toContain('not remembered')
+    expect(sentences[2]).toContain('did not remember')
+    // And the behaviour is what the sentences say: a fresh state is on.
+    expect(SPEND_DEFAULT_CONTROLS.persons).toBe(true)
   })
 
-  it('draws the person knob off, with no person row on the screen, until the knob is on', () => {
-    // Off: the knob is on the screen and it is off, and the person document's
-    // rows are withheld rather than drawn -- the address is not on the screen
-    // at all, not even as a key this console redacted after drawing it.
-    const off = renderSpend(factory, buildSpendModel(PERSON_DOCUMENT, null), 'light', SPEND_DEFAULT_CONTROLS)
+  it('draws the person knob on, with the person rows and the address, on the default', () => {
+    // On, which is where the screen opens (D3214): the same document, and the
+    // rows are the document's own keys. The one address is drawn as the identity
+    // it is (D3213), and the note beside the knob says what the default costs.
+    const on = renderSpend(
+      factory,
+      buildSpendModel(PERSON_DOCUMENT, null, { persons: true }),
+      'light',
+      SPEND_DEFAULT_CONTROLS,
+    )
+    expect(only(on, 'spend-persons').getAttribute('data-enabled')).toBe('true')
+    expect(only(on, 'spend-persons').tag).toBe('button')
+    expect(only(on, 'spend-persons').getAttribute('aria-pressed')).toBe('true')
+    expect(texts(on, 'spend-persons-state')).toEqual(['on'])
+    expect(texts(on, 'spend-persons-note')[0]).toContain('on by default')
+    expect(all(on, 'spend-row')).toHaveLength(2)
+    expect(drawnText(on)).toContain('ada@example.com')
+    expect(drawnText(on)).not.toContain('redacted@example.invalid')
+    // The switch's own word for the grouping is drawn from the document: the
+    // knob and the switch agree about what this screen is grouped by.
+    expect(texts(on, 'spend-key')).toContain('unknown')
+
+    // Off, the state the operator reaches by pressing the switch: the knob is on
+    // the screen and it is off, and the person document's rows are withheld
+    // rather than drawn -- the address is not on the screen at all, not even as
+    // a key this console redacted after drawing it.
+    const off = renderSpend(
+      factory,
+      buildSpendModel(PERSON_DOCUMENT, null, { persons: false }),
+      'light',
+      personView(SPEND_DEFAULT_CONTROLS, false),
+    )
     expect(only(off, 'spend-persons').getAttribute('data-enabled')).toBe('false')
-    expect(only(off, 'spend-persons').tag).toBe('button')
     expect(only(off, 'spend-persons').getAttribute('aria-pressed')).toBe('false')
     expect(texts(off, 'spend-persons-state')).toEqual(['off'])
     expect(texts(off, 'spend-persons-note')[0]).toContain('person breakdown is off')
     expect(all(off, 'spend-row')).toEqual([])
     expect(drawnText(off)).not.toContain('ada')
-
-    // On: the same document, and the rows are the document's own keys. The one
-    // address is drawn as the console's own marker for it, and the note beside
-    // the knob says what turning it on costs.
-    const on = renderSpend(
-      factory,
-      buildSpendModel(PERSON_DOCUMENT, null, { persons: true }),
-      'light',
-      personView(SPEND_DEFAULT_CONTROLS, true),
-    )
-    expect(only(on, 'spend-persons').getAttribute('data-enabled')).toBe('true')
-    expect(only(on, 'spend-persons').getAttribute('aria-pressed')).toBe('true')
-    expect(texts(on, 'spend-persons-state')).toEqual(['on'])
-    expect(texts(on, 'spend-persons-note')[0]).toContain('is on for this session')
-    expect(all(on, 'spend-row')).toHaveLength(2)
-    expect(drawnText(on)).toContain('redacted@example.invalid')
-    expect(drawnText(on)).not.toContain('ada')
-    // The switch's own word for the grouping is drawn from the document: the
-    // knob and the switch agree about what this screen is grouped by.
-    expect(texts(on, 'spend-key')).toContain('unknown')
   })
 
   // -------------------------------------------------------------------------

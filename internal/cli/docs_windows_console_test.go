@@ -865,7 +865,7 @@ func TestDocsWindowsConsoleReleaseDocsCarryTheDryRun(t *testing.T) {
 //     console's own Windows question to this folder. U13 is in that document's
 //     **§7 (UNVERIFIED)** and puts "anything about the desktop console on
 //     Windows" *out of the CLI track's scope*, assigning it to
-//     `docs/design/desktop-console.md` D10 -- so the folder's stated provenance
+//     `docs/desktop-console/spec.md` D10 -- so the folder's stated provenance
 //     was false, and a reader following it would look for a hand-off that does
 //     not exist.
 //   - Three places cited `SECURITY.md` for a POSIX-only mode caveat it does not
@@ -895,10 +895,10 @@ func TestDocsWindowsConsoleClaimsAboutOtherFilesAreTrue(t *testing.T) {
 	// settled, and the section of the sibling document it is written in.
 	for _, want := range []string{
 		"U13, in that document's §7",
-		"`docs/design/desktop-console.md` D10 owns it",
+		"`docs/desktop-console/spec.md` D10 owns it",
 	} {
 		if !strings.Contains(idx, want) {
-			t.Errorf("%s no longer carries %q: U13 is in docs/windows-cli/reconciliation.md's §7 and assigns the console's Windows question to docs/design/desktop-console.md D10, so a citation of it has to say that", index, want)
+			t.Errorf("%s no longer carries %q: U13 is in docs/windows-cli/reconciliation.md's §7 and assigns the console's Windows question to docs/desktop-console/spec.md D10, so a citation of it has to say that", index, want)
 		}
 	}
 	if strings.Contains(idx, "§4 U13") {
@@ -986,7 +986,7 @@ func TestDocsWindowsConsoleClaimsAboutOtherFilesAreTrue(t *testing.T) {
 		}
 	}
 	if strings.Contains(release, "the console has a Windows build") {
-		t.Errorf("docs/release.md says the console has a Windows build again: the plan is approved but unbuilt, no host has carried a `--win` pack to an artifact, and docs/design/desktop-console.md and the console's own README carry dated notes that say the build half moved and the signing half did not")
+		t.Errorf("docs/release.md says the console has a Windows build again: the plan is approved but unbuilt, no host has carried a `--win` pack to an artifact, and docs/desktop-console/spec.md and the console's own README carry dated notes that say the build half moved and the signing half did not")
 	}
 
 	// 6. And the figure the suite's size is given as, in the two other places it
@@ -1063,7 +1063,7 @@ func TestDocsWindowsConsoleClaimsAboutOtherFilesAreTrue(t *testing.T) {
 // belongs to, and put the release document's "still carry the older sentence"
 // clause back. Each fails here.
 func TestDocsWindowsConsoleNotesSayWhichHalfMoved(t *testing.T) {
-	const design = "docs/design/desktop-console.md"
+	const design = "docs/desktop-console/spec.md"
 	designDoc := readDoc(t, design)
 
 	// Every note says the same three things, because "which half moved" is only

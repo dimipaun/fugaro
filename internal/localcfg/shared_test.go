@@ -106,6 +106,19 @@ batch:
     GITHUB_TOKEN: projects/my-project/secrets/github-token
   socket_gid: 412
   task_timeout: 6h
+  opt_in: in
+  seal_key:
+    version: projects/my-project/locations/us-central1/keyRings/fugaro-batch/cryptoKeys/seal-key/cryptoKeyVersions/1
+    public_key: |
+      -----BEGIN PUBLIC KEY-----
+      MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4HUq0vDPYGjr7BfAyKNA
+      XRXxE0+5elG1+QraI8s+0Bx2uUGppkdd8dP3+ECdhfHtVbV8DNo/2iORKRk7DUcB
+      uCny+sSxOpypEzLxx72Sc8I2Uw1KOVUJ2V35hPgXYrmQuJsGPjJNsNGNvWLS+F0l
+      qLRdw3kuDPmwMU7RgSdGscp3DBonCv+S6Brge+p0nEPWk8NJajRgdrgqsHxdz64O
+      Kdnr98DZILIXM+FZd82Bu+O6e0WkaD71IghXJ423z33tHW7H8A/db2MGylzNisqR
+      QkuUGQEbInUQXAka5n/89eHKLVAI7DqOIs/cdx/zPlf8VjaB6g2MSCpCu80iXSD6
+      mQIDAQAB
+      -----END PUBLIC KEY-----
 max_parallel: 7
 endpoints: { run: "http://127.0.0.1:1/", no_auth: true }
 update_check: false
@@ -357,6 +370,237 @@ func TestMergeSharedKeepsThePublishedBatchBlock(t *testing.T) {
 	}
 }
 
+// sharedBatchBlock is a publishing machine's own `batch:` block — the compute
+// facts it carries into the published object (BR19) — and it is a machine's,
+// not the installation's: the image, the machine type and the socket gid are
+// what this machine's own compute was provisioned with, which is why the local
+// block wins them (MergeShared's whole-block rule, kept).
+const sharedBatchBlock = "batch:\n  image: us-central1-docker.pkg.dev/my-project/fugaro/acme-web:1\n  machine_type: e2-standard-4\n  service_account: fugaro-batch@my-project.iam.gserviceaccount.com\n  socket_gid: 412\n"
+
+// sharedBatchBlockOptIn is sharedBatchBlock with the opt-in fact on it, or the
+// block itself for "": the fact is absent from a block that never chose Batch
+// (C1, D3110 as amended), which is the state most machines that publish are in
+// — their block was written by a setup that never selected the backend, or by
+// the release behind.
+func sharedBatchBlockOptIn(optIn string) string {
+	if optIn == "" {
+		return sharedBatchBlock
+	}
+	return sharedBatchBlock + "  opt_in: " + optIn + "\n"
+}
+
+// TestPublishingKeepsTheOptIn: the opt-in fact is the INSTALLATION's answer to
+// whether its compute root is applied (R2, D3110 as amended), and the published
+// object is the only copy every machine reads it from — the local copy of a
+// teammate who has no config of their own IS that object — so a publish takes
+// the fact from the published copy and never from the publishing machine's own
+// block (R15). The machine that publishes is usually one whose block says
+// nothing about it: a setup that never chose Batch wrote that block, an operator
+// opted the installation in afterwards, and a publish from it would drop the
+// fact for everybody.
+//
+// Mutation (verified, run and restored): delete the `case published != nil`
+// arm of mergeBatchBlock's switch, so the block keeps the publishing machine's
+// own value — both cases below fail with the fact gone from the merged block
+// (and, with it, the withdrawal and the stale-copy cases of the two tests
+// below, which is the same mutation seen from their side). Delete the
+// empty-bucket arm of MergeSharedOptIn's early return — its mergeBatchBlock call
+// — and only the writer's case below fails, here and in the CLI test.
+func TestPublishingKeepsTheOptIn(t *testing.T) {
+	published := sharedBase(t, sharedBatchBlockOptIn(BatchOptInOn))
+	for _, c := range []struct {
+		what  string
+		local *Config
+	}{
+		{"a block whose own copy of the fact is absent", sharedBase(t, sharedBatchBlockOptIn(""))},
+		{"no batch: block at all", sharedBase(t, "")},
+	} {
+		got := MergeShared(published, c.local)
+		if got.Batch == nil || got.Batch.OptIn != BatchOptInOn || !got.Batch.OptedIn() {
+			t.Errorf("a publish from a machine with %s dropped the installation's opt-in: %+v", c.what, got.Batch)
+		}
+	}
+	out, err := MergeShared(published, sharedBase(t, sharedBatchBlockOptIn(""))).Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "opt_in: in") {
+		t.Errorf("the published file carries no opt-in:\n%s", out)
+	}
+	// The writers R15 names are the only way the fact is written, and they pass
+	// the value they are writing: an operator who selects the backend (R2)
+	// writes `in` on an installation whose block carries no fact at all.
+	if got := MergeSharedOptIn(sharedBase(t, sharedBatchBlockOptIn("")), sharedBase(t, sharedBatchBlockOptIn("")), BatchOptInOn); got.Batch == nil || !got.Batch.OptedIn() {
+		t.Errorf("the value an opt-in writer passed did not reach the block: %+v", got.Batch)
+	}
+	// The value is written whether or not the bucket holds a copy of the
+	// installation's config at all: a fresh bucket has none, and the fact is the
+	// one thing a writer's publish adds to its own block that no copy of the
+	// machine's own could supply.
+	if got := MergeSharedOptIn(nil, sharedBase(t, sharedBatchBlockOptIn("")), BatchOptInOn); got.Batch == nil || !got.Batch.OptedIn() {
+		t.Errorf("a writer's value was lost on a bucket with nothing published: %+v", got.Batch)
+	}
+	// And no other publish introduces a value: with neither copy carrying the
+	// fact, the published block carries none either — the absence is a state,
+	// not something a publish invents on its way through.
+	if got := MergeShared(sharedBase(t, sharedBatchBlockOptIn("")), sharedBase(t, sharedBatchBlockOptIn(""))); got.Batch == nil || got.Batch.OptIn != "" {
+		t.Errorf("a publish invented an opt-in nobody wrote: %+v", got.Batch)
+	}
+}
+
+// TestPublishingKeepsAWithdrawal: a withdrawal is a WRITTEN value and not an
+// absence (C1, D3111), so a publish keeps the published `withdrawn` the way it
+// keeps `in`, and keeps it apart from the absence: an update applies the
+// compute root with the grants off for the first (R16, BR21) and does nothing
+// for the second, and the service's deploy input is set from the two (R17), so
+// a publish that flattened the withdrawal into "nobody has opted in" would
+// turn an installation that opted out into one that never chose Batch.
+//
+// Mutation (verified, run and restored): narrow the switch's second arm to
+// `published != nil && published.OptIn != BatchOptInWithdrawn` — the three
+// states read as two, with the withdrawal a fall-back to the machine's own copy
+// — the second case below fails with `opt_in: withdrawn` gone from the file (and
+// the stale-copy test below with it, which is this mutation from its side).
+func TestPublishingKeepsAWithdrawal(t *testing.T) {
+	withdrawn := sharedBase(t, sharedBatchBlockOptIn(BatchOptInWithdrawn))
+	for _, c := range []struct {
+		what  string
+		local *Config
+	}{
+		{"no batch: block at all", sharedBase(t, "")},
+		{"a block whose own copy of the fact is absent", sharedBase(t, sharedBatchBlockOptIn(""))},
+	} {
+		got := MergeShared(withdrawn, c.local)
+		if got.Batch == nil || !got.Batch.OptInWithdrawn() || got.Batch.OptedIn() {
+			t.Errorf("a publish from a machine with %s lost the withdrawal: %+v", c.what, got.Batch)
+		}
+	}
+	out, err := MergeShared(withdrawn, sharedBase(t, sharedBatchBlockOptIn(""))).Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "opt_in: withdrawn") {
+		t.Errorf("the published file does not carry the withdrawal as a value:\n%s", out)
+	}
+}
+
+// TestAStaleLocalOptInDoesNotOverwriteAWithdrawal: the machine's own copy of
+// the fact is never the authority (R15), so the machine whose block still says
+// `in` — it opted in before an operator withdrew the fact, or its file has
+// simply not followed the published copy yet, which is the window O19 is about
+// — publishes the withdrawal and not its own value, and the same holds the other
+// way round. The published object is what every machine without a config of its
+// own reads, so one stale publish reaching it would put the whole installation
+// back in (or out) and start VMs the service then refuses the claim of (R17).
+//
+// Mutation (verified, run and restored): let the opt-in take the local block's
+// value again, which is what the switch replaced (its second arm deleted) — the
+// first case below fails with `in` published over the withdrawal; and a switch
+// that reads the fact as two states rather than three (the withdrawal falling
+// back to the machine's own copy) fails it too.
+func TestAStaleLocalOptInDoesNotOverwriteAWithdrawal(t *testing.T) {
+	published := sharedBase(t, sharedBatchBlockOptIn(BatchOptInWithdrawn))
+	stale := sharedBase(t, sharedBatchBlockOptIn(BatchOptInOn))
+	got := MergeShared(published, stale)
+	if got.Batch == nil || !got.Batch.OptInWithdrawn() || got.Batch.OptedIn() {
+		t.Fatalf("a stale local `in` overwrote the published withdrawal: %+v", got.Batch)
+	}
+	out, err := got.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "opt_in: in") {
+		t.Errorf("the published file says `in` after a withdrawal:\n%s", out)
+	}
+	// The other direction is the same rule, and it is the one a machine that
+	// opted out and never updated its file is in: it cannot publish its own
+	// withdrawal over an installation that opted in again.
+	back := sharedBase(t, sharedBatchBlockOptIn(BatchOptInWithdrawn))
+	if got := MergeShared(sharedBase(t, sharedBatchBlockOptIn(BatchOptInOn)), back); got.Batch == nil || !got.Batch.OptedIn() {
+		t.Errorf("a stale local withdrawal overwrote the published opt-in: %+v", got.Batch)
+	}
+	// Opting in again (R2) is the way out, and it is the writers' own: they pass
+	// the value, and it is the only thing that can write over a withdrawal.
+	if got := MergeSharedOptIn(published, stale, BatchOptInOn); got.Batch == nil || !got.Batch.OptedIn() {
+		t.Errorf("the value an opt-in writer passed lost to a withdrawal: %+v", got.Batch)
+	}
+}
+
+// TestEveryOtherBatchFieldMergesAsBefore: the opt-in fact is the one field of
+// the block that is read the other way round (R15), and every other field keeps
+// the rule the block has always merged by, which is the whole block's: the
+// publishing machine's own block wins where it has one — its image and its
+// socket gid are what its own compute was provisioned with — and the published
+// block is adopted where the machine has none. A publish must not become a
+// merge of the block field by field: splicing one machine's image onto another's
+// account is a job that boots under an account that may not read that image.
+//
+// Mutation (verified, run and restored): take the published block whenever the
+// local one is not nil (`out = *published` beside the copy in mergeBatchBlock)
+// — the first case below fails with the published machine's image and gid, and
+// nothing else in this package notices.
+func TestEveryOtherBatchFieldMergesAsBefore(t *testing.T) {
+	published := sharedBase(t, sharedBatchBlockOptIn(BatchOptInOn))
+	local := sharedBase(t, strings.Replace(strings.Replace(sharedBatchBlockOptIn(BatchOptInWithdrawn), "412", "998", 1), "acme-web:1", "acme-web:2", 1))
+	got := MergeShared(published, local)
+	if got.Batch == nil || got.Batch.SocketGID != 998 || got.Batch.Image != "us-central1-docker.pkg.dev/my-project/fugaro/acme-web:2" || !got.Batch.OptedIn() {
+		t.Fatalf("the local block no longer wins its own fields, or the opt-in followed it: %+v", got.Batch)
+	}
+	if got := MergeShared(published, sharedBase(t, "")); got.Batch == nil || got.Batch.SocketGID != 412 || got.Batch.MachineType != "e2-standard-4" {
+		t.Errorf("a machine with no block of its own did not adopt the published one: %+v", got.Batch)
+	}
+	if got := MergeShared(nil, sharedBase(t, "")); got.Batch != nil {
+		t.Errorf("no block on either side became %+v", got.Batch)
+	}
+	out, err := MergeShared(nil, sharedBase(t, "")).Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "batch") {
+		t.Errorf("the merged file carries a batch key nobody set:\n%s", out)
+	}
+}
+
+// TestAKeyFactIsNotPublished: no publish carries a key fact (R15 as re-cut by
+// LM19, R21), because the fact is retired and only the launch's own identity
+// names a run from here on. Until BR23 removes the field, a machine that still
+// holds one can publish — the block is READ and not refused, R10's rule for a
+// block that still carries `batch.secrets` — and what the publish does with it
+// is what an update does with that key: the fact leaves the block in place,
+// with every other field of the block standing, and the machine's own file keeps
+// it until an update rewrites that file.
+//
+// Mutation (verified, run and restored): delete `out.SealKey = nil` from
+// mergeBatchBlock — this fails with a published seal_key.
+func TestAKeyFactIsNotPublished(t *testing.T) {
+	keyed := sharedBase(t, sharedBatchBlockOptIn(BatchOptInOn))
+	keyed.Batch.SealKey = fullLocalConfig(t).Batch.SealKey
+	if keyed.Batch.SealKey == nil {
+		t.Fatal("the fixture carries no key fact to drop")
+	}
+	got := MergeShared(keyed.Shared(), keyed)
+	if got.Batch == nil || got.Batch.SealKey != nil {
+		t.Fatalf("a publish from a keyed block published the key fact: %+v", got.Batch)
+	}
+	if got.Batch.SocketGID != 412 || got.Batch.MachineType != "e2-standard-4" || !got.Batch.OptedIn() {
+		t.Errorf("dropping the key fact took the rest of the block with it: %+v", got.Batch)
+	}
+	out, err := got.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "seal_key") {
+		t.Errorf("the published file carries a key fact:\n%s", out)
+	}
+	// The machine's own copy is the one thing a publish leaves alone: the file
+	// still parses with the fact on it (the fixture's block does, which is what
+	// `fullLocalConfig` reads), and what rewrites it is `fugaro update`, not a
+	// publish (R10).
+	if s := keyed.Shared(); s.Batch == nil || s.Batch.SealKey == nil {
+		t.Error("Shared() dropped the key fact from the machine's own copy, which only an update may do")
+	}
+}
+
 // TestSharedNeverPublishesTheBackendName: the `batch:` block is published for
 // the reason above, and `backend:` is not, and the difference is what
 // publishes them can be judged. An operator reading doctor's Batch findings
@@ -484,7 +728,7 @@ func TestMergeSharedNeverCarriesProviders(t *testing.T) {
 
 // TestMergeSharedNeverCarriesClaudeAccounts: claude_accounts is the
 // operator-only allow-list of decision T1 (design
-// docs/design/named-oauth-tokens.md §3) — never published, so neither the
+// docs/named-oauth-tokens/spec.md §3) — never published, so neither the
 // local nor a published config's claude_accounts reaches the output. This
 // is the regression test for the leak a bucket writer could otherwise use
 // to inject or widen the allow-list (MergeShared(nil, lc).Marshal() used to
@@ -779,7 +1023,7 @@ func TestMergeSharedKeepsTheOwnerInStep(t *testing.T) {
 }
 
 // TestMergeSharedNeverCarriesProjectSecrets: project_secrets is
-// operator-only local config (design docs/design/project-secrets.md §7),
+// operator-only local config (design docs/project-secrets/spec.md §7),
 // never published -- neither the local nor a published config's block
 // reaches the output.
 func TestMergeSharedNeverCarriesProjectSecrets(t *testing.T) {

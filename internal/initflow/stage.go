@@ -142,6 +142,24 @@ const (
 	// and no shorter gap exists, because the node is one database write and the
 	// service's replacement is a Terraform apply of the installation root.
 	CredentialsService = "credentials-service"
+	// CredentialsCopy is the copy of this installation's model keys into the
+	// credentials service's bundle (internal/cli/update_keys.go, KS12 of
+	// docs/keys-through-service, D3001, R4): for each model key the
+	// installation holds outside the bundle, the newest version of its
+	// container is read in memory and written under C1's name for the
+	// repository it is for, with the container and the version it came from
+	// recorded on the entry.
+	//
+	// It comes immediately AFTER the credentials service's own stage, and
+	// that position is the whole of it: what it writes a value INTO is the
+	// service's bundle, and a document holding an entry the deployed service
+	// does not know is a document that service refuses WHOLE (the loader's
+	// strictness, F22/F26) — halting every caller of it, coding runs included.
+	// The copy goes through the same guard as every other writer of the
+	// family, so a service too old for the entry refuses the write rather than
+	// landing it; the stage's position is what makes the guard's answer a
+	// state the same run has already fixed.
+	CredentialsCopy = "credentials-copy"
 	// Workspace is the workspace OWNER's published record
 	// (internal/cli/update_workspace.go, D1292): `workspaces/<name>` in the
 	// workspace's own database, built from the record this installation
@@ -153,6 +171,23 @@ const (
 	// stage and skips it — a member holds no grant on the workspace's project
 	// at all — so it is the owner's installation that publishes.
 	Workspace = "workspace"
+	// CredentialsRoute is the MEMBER's published record of where each of its
+	// repositories' credentials is served from (internal/cli/update_route.go,
+	// WS9, D2973/D2982): `config/policy/route/<slug>` in the member's own
+	// database, one record per repository, carrying the workspace's service
+	// address from the member's own pin and, per kind, whether the project's
+	// own copy serves it or the workspace's service does. A run reads it once
+	// at bootstrap and keeps the answer, so this stage is what writes the only
+	// leaves a run's reads are made of.
+	//
+	// It comes after the policy and the workspace stages: what it publishes is
+	// derived from the policy node the same run publishes (which credentials
+	// the member's own policy admits) and from the membership key and pin the
+	// workspace stage's own subjects declare — recording a route before the
+	// node it is derived from would publish a decision no policy backs. It
+	// comes BEFORE the layer's, and it needs neither the layer nor the
+	// checkout: the record is a database write and nothing else.
+	CredentialsRoute = "credentials-route"
 	// WorkspaceProject is the workspace's OWN project's root
 	// (internal/cli/workspace_create.go, W3): the workspace's own service
 	// account and the one grant that reaches the workspace's database, in the
@@ -196,7 +231,7 @@ const (
 	// terminal and with nothing asked.
 	Unit = "unit"
 	// Compute is the Batch backend's installation-level provisioning
-	// (design docs/design/compute-backend.md §8.1 task 6). It is last
+	// (design docs/compute-backend/spec.md §8.1 task 6). It is last
 	// because it is the only stage that may not run before everything else
 	// is done: what it provisions is for a backend no run can select yet.
 	Compute = "compute"
@@ -283,6 +318,12 @@ var order = []slot{
 	// the process that reads it is replaced (CredentialsService's own comment,
 	// the owner's ruling of 2026-11-10).
 	{name: CredentialsService, needs: []string{Policy}},
+	// The copy of the installation's model keys, immediately after the service
+	// whose bundle it writes them into and with nothing between them: the
+	// document it leaves must be one the service that reads it can load, and
+	// the stage before this one is the run's one move of that service's image
+	// (CredentialsCopy's own comment has the window).
+	{name: CredentialsCopy, needs: []string{CredentialsService}},
 	// The workspace's own project's root, before the record it serves: what it
 	// creates is the identity the workspace's own service runs as, and the
 	// record stage publishes the node that service reads. It needs the
@@ -297,6 +338,13 @@ var order = []slot{
 	// after the policy one because the two are the run's published documents
 	// and the policy node is what every run of the project is admitted by.
 	{name: Workspace, needs: []string{Installation2, Policy}},
+	// The route is the member's own record of where each repository's
+	// credentials are served (internal/cli/update_route.go). It needs the
+	// policy stage, because which kind the member's own copy serves is a
+	// question asked of the node that stage publishes, and it needs the
+	// installation's own stages for the database it writes into — the same
+	// two the workspace record needs and for the same reason.
+	{name: CredentialsRoute, needs: []string{Installation2, Policy}},
 	// The layer is what the checkout's images are built from, so it is
 	// published before the refresh that reads it: the checkout stage's cloud
 	// step builds this checkout's images off the layer that applies, and a

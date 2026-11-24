@@ -2,7 +2,7 @@
 # See ee/LICENSE for the terms.
 
 # The services root: the portal's two Cloud Run services and everything one
-# project holds for them (D2194, S3.5, docs/design/key-signing-service.md §3). The
+# project holds for them (D2194, S3.5, docs/key-signing-service/spec.md §3). The
 # API is the internet-facing half — the SPA's calls, the merchant's events, the
 # scheduler's monthly and daily runs — and the minter is the one service that
 # signs: only the API's account may call it, and the call carries an ID token

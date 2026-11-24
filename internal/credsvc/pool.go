@@ -38,6 +38,20 @@ package credsvc
 // what an installation that uses none is offered. The narrowing therefore
 // starts at the crafts block and not at the pools — a pool no craft's access
 // names serves nothing, however many members it lists.
+//
+// **And once the installation is migrated, the spread switch is retired**
+// (D3177; plan task PL3). A pool of two or more subscription tokens is inert
+// while `subscription_spread` is off (D1622, D1626) — and the migration retires
+// that rule: a pool of several subscription tokens serves all of them, under
+// every rule, and the switch no longer decides whether a second token may be
+// used. What tells this service that an installation HAS been migrated is the
+// one new top-level policy key the migration publishes with the table, its
+// admissions and the pools in their new shape (`model_routing`, C1's key), and
+// *migrated* below is that read. So the switch keeps deciding exactly as it
+// does today until the node carries that key, which is what keeps merging this
+// task alone from moving anything: no installation is migrated until `fugaro
+// update` publishes the key (RT4, MG1), and until then every pool behaves as it
+// did.
 
 import (
 	"fmt"
@@ -62,20 +76,25 @@ const craftNodeKeyPrefix = "crafts"
 // the call declared, the switch or the path that would let it serve — and the
 // caller's error branch has no other case it could be confused with.
 //
-// Two walks refuse with it, and they are the two that decide a call's candidate
-// list from a document rather than from the bundle: the project's crafts
+// Three walks refuse with it, and each is a call whose candidate list a
+// document decided rather than the bundle: the project's crafts
 // (poolOffering), which leave a call nothing when every access of theirs serves
-// nothing, and the repository's own recorded auth (narrowToRepoAuth, B2.1),
-// which serves a repository only what its own configuration names and refuses
-// a call whose declaration disagrees with that record. Neither answers an empty
-// list, which the selector would turn into a sentence about the bundle and send
-// an operator looking in the wrong document.
+// nothing; the repository's own recorded auth (narrowToRepoAuth, B2.1), which
+// serves a repository only what its own configuration names and refuses a call
+// whose declaration disagrees with that record; and the personal half
+// (personal_workspace.go's reader, WC5), which refuses a call under a slip that
+// names a person's token the member's switch is off for — or whose switch could
+// not be read — rather than moving it to the shared entries (R11). None of them
+// answers an empty list, which the selector would turn into a sentence about the
+// bundle and send an operator looking in the wrong document.
 //
-// The sentence names credentials, pools and accounts by NAME and never by
-// value, the way every other refusal on this path does: it is built from the
-// published node, which is the document an operator wrote, from the record the
-// repository's own update wrote, and from the names of the bundle's entries,
-// which is all this service ever says about them (F27, C1.13). The auth and the
+// The sentences the document walks build name credentials, pools and accounts
+// by NAME and never by value, the way every other refusal on this path does: it
+// is built from the published node, which is the document an operator wrote,
+// from the record the repository's own update wrote, and from the names of the
+// bundle's entries, which is all this service ever says about them (F27,
+// C1.13). The personal half's two name no credential at all — a class and the
+// command that fixes it (personal_workspace.go). The auth and the
 // account a call DECLARED are the caller's own text, so they reach this
 // sentence only through the closed set of agent auths and the shape an account
 // name has (ValidAuthMode, ValidAuthAccount): what is printed is a value this
@@ -108,7 +127,7 @@ func poolOffering(p *projectpolicy.Policy, b *Bundle) (offering []creds.Credenti
 		Crafts:      *p.Crafts,
 		Credentials: p.CraftCredentials,
 		Pools:       p.CraftPools,
-	}}, subscriptionSpreadOf(p))
+	}}, subscriptionSpread(p))
 
 	held := bundleTiers(b)
 	var out []creds.Credential
@@ -181,6 +200,9 @@ func craftOffering(name string, e craft.Effective, p *projectpolicy.Policy, held
 		// D1622: a pool of two or more Claude OAuth subscriptions serves nothing
 		// while the owner's subscription-spread switch is off, and this is the
 		// path's half of the rule the runner's checkStagePool states on its own.
+		// A migrated installation is not in this state at all: the resolver
+		// answered Inert off the switch the migration retires (D3177,
+		// subscriptionSpread), so this clause is unreachable for it.
 		pool, _ := namedPool(e.Access, p)
 		return nil, fmt.Sprintf("the %s craft's access names the pool %q, which serves nothing yet: it lists %s, and Fugaro spreads a run across subscriptions only once the project's subscription_spread switch is on (it is off)",
 			name, e.Access, oauthMemberText(pool, p.CraftCredentials))
@@ -225,14 +247,17 @@ func craftOffering(name string, e craft.Effective, p *projectpolicy.Policy, held
 // job that would spend it holds instead — the runner path's shape.
 //
 // **A Claude OAuth member is served only once the subscription switch is on**
-// (D1622, D1626, D1636). The resolver calls a pool of two or more such members
-// inert, and this is the other half of the same ruling on this path: inside a
-// pool that also holds another kind each subscription member is stepped over
-// while the switch is off, which is the skip the runner's poolMember makes from
-// its side (poolSkipSubscription) — the two paths answer one pool, so a mixed
-// pool must not be spread by this one alone.
+// (D1622, D1626, D1636) — and always once the installation is migrated (D3177):
+// the switch is read through subscriptionSpread, so on a migrated node every
+// member is served and there is no skip at all. Until then the resolver calls a
+// pool of two or more such members inert, and this is the other half of the
+// same ruling on this path: inside a pool that also holds another kind each
+// subscription member is stepped over while the switch is off, which is the
+// skip the runner's poolMember makes from its side (poolSkipSubscription) — the
+// two paths answer one pool, so a mixed pool must not be spread by this one
+// alone.
 func poolOfferingOf(pool config.Pool, p *projectpolicy.Policy, held map[string]creds.Tier) []creds.Credential {
-	spread := subscriptionSpreadOf(p)
+	spread := subscriptionSpread(p)
 	var out []creds.Credential
 	for _, m := range config.PoolMembers(pool, p.CraftCredentials) {
 		if m.Path != config.CredentialPathCredsvc {
@@ -261,7 +286,7 @@ func memberClauses(pool config.Pool, p *projectpolicy.Policy, held map[string]cr
 		case m.Path == "":
 			parts = append(parts, fmt.Sprintf("%s (no path this release serves a credential of type %q on)", m.Name, m.Type))
 		default:
-			if m.Type == config.CredentialTypeClaudeOAuth && !subscriptionSpreadOf(p) {
+			if m.Type == config.CredentialTypeClaudeOAuth && !subscriptionSpread(p) {
 				parts = append(parts, fmt.Sprintf("%s (%s)", m.Name, poolSkipSubscription))
 				continue
 			}
@@ -363,10 +388,57 @@ func bundleTiers(b *Bundle) map[string]creds.Tier {
 	return out
 }
 
-// subscriptionSpreadOf is the published node's subscription-spread switch
-// (D1622, D1636): off unless the node says true.
-func subscriptionSpreadOf(p *projectpolicy.Policy) bool {
-	return p.SubscriptionSpread != nil && *p.SubscriptionSpread
+// modelRoutingKey is the top-level policy key the migration adds
+// (contract-table.md): the table, its admissions and the pools in their new
+// shape, published together. Its PRESENCE is what says an installation has been
+// migrated, which is the marker C2's contract fixes for the service (D3177,
+// contract-pools.md "What tells the service an installation is migrated").
+const modelRoutingKey = "model_routing"
+
+// migrated reports whether the published node is one a migrated installation
+// published: it carries `model_routing`.
+//
+// It is read off Policy.UnknownKeys, and that is a fact about THIS release and
+// not about the key: RT4 is the task that publishes `model_routing` and the
+// reader that knows it, so until it lands the key is one this binary does not
+// know — which is exactly how a release-behind reader reads a node a newer
+// `fugaro update` wrote (R21), and what lets this task land before the
+// migration does.
+//
+// **Whoever makes `model_routing` a key this package knows — RT4, or the
+// release that carries it — moves this read to the typed member it becomes.**
+// The key then leaves UnknownKeys and this function answers false for every
+// node, including a migrated one: the direction that keeps a pool inert and
+// never the one that spreads a pool nobody has migrated, so an omission fails
+// closed — and TestAPoolServesWithoutTheSpreadSwitch goes red, which is where
+// the omission is read rather than discovered later.
+func migrated(p *projectpolicy.Policy) bool {
+	if p == nil {
+		return false
+	}
+	for _, k := range p.UnknownKeys {
+		if k == modelRoutingKey {
+			return true
+		}
+	}
+	return false
+}
+
+// subscriptionSpread is whether this project's pools may spread subscription
+// members at all, and it is the one place D3177 is read: a migrated
+// installation's pools spread whatever the node says — a pool of several
+// subscription tokens serves all of them (D3177) — and an installation that is
+// not migrated reads the switch exactly as it always did (D1622, D1636), off
+// unless the node says true.
+//
+// The member is still decoded either way: a policy a release behind published
+// still loads, and a node a release behind READS keeps its meaning (PL1, R21).
+// What changed is only who it decides for.
+func subscriptionSpread(p *projectpolicy.Policy) bool {
+	if migrated(p) {
+		return true
+	}
+	return p != nil && p.SubscriptionSpread != nil && *p.SubscriptionSpread
 }
 
 // named is whether the offering holds a credential of that name, which is what

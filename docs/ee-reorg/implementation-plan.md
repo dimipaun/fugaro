@@ -103,7 +103,7 @@ stage halts? Does a core runner given a `governance:` block ever refuse a run?
 
 #### E0.3 The design: the moves file by file, and the hooks
 
-- **Files:** `docs/design/ee-boundary-moves.md` (new).
+- **Files:** `docs/ee-reorg/boundary-moves.md` (new).
 - **Content:** everything subscriptions S1.1 listed for the coordinator and the report, plus:
   - the `report.USD6` gap in the digest's MIT copy (F6) and `consoleReadPaths` (F6);
   - the governance split of D521, symbol by symbol from reconciliation F7: which types stay, which
@@ -524,7 +524,7 @@ must cover the images before an image takes the tag).
 | `internal/clidoc/cliref/`, `internal/cli/docs_mobile_mailbox_plan_test.go`, `website/test/meta.mjs` | E1.7 (L3) |
 | `ee/README.md`, `.claude/rules/ee.md`, `internal/cli/docs_ee_reserved_test.go` | E0.2 (L0) |
 | `docs/subscriptions/*` | E0.1 (L0) |
-| `docs/design/ee-boundary-moves.md` | E0.3 (L0) |
+| `docs/ee-reorg/boundary-moves.md` | E0.3 (L0) |
 | `docs/task-governance/*` | E0.4 (L1) |
 | `docs/releases/v0.13.0.md`, `website/data/release-summaries.yaml` | E3.3 (L7) |
 

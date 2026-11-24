@@ -36,7 +36,7 @@ import (
 // read-only guarantee.
 const (
 	reportContractPath = "../../../console/docs/json-contract.md"
-	reportDesignPath   = "../../../docs/design/desktop-console.md"
+	reportDesignPath   = "../../../docs/desktop-console/spec.md"
 )
 
 // reportFlagRE finds a --flag the documents write, the same pattern the core's

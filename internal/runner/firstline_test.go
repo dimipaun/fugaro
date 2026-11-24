@@ -28,7 +28,7 @@ func firstLineCfg(t *testing.T, rounds int, extra string) string {
 		extra = "  first_line_rounds: 1\n" + extra
 	}
 	cfg := testutil.FixtureFiles(t)["fugaro.yaml"]
-	out := strings.Replace(cfg, "  review_rounds: 2\n", "  review_rounds: "+string(rune('0'+rounds))+"\n  models: { coder: coder-model, reviewer: senior-model }\n"+extra, 1)
+	out := strings.Replace(cfg, "  review_rounds: 2\n", "  review_rounds: "+string(rune('0'+rounds))+"\n  models: { coder: "+sonnet+", reviewer: "+opus+", background: "+haiku+" }\n"+extra, 1)
 	if out == cfg {
 		t.Fatal("fixture has no review_rounds line")
 	}
@@ -61,8 +61,14 @@ func eq(a []string, b ...string) bool { return strings.Join(a, ",") == strings.J
 
 // TestFirstLineStageOrder: implement, review_first, fix, then the senior
 // review on the reviewer's model, with first-line findings kept from it.
+//
+// The run is an oauth one: each of these stages' dollars is Claude Code's own
+// figure, and a gateway run's cost is the ledger's, which a scripted agent
+// never fills (AB1b, D3009). The assertion below is about the loop — that a
+// first-line stage counts like any other — so it is read off the credential
+// whose run still counts the stages' own figures.
 func TestFirstLineStageOrder(t *testing.T) {
-	h := newHarness(t, firstLineCfg(t, 2, "  first_line_review: on\n"), nil)
+	h := oauthHarness(t, firstLineCfg(t, 2, "  first_line_review: on\n"), nil)
 	rec, err := h.run(t, implement("feature"), review("changes", 1), fixStep, review("ship", 0))
 	if err != nil || rec.Outcome != runstore.OutcomeReady {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
@@ -74,7 +80,7 @@ func TestFirstLineStageOrder(t *testing.T) {
 		t.Fatalf("reviews = %v", got)
 	}
 	c := h.agent.calls
-	if c[0].Model != "coder-model" || c[1].Model != "coder-model" || c[2].Model != "coder-model" || c[3].Model != "senior-model" {
+	if c[0].Model != sonnet || c[1].Model != sonnet || c[2].Model != sonnet || c[3].Model != opus {
 		t.Fatalf("models = %q %q %q %q", c[0].Model, c[1].Model, c[2].Model, c[3].Model)
 	}
 	// The two reviews are given the same prompt, up to the input each round
@@ -120,7 +126,7 @@ func TestFirstLineVerdictNeverMakesReady(t *testing.T) {
 		t.Fatalf("reviews = %v", got)
 	}
 	// The senior review ran although the first line shipped.
-	if len(h.agent.calls) != 3 || h.agent.calls[2].Model != "senior-model" {
+	if len(h.agent.calls) != 3 || h.agent.calls[2].Model != opus {
 		t.Fatalf("calls = %d", len(h.agent.calls))
 	}
 }
@@ -186,7 +192,7 @@ func TestFirstLineFailureSkipped(t *testing.T) {
 				t.Errorf("a skipped first line has no findings to record: %+v", rec.Reviews[0])
 			}
 			// No fix, and no second first-line round after a failure.
-			if len(h.agent.calls) != 3 || h.agent.calls[2].Model != "senior-model" {
+			if len(h.agent.calls) != 3 || h.agent.calls[2].Model != opus {
 				t.Fatalf("calls = %d", len(h.agent.calls))
 			}
 		})
@@ -302,7 +308,7 @@ func withFirstLine(t *testing.T, cfg string) string {
 	// first_line_rounds comes with first_line_review: the cases that use this
 	// helper script one cheap round, and an unset knob would take the resolved
 	// mode's row instead (internal/rigor's DefaultRounds).
-	out := strings.Replace(cfg, "review_rounds: 2", "review_rounds: 2\n  models: { coder: coder-model, reviewer: senior-model }\n  first_line_review: on\n  first_line_rounds: 1", 1)
+	out := strings.Replace(cfg, "review_rounds: 2", "review_rounds: 2\n  models: { coder: "+sonnet+", reviewer: "+opus+", background: "+haiku+" }\n  first_line_review: on\n  first_line_rounds: 1", 1)
 	if out == cfg {
 		t.Fatal("no review_rounds: 2 in the config")
 	}

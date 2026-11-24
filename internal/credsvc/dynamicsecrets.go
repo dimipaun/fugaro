@@ -24,16 +24,40 @@ package credsvc
 // land together; until then a per-secret name behaves exactly as it did before
 // this file existed (G7, G12).
 //
-// R6: nothing moves. `fugaro update` cannot read the bundle's values (they were
-// written by hand, and the people who wrote them cannot read them back), so a
-// rotation is never a migration and no value is ever copied from one store to
-// the other. What the service does instead is resolve in order: the per-secret
+// R6: what THIS SERVICE does moves nothing. It resolves a credential in order —
+// it reads, it never writes, and no value it reads is carried anywhere but into
+// the call it was read for — so a rotation is never a migration here, and the
+// bundle's values stay the ones their owners wrote by hand (who cannot read them
+// back, which is why nothing in this tree may rewrite one). That is the rule the
+// exception below is an exception TO, and it is stated as this file's own rather
+// than as a law of the two stores because it no longer is one: one command
+// outside the service moves a value between them, deliberately and once, and it
+// is named below. What the service does instead is resolve in order: the per-secret
 // container FIRST, and the bundle's entry for the same credential second. A
 // container that is not there — none, or one with no version — is R7's fall to
 // the bundle, which is why an installation that has rotated nothing behaves
 // exactly as it did before this file existed (G7), and why a slip-less older
 // CLI is served the bundle's value after a rotation (D1945, accepted:
 // `update` prompts the upgrade).
+//
+// **The one exception is KS12's copy** (internal/cli/update_keys.go, D3001,
+// R4), and it is an exception to the rule above in the direction the rule is
+// about and not around it: the same project owner, with the IAM that already
+// reads both containers, reads each model key this installation holds outside the
+// bundle — a provider's, for every repository that may send code to it, and a
+// repository's own Anthropic key — out of its container and writes the value into
+// the bundle entry the service serves that repository, once, in one version,
+// behind the confirmation of their own `fugaro update`. Nothing a rotation does is that —
+// a rotation is a person's new value landing in the container the intake
+// writes, and this file's read is what serves it, unchanged. What the copy
+// exists for is the end of the mount: a key that is only in a container is a
+// key no released run is served, so the owner moves it into the document their
+// service reads. Three things keep it inside the rule: it never overwrites an
+// entry it did not write (it records the container and the version it read on
+// every entry it does write, and an entry without that marker is left alone and
+// named), it reads nothing the service could not have served, and it is
+// unreachable from this file — no line of the read below writes anything, and
+// no value it reads is copied anywhere.
 //
 // A read that FAILED is neither an absence nor a fallback: the call is refused
 // (D143, R7). A service that answered the bundle's value because Secret Manager
@@ -76,6 +100,52 @@ var ErrPerSecretUnreadable = errors.New(perSecretRefusal)
 // credential it was to be served could not be read, and nothing about where the
 // service looked.
 const perSecretRefusal = "the per-secret credential could not be read"
+
+// ErrPersonalTokenAbsent is R7's refusal for a call that names a person's own
+// token and finds none: the container is not there at all, or holds no version
+// (D2974).
+//
+// **It is a class of its own because this candidate must not fall to the
+// bundle.** R6's fall is what every other per-secret name does — a rotation the
+// bundle also holds a value for is served the bundle's entry when no container
+// answers (an installation that has rotated nothing behaves as it always did,
+// G7) — and it is exactly what D2974 refuses for the personal name, whose held
+// credential name is the SHARED subscription token's: config.ClaudeOAuthToken is
+// the default account's secret, so the credential the fall names is the
+// workspace's own token, served to a run whose slip named a PERSON's token
+// through no allow-list of its own and counted as unbilled, because the tier is
+// the candidate's.
+//
+// What that fall answers today is usually a sentence rather than that token, and
+// the class is here so that it is a RULE either way. The bundle's index holds
+// the RESOLVED account name (config.DefaultClaudeAccount) and the fall names the
+// credential the grammar holds, so with the ordinary document the person who has
+// stored nothing meets "the selected credential is not in the bundle" — a
+// sentence about a document they cannot see, naming no command. And an account
+// may legally be NAMED after the credential (the bundle reserves that spelling
+// for the git entry alone), in which case that name IS in the index and the fall
+// serves that account's token instead: the state
+// TestAMissingPersonalTokenRefusesEvenWhereTheBundleHoldsThatName builds, and
+// the one D2974 is about.
+//
+// Its sentence names the command that sets a token and carries no container, no
+// credential name and no value: a run reads what to do, and nothing about where
+// the service looked.
+var ErrPersonalTokenAbsent = errors.New(personalTokenAbsent)
+
+// personalTokenAbsent is the sentence a run is answered with, on the wire and on
+// the operator's own line.
+const personalTokenAbsent = "the personal token this call's slip names is not there: a person sets one at the workspace with `fugaro secrets user set`"
+
+// personalTokenName reports whether a parsed per-secret name is the one personal
+// name this plan serves: a person's own claude-oauth-token, under their own
+// prefix (A1, R6). A project-shared name of that spelling is not it — this half
+// serves no `fugaro_p_` name — and neither is an account's own token
+// (`claude-oauth-token-<account>`), which is a per-user rotation like any other
+// and keeps R6's fall.
+func personalTokenName(n secretname.Name) bool {
+	return !n.Shared() && n.Name == creds.PersonTokenName
+}
 
 // PerSecretSource reads one per-secret container. It is an interface so a test
 // can answer one without a cloud call (Convention 9), and
@@ -166,6 +236,10 @@ type DynamicSecrets struct {
 //	("", false, name, nil)  there is no per-secret reading of this candidate —
 //	                        its name is not one of the grammar's, or no
 //	                        container (or no version) is there
+//	("", false, "", ErrPersonalTokenAbsent)
+//	                        the candidate is the personal name this plan serves
+//	                        and no container answered it: R7 refuses rather than
+//	                        fall (D2974)
 //	("", false, "", err)    the read FAILED: the caller refuses (D143)
 //
 // name is the credential name the bundle is to be asked for when nothing
@@ -173,6 +247,14 @@ type DynamicSecrets struct {
 // the grammar (R7's fall — the bundle's entry for the credential the rotation
 // was of), and the candidate's own name for every other candidate. It is empty
 // on the failure, which the caller does not fall from.
+//
+// **The personal name is the one candidate of the grammar with no fall**, and
+// the name is the whole of how the two are told apart: a personal candidate is
+// the same container `fugaro secrets user set` writes, so a caller cannot tell
+// the personal half's read from a rotation's by anything but the name it is
+// reading (personalTokenName). What a fall would serve there is the shared
+// subscription token, which is the one thing D2974 forbids — see
+// ErrPersonalTokenAbsent.
 //
 // The name is read as it stands and is never built here: a per-secret name is
 // an exact Secret Manager container ID, the grammar is what tells one from
@@ -193,7 +275,13 @@ func (d *DynamicSecrets) read(ctx context.Context, c creds.Credential) (Entry, b
 		// No per-secret reader at all: the name falls to the bundle exactly as
 		// one whose container is not there does, and for the same reason — the
 		// grammar, and not the reader's presence, is what decides which bundle
-		// entry a per-secret name stands for (G7).
+		// entry a per-secret name stands for (G7). The personal name is the one
+		// exception, and it is refused here rather than fallen from for the same
+		// reason it is refused below: a service with no per-secret reader holds
+		// no container of the person's either.
+		if personalTokenName(parsed) {
+			return Entry{}, false, "", ErrPersonalTokenAbsent
+		}
 		return Entry{}, false, parsed.Name, nil
 	}
 	value, found, err := d.Source.Value(ctx, c.Name)
@@ -201,6 +289,9 @@ func (d *DynamicSecrets) read(ctx context.Context, c creds.Credential) (Entry, b
 		return Entry{}, false, "", err
 	}
 	if !found {
+		if personalTokenName(parsed) {
+			return Entry{}, false, "", ErrPersonalTokenAbsent
+		}
 		return Entry{}, false, parsed.Name, nil
 	}
 	// The entry is built rather than looked up: there is no bundle entry under

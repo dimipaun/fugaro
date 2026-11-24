@@ -214,7 +214,7 @@ describe('the installation list document', () => {
 
   it('refuses a row whose checkouts run past the bound, rather than drawing a shortened row', () => {
     // **The bound is named, not applied behind the screen's back.**
-    // `docs/design/console-styling.md` §2.2 says the picker's buttons are the
+    // `docs/console-styling/spec.md` §2.2 says the picker's buttons are the
     // installation's own `checkouts` and that there is no per-row cap -- every
     // checkout the document carried is drawn. `checkoutsOf` used to slice the
     // array at `MAX_DISCOVERED_INSTALLATIONS`, so a row with more than that lost

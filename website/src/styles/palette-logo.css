@@ -64,7 +64,7 @@
   /* The success tone: the end of the run, the card that finishes, the second stop of the
    * gradient a heading is drawn in. It is the one colour on the site that means "this finished",
    * and it is legible as a mark on the ground, the panel and the surface. Its hue is **154.1°**
-   * (`hsl`'s own convention, the one `docs/design/console-styling.md` §3.2 prints its hues in),
+   * (`hsl`'s own convention, the one `docs/console-styling/spec.md` §3.2 prints its hues in),
    * and the accent's is **198.0°** — the two are **43.9° apart**, which is *less* than the 50°
    * the console's styling rule asks of any two of its own five state colours. That rule is the
    * console's and is not claimed here: the site has exactly one state colour, so the green and
@@ -73,7 +73,7 @@
    * "this is the site's colour".
    *
    * **The value is this site's own, and deliberately not the console's `--ok`.** The console's
-   * `docs/design/console-styling.md` §3.2 records `--ok` as one of six colours it invents
+   * `docs/console-styling/spec.md` §3.2 records `--ok` as one of six colours it invents
    * because "the website has no equivalent", and `internal/cli`'s
    * `TestDocsConsoleStylingTokenProvenance` holds that sentence true by refusing the console's
    * six literals anywhere in **this** file — the palette in force. So the site's green is its

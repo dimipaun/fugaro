@@ -108,7 +108,7 @@ section and the cited number — rather than claiming all four.
   precedence works.
 - [docs/console-managed-screens/](../console-managed-screens/) — the number block this one reads above,
   and the precedent for a deferred read-only console screen.
-- [docs/project-layer.md](../project-layer.md), [docs/design/layered-config.md](../design/layered-config.md) —
+- [docs/project-layer.md](../project-layer.md), [docs/layered-config/spec.md](../layered-config/spec.md) —
   the project layer the new key joins, and its scope table.
 - [.claude/rules/credentials-service.md](../../.claude/rules/credentials-service.md), [console.md](../../.claude/rules/console.md),
   [terraform.md](../../.claude/rules/terraform.md) — three of the four places the definition lives today,

@@ -33,6 +33,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/runmsg"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -882,6 +883,7 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	// false: a field the runner writes and the schema does not name is a
 	// record the schema rejects.
 	cost.ReportedBy = map[string]float64{"deepseek/deepseek-v4.1-flash": 4.04, "deepseek/deepseek-v4-pro": 0.02}
+	cost.FallbackUSD = 0.9
 	cost.TableLoUSD, cost.TableHiUSD, cost.UnreportedCalls = 3.6, 5.1, 2
 	rec := runstore.Record{
 		Version: 1, RunID: "20260927-100000-abcd", Repo: "acme/app", Workflow: "web",
@@ -889,7 +891,7 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		Status:    runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
 		Reason: "tests failing on the final commit", Branch: "fugaro/add-a-feature", BaseBranch: "main", HeadSHA: "abcdef1234567",
 		// The closed cause beside the free text, which is the pair the record
-		// carries from the failure classes on (docs/design/failure-classes.md
+		// carries from the failure classes on (docs/failure-classes/design.md
 		// §3): the reason stays the sentence a person reads and the class is
 		// what the report counts.
 		FailureClass: failure.TestsFailed,
@@ -898,6 +900,12 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		// that names the account the run used last.
 		OAuthAccount:  "team-a",
 		StageAccounts: map[string]string{"implement": "team-b", "review": "team-a"},
+		// And the owner of the token the run was served with (F16,
+		// docs/secrets-brokering/dynamic-delivery): a launcher's account id
+		// beside the credential's name and the per-stage accounts, which keep
+		// their meanings. It rides the fully-populated record so a schema that
+		// did not name it would reject a record the runner writes.
+		CredentialOwner: "104329501182774832335",
 		// The commit the run was cut from, which its guards compare against
 		// (design v1.md §4.6).
 		StartSHA: strings.Repeat("c", 40),
@@ -914,7 +922,11 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			Warning: "w", StartedAt: at, DurationS: 1.5,
 		}},
 		CostUSD: 4.12, Cost: &cost,
-		Stages: []runstore.StageTiming{{Name: "implement", StartedAt: at, DurationS: 61, ModelUSD: 0.42, ModelNotionalUSD: 0.12, Model: "claude-sonnet-5-5", Calls: &calls, Agents: &agents}},
+		// The chain members ride along for the same reason the artifact ones
+		// do: a member the runner writes and the schema does not name is a
+		// record the schema rejects (C1, CS8).
+		Stages: []runstore.StageTiming{{Name: "implement", StartedAt: at, DurationS: 61, ModelUSD: 0.42, ModelNotionalUSD: 0.12, Model: "claude-sonnet-5-5", Calls: &calls, Agents: &agents,
+			Source: &routing.SourceName{Kind: routing.KindProvider, Name: "openrouter"}, Fallback: true}},
 		// The switch log (C1.16, D140): the service's record of a credential
 		// change beside the cache-miss estimate only the gateway can compute,
 		// including the one a tier's unmeasured cache behaviour leaves
@@ -1063,6 +1075,23 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	}
 	if err := sch.Validate(atBound); err != nil {
 		t.Errorf("schema rejects a stage account name of 64 runes: %v", err)
+	}
+	// credential_owner is the launcher's account id and nothing else: digits
+	// only and at most 21 of them (F16, maxLauncherSubDigits). A name, a
+	// credential value or a 22-digit number is a record no reader should have
+	// to render, and each is refused rather than stored.
+	for _, tc := range []struct{ name, new string }{
+		{"a value that is not an account id", `"credential_owner":"launcher@example.invalid"`},
+		{"an id longer than the bound", `"credential_owner":"` + strings.Repeat("1", 22) + `"`},
+		{"an id that is not text", `"credential_owner":104329501182774832335`},
+	} {
+		bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, []byte(`"credential_owner":"104329501182774832335"`), []byte(tc.new), 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(bad); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, tc.new)
+		}
 	}
 	// The cost object is closed, so a compute_source that is not a string
 	// (what a hand-edited result.json could carry) is rejected rather than
@@ -1869,7 +1898,7 @@ func TestResultSchemaAcceptsARecordWithoutArtifacts(t *testing.T) {
 }
 
 // TestResultSchemaOAuthAccount: a record naming a Claude OAuth account
-// (docs/design/named-oauth-tokens.md) validates; a non-string value (what a
+// (docs/named-oauth-tokens/spec.md) validates; a non-string value (what a
 // hand-edited or corrupt result.json could carry) does not. config.
 // ClaudeAccount's name regex (plan Task 1) has not landed on this branch, so
 // the schema only bounds the length, not the charset; this test (and the
@@ -1969,7 +1998,7 @@ func TestResultSchemaStageCallsAndAgents(t *testing.T) {
 }
 
 // TestResultSchemaStageCredential pins the schema half of the record's one
-// per-stage credential (docs/design/mixed-credentials.md §5, P12): the value
+// per-stage credential (docs/mixed-credentials/spec.md §5, P12): the value
 // is the closed set the design's contract names — "oauth" for a stage a
 // stage-scoped Claude OAuth account served — and the field is optional, so a
 // record whose stages all ran on the run's own credential carries none.
@@ -3433,6 +3462,67 @@ func TestProjectLayerSchemaCorpus(t *testing.T) {
 	}
 }
 
+// TestProjectLayerSchemaRigorMembers keeps the project layer's LD4 shapes in
+// step with the Go reader, the way TestProjectLayerSchemaArtifactKeys keeps a
+// profile's: an area made of members and a per-repo map are keys the schema an
+// editor validates against must accept, and a member's path that climbs out of
+// its own repository must be refused by both. A corpus fixture can show the
+// refusal and not the reason, so the last part of this test names it: the
+// schema's complaint is about the member's path — its instance location is the
+// one the Go reader's message names — and never an unknown key, which is what
+// a `members` the schema did not know would produce.
+func TestProjectLayerSchemaRigorMembers(t *testing.T) {
+	sch := compile(t, "project-layer.schema.json")
+	const head = "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n  rigor:\n"
+	anchor := config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
+	for _, c := range []struct {
+		name string
+		body string
+		ok   bool
+	}{
+		{"a whole-repo member", "    areas:\n      - name: console\n        members: [{ repo: acme/console-web }]\n        level: pro\n", true},
+		{"a member with paths", "    areas:\n      - name: console\n        members:\n          - { repo: acme/app, paths: [\"ui/**\"] }\n        level: pro\n", true},
+		{"one repository in two areas", "    areas:\n      - name: console\n        members: [{ repo: acme/app, paths: [\"ui/**\"] }]\n        level: pro\n      - name: mobile\n        members: [{ repo: acme/app, paths: [\"mobile/**\"] }]\n        level: startup\n", true},
+		{"the pre-LD4 match shape, still read", "    areas:\n      - { name: payments, match: \"internal/payments/**\", level: critical }\n", true},
+		{"a per-repo map", "    repos:\n      acme/payments-core: critical\n      acme/legacy-api: pro\n", true},
+		{"a member whose path leaves its repo", "    areas:\n      - name: console\n        members:\n          - { repo: acme/app, paths: [\"../secrets/**\"] }\n        level: pro\n", false},
+		{"a member's absolute path", "    areas:\n      - name: console\n        members:\n          - { repo: acme/app, paths: [\"/etc/passwd\"] }\n        level: pro\n", false},
+		{"an area with neither members nor a match", "    areas:\n      - { name: console, level: pro }\n", false},
+		{"a member with no repo", "    areas:\n      - name: console\n        members: [{ paths: [\"ui/**\"] }]\n        level: pro\n", false},
+		{"a member whose repo is a bare name", "    areas:\n      - name: console\n        members: [{ repo: console-web }]\n        level: pro\n", false},
+		{"a repos key that is a bare name", "    repos:\n      console-web: pro\n", false},
+		{"a repos value outside the vocabulary", "    repos:\n      acme/payments-core: paranoid\n", false},
+	} {
+		text := head + c.body
+		schemaOK := sch.Validate(yamlInstance(t, []byte(text))) == nil
+		_, ps := config.ParseProjectLayer([]byte(text), anchor)
+		if schemaOK != (len(ps) == 0) {
+			t.Errorf("%s: the schema says ok=%v and config.ParseProjectLayer gives %v", c.name, schemaOK, ps)
+		}
+		if schemaOK != c.ok {
+			t.Errorf("%s: the schema says ok=%v; want %v", c.name, schemaOK, c.ok)
+		}
+	}
+	// The reason, on the fixture the corpus carries and the Go test pins.
+	data, err := os.ReadFile("../testdata/project-layer/invalid/rigor-area-outside-repo.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = sch.Validate(yamlInstance(t, data))
+	if err == nil {
+		t.Fatal("the schema accepts a member path that leaves its repository")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "/defaults/rigor/areas/0/members/0/paths/0") {
+		t.Errorf("the schema's refusal does not name the member path it is about: %s", msg)
+	}
+	for _, wrong := range []string{"additional propert", "unknown"} {
+		if strings.Contains(msg, wrong) {
+			t.Errorf("the schema refuses the fixture as %q rather than as a member path leaving its repository: %s", wrong, msg)
+		}
+	}
+}
+
 // TestProjectLayerSchemaCommandsLintFix checks the profile schema's
 // commands.lint and commands.fix the same way TestSchemaBudgetBlock checks
 // budget: inline snippets, not the shared testdata/project-layer corpus.
@@ -3442,7 +3532,7 @@ func TestProjectLayerSchemaCorpus(t *testing.T) {
 // Validate (validateProfile's own comment: "what [a profile] leaves out the
 // repository may set, and Validate checks the merged workflow") — a profile
 // may ship commands.fix alone and let a repository supply commands.lint by
-// its own key, which the key-by-key merge (docs/design/layered-config.md
+// its own key, which the key-by-key merge (docs/layered-config/spec.md
 // §4) allows. The schema is intentionally stricter here, to catch the
 // likely mistake at authoring time; that's a false positive in an editor at
 // worst, never a false negative, so it doesn't need Go to agree.
@@ -7175,6 +7265,59 @@ func TestRunsShowSchema(t *testing.T) {
 		}
 		if err := sch.Validate(inst); err == nil {
 			t.Errorf("%s: the schema accepts a document the command cannot write", tc.name)
+		}
+	}
+}
+
+// TestOrchestratorIDSchemaAgreesWithGo: the id rule C-ORCH fixed (D3207,
+// internal/orchestrator/naming.go) is the rule the published documents carry, so
+// every field that is an orchestrator id admits exactly what
+// orchestrator.ValidOrchestratorID admits and refuses the rest. A named
+// orchestrator's `<project>~<name>` is an id a state document, an `orchestrator
+// ls` entry and an escalation listing all carry (CG1a), and a string the rule
+// refuses is carried by none of them — a schema still holding the agent rule
+// would refuse a document this release writes.
+//
+// A work item's id is deliberately not this rule (F36): the item ids beside
+// these fields keep idRE, which admits no `~`.
+//
+// Mutation (narrow one of these patterns back to the agent rule, or widen one to
+// idRE): this test fails naming the schema, the field and the id.
+func TestOrchestratorIDSchemaAgreesWithGo(t *testing.T) {
+	for _, tc := range []struct {
+		file string
+		path []string
+	}{
+		{"orchestrator-state.schema.json", []string{"properties", "agent_id", "pattern"}},
+		{"orchestrator-output.schema.json", []string{"$defs", "id", "pattern"}},
+		{"orchestrator-output.schema.json", []string{"$defs", "ls", "properties", "orchestrators", "items", "properties", "project", "pattern"}},
+		{"escalation.schema.json", []string{"$defs", "ls", "properties", "project", "pattern"}},
+		{"escalation.schema.json", []string{"$defs", "show", "properties", "project", "pattern"}},
+	} {
+		pattern, ok := schemaAt(t, tc.file, tc.path...).(string)
+		if !ok {
+			t.Fatalf("%s: %v: not a string", tc.file, tc.path)
+		}
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			t.Fatalf("%s: %v: %q does not compile: %v", tc.file, tc.path, pattern, err)
+		}
+		for _, id := range []string{
+			// The ids the rule admits: a project's default orchestrator, a named
+			// one, and one at the longest id the rule takes (a project at its own
+			// 40-character cap, the separator, a name).
+			"fugaro", "my-project", "a1", "fugaro~night", "my-project~night-shift-2",
+			strings.Repeat("o", 40) + "~night",
+			// And the ids it refuses, the claim key and a work item's shape among
+			// them: the two that would otherwise be mistaken for an orchestrator.
+			"", "Fugaro", "fugaro_night", "fugaro~Night", "fugaro~night~x", "fugaro-",
+			"-fugaro", "fugaro night", "fugaro/night", "fugaro.night",
+			orchestrator.ClaimsKey, strings.Repeat("n", 41),
+			strings.Repeat("o", 40) + "~" + strings.Repeat("n", 41),
+		} {
+			if got, want := re.MatchString(id), orchestrator.ValidOrchestratorID(id); got != want {
+				t.Errorf("%s: %v: the pattern matches %q = %v, and orchestrator.ValidOrchestratorID says %v", tc.file, tc.path, id, got, want)
+			}
 		}
 	}
 }

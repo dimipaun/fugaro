@@ -1390,6 +1390,52 @@ func TestGitEnvStripsTheBudgetMarker(t *testing.T) {
 	}
 }
 
+// A Batch run's identity ticket (FUGARO_IDENTITY_TICKET) rides in the job's
+// environment, and every git call inherits that environment unless it is
+// stripped: the ticket is not a secret the way the seal key is — Batch prints
+// a job's variables itself, which D3115 accepts — but Fugaro prints it
+// nowhere, and a command an agent-written .git/config makes git run is a place
+// it would otherwise surface (BR4, R7 of docs/batch-run-identity). It never
+// reaches git or a command git runs, even for a Repo whose StripEnv is empty:
+// StripEnv is the caller's list and this is not the caller's to remember.
+func TestGitNeverSeesTheTicket(t *testing.T) {
+	repo, _ := setup(t)
+	// A fixture value, never a ticket: this test is about the variable's name
+	// and value reaching a hook, not about the claim.
+	const value = "ticket-fixture-never-a-real-ticket"
+	t.Setenv(IdentityTicketEnv, value)
+	t.Setenv("KEEP_ME", "kept")
+	dump := filepath.Join(t.TempDir(), "env.txt")
+	hook := filepath.Join(t.TempDir(), "fsmonitor.sh")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nenv > "+dump+"\nprintf '\\0'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, repo.Dir, "config", "core.fsmonitor", hook)
+	repo.Env = append(repo.Env, IdentityTicketEnv+"="+value)
+	repo.StripEnv = nil
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"a.txt": "a\n"})
+	if _, err := repo.CommitAll(ctx, "add a"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(dump)
+	if err != nil {
+		t.Fatalf("the fsmonitor hook never ran: %v", err)
+	}
+	if !strings.Contains(string(b), "KEEP_ME=kept") {
+		t.Fatalf("the hook's env lost an ordinary variable:\n%s", b)
+	}
+	if strings.Contains(string(b), IdentityTicketEnv) || strings.Contains(string(b), value) {
+		t.Errorf("the hook's env holds the identity ticket:\n%s", b)
+	}
+	// The same environment is what Environ hands a caller that runs a command
+	// of its own beside git's (the git proxy's calls), so it is asked too.
+	for _, kv := range repo.Environ() {
+		if strings.HasPrefix(kv, IdentityTicketEnv+"=") {
+			t.Errorf("Environ holds the identity ticket: %q", kv)
+		}
+	}
+}
+
 func TestOpenOrCloneStripsFromTheStart(t *testing.T) {
 	_, remote := setup(t)
 	dir := filepath.Join(t.TempDir(), "w")

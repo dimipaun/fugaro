@@ -154,7 +154,7 @@ func TestDoctorTokenSignersNoneIsStillPartial(t *testing.T) {
 	if err != nil || !ok || c.OK || c.Severity != "info" || len(signerChecks(o)) != 0 {
 		t.Fatalf("err %v, checks %+v", err, o.Checks)
 	}
-	for _, want := range []string{"checked the project and service-account IAM policies of proj-1234", "not read:", "folder- and organization-inherited bindings", "deny policies", "Google service agents of this project are read and classified", "docs/design/m9-budget-and-dashboard.md"} {
+	for _, want := range []string{"checked the project and service-account IAM policies of proj-1234", "not read:", "folder- and organization-inherited bindings", "deny policies", "Google service agents of this project are read and classified", "docs/m9-budget-and-dashboard/spec.md"} {
 		if !strings.Contains(c.Problem, want) {
 			t.Errorf("summary %q lacks %q", c.Problem, want)
 		}
@@ -515,7 +515,7 @@ func TestDoctorTokenSignersUnreadProjectNumberIsCounted(t *testing.T) {
 // Firebase project.
 //
 // What a service makes of the module's condition is Check 68's to measure and
-// is not claimed here (docs/design/managed-deployer-fence.md: until it has
+// is not claimed here (docs/managed-deployer-fence/spec.md: until it has
 // run, the prefix condition is not a boundary).
 //
 // Mutations this test is the guard for: classifying the two as information

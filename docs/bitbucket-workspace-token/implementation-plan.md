@@ -44,7 +44,8 @@ references decisions by `D#` and findings by `F#`.
     across the token's reach.
   - **D477 = bump the policy version (3 → 4).** This was not the recommendation. 0.13.0 ships as a
     lockstep upgrade, and T2.11 writes its release notes.
-  - Check 180 stays owner-run and comes later: no Premium sandbox workspace is known (U6).
+  - Check 180 stays owner-run and comes later — **U6 was open then, and it is settled 2026-11-23:
+    the Premium sandbox workspace is the owner's `dimi_bmb`**.
 - **Answered in the next round, also 2026-10-27:**
   - **D464 = yes, in 0.12.1** (not the recommendation). `*` is allowed within one path segment of
     `allow_data_to`, at most two of them, never in the owner or workspace segment, never bare or
@@ -109,7 +110,7 @@ references decisions by `D#` and findings by `F#`.
   sandbox installation and a sandbox Bitbucket workspace only. No real person's or organisation's
   name appears in any doc.
 - Historical records are amended by a dated note, never rewritten: `docs/releases/v0.9.0.md`,
-  Check 52's FACT, and `docs/plans/2026-10-14-project-centric.md`.
+  Check 52's FACT, and `docs/project-centric/implementation-plan.md`.
 - Opting in is the operator's own act, so S1 needs no "For operators" release step. **S2 needs
   four**, and T2.11 writes them all into the 0.13.0 notes (`docs/releases/README.md`):
   1. The lockstep upgrade for the policy version 4 (D477).
@@ -184,7 +185,7 @@ references decisions by `D#` and findings by `F#`.
   - `website/content/security.md`: regenerated with `go run ./internal/clidoc`.
   - `README.md`: its Bitbucket line.
   - `docs/multi-model.md`: the per-repository sentence (its pin moves with it).
-  - `docs/design/project-secrets.md` and `docs/design/project-centric.md` §6.3: dated notes.
+  - `docs/project-secrets/spec.md` and `docs/project-centric/spec.md` §6.3: dated notes.
   - `internal/cli/docs_credentials_github_tokens_test.go`: it pins "**On Bitbucket it IS this
     repository's access token**". The pin keeps its fact ("the mounted token's own value"),
     reworded in both places.
@@ -354,7 +355,9 @@ registration. The text below is kept as written.*
 ### T1.4: Check 180, OWNER-RUN
 
 *Verdict 2026-11-10: **Kept.** Nothing in the proxy chain changes it: the register's row reads
-USER-RUN, NOT RUN, and no Premium sandbox workspace is known (U6).*
+USER-RUN, NOT RUN, and the one thing it waited on was U6, the Premium sandbox workspace — **settled
+2026-11-23: it is the owner's own `dimi_bmb`**, which `check180.sh`'s `--workspace` defaults to, so
+what the check waits on is the owner running it.*
 
 - **OWNER-RUN.** The owner follows T1.3's section on the sandbox only. No agent performs any step.
   The owner types the commands the section gives, which are the
@@ -564,14 +567,14 @@ is the phase-3 half alone.***
     - the `FUGARO_BITBUCKET_API_URL` variables-table row (T2.8), with `bitbucket_api_roots` and the
       statement that a listed root must speak Bitbucket Cloud's API, because Data Center is not
       supported (D366, T2).
-  - `docs/design/project-centric.md`: dated amendments to §4.1 "GitHub only" and §4.5/D5.
+  - `docs/project-centric/spec.md`: dated amendments to §4.1 "GitHub only" and §4.5/D5.
   - `docs/project-layer.md`: "Bitbucket repositories never reach one", plus Global Constraint 6's
     known drift.
   - `docs/gcp-live-checklist.md`: a dated note under Check 52 §2, and the Check 181 section.
     **Trap:** the Check 52 pins in `docs_project_centric_test.go` ban "project access token" and
     "bitbucket.org" anywhere in that section. The note says "the 2026-10-27 rulings D460–D462" and
     links to this folder instead.
-  - `docs/plans/2026-10-14-project-centric.md`: a dated note.
+  - `docs/project-centric/implementation-plan.md`: a dated note.
   - `SECURITY.md` and `website/content/security.md` (regenerated): a shared Bitbucket job's
     isolation (F12), stated as a job with no token behind a proxy that pairs it by profile (D2302).
   - `internal/cli/docs_project_centric_test.go`: a pin for the dated note.
@@ -608,7 +611,14 @@ T2.6 and S5.*
      - added to the profile, it makes `fugaro project policy publish` and `fugaro update` refuse;
      - launched by hand against the job, it is refused by the runner (T2.9).
 - The owner types the commands T2.6's section gives. No agent performs any step.
-- **Depends on:** T2.6, released or a dev build, plus U6.
+- **Delivered as one script (2026-11-23)**, the way Check 180 is: the steps above are what
+  `scripts/live-checks/check181.sh` runs — `fugaro project policy publish`, `fugaro update` and
+  `fugaro run --repo <owner/name>`, with `--dry-run` printing them and calling nothing — its
+  hermetic test is `scripts/live-checks/check181_test.sh`, and the register's row and section name
+  both. The token file is handed to `fugaro secrets set` on stdin and is never on a command line or
+  in the block.
+- **Depends on:** T2.6, released or a dev build, plus U6 — **settled**: the Premium sandbox
+  workspace is the owner's `dimi_bmb`, which is the script's `--workspace` default.
 
 ### T2.8: A cloud run pins the Bitbucket API root (0.13.0, on: D474 = yes)
 
@@ -816,14 +826,14 @@ waits on the owner's own scope.
 | `docs/git-providers.md` | T1.1 (0.12.1 L0), T2.6 (0.13.0 L2) |
 | `SECURITY.md`, `website/content/security.md`, `internal/cli/docs_project_wide_git_test.go` | T1.1 (0.12.1 L0), T2.6 (0.13.0 L2) |
 | `docs/gcp-live-checklist.md`, `internal/cli/docs_checks_180_181_test.go` | T1.3 (0.13.0 L0), T2.6 (0.13.0 L2); T1.4's results (owner-run) land outside the levels, in their own commit after T2.6 has merged if it slips |
-| `docs/design/project-centric.md` | T1.1 (0.12.1 L0, §6.3 note), T2.6 (0.13.0 L2) |
-| `docs/design/project-secrets.md`, `plugin/skills/setup/*`, `README.md`, `docs/multi-model.md`, `internal/cli/docs_credentials_github_tokens_test.go`, `website/src/pages/getting-started.astro`, `docs/bitbucket-credentials/README.md`, `docs/bitbucket-credentials/reconciliation.md` | T1.1 (0.12.1 L0) |
+| `docs/project-centric/spec.md` | T1.1 (0.12.1 L0, §6.3 note), T2.6 (0.13.0 L2) |
+| `docs/project-secrets/spec.md`, `plugin/skills/setup/*`, `README.md`, `docs/multi-model.md`, `internal/cli/docs_credentials_github_tokens_test.go`, `website/src/pages/getting-started.astro`, `docs/bitbucket-credentials/README.md`, `docs/bitbucket-credentials/reconciliation.md` | T1.1 (0.12.1 L0) |
 | `docs/coordinator/README.md` | T1.3 (0.13.0 L0), T2.6 (0.13.0 L2) |
 | `internal/gitprov/bitbucket/bitbucket.go` | T1.2 (0.12.1 L0) |
 | `internal/runner/project.go` | T2.9 (L1) — **closed** (D1981) |
 | `internal/cli/secrets.go`, `internal/cli/init.go`, `internal/config/config.go`, `internal/config/providers.go`, `internal/infra/spec.go`, `internal/gitprov/providers/providers.go`, `website/content/cli-reference.md`, `internal/cli/secrets_bitbucket_text_test.go` | T1.2 (0.12.1 L0) |
 | `internal/config/project_secrets.go`, `internal/config/providers.go`, `internal/cli/secrets.go`, `website/content/cli-reference.md` | run dc73 (before L0), then T1.2 (0.12.1 L0) |
-| `SECURITY.md`, `website/content/security.md`, `docs/git-providers.md`, `docs/design/project-secrets.md`, `plugin/skills/setup/reference/decisions.md` | run dc73 (before L0), then T1.1 (0.12.1 L0); later T2.6 for the first three |
+| `SECURITY.md`, `website/content/security.md`, `docs/git-providers.md`, `docs/project-secrets/spec.md`, `plugin/skills/setup/reference/decisions.md` | run dc73 (before L0), then T1.1 (0.12.1 L0); later T2.6 for the first three |
 | `internal/projectpolicy/policy.go`, `profiles.go`, `version.go`, `bitbucket_test.go` | T2.1 (L0) |
 | `internal/projectpolicy/bitbucket.go` | T2.1 (L0) |
 | `docs/bitbucket-workspace-token/release-0.13.0-operators.md`, `internal/cli/docs_bitbucket_release_steps_test.go` | T2.11 (L2). `docs/releases/v0.13.0.md` is written by the release PR, outside the levels |
@@ -835,7 +845,7 @@ waits on the owner's own scope.
 | `internal/runner/runner.go`, `internal/runner/bitbucket_api_root_test.go` | T2.8 (L1) |
 | `internal/runner/projectjob.go` | T2.9 (L1) — **closed** (D1981) |
 | `internal/runner/projectjob_bitbucket_test.go` | T2.9 (L1) — **closed** (D1981); the file is not written |
-| `docs/project-layer.md`, `docs/plans/2026-10-14-project-centric.md`, `internal/cli/docs_project_centric_test.go` | T2.6 (L2) |
+| `docs/project-layer.md`, `docs/project-centric/implementation-plan.md`, `internal/cli/docs_project_centric_test.go` | T2.6 (L2) |
 
 ## Checks this plan takes
 

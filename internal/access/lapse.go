@@ -16,7 +16,10 @@ import "errors"
 // (SubscriptionAllowed). Which actions a lapse keeps is the licence's answer and
 // lives in ee/ (installed from ee/register), the only caller of the setter — the rule
 // every moved feature's seam obeys (design ee-boundary-moves.md §5.5, roles.md
-// D694).
+// D694). The other limit a Subscription surface is judged by is the seat rule
+// (seats.go): an unseated operator holds operator in the grants node and acts
+// as a viewer on these surfaces, which is a limit of the same kind, installed
+// the same way.
 
 // Limit is what a lapsed Subscription surface keeps: given one action, it
 // answers whether the surface still offers it while a subscription is lapsed.
@@ -64,19 +67,32 @@ func SetSubscriptionLimit(l Limit) error {
 func keepEveryAction(Action) bool { return true }
 
 // SubscriptionAllowed reports whether caller may do action on a Subscription
-// surface: Allowed's answer, with the licence state's limit on top while the
-// input lapsed. The limit is consulted only then — a valid subscription is not a
-// surface with a shorter action list — and it only ever refuses, so the role
-// rules still decide what a caller holds and a limit that kept an action grants
-// it to nobody.
+// surface: Allowed's answer, with the licence's two limits on top — the seat
+// rule while the installation is licensed (seats.go) and the action list while
+// the input lapsed (the limit above).
+//
+// The seat rule is applied first and is what an unseated operator meets: they
+// hold operator in the grants node and act as a viewer here, so the surfaces a
+// subscription is bought for — launching, a repository's and the project's
+// settings — are refused them while reading and cancelling, which a viewer
+// holds, are not. A seat is not a grant, so the rule only ever lowers a role.
+//
+// The lapse limit is consulted only while the input lapsed — a valid
+// subscription is not a surface with a shorter action list — and it only ever
+// refuses, so the role rules still decide what a caller holds and a limit that
+// kept an action grants it to nobody.
 //
 // Nothing in the core asks this. The MIT CLI's own commands ask Allowed, which
-// is what makes a lapse stop the Subscription surfaces and nothing else
-// (D1582); the surfaces that do ask are ee/'s, through the limit ee/register
-// installed.
+// is what makes a lapse and a smaller key stop the Subscription surfaces and
+// nothing else (D1582, D2132); the surfaces that do ask are ee/'s, through the
+// two limits ee/register installed.
 func SubscriptionAllowed(in Input, caller string, action Action, repo string) bool {
 	if in.Lapse && !subscriptionLimit(action) {
 		return false
 	}
-	return Allowed(in, caller, action, repo)
+	held, rule, known := roleFor(in, caller, action, repo)
+	if !known {
+		return false
+	}
+	return seatCapped(in, caller, held).AtLeast(rule.min)
 }

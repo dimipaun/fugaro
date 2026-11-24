@@ -1167,12 +1167,18 @@ func TestInitForgetWarnsLogBucketUndelete(t *testing.T) {
 	r.stateBucket()
 	fakeTerminal(t)
 	r.setPlan(t, forgetPlan()...)
+	// The installation's bucket is in `global`, where an installation made
+	// before the mapping has it, while this fixture's region maps elsewhere
+	// (us-east5 -> us). The printed command must name the bucket's OWN
+	// location, read off the bucket by the same listing discovery uses, and
+	// not the mapping's answer (LP6, R5, F10).
+	r.logs.AddBucket(initProject, "global", infra.LogBucket, "ACTIVE", infra.LogBucketDescription)
 	out, _, err := executeStdin(t, "", "update", "--forget")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "pending deletion for 7 days") || !strings.Contains(out, infra.LogBucketUndelete(initProject)) {
-		t.Fatalf("no undelete warning:\n%s", out)
+	if !strings.Contains(out, "pending deletion for 7 days") || !strings.Contains(out, infra.LogBucketUndelete(initProject, "global")) {
+		t.Fatalf("no undelete warning naming the bucket's own location:\n%s", out)
 	}
 }
 
@@ -1554,7 +1560,7 @@ func TestInitRepoRefusesVertexEnforce(t *testing.T) {
 	vertex, apiKey := cfgFile("vertex"), cfgFile("api-key")
 	enforce := withBudget("budget: { mode: enforce, per_run_usd: 5 }\n")
 	err := checkVertexBudget(enforce, vertex)
-	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet: use budget.mode observe or off") {
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet: use budget.mode observe for this repository") {
 		t.Fatalf("vertex + enforce: exit %d, err %v", ExitCode(err), err)
 	}
 	// A committed enforce is the effective mode under an off ceiling, and

@@ -11,12 +11,13 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
-// The run's read of the project's own policy (docs/design/project-centric.md
+// The run's read of the project's own policy (docs/project-centric/spec.md
 // D11, plan task 1.3). Three things are true at once and the code below is
 // shaped by them:
 //
@@ -27,13 +28,26 @@ import (
 //     a delete; internal/budget/token/object.go), and the take is still shared:
 //     exactly once per run, handed to the policy read and to budget.Open both
 //     (finding 2).
-//   - The mode-off path is entered by the job's own budget mode being off,
-//     never by an absence of a credential and never by a failure the run sees
-//     (B1). A budget-on run with no FUGARO_FIREBASE_API_KEY, or with no token
-//     object in the runs bucket, stops on the shipped refusals below; an
-//     exchange that fails halts the run the way the session's own Open does.
-//     A failure is never read as "no policy here", which would drop the run
-//     to the environment ceiling with the project's policy unenforced (R2-3).
+//   - The path with nothing read at all is entered by a launch the launcher
+//     minted no identity for, never by a failure the run sees (B1): its job
+//     carries no backend, or names one and no token was minted for it. From
+//     AB1a on every run is accounted for (D3009, R3), so no mode turns a run
+//     down this path either — the launcher's marker does, and the marker is
+//     evidence about this launch rather than about the mode. A job that cannot
+//     be read with — no FUGARO_FIREBASE_API_KEY, an environment this image
+//     cannot parse — stops on the shipped refusals below, and an absent token
+//     object does too unless the launch is one the launcher could not have
+//     minted for; an exchange that fails halts the run the way the session's
+//     own Open does. A failure is never read as "no policy here", which would
+//     drop the run to the environment ceiling with the project's policy
+//     unenforced (R2-3). The one absence that still reads that way is the
+//     markless launch with no token whose job names no live mode (liveMode): a
+//     launcher mints for what it can see — a shared budget, or a published
+//     policy — and internal/infra writes a mode into the job only when it is
+//     observe or enforce, so that is an installation whose mode is off or unset
+//     and which has published nothing. Such a run has nothing to read, and
+//     until the launcher mints on every launch (AB4, R6) a refusal here would
+//     stop it on a fix that cannot change what its launcher mints.
 //   - Whether a policy exists at all may not be guessed from a read this run
 //     cannot make. The rules marker decides (projectpolicy.Read): before the
 //     policy rules are deployed, no policy can have been published here, so an
@@ -56,9 +70,9 @@ type policyRead struct {
 // identity. The policy read needs the client before the session exists, and
 // both must be the same identity, so this is memoized on the run.
 //
-// db nil and err nil mean this run has no database to read: the job carries no
-// backend, or its budget is off and the bucket holds no token (see
-// budgetClient).
+// db nil and err nil mean this run has nothing to read with: the job carries no
+// backend at all, or names one and holds no token object for this run with no
+// marker saying one was minted and no live mode of its own (see budgetClient).
 type budgetIdentity struct {
 	done   bool
 	cfg    budget.Config
@@ -96,18 +110,19 @@ func (r *run) projectPolicy(ctx context.Context) (*projectpolicy.Policy, bool, e
 		return p.policy, p.found, p.err
 	}
 	p.done = true
-	if !r.d.Backend.On() && !r.d.Backend.MalformedEnv && !r.d.Backend.TokenMarked {
-		// No database in the job's environment: no client, no marker, no node.
-		// This is the absence the readiness gate refuses (fugaro update) once
-		// the project has published a policy; a run cannot invent the
-		// credential it would need to notice one. An environment that named a
-		// backend it could not parse is not that absence (L-b), and neither is
-		// one whose launcher minted a token (M2): both name something that only
-		// exists when a policy or a shared budget does, so both go through
-		// budgetClient, which refuses them whatever the run's mode. Answering
-		// "no policy" here for a marked job is the fail-open M2 closed one step
-		// too late: admissionCheck would never see the allow-list, and the
-		// clone would be made before startBudgetBackend refused.
+	if !r.d.Backend.On() && !r.d.Backend.MalformedEnv && !r.d.Backend.Issued() {
+		// No database in the job's environment: no client, nothing a launcher
+		// left, no node. This is the absence the readiness gate refuses (fugaro
+		// update) once the project has published a policy; a run cannot invent
+		// the credential it would need to notice one. An environment that named
+		// a backend it could not parse is not that absence (L-b), and neither
+		// is one whose launcher provisioned this run's identity -- a minted
+		// token (M2) or a ticket (LM7): both say something that only exists
+		// when a policy or a shared budget does, so both go through
+		// budgetClient, which refuses them. Answering "no policy" here for such
+		// a job is the fail-open M2 closed one step too late: admissionCheck
+		// would never see the allow-list, and the clone would be made before
+		// startBudgetBackend refused.
 		return nil, false, nil
 	}
 	db, err := r.budgetClient(ctx)
@@ -339,6 +354,21 @@ func (r *run) unreadablePolicy(err error) error {
 		projectpolicy.PathShared(), marker, projectpolicy.RulesVersion, r.redact(err.Error()))
 }
 
+// liveMode reports whether a mode string names one of the two live modes. It
+// has one reader — budgetClient's markless arm — and its subject is the job's
+// own environment rather than what the run is accounted for: internal/infra
+// writes FUGARO_BUDGET_MODE only when the mode is observe or enforce
+// (budgetEnv), so a job carrying one is a job whose launcher mints, while a job
+// carrying "" or the word that was a mode is a launch of an installation whose
+// launcher mints nothing (internal/cli's budgetMintOn: the mode is off, and no
+// policy node was found to mint for). What a run is *accounted for* is C1's
+// answer and never this string (Spend.On, and the record's own mode); the raw
+// string is otherwise kept for the gateway's question, which AB1b makes
+// unconditional.
+func liveMode(mode string) bool {
+	return mode == policy.ModeObserve || mode == policy.ModeEnforce
+}
+
 // budgetClient builds the client this run reads the project's database with,
 // from its own Firebase identity. It is the run's one call site of
 // takeBudgetToken — the memo guard below is what makes it one read of the
@@ -346,14 +376,29 @@ func (r *run) unreadablePolicy(err error) error {
 // call site at one — and the unsealed token is shared with budget.Open
 // (finding 2).
 //
-// A nil client with a nil error means this run has no database to read: the job
-// carries no backend, or its budget is off and the runs bucket holds no token
-// for it, or its budget is off and the job carries no web API key. The second is
-// safe to read as "no policy here" because the launcher
-// mints a token whenever it can see a policy, whatever the mode
-// (internal/cli's mint decision): off, with no token, is a job of a project
-// with nothing published. Every other failure is returned as the error that
-// ends bootstrap, already classified.
+// A nil client with a nil error means this launch has nothing to read the
+// project's policy with: the job carries no backend at all, or names one and
+// holds no token object for this run with no marker saying one was minted and
+// no live mode in its own environment (liveMode). From AB1a on every run is
+// accounted for (D3009, R3), so what a run is accounted for is never what
+// decides that — the launcher's evidence about this launch is: its marker, and
+// the mode the job carries, which internal/infra writes only for an
+// installation whose launcher mints.
+//
+// The one absence that is not a refusal is a markless launch with no token
+// whose job names no live mode. The launcher mints whenever it can see a shared
+// budget or a published policy (internal/cli's budgetMintOn), so this is the
+// shape an installation whose mode is off or unset and which has published
+// nothing gives its runs: nothing to read, no session to open, and the
+// environment ceiling exactly as it stood before AB1a. Refusing it would stop
+// such a run on a remedy — fugaro update — that cannot change what its launcher
+// mints until the launcher mints on every launch (AB4, R6).
+//
+// Everything else that leaves this function clientless is a refusal, returned
+// as the error that ends bootstrap, already classified: an absent token when a
+// marker says this run had one, or when the job's own mode is one its launcher
+// mints for; an environment this image cannot parse; a job that names a
+// database with no web API key to exchange with.
 func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 	c := &r.ident
 	if c.done {
@@ -361,79 +406,66 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 	}
 	c.done = true
 	if r.d.BackendErr != nil {
-		// The job's environment does not describe a usable backend. A
-		// budget-off run ignores it when it describes no backend at all
-		// (MalformedEnv false: a stray grace value, an API key with no URL), as
-		// it ignores the rest of the backend's environment; a budget-on run
-		// stops on the shipped error, before anything else (its text is the one
-		// startBudgetBackend has always returned for it).
+		// The job's environment does not describe a usable backend, and from
+		// AB1a on that stops every run: the run is accounted for whatever its
+		// mode is (D3009, R3), so a value it cannot parse is damage to the
+		// ceiling's own environment rather than something a run ignores — its
+		// text is the one startBudgetBackend has always returned for it.
 		//
 		// An environment that *carries* the URL or the launcher's marker and
-		// cannot be parsed stops the run whatever its mode (L-b of the security
-		// review of PR #379). This is the one place the marker did not fail
-		// closed: BackendFromEnv returns a zero Backend with the error, so the
-		// marker was lost, and a job whose launcher had minted a token — proof
-		// that a policy exists — read the missing backend as "this project has
-		// published nothing" and ran on the environment ceiling with no
-		// session, no cap and no kill switch.
-		if !r.d.Spend.On() && !r.d.Backend.MalformedEnv {
-			return nil, nil
-		}
+		// cannot be parsed is the state this arm exists for (L-b of the
+		// security review of PR #379). This is the one place the marker did not
+		// fail closed: BackendFromEnv returns a zero Backend with the error, so
+		// the marker was lost, and a job whose launcher had minted a token —
+		// proof that a policy exists — read the missing backend as "this
+		// project has published nothing" and ran on the environment ceiling
+		// with no session, no cap and no kill switch.
 		c.err = fmt.Errorf("the budget backend in the job's environment: %w", r.d.BackendErr)
 		return nil, c.err
 	}
 	if !r.d.Backend.On() {
-		// A job with no database in its environment, and no launcher's marker
-		// either, has nothing to read (projectPolicy's early return does not
-		// send it here). A marked one is M2's state met at the policy read
-		// rather than at startBudgetBackend: the launcher minted a token, which
-		// it does only when the project has a shared budget or a published
-		// policy, so this run has a ceiling it cannot read and must stop before
-		// admission and before any git credential exists — not after the clone.
-		if r.d.Backend.TokenMarked {
-			c.err = strayTokenNoBackend()
+		// A job with no database in its environment, and nothing a launcher
+		// left on it, has nothing to read (projectPolicy's early return does
+		// not send it here). A job the launcher provisioned an identity for --
+		// a minted token or a ticket (LM7) -- is M2's state met at the policy
+		// read rather than at startBudgetBackend: the launcher does either only
+		// when the project has a shared budget or a published policy, so this
+		// run has a ceiling it cannot read and must stop before admission and
+		// before any git credential exists — not after the clone.
+		if r.d.Backend.Issued() {
+			c.err = noBackendForWhatTheLauncherLeft(r.d.Backend)
 			return nil, c.err
 		}
-		return nil, nil
-	}
-	if r.d.Backend.APIKey == "" && !r.d.Spend.On() && !r.d.Backend.TokenMarked {
-		// A job that names a database and carries no web API key: the token
-		// exchange needs that key, so this run cannot read the marker or the
-		// node at all. The key is a credential, and on a budget-off job its
-		// absence is the mode-off path, exactly as an absent backend or an
-		// absent token object is (B1, P3): the mode-off path is entered by the
-		// job's own mode being off, never by an absence of a credential, and
-		// the refusal for this job is the launcher's readiness gate — a job
-		// that cannot read a published policy is not deployed (task 1.4).
-		// The run cannot tell "no policy" from "no key" here, which is why the
-		// gate and not the runner is the refusal.
-		//
-		// A budget-on job stops on the shipped error below, and so does a job
-		// whose launcher minted a token: with the mode off the launcher mints
-		// only when a policy exists (internal/cli's budgetMintOn), so the
-		// marker says this launch had one to read, and the run must not read
-		// its own missing credential as "this project has published nothing"
-		// (M2). So does a budget-off job whose environment names a backend it
-		// cannot parse (BackendErr above, L-b), which never reaches here.
 		return nil, nil
 	}
 	custom, err := r.takeBudgetToken(ctx)
 	switch {
 	case err == nil:
-	case errors.Is(err, token.ErrNoToken) && !r.d.Spend.On() && !r.d.Backend.TokenMarked:
-		// No token, and the job's own mode is off, and no launcher said it
-		// minted one: nothing to read.
+	case errors.Is(err, token.ErrNoToken) && !r.d.Backend.TokenMarked && !liveMode(r.d.Spend.Mode):
+		// No token object, no launcher said it minted one, and the job's own
+		// environment names no live mode: nothing to read, and no launch that
+		// was entitled to a token. The launcher mints only for what it can see
+		// — a shared budget, or a published policy — and internal/infra writes
+		// the mode into the job only when it is observe or enforce, so this is
+		// the deployment of an installation whose mode is off or unset and
+		// which has published nothing, with no session and no cap, exactly as
+		// before AB1a. Until the launcher mints on every launch (AB4, R6) the
+		// refusal that used to stand here would stop such a run on a remedy —
+		// fugaro update — that cannot change what its launcher mints.
 		return nil, nil
 	case errors.Is(err, token.ErrNoToken):
-		// A budget-on run whose token object cannot be read is the shipped
-		// refusal (B1, budget_session.go's startBudgetBackend said the same
-		// before this read existed). So is a job whose environment carries
-		// the launcher's marker (M2): the launcher mints whenever it can see
-		// a policy, whatever the mode, so a marker means this run HAD a token.
-		// Reading its absence as "no policy here" would run a mode-off job of
-		// a policy-enforcing project with no session, no cap and no kill
-		// switch. The marker is a fact about this launch, so it is the one
-		// the run trusts.
+		// The shipped refusal (B1, budget_session.go's startBudgetBackend said
+		// the same before this read existed), in the two sentences it has
+		// always had. The marker picks the marked one (M2) and is a fact about
+		// this launch, so it is the one the run trusts; a markless job whose
+		// own environment names a live mode is a launch its launcher was
+		// entitled to mint for — infra writes no mode on an installation that
+		// mints nothing, and a markless job of one never reaches here (the arm
+		// above) — so an absent token is a token this run's launch should have
+		// carried: a direct execution of the job, or one whose override was
+		// dropped. Reading either absence as "no policy here" would run a job
+		// of a policy-enforcing project with no session, no cap and no kill
+		// switch.
 		//
 		// What the absence means changed with the seal (D16): the take is
 		// read-only and no run can delete a queued run's object, so "already
@@ -476,18 +508,45 @@ func errLauncherPredatesSeal(runID string) error {
 	return fmt.Errorf("%s is 1, so the fugaro that launched this run predates the seal of the budget token: it wrote the token unsealed, where this runner never reads one, and handed this execution no key; nothing was read. Upgrade the launching fugaro (brew upgrade dimipaun/tap/fugaro), run 'fugaro update' with the newer binary, then start a new run (fugaro run with the same task): run %s has launched, and retrying its run id would only report it", BudgetTokenEnv, runID)
 }
 
-// takeBudgetToken reads the run's sealed token object. It has one call site —
-// budgetClient, which memoizes what this returns, so the object is read once
-// per run — and that is a shape the source holds rather than one a run's state
-// can show: see TestTheBudgetTokenIsTakenAtOneCallSite. Its refusals are the
-// shipped ones (plan R10, B1): a job whose environment says
-// the budget is on but carries no Firebase API key, or no runs bucket, or a
-// slug or run id that cannot be a database key, is damage to the job, and the
-// run stops before anything else.
+// takeBudgetToken yields the run's identity: it claims the ticket the launcher
+// asked the installation's credentials service for, or reads the sealed token
+// object a launcher of the release behind left in the runs bucket (LM7, R7). It
+// has one call site — budgetClient, which memoizes what this returns, so the
+// identity is taken once per run — and that is a shape the source holds rather
+// than one a run's state can show: see TestTheBudgetTokenIsTakenAtOneCallSite.
+//
+// Which of the two it does is what the launch left on the execution and nothing
+// else: a ticket where the launcher asked an issuer for this run's identity,
+// the marker's seal key where it minted the token itself. Both arms hand back
+// one custom token for the same exchange below, so the policy read and the
+// session are one identity whichever the launch was (the bridge, R7).
+//
+// Its refusals are the shipped ones (plan R10, B1) for the sealed object — a
+// job whose environment says the budget is on but carries no Firebase API key,
+// or no runs bucket, or a slug or run id that cannot be a database key, is
+// damage to the job, and the run stops before anything else — and the claim's
+// own for a ticket (identity_claim.go), which halts the run rather than
+// returning a reason a caller could carry on from.
 func (r *run) takeBudgetToken(ctx context.Context) (string, error) {
 	b := r.d.Backend
 	if b.APIKey == "" {
 		return "", fmt.Errorf("the budget backend is configured (%s) but %s is not set", RTDBURLEnv, FirebaseAPIKeyEnv)
+	}
+	if b.Ticket != "" {
+		// The claim needs the API key and nothing else of the backend: the
+		// custom token it answers is exchanged below with that key, and a
+		// claimed launch minted no object, so the runs bucket is not read and
+		// its absence is not an error here.
+		custom, err := r.claimBudgetIdentity(ctx, b.Ticket)
+		if err != nil {
+			return "", err
+		}
+		// Registered before anything can print it: the answer that carried it
+		// is already out of claimBudgetIdentity, and every reason this run
+		// publishes from here on is redacted of it (the sealed object's rule
+		// below, one mechanism over).
+		r.addSecret(custom)
+		return custom, nil
 	}
 	if r.d.Bucket == nil {
 		return "", errors.New("the budget token is delivered through the runs bucket, and this run has none")

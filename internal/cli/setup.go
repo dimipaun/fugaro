@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -30,7 +32,12 @@ import (
 // moved out of init.go (W1.2 splits the retired command's Long between the
 // two doors) with the command it names being the one it is; W1.3 grows the
 // wizard's questions into it.
-const setupLong = `setup plans the installation's shared resources (the runs bucket, registries,
+//
+// The budget question's suggestion and its unit are read from T1's constants
+// rather than written into the sentence (D2211, D2212): the help a person reads
+// before a first run names the same figures the question takes and the alert is
+// created with, whatever those are.
+var setupLong = `setup plans the installation's shared resources (the runs bucket, registries,
 custom roles, the scheduler account, log isolation, an optional budget) with
 Terraform, importing what the bootstrap already made, and applies the plan it
 showed once a person at the terminal confirms it. It
@@ -53,31 +60,45 @@ Credentials), so that fugaro run works; --operator or --admin replaces that,
 an existing config is never changed by it, and with a service
 account's credentials it stops and names the two flags.
 
-Fugaro only starts fresh: a first run creates the GCP project the installation
-lives in, and that project is Fugaro's, and managed, from its creation. On a
+A first run creates the GCP project the installation
+lives in — or adopts one that is already there and holds nothing of Fugaro's,
+using it as if it had created it (the owner's ruling of 2026-11-22) — and that
+project is Fugaro's, and managed, from its creation. On a
 first run it asks its questions once, in this order, each with a suggestion
 Enter takes, and writes the local config, so later runs ask nothing: the new
 GCP project's ID (--gcp-project; a project named after this one,
-fugaro-<name>, which Enter takes; never gcloud's default project), the region
-(--region; us-east5), the project's name (--name; from the repository's
+fugaro-<name>, which Enter takes; never gcloud's default project), where the
+installation lives (--location; US, whose region is us-east5 and which Enter
+takes, or EU, whose region is europe-west1; a region typed in full answers the
+same question and is --region's own form, and the two given together must
+agree), the project's name (--name; from the repository's
 owner, else this directory's), the project's rigor mode (--rigor; how much
 review every run of it gets — poc, startup, pro, the built-in default that is
 listed first, or critical — and the one question with no suggestion, so Enter
-is not an answer there) and whether a repository the build can read is
+is not an answer there), the project's monthly budget alert (--budget; the
+amount Cloud Billing warns the owner at when the month's spend reaches it — an
+alert, not a cap on spending: what stops a run is the gateway's cost cap — in
+whole units of ` + managed.DefaultBudgetCurrency + `, which Enter takes as ` + strconv.FormatInt(managed.DefaultBudgetAmount, 10) + `) and whether a
+repository the build can read is
 baked into the image its job runs (--bake-repos; yes, which makes jobs start
 faster; asked only where it can be answered, so a run with a project config
 keeps that project's answer). Every question has its flag, so only the
 confirmations below need a terminal at all: without one, or with
 --json, the run names every missing flag in one
-error — the bake switch needs no flag there, because an absent key means the
-same as a written yes. An ID that already exists is refused before anything is
-asked or changed ("Fugaro only starts fresh: <id> already exists; pick
-another id"), and so is one that already holds a Fugaro installation, with the
+error — the bake switch and the budget need no flag there, because an absent
+key means the same as a written yes and a budget nobody answered takes its own
+default. An ID that already exists and holds anything of Fugaro's is refused
+before anything is asked or changed ("<id> already exists and holds something
+of Fugaro's: fugaro setup only adopts a project that holds nothing of
+Fugaro's, so pick another id"), and so is one that already holds a Fugaro
+installation, with the
 command that uses that installation from this machine instead: fugaro update
 --gcp-project <id> --region <region>, which writes the local config from the
-installation and applies nothing. The one taken ID a first run goes on with is a project an
-earlier run of fugaro setup created and did not finish (it carries the label
-fugaro_created=true from its creation): the rerun resumes it. The budget
+installation and applies nothing. A project that already exists and holds
+nothing of Fugaro's is adopted: the run uses it as if it had created it. The
+other ID a first run goes on with is a project an
+earlier run of fugaro setup made Fugaro's and did not finish (it carries the
+label fugaro_created, true or adopted, from that run): the rerun resumes it. The budget
 section of a local config written from an installation (rtdb_url,
 firebase_project, firebase_api_key, token_signer: none a secret) is filled
 from the Firebase root's outputs, read only. A --name given for an
@@ -95,9 +116,10 @@ not, the build is left for you with each missing permission and its fix and
 nothing is billed. A repository the local config does not list is asked about
 first, at the start, before any plan.
 
-setup runs as a converge of stages (preflight, installation, with
---firebase-project the Firebase backend and the images, the secrets, the
-plugin wiring and the repository, and on a first run the project — the one
+setup runs as a converge of stages (preflight, installation, the Firebase
+backend — the budget database, which it adopts or creates, see
+--firebase-project — the images, the secrets, the plugin wiring and the
+repository, and on a first run the project — the one
 stage that creates the GCP project, and the one that refuses an ID that
 already exists), each with its own confirmation, in order, and stops at the
 first that fails or needs you; a rerun resumes, and one with nothing to do
@@ -143,8 +165,18 @@ session may run it: it edits only a local file.
 setup --firebase-project <gcp-project-id> turns the shared budget on: it
 builds the budget backend in the installation's own GCP project. The value is
 the installation's own GCP project id (the default; the flag is only needed to
-turn the shared budget on), and any other id is refused. A setup without it
-builds no backend. It creates nothing and links nothing
+turn the shared budget on), and any other id is refused. The stage runs with
+and without the flag, and setup and update run the same one: with none it
+adopts the database the installation's Firebase state names where that
+database is the installation's own project's, or creates one in the
+installation's own project where this credential may make the project's IAM
+changes and the project has billing (the new database starts in observe, with
+no mode chosen); where neither is this run's — the credential may not, the
+project has no billing, or nothing answers the confirmation creating one costs
+(a coding agent's session, --json, a pipe) — the stage changes nothing, says
+in one line who must run the command or that billing must be linked, and the
+rest of the run carries on. An installation whose database this machine
+already records keeps what it has. The stage creates nothing and links nothing
 itself (the project and its billing link are the first run's), and it refuses
 a project that has no billing, or whose database holds data and no Fugaro
 mark. It runs three applies, each
@@ -247,8 +279,12 @@ at user scope are all it writes).
 
 In a checkout of a repository of this project, the converge's secrets stage
 asks, at hidden prompts, for the secrets its jobs mount (the git credential,
-the Claude credential agent.auth names, none for vertex, the allowed model
-providers' keys, the workflows' own), and skips what is already stored. It
+the Claude credential agent.auth names, none for vertex, the workflows' own),
+and skips what is already stored. A model provider's key is not one of them:
+since 0.27.0 it is entered in the credentials service's bundle, one entry per
+repository, and the stage names the command that writes this repository's
+entry (fugaro secrets set NAME --repo owner/name) instead of prompting for a
+value it would refuse to store. It
 prompts only in your own terminal: never with
 --json (--json never prompts; the stage then exits 1 with the one-line
 fugaro secrets set commands), never when stdin, stdout or stderr is not a
@@ -395,10 +431,18 @@ var setupQuestions = []wizardQuestion{
 		missing: "--gcp-project <id>",
 	},
 	{
-		what:    "the region the installation's jobs and the scheduler run in",
-		label:   "Region (the installation's jobs and the scheduler)",
-		flag:    "--region",
-		missing: "--region <region>",
+		// The place question (LP4 of docs/location-preference; D3080, D3081,
+		// D3086). It is the wizard's region question in a person's words and
+		// not a second question (F2): the answer is us, eu, or a region typed
+		// in full, --region answers the same question precisely, and the
+		// region stays the one setting the installation stores (D3080). The
+		// suggestion is US, which is today's default region; the region itself
+		// is not in the row, because a place answer names one region and the
+		// mapping's own line says which (R7).
+		what:    "the place the installation lives in (US, EU, or a region typed in full)",
+		label:   "Place (US, EU, or a region: where the installation's jobs and its data go)",
+		flag:    "--location",
+		missing: "--location <us|eu>",
 	},
 	{
 		what:    "the Fugaro project's name",
@@ -417,6 +461,22 @@ var setupQuestions = []wizardQuestion{
 		label:   "Rigor mode",
 		flag:    "--rigor",
 		missing: "--rigor <mode>",
+	},
+	{
+		// The budget question (T2b of docs/managed-flag-ergonomics; D2210,
+		// D2211, D2212). The figure is the project's budget ALERT — the point
+		// Cloud Billing warns the owner at — and the label says so, because
+		// what stops a run is the gateway's cost cap, a different figure in a
+		// different place (internal/infra/managed/defaults.go): a monthly
+		// figure read as a cap would be read as a limit this wizard does not
+		// set. The suggestion is the default amount, which Enter takes, and
+		// the missing is empty on purpose like the bake switch's below: a run
+		// that cannot ask takes the same default (D2212), so demanding the flag
+		// would refuse a run whose answer is already in hand (askBudget).
+		what:    "the monthly amount of the project's budget alert, in whole units of " + managed.DefaultBudgetCurrency,
+		label:   "Monthly budget alert (an alert at a threshold, not a cap on spending)",
+		flag:    "--budget",
+		missing: "",
 	},
 	{
 		// The bake switch (IS7 of docs/image-setup-skill/implementation-plan.md;
@@ -692,6 +752,88 @@ func (s *wizardStage) askRigor() error {
 	return nil
 }
 
+// budgetQuestionLead is the line above the budget question, and the whole of
+// what says what the number is for: it is a budget ALERT's threshold — the
+// point Cloud Billing warns the owner at — and never a cap on spending, because
+// what stops a run is the gateway's cost cap, a different figure in a different
+// place (internal/infra/managed/defaults.go). Every other question of this
+// wizard is about its own answer alone; a monthly figure is the one a reader
+// would otherwise take for a limit they are setting (askBudget).
+const budgetQuestionLead = "the figure below is the project's budget ALERT: the point Cloud Billing warns the owner at when the month's spend reaches it. It is an alert, and not a cap on spending — what stops a run is the gateway's cost cap, a different figure in a different place."
+
+// askBudget is the wizard's budget question (T2b of
+// docs/managed-flag-ergonomics; D2210, D2211, D2212): the monthly amount the
+// project's budget alert is created with, asked once after the rigor question,
+// with the default amount as the suggestion Enter takes.
+//
+// The answer goes onto --budget's own fields, which is where a scripted run
+// answers the same question and where the installation's alert is created from
+// (installOptions, init.go), and the currency the amount is in is the default
+// one (D2211): the question asks what the owner is warned at, and an amount
+// without a currency is one no alert can be created with. The answers file
+// fills the same two fields and may answer either on its own (setup_answers.go,
+// R4).
+//
+// It asks nothing where nobody can ask (canAsk: --json, a pipe, --yes, a run
+// that never prompts) and nothing on a run that does not create the
+// installation — a run with a project config, `fugaro update` too — which is
+// askRigor's rule and askBake's: the question is about the project this run
+// brings up, and a project that is already there keeps the budget its own. A
+// run that cannot ask takes the default itself, which is what D2212 says the
+// answer is wherever nobody chose one: nothing waits, and no flag is demanded
+// (the row's missing is empty).
+//
+// The account the alert is on is settled once the billing question has
+// answered, because that is where the linked account appears (settleBudget): a
+// budget is an alert on a billing account, and the answer this question collects
+// must not reach the installation without one.
+func (s *wizardStage) askBudget() error {
+	r, o := s.r, s.r.o
+	if !o.createProject || o.budget > 0 {
+		return nil
+	}
+	if !r.canAsk() {
+		o.budget, o.budgetCurrency = managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency
+		return nil
+	}
+	q := questionFor("--budget")
+	s.a.asked = append(s.a.asked, q.label)
+	fmt.Fprintln(r.w, budgetQuestionLead)
+	v, err := r.prompt(valueSpec{what: q.what, flag: q.flag}, strconv.FormatInt(managed.DefaultBudgetAmount, 10), func(v string) error {
+		_, verr := budgetAnswer(v)
+		return verr
+	})
+	if err != nil {
+		return err
+	}
+	amount, err := budgetAnswer(v)
+	if err != nil {
+		// The prompt validated the same value one line above, so this cannot be
+		// reached; an amount is recorded only where it read back as one.
+		return err
+	}
+	o.budget, o.budgetCurrency = amount, managed.DefaultBudgetCurrency
+	return nil
+}
+
+// budgetAnswer is the budget question's own reading of an answer: a whole
+// number of units, in the range the alert's amount may take — which is the
+// marker's own rule (managed.Budget.Check, T1's constants), so a figure the
+// question takes is one the installation and the creation fact take as well,
+// and no later step refuses what a person just answered. What it does not read
+// is a currency: the question asks for the amount and takes the default
+// currency (D2211).
+func budgetAnswer(v string) (int64, error) {
+	n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+	if err != nil {
+		return 0, errors.New("answer a whole number of units, such as " + strconv.FormatInt(managed.DefaultBudgetAmount, 10))
+	}
+	if err := (managed.Budget{Amount: n, Currency: managed.DefaultBudgetCurrency}).Check(); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // bakeAnswer is the bake question's own reading of an answer: the two things it
 // has to say — yes and no, which is how the question is asked — and the
 // spellings the same switch is written in elsewhere, since --bake-repos and
@@ -738,11 +880,12 @@ func wizardStages(ctx context.Context, r *initRun) []initflow.Stage {
 }
 
 // settleCreation records what this run does about the GCP project, where the
-// rest of the run reads it: --create-project's own field. Fugaro only starts
-// fresh (the owner's ruling of 2026-10-23), so there is no question to ask: a
-// first run of fugaro setup creates its project (the project stage,
-// init_project.go, refuses an ID that already exists before anything is
-// changed), and the flag only says so explicitly.
+// rest of the run reads it: --create-project's own field. There is no question
+// to ask: a first run of fugaro setup makes its project Fugaro's — it creates
+// it, or adopts one that is already there and holds nothing of Fugaro's (the
+// owner's ruling of 2026-11-22; the project stage, init_project.go, refuses an
+// ID that holds anything of Fugaro's before anything is changed), and the flag
+// only says so explicitly.
 //
 // A run that cannot act on a creation does not get one: `fugaro update` creates
 // nothing (its stage set has no project stage at all, init_stages.go), and

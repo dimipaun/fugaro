@@ -2,11 +2,75 @@
  "data": [
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
-   "tag": "modelrun/fp4"
+   "tag": "ionstream"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "nebius/fp8"
   },
   {
    "model_id": "moonshotai/kimi-k3",
-   "tag": "fireworks/spot"
+   "tag": "amazon-bedrock/us-east-1"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "cloudflare"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-pro",
+   "tag": "deepinfra/fp8/priority"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-flash",
+   "tag": "deepinfra/fp8/priority"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-flash",
+   "tag": "deepinfra/fp8/flex"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-pro",
+   "tag": "deepinfra/fp8/flex"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "nebius/fp4"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "river"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "river"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "venice/ultrafast"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "parasail/fast"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "io-net/fp4"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "wafer/us"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "wafer/fast"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-flash",
+   "tag": "fireworks"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "mancer/fp8"
   },
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
@@ -29,18 +93,6 @@
    "tag": "inference-net/us/fast"
   },
   {
-   "model_id": "moonshotai/kimi-k3",
-   "tag": "pareto-alpha/us"
-  },
-  {
-   "model_id": "deepseek/deepseek-v4.1-flash",
-   "tag": "nebius/fp8"
-  },
-  {
-   "model_id": "deepseek/deepseek-v4.1-flash",
-   "tag": "sail-research/fp4/us"
-  },
-  {
    "model_id": "deepseek/deepseek-v4.1-flash",
    "tag": "deepinfra/fp8/priority"
   },
@@ -49,36 +101,20 @@
    "tag": "deepinfra/fp8/flex"
   },
   {
-   "model_id": "deepseek/deepseek-v4.1-flash",
-   "tag": "primeintellect"
-  },
-  {
    "model_id": "moonshotai/kimi-k3",
-   "tag": "sail-research/fp4/us"
+   "tag": "parasail/fast"
   },
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
-   "tag": "cohere"
+   "tag": "cohere/fp8"
   },
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
    "tag": "crusoe/fp8"
   },
   {
-   "model_id": "deepseek/deepseek-v4-flash",
-   "tag": "cloudflare"
-  },
-  {
-   "model_id": "deepseek/deepseek-v4-pro",
-   "tag": "reka"
-  },
-  {
    "model_id": "moonshotai/kimi-k3",
    "tag": "inference-net/fast"
-  },
-  {
-   "model_id": "deepseek/deepseek-v4.1-flash",
-   "tag": "decart/fp4"
   },
   {
    "model_id": "moonshotai/kimi-k3",
@@ -89,20 +125,8 @@
    "tag": "fireworks/us"
   },
   {
-   "model_id": "deepseek/deepseek-v4.1-flash",
-   "tag": "baseten/fast"
-  },
-  {
-   "model_id": "moonshotai/kimi-k3",
-   "tag": "decart/mxfp4"
-  },
-  {
    "model_id": "deepseek/deepseek-v4-pro",
    "tag": "relace/fp4"
-  },
-  {
-   "model_id": "moonshotai/kimi-k3",
-   "tag": "akashml/fp4"
   },
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
@@ -126,10 +150,6 @@
   },
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
-   "tag": "sail-research/fp4"
-  },
-  {
-   "model_id": "deepseek/deepseek-v4.1-flash",
    "tag": "baseten/us"
   },
   {
@@ -146,27 +166,15 @@
   },
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
-   "tag": "phala"
-  },
-  {
-   "model_id": "deepseek/deepseek-v4-pro",
-   "tag": "cloudflare"
-  },
-  {
-   "model_id": "deepseek/deepseek-v4.1-flash",
    "tag": "together"
   },
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
-   "tag": "relace"
+   "tag": "relace/fp4"
   },
   {
    "model_id": "moonshotai/kimi-k3",
    "tag": "inference-net/fp4"
-  },
-  {
-   "model_id": "deepseek/deepseek-v4.1-flash",
-   "tag": "siliconflow/fp8"
   },
   {
    "model_id": "deepseek/deepseek-v4-flash",
@@ -194,15 +202,7 @@
   },
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
-   "tag": "morph/fp8"
-  },
-  {
-   "model_id": "deepseek/deepseek-v4.1-flash",
    "tag": "venice/fp8"
-  },
-  {
-   "model_id": "deepseek/deepseek-v4.1-flash",
-   "tag": "novita/fp8"
   },
   {
    "model_id": "deepseek/deepseek-v4.1-flash",
@@ -227,10 +227,6 @@
   {
    "model_id": "moonshotai/kimi-k3",
    "tag": "relace/fp4"
-  },
-  {
-   "model_id": "moonshotai/kimi-k3",
-   "tag": "phala"
   },
   {
    "model_id": "moonshotai/kimi-k3",
@@ -266,10 +262,6 @@
   },
   {
    "model_id": "moonshotai/kimi-k3",
-   "tag": "morph/fp8"
-  },
-  {
-   "model_id": "moonshotai/kimi-k3",
    "tag": "fireworks"
   },
   {
@@ -281,14 +273,6 @@
    "tag": "mancer/fp8"
   },
   {
-   "model_id": "moonshotai/kimi-k3",
-   "tag": "moonshotai/mxfp4"
-  },
-  {
-   "model_id": "deepseek/deepseek-v4-flash",
-   "tag": "digitalocean"
-  },
-  {
    "model_id": "deepseek/deepseek-v4-pro",
    "tag": "digitalocean"
   },
@@ -299,10 +283,6 @@
   {
    "model_id": "deepseek/deepseek-v4-pro",
    "tag": "venice"
-  },
-  {
-   "model_id": "deepseek/deepseek-v4-pro",
-   "tag": "novita/fp8"
   },
   {
    "model_id": "deepseek/deepseek-v4-pro",
@@ -315,14 +295,6 @@
   {
    "model_id": "deepseek/deepseek-v4-flash",
    "tag": "parasail/fp8"
-  },
-  {
-   "model_id": "deepseek/deepseek-v4-flash",
-   "tag": "siliconflow/fp8"
-  },
-  {
-   "model_id": "deepseek/deepseek-v4-pro",
-   "tag": "siliconflow/fp8"
   }
  ]
 }

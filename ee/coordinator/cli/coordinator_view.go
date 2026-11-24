@@ -50,7 +50,7 @@ func runCoordinatorStatusFromStore(cmd *cobra.Command, o *coordinatorOptions) er
 	if err != nil {
 		return err
 	}
-	project, err := StoredProject(ctx, env, repos, coordinatorSince(window), cmd.ErrOrStderr())
+	project, err := StoredProject(ctx, env, repos, coordinatorSince(window), bucketRuns(env), cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
@@ -73,6 +73,21 @@ func runCoordinatorStatusFromStore(cmd *cobra.Command, o *coordinatorOptions) er
 	return writeCoordinatorStored(out, project.Repos[0])
 }
 
+// RunsFallback builds the runs half a stored-project read answers with for one
+// repository, over the writer that read's warnings go to. It is a parameter of
+// the read rather than a constant of it because the two callers read those runs
+// from two places: `coordinator status --from-store` from the runs bucket, which
+// is what that command has always answered with, and `fugaro graph` from the
+// run index (IR3, F3), which is what makes a repository with no stored view
+// cost one query where it cost a listing and a read per run. The view is the
+// same view either way — the index is folded from those same runs — so what
+// differs is the read and never the document.
+//
+// The writer is the reader's own: the bucket read warns about a run whose
+// objects would not decode, and the caller buffers those lines per repository
+// so that twenty reads at once cannot interleave them.
+type RunsFallback func(warn io.Writer) coordinator.RunsReader
+
 // StoredProject is the read `fugaro coordinator status --from-store` makes
 // (D364): every named repository's stored view, in the order the names were
 // given. It is the view the sweep already stored, which is what makes the
@@ -82,10 +97,13 @@ func runCoordinatorStatusFromStore(cmd *cobra.Command, o *coordinatorOptions) er
 // It is exported because a second command reads the same node for the same
 // reason — `fugaro graph`'s coordinator scope, whose document is drawn from
 // exactly this data (CG3) — and a node read by two commands is a node with two
-// readers only if they may differ. What they must not differ on is the runs
-// half: a repository with nothing stored is the runs alone and "stored": false,
-// never a failure, and the graph's `down` state is that same fallback seen from
-// one step further away.
+// readers only if they may differ. What they must not differ on is the shape of
+// the answer: a repository with nothing stored is the runs alone and "stored":
+// false, never a failure, and the graph's `down` state is that same fallback
+// seen from one step further away. Where the runs half is read from is the
+// caller's, and the two callers differ there by design (RunsFallback): the
+// person's own CLI reads them from the bucket, and the graph — the console's
+// read, and the one that has to answer at scale — from the index (IR3, F3).
 //
 // Three properties are the read rather than niceties around it:
 //
@@ -126,26 +144,28 @@ func runCoordinatorStatusFromStore(cmd *cobra.Command, o *coordinatorOptions) er
 // for as long as the console holds the stream open — opens one and calls
 // StoredProjectThrough with it, because a store opened per read is an rtdb
 // client and a token source built per read (CoordinatorStore, CG7).
-func StoredProject(ctx context.Context, env *fcli.Cloud, repos []string, since time.Time, warn io.Writer) (coordinator.StoredProjectView, error) {
+func StoredProject(ctx context.Context, env *fcli.Cloud, repos []string, since time.Time, runs RunsFallback, warn io.Writer) (coordinator.StoredProjectView, error) {
 	store, err := openCoordinatorStore(ctx, env.Config())
 	if err != nil {
 		return coordinator.StoredProjectView{}, err
 	}
-	return StoredProjectThrough(ctx, env, store, repos, since, warn)
+	return StoredProjectThrough(ctx, env, store, repos, since, runs, warn)
 }
 
 // StoredProjectThrough is StoredProject's read over a store the caller already
 // holds: the same read and not a second one — the same parallel pass, the same
 // runs-half fallback for a repository with nothing stored, the same warnings in
 // the selection's own order — because two callers reading one node is two
-// callers only if they may differ, and these may not.
+// callers only if they may differ, and these may not. The one thing they do
+// differ on is where the runs half is read (RunsFallback), which is the
+// caller's own account and never this read's.
 //
 // It is the entry a caller that reads more than once takes, and the reason it
 // exists is the cost of opening: a store is one rtdb client and the credential
 // minted with it (CoordinatorStore), so a caller that reads per change holds one
 // for its whole life rather than reading the ADC file and fetching a token again
 // on every change, every keep-alive and every retry of a failed read (CG7).
-func StoredProjectThrough(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, repos []string, since time.Time, warn io.Writer) (coordinator.StoredProjectView, error) {
+func StoredProjectThrough(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, repos []string, since time.Time, runs RunsFallback, warn io.Writer) (coordinator.StoredProjectView, error) {
 	// Every repository's view is read in one pass, a few at a time: a project
 	// with twenty of them costs one repository's read per round rather than
 	// their sum, which is the whole of this read's cost. Each read writes its
@@ -162,7 +182,7 @@ func StoredProjectThrough(ctx context.Context, env *fcli.Cloud, store *coordinat
 	views := make([]coordinator.RepoView, len(repos))
 	errs := make([]error, len(repos))
 	pool.Run(len(repos), coordinatorViewRepos, func(i int) {
-		views[i], errs[i] = coordinatorStoredView(ctx, env, store, repos[i], since, &warns[i])
+		views[i], errs[i] = coordinatorStoredView(ctx, env, store, repos[i], since, runs(&warns[i]))
 	})
 	// The flush stops at the first failure, and stops there for good: the
 	// repository that failed is one the read did not finish, so neither its own
@@ -193,13 +213,14 @@ func coordinatorStatusProviders(ctx context.Context, env *fcli.Cloud, repos []st
 // coordinatorStoredView reads one repository's stored view, and falls back to
 // the runs half when the database holds none.
 //
-// The fallback is the runs bucket alone — the join of the runs with no pull
-// requests, so the pull requests those runs name are listed with the host's
-// state unknown rather than fetched. It is the half of the view that needs no
-// credential at all, which is the point: a project whose coordinator has never
-// run still gets a view out of this command, and the document says which of
-// the two halves it is holding.
-func coordinatorStoredView(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, repo string, since time.Time, warn io.Writer) (coordinator.RepoView, error) {
+// The fallback is the runs alone — the join of them with no pull requests, so
+// the pull requests those runs name are listed with the host's state unknown
+// rather than fetched from the host. It is the half of the view that needs no
+// repository credential at all, which is the point: a project whose coordinator
+// has never run still gets a view, and the document says which of the two
+// halves it is holding. Where those runs are read from is the caller's
+// (RunsFallback): the bucket, or the index for `fugaro graph` (IR3, F3).
+func coordinatorStoredView(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, repo string, since time.Time, runs coordinator.RunsReader) (coordinator.RepoView, error) {
 	slug, err := env.RepoSlug(ctx, repo)
 	if err != nil {
 		return coordinator.RepoView{}, err
@@ -211,11 +232,11 @@ func coordinatorStoredView(ctx context.Context, env *fcli.Cloud, store *coordina
 	if view.Stored {
 		return view, nil
 	}
-	runs, err := coordinatorRuns(ctx, env, slug, since, warn)
+	read, err := runs.Runs(ctx, coordinator.Repo{Name: repo, Slug: slug}, since)
 	if err != nil {
 		return coordinator.RepoView{}, err
 	}
-	view.View = coordinator.Join(repo, nil, runs)
+	view.View = coordinator.Join(repo, nil, read)
 	return view, nil
 }
 

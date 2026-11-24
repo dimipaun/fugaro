@@ -378,6 +378,102 @@ func TestSelectRoundRobinTies(t *testing.T) {
 	}
 }
 
+// A candidate the caller marked exclusive is SERVED while it can serve, whatever
+// the tier's own rule would have done with the list. The two rules that pick a
+// member by position are both here, because the offered order says nothing under
+// either of them: the tie-breaking counter's turn (seeded off zero, so the
+// answer is not the first entry by luck) and a pool's rotation. A list that
+// offered this candidate as one more member of its tier would serve it about one
+// call in N — the reviewer's finding on R7 and D3144 — which is why the rule is
+// a mark of the caller's and not the position.
+func TestSelectExclusiveCandidateWins(t *testing.T) {
+	own := Credential{Name: "own-token", Tier: TierA}
+	for _, tc := range []struct {
+		name     string
+		strategy Strategy
+	}{
+		{"the tie-breaking counter is on another turn", StrategyFailover},
+		{"a pool asks for the rotation", StrategyRoundRobin},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.setRoundRobin(1)
+			s := selector(st, noWindow())
+			s.Strategy = tc.strategy
+			s.Exclusive = own.Name
+
+			c, _, err := s.Select(ctx, run, []Credential{own, a1, a2})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.Name != own.Name {
+				t.Fatalf("the selection = %q; want %q: a candidate marked exclusive is served while it can serve, and the position it was offered at is not the question", c.Name, own.Name)
+			}
+			// Served and not merely named: the run is placed on it, and the
+			// turn the rotation would have taken was not taken.
+			if got, ok := st.currentOf(run); !ok || got != own.Name {
+				t.Fatalf("the run is on %q, %v; want %q", got, ok, own.Name)
+			}
+			if got := st.rr; got != 1 {
+				t.Fatalf("the counter reads %d; want 1: serving an exclusive candidate is not a turn of the rotation", got)
+			}
+		})
+	}
+}
+
+// And it is stepped over the moment it cannot serve, with the rest of the list
+// the answer: the four states that stop it are the four states every candidate
+// meets (free), which is the whole of when D2974's fall-through applies.
+func TestSelectExclusiveCandidateStepsAside(t *testing.T) {
+	own := Credential{Name: "own-token", Tier: TierA}
+	for _, tc := range []struct {
+		name string
+		hold func(*fakeStore, *Settings)
+	}{
+		{
+			name: "exhausted until its reset",
+			hold: func(st *fakeStore, _ *Settings) {
+				st.setMark(own.Name, Mark{State: StateExhausted, Since: now.Add(-time.Minute), Until: now.Add(time.Hour)})
+			},
+		},
+		{
+			name: "backed off, waiting for a probe",
+			hold: func(st *fakeStore, _ *Settings) {
+				st.setMark(own.Name, Mark{State: StateBackedOff, Since: now.Add(-time.Minute), Until: now.Add(time.Hour)})
+			},
+		},
+		{
+			name: "broken",
+			hold: func(st *fakeStore, _ *Settings) {
+				st.setMark(own.Name, Mark{State: StateBroken, Since: now.Add(-time.Minute)})
+			},
+		},
+		{
+			name: "capped, another run holding the only slot",
+			hold: func(st *fakeStore, set *Settings) {
+				set.ConcurrencyPerToken = ptr(1)
+				st.setLease(Run{Slug: run.Slug, ID: "another"}, Lease{Credential: own.Name, Until: now.Add(time.Hour)})
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			set := noWindow()
+			tc.hold(st, &set)
+			s := selector(st, set)
+			s.Exclusive = own.Name
+
+			c, _, err := s.Select(ctx, run, []Credential{own, a1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.Name != a1.Name {
+				t.Fatalf("the selection = %q; want %q: an exclusive candidate that cannot serve is not held up, and the rest of the list is the answer", c.Name, a1.Name)
+			}
+		})
+	}
+}
+
 // D142's first control: once a shared token has hit its limit, it is out for
 // the rest of its window, whatever reset the response reported. Turned off, the
 // reset is all that holds it.
@@ -1666,10 +1762,65 @@ func TestTheStickyPathRefreshesTheLease(t *testing.T) {
 	}
 }
 
+// MayServe is Select's judgement with the recording left out, and the two halves
+// of that are what this test states: it answers what Select answers about a
+// credential — here a tier-C one, so the model and the provider are the rules it
+// meets — and the run's placement is exactly where it was afterwards.
+//
+// The placement is the reason the entry point exists. Current and the lease are
+// ONE fact, where this run is (SetPlacement), and a caller whose credential is
+// DERIVED — the credentials service's provider route, whose entry comes from the
+// run's verified repository and the provider's name — has no decision to record:
+// placing it would move a run that is halfway through a Claude call off the
+// subscription account it is on and take that account's lease (D142's slot) with
+// it, while the next Claude call found no current credential to stay on (D154).
+func TestMayServeAnswersWithoutPlacingTheRun(t *testing.T) {
+	st := newFakeStore()
+	// The run is where a cascade call left it: on a shared token, holding it.
+	st.setPlacement(run, a1.Name, Lease{Credential: a1.Name, Until: now.Add(DefaultLeaseTTL)})
+	held, _ := st.lease(run)
+
+	s := selector(st, noWindow())
+	s.Model = otherModel
+	s.Provider = openrouter.Provider
+	if err := s.MayServe(ctx, run, openrouter); err != nil {
+		t.Fatalf("MayServe on a provider key for the model it serves = %v; want the judgement Select makes over the same list", err)
+	}
+	if cur, _, err := st.Current(ctx, run); err != nil || cur != a1.Name {
+		t.Fatalf("MayServe left the run on %q, %v; want %q: a judgement places nothing", cur, err, a1.Name)
+	}
+	if l, ok := st.lease(run); !ok || l != held {
+		t.Fatalf("MayServe left the lease %+v, %v; want the %+v the run was holding: the slot and the stickiness are one fact and neither moved", l, ok, held)
+	}
+	if st.updates != 0 || st.rr != 0 {
+		t.Fatalf("MayServe wrote state (mark updates %d, tie-break counter %d); want none", st.updates, st.rr)
+	}
+
+	// The judgement itself is Select's, and the refusals are the same two a
+	// selection of one answers with: the class gate for a Claude model, and the
+	// wait a mark that will lift is answered with.
+	s.Model = claudeModel
+	if err := s.MayServe(ctx, run, openrouter); err == nil || !strings.Contains(err.Error(), "Check 50") {
+		t.Fatalf("MayServe on a provider key for a Claude model = %v; want Check 50's refusal", err)
+	}
+	s.Model = otherModel
+	st.setMark(openrouter.Name, Mark{State: StateExhausted, Since: now, Until: now.Add(5 * time.Minute)})
+	_, _, err := s.Select(ctx, run, []Credential{openrouter})
+	if err == nil {
+		t.Fatal("the control selection is served a mark-held credential: there is no wait for this test to compare against")
+	}
+	err = s.MayServe(ctx, run, openrouter)
+	var eu *ExhaustedUntil
+	if !errors.As(err, &eu) || eu.Wait != 5*time.Minute {
+		t.Fatalf("MayServe on a mark-held provider key = %v; want the same wait a selection of one answers with (5m)", err)
+	}
+}
+
 // failStore is a Store that refuses one chosen call, so the selection's
 // fail-closed guards can be exercised: a call is never sent on a decision the
 // service could not read, or on one it could not record. Review finding N2 —
 // every guard on a store error was unreachable from the tests.
+
 type failStore struct {
 	*fakeStore
 	marksErr, leasesErr, currentErr, rrErr, placeErr error

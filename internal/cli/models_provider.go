@@ -198,9 +198,14 @@ func runModelsProviderSet(cmd *cobra.Command, name string, o *modelsProviderSetO
 		// already carries — owes no stage: there is no change to publish.
 		return nil
 	}
-	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "providers.%s carries %s now: next: fugaro update --repo . in each repository whose code should go down this route\n", name, strings.Join(wrote, ", "))
-	return runAfterWrite(cmd.Context(), cmd, afterWriteChange{Key: "providers." + name + "." + wrote[0], Store: settings.StoreLocal})
+	// The line says the node carries the entry, so it is printed once the hook
+	// has left it live: an arm that ends on the not-live sentence would
+	// otherwise answer the same question twice, against itself (D2614).
+	if err := runAfterWrite(cmd.Context(), cmd, afterWriteChange{Key: "providers." + name + "." + wrote[0], Store: settings.StoreLocal}); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "providers.%s carries %s now, and the policy node this project publishes carries it: a run routes by the copy in its own job's environment, so each repository whose code should go down this route needs its own `fugaro update --repo .` in that checkout\n", name, strings.Join(wrote, ", "))
+	return nil
 }
 
 // modelsProviderSplice is one leaf of `models provider set`, written into the
@@ -625,8 +630,14 @@ func runModelsPriceSet(cmd *cobra.Command, id string, o *modelsPriceSetOptions) 
 	if !yamledit.Changed(old, next) {
 		return nil
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "model_prices.%s carries %s now: next: fugaro update, which publishes the policy node a run reads prices from\n", id, strings.Join(wrote, ", "))
-	return runAfterWrite(cmd.Context(), cmd, afterWriteChange{Key: "model_prices." + id + "." + wrote[0], Store: settings.StoreLocal})
+	// As models provider set: the node carries the price only where the hook
+	// left it live, and the not-live arm is the one answer that says otherwise
+	// (D2614).
+	if err := runAfterWrite(cmd.Context(), cmd, afterWriteChange{Key: "model_prices." + id + "." + wrote[0], Store: settings.StoreLocal}); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "model_prices.%s carries %s now: the policy node a run reads prices from carries it, so no further command is needed\n", id, strings.Join(wrote, ", "))
+	return nil
 }
 
 // modelsPriceRefuseID refuses a key no model_prices entry may carry: an alias

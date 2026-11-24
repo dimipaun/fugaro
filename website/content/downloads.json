@@ -4,11 +4,11 @@
   "name": "The Fugaro desktop console",
   "what": {
     "text": "A desktop app that is a live view of your runs: no backend, no service account, no database client and no credential of its own.",
-    "source": "docs/design/desktop-console.md D1"
+    "source": "docs/desktop-console/spec.md D1"
   },
   "released": {
     "text": "The console ships for macOS: one universal disk image and one archive, signed and notarised by Apple. Install the CLI first, because the CLI is the data plane. Windows builds do not exist yet.",
-    "source": "docs/design/desktop-console.md D1 D4"
+    "source": "docs/desktop-console/spec.md D1 D4"
   },
   "not_released": {
     "text": "Not released yet. The console is built for macOS and has not been published: this section carries no download link until its own release exists.",
@@ -20,19 +20,19 @@
       "id": "read-only",
       "title": "Strictly read-only",
       "text": "Everything the console runs is read-only; kill, resume and cancel stay in the CLI.",
-      "source": "docs/design/desktop-console.md D2"
+      "source": "docs/desktop-console/spec.md D2"
     },
     {
       "id": "no-telemetry",
       "title": "No telemetry",
       "text": "No telemetry, no analytics, no crash reporting unless you opt in, and an update check that carries no identifier. Crash reports go to Sentry, hosted in the European Union, and hold only the exception type and the app's own code frames.",
-      "source": "docs/design/desktop-console.md D5"
+      "source": "docs/desktop-console/spec.md D5"
     },
     {
       "id": "own-artifact",
       "title": "Its own artifact",
       "text": "Its own release, published from the CLI's tag, declaring the CLI versions it was built against.",
-      "source": "docs/design/desktop-console.md D11"
+      "source": "docs/desktop-console/spec.md D11"
     }
   ],
   "release": {
@@ -74,6 +74,6 @@
       "cosign verify-blob console-sha256sums.txt --bundle console-sha256sums.txt.sigstore.json --certificate-identity \"https://github.com/dimipaun/fugaro/.github/workflows/console-release.yml@refs/tags/console-v{version}\" --certificate-oidc-issuer https://token.actions.githubusercontent.com",
       "grep \"linux-\" console-sha256sums.txt | sha256sum -c --ignore-missing -"
     ],
-    "source": "docs/design/desktop-console.md D10"
+    "source": "docs/desktop-console/spec.md D10"
   }
 }

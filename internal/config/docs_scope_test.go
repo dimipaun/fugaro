@@ -37,26 +37,52 @@ func TestScopeTableMatchesDocs(t *testing.T) {
 	}
 }
 
-// rigorOrderRanks are the mode's layers, narrowest first, each with the
-// phrase docs/project-layer.md §2 must name it by (between that section's
-// rigor-order markers). The guard below reads them in this order, so a doc
-// that reorders the sentence fails, and it asks rigor.Resolve about every
-// adjacency, so a resolver that stops honouring the order fails too.
+// rigorOrderRanks are the mode's ranks, weakest first, each with the phrase
+// docs/project-layer.md §2 must name it by (between that section's
+// rigor-order markers), the layer a resolution from it names, and the way a
+// test sets that rank's level. The guard below reads them in this order, so a
+// doc that reorders the sentence fails, and it asks rigor.Resolve for every
+// rank, so a resolver that stops honouring the order fails too.
+//
+// Two ranks are areas and two are the project layer, which is why an entry
+// carries the layer a resolution names rather than being keyed by it: the
+// order is the doc's sentence, and the layer is what a run's record says about
+// the rank that won.
 var rigorOrderRanks = []struct {
 	phrase string
 	from   rigor.Layer
+	set    func(*rigor.Config, *rigor.Request, rigor.Rigor)
 }{
-	{"an `rigor.areas` rule the run's paths match", rigor.FromArea},
-	{"the repository's `rigor.default`", rigor.FromRepo},
-	{"the project layer's `defaults.rigor.default`", rigor.FromProject},
-	{"Fugaro's own default", rigor.FromDefault},
+	{"Fugaro's own default", rigor.FromDefault,
+		func(*rigor.Config, *rigor.Request, rigor.Rigor) {}},
+	{"the project layer's `defaults.rigor.default`", rigor.FromProject,
+		func(c *rigor.Config, _ *rigor.Request, l rigor.Rigor) { c.Project = l }},
+	{"a `defaults.rigor.areas` rule the run's repository and paths match", rigor.FromArea,
+		func(c *rigor.Config, r *rigor.Request, l rigor.Rigor) {
+			c.ProjectAreas = []rigor.Area{{Name: "payments", Match: "payments/**", Level: l}}
+			r.Paths = append(r.Paths, "payments/x.go")
+		}},
+	{"the project layer's `defaults.rigor.repos` entry for the run's repository", rigor.FromProject,
+		func(c *rigor.Config, r *rigor.Request, l rigor.Rigor) {
+			c.ProjectRepos = map[string]rigor.Rigor{"acme/app": l}
+			r.Repo = "acme/app"
+		}},
+	{"the repository's own `rigor.default`", rigor.FromRepo,
+		func(c *rigor.Config, _ *rigor.Request, l rigor.Rigor) { c.Repo = l }},
+	{"a rule of the repository's own `rigor.areas`", rigor.FromArea,
+		func(c *rigor.Config, r *rigor.Request, l rigor.Rigor) {
+			c.RepoAreas = []rigor.Area{{Name: "own", Match: "own/**", Level: l}}
+			r.Paths = append(r.Paths, "own/x.go")
+		}},
+	{"the run's own request", rigor.FromRequest,
+		func(_ *rigor.Config, r *rigor.Request, l rigor.Rigor) { r.Level = l }},
 }
 
 // TestProjectLayerDocStatesTheRigorOrder is F37's other half: the scope
 // table below is pinned row by row, and §2's own statement of the mode's
-// precedence — the one place the order is written for a reader (D6, D20) —
-// was not. The doc states the order, so this test reads the order out of the
-// doc and then holds the resolver to it, rather than restating either.
+// precedence — the one place the order is written for a reader (D6, D20,
+// LD3) — was not. The doc states the order, so this test reads the order out
+// of the doc and then holds the resolver to it, rather than restating either.
 //
 // Mutation (swap two phrases in docs/project-layer.md §2, or make
 // rigor.Resolve read the repository's value before the project's): this test
@@ -91,50 +117,38 @@ func TestProjectLayerDocStatesTheRigorOrder(t *testing.T) {
 		t.Errorf("docs/project-layer.md §2 does not name the built-in default %q (internal/rigor's Default)", rigor.Default)
 	}
 
-	// Each phrase, held against the resolver: with that layer and every
-	// wider layer set and disagreeing, the narrower one is the answer.
-	for _, r := range rigorOrderRanks {
-		cfg, req := rigorOrderSetup(r.from)
+	// Each rank, held against the resolver: with that rank set to Critical
+	// and every weaker rank set to POC, the narrower one is the answer, and
+	// it is the layer the phrase's rank names.
+	for i, r := range rigorOrderRanks {
+		var cfg rigor.Config
+		var req rigor.Request
+		for _, weaker := range rigorOrderRanks[:i] {
+			weaker.set(&cfg, &req, rigor.POC)
+		}
+		r.set(&cfg, &req, rigor.Critical)
 		want := rigor.Critical
-		if r.from == rigor.FromDefault {
+		if i == 0 {
 			// Nothing sets a mode at all, so the built-in default is the
-			// answer — which is what the last phrase claims.
+			// answer — which is what the first phrase claims.
 			want = rigor.Default
 		}
 		got := rigor.Resolve(cfg, req)
 		if got.From != r.from || got.Level != want {
-			t.Errorf("§2 says %q wins over the wider layers, but rigor.Resolve answers %q from %q", r.phrase, got.Level, got.From)
+			t.Errorf("§2 says %q wins over every weaker rank, but rigor.Resolve answers %q from %q", r.phrase, got.Level, got.From)
 		}
 	}
 
 	// The two claims the same sentence makes about a run's own input: a
-	// request may raise and never lower, and a mode a run reached never
-	// falls.
-	if got := rigor.Resolve(rigor.Config{Repo: rigor.Critical}, rigor.Request{Level: rigor.POC}); got.Level != rigor.Critical {
-		t.Errorf("§2 says a run's own request may raise and never lower it, but a request for %q answered %q", rigor.POC, got.Level)
+	// request settles the level whether it raises or lowers what the layers
+	// set (only a floor, outside every layer, holds it), and a level a run has
+	// reached never falls.
+	if got := rigor.Resolve(rigor.Config{Repo: rigor.Critical}, rigor.Request{Level: rigor.POC}); got.Level != rigor.POC {
+		t.Errorf("§2 says a run's own request settles the level a layer set, but a request for %q answered %q", rigor.POC, got.Level)
 	}
 	if got := rigor.Resolve(rigor.Config{Repo: rigor.Pro}, rigor.Request{Reached: rigor.Critical}); got.Level != rigor.Critical {
-		t.Errorf("§2 says a mode a run has reached never falls, but a reached %q answered %q", rigor.Critical, got.Level)
+		t.Errorf("§2 says a level a run has reached never falls, but a reached %q answered %q", rigor.Critical, got.Level)
 	}
-}
-
-// rigorOrderSetup is a configuration in which the named layer and every
-// wider layer set the mode, each wider layer the looser one, so the answer
-// must name the narrowest of them — the layer the doc's phrase is about.
-func rigorOrderSetup(narrowest rigor.Layer) (rigor.Config, rigor.Request) {
-	var cfg rigor.Config
-	var req rigor.Request
-	switch narrowest {
-	case rigor.FromArea:
-		cfg.Project, cfg.Repo = rigor.POC, rigor.Startup
-		cfg.RepoAreas = []rigor.Area{{Name: "area", Match: "area/**", Level: rigor.Critical}}
-		req.Paths = []string{"area/x"}
-	case rigor.FromRepo:
-		cfg.Project, cfg.Repo = rigor.POC, rigor.Critical
-	case rigor.FromProject:
-		cfg.Project = rigor.Critical
-	}
-	return cfg, req
 }
 
 // TestExecutableKeysMatchDocs keeps docs/project-layer.md's executable-keys

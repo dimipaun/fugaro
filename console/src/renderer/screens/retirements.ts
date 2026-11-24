@@ -17,7 +17,7 @@
 //      fixture arms are the two CM4 reads. A fourth read ("a row of its own")
 //      would be a new row in the spawn and IPC allow-lists -- a
 //      security-sensitive change of its own, with its own pinning tests and its
-//      own row in `docs/design/desktop-console.md` section 5.1 -- and the
+//      own row in `docs/desktop-console/spec.md` section 5.1 -- and the
 //      plan's shared-files table gives this task no writer of `spawn.ts`,
 //      `ipc.ts`, `preload/index.ts` or that design document.
 //   2. One read is one opinion. The retirement and the marks are two facts

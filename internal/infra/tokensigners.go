@@ -66,7 +66,7 @@ const (
 	// made; Firebase accepts a token signed by ANY account of the project
 	// (live Check 26, step 7). What the condition admits once a service
 	// enforces it is Check 68 of docs/gcp-live-checklist.md's to measure and is
-	// not read here (docs/design/managed-deployer-fence.md) — and a grant whose
+	// not read here (docs/managed-deployer-fence/spec.md) — and a grant whose
 	// harmlessness rests on an unmeasured answer is not an information line.
 	// Removing either binding stops the managed replacement `fugaro update`
 	// runs, so the warning names the path and carries no remove command.
@@ -374,12 +374,12 @@ func (e *signerEval) eval(account string, bs []signerBinding) []SignerFinding {
 //     these bindings are in — and the condition names exactly the accounts the
 //     deployer creates, so the account can grant itself the token-creator role
 //     on the one it made. Whether a service honours the condition at all is
-//     Check 68's to measure (docs/design/managed-deployer-fence.md); nothing
+//     Check 68's to measure (docs/managed-deployer-fence/spec.md); nothing
 //     here claims it does.
 //   - an operator the installation names (Managed.Operators) holding
 //     roles/iam.serviceAccountTokenCreator on the deployer account: the managed
 //     mode's one-time impersonation setup (Task 1.5 step 2 of
-//     docs/plans/2026-10-16-managed-projects.md), which is how the person at
+//     docs/managed-projects/implementation-plan.md), which is how the person at
 //     the terminal assumes the deployer. The account it is on is the deployer,
 //     and assuming the deployer reaches the create-and-grant path above.
 //

@@ -170,7 +170,7 @@ for it. It must not claim the notional fields exist.
 **F10. `Exists` — `agent.max_budget_usd` is the only bound on a subscription stage, and it is Claude
 Code's own estimate** (pass `--max-budget-usd`), accurate for a Claude model and about twenty-five
 times too high for a provider model ([docs/multi-model.md](../multi-model.md),
-[docs/design/mixed-credentials.md](../design/mixed-credentials.md) §5). **Consequence:** the review
+[docs/mixed-credentials/spec.md](../mixed-credentials/spec.md) §5). **Consequence:** the review
 job's cost ceiling is that estimate and **not** `budget.per_run_usd`, which binds nothing on a
 subscription credential. The live check's step 5 observes exactly this.
 
@@ -214,7 +214,7 @@ profile's job set is computed, and `fugaro doctor`'s census reads it); what does
 no App key. Naming, deploying and census-reading that variant is **CSR7**.
 
 **F15. `Rule` — a shared project job's bucket reach is installation-wide, and the accepted ruling
-says so.** `docs/design/bucket-iam.md` §2.1 and §10: a project job account holds
+says so.** `docs/bucket-iam/spec.md` §2.1 and §10: a project job account holds
 `roles/storage.objectUser` conditioned on the whole of `runs/`, `cache/` and `locks/` (one clause per
 prefix, **no slug**, `gcp.ProjectBucketCondition`), and the owner ruled on 2026-10-17 to **accept**
 that reach — a profile is a secret boundary, not a bucket one. **Consequence:** a review job that
@@ -698,7 +698,7 @@ met** (§6's **E7** and D893's own entry below say exactly what is missing).
   coder's credential (**F1**, **F3**), which is the configuration this design exists to leave; a
   recipe stage cannot change a job's credential at all.
 - **D881. D9's hold on the OAuth reviewer stage stays. This design does not lift it.** *Recommended:*
-  do not lift. **D9 in its own words**, `docs/design/project-centric.md` **§10**'s "Effect on work in
+  do not lift. **D9 in its own words**, `docs/project-centric/spec.md` **§10**'s "Effect on work in
   flight" table (the row) and **§11**'s phase 5 list: *"#363 OAuth reviewer stage | Multiplies
   per-repository variant jobs; widens token
   blast radius under sharing. | **Hold** until phase 5 (owner, D9)"*, with phase 5 being *"OAuth

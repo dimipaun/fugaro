@@ -182,23 +182,55 @@ var settingSteps = []struct {
 	{"workspace_members.", false, []string{initflow.WorkspaceProject, initflow.Workspace}},
 	{"workspace_cap.", false, []string{initflow.WorkspaceProject, initflow.Workspace}},
 	{"workspace_shared.", false, []string{initflow.WorkspaceProject, initflow.Workspace}},
-	// The workspace MEMBER's half — the pin, and the membership key naming the
-	// workspace it trusts — owes no step: nothing publishes either. The
-	// workspace stage is the owner's and skips on a member, no other stage
-	// reads them, and localcfg.Config.Shared nils the pin rather than publishing
-	// it (W1). They are the member's own record, read by its own commands and
-	// verified against its own config, so the change is live when the config is
-	// written — and a row mapping them to the workspace stage would queue a step
-	// that can never run on the machine that asked for it.
+	// The providers block is where the copy of the installation's model keys
+	// into the credentials service's bundle reads two of the three things an
+	// entry carries: the provider's OWN address and auth shape (F45, D1418 —
+	// the destination of a routed call is the entry's and never a caller's) and
+	// the container the key is stored in, `providers.<name>.secret`. A write
+	// here is therefore a bundle entry the copy would write differently, which
+	// is what `fugaro update`'s credentials-copy stage is for
+	// (internal/cli/update_keys.go, KS12/D3001).
+	//
+	// The policy stage is restated because a row of this table REPLACES what
+	// the registry declares for the keys it answers and never adds to it: the
+	// providers block's rows are the local config's (`settings.loc`, both
+	// `local` and `shared`), so the publish below is their own answer and
+	// dropping it here would save a providers write that never reaches the node
+	// again. The family prefix is the only granularity this table has (a row
+	// matches a key's literal text), so the keys of the block that move neither
+	// fact — `route_fee_pct`, say — queue the copy as well: they cost it one
+	// check that finds nothing to write, which is the cheap direction of a
+	// declaration that cannot be made finer.
+	{"providers.", false, []string{initflow.Policy, initflow.CredentialsCopy}},
+	// The pin's ADDRESS is the one key of the member's half that owes a step:
+	// it is what the member's own credential-route record is keyed on — the
+	// address a run of its repositories takes the workspace's service from
+	// (internal/cli/update_route.go, R3/WS9) — so writing it queues the route
+	// stage, which republishes the record or removes it. The rest of the pin
+	// owes no step: the workspace stage is the owner's and skips on a member,
+	// the route reads no other pin key, and localcfg.Config.Shared nils the pin
+	// rather than publishing it (W1). Those keys are the member's own record,
+	// read by its own commands and verified against its own config, so the
+	// change is live when the config is written — and a row mapping them to the
+	// workspace stage would queue a step that can never run on the machine that
+	// asked for it. The exact row must stand before the prefix one: the table
+	// answers a key with the first row that matches it, and a prefix row placed
+	// above this one would answer the address with the pin's own "owes
+	// nothing".
+	{"workspace_pin.service_address", true, []string{initflow.CredentialsRoute}},
 	{"workspace_pin.", false, nil},
-	// The bare membership key owes no step for the pin's reasons, and it is
-	// matched whole rather than as a prefix: it is a prefix of every other key
-	// of its family, so a prefix row here would answer `workspace_members`,
-	// `workspace_cap` and any future `workspaces.*` — keys the registry does
-	// not declare — with "declared, owes nothing" instead of the gap the table
-	// owes them, and an owner-side key added later would be saved with no
-	// workspace stage queued and nothing said about it.
-	{"workspace", true, nil},
+	// The bare membership key owes the route step: whether this project is in a
+	// workspace at all is half of what the record says — a member publishes one
+	// and a project in no workspace removes the one it published before
+	// (update_route.go's own comment) — so a membership key written here is a
+	// route decision the next run makes. It is matched whole rather than as a
+	// prefix: it is a prefix of every other key of its family, so a prefix row
+	// here would answer `workspace_members`, `workspace_cap` and any future
+	// `workspaces.*` — keys the registry does not declare — with "declared,
+	// owes nothing" instead of the gap the table owes them, and an owner-side
+	// key added later would be saved with no workspace stage queued and nothing
+	// said about it.
+	{"workspace", true, []string{initflow.CredentialsRoute}},
 }
 
 // Steps answers the steps change owes, in the order initflow runs them, and

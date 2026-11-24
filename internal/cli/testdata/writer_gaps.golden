@@ -60,6 +60,9 @@ batch.boot_image	label:file
 batch.image	label:file
 batch.machine_type	label:file
 batch.network	label:file
+batch.opt_in	label:file
+batch.seal_key.public_key	label:file
+batch.seal_key.version	label:file
 batch.secrets	label:file
 batch.service_account	label:file
 batch.socket_gid	label:file
@@ -195,8 +198,11 @@ layer.defaults.model_grades.strongest.access	open:writer-unproven
 layer.defaults.model_grades.strongest.model	open:no-writer
 layer.defaults.rigor.areas.src.level	open:writer-unproven
 layer.defaults.rigor.areas.src.match	open:writer-unproven
+layer.defaults.rigor.areas.src.members.conformance.paths	open:writer-unproven
+layer.defaults.rigor.areas.src.members.conformance.repo	open:writer-unproven
 layer.defaults.rigor.areas.src.name	open:writer-unproven
 layer.defaults.rigor.default	open:writer-unproven
+layer.defaults.rigor.repos	open:writer-unproven
 layer.gcp_project	label:file
 layer.profiles.web.base	open:writer-unproven
 layer.profiles.web.cache.conformance.key	open:writer-unproven
@@ -248,6 +254,12 @@ model_prices.conformance.long_context.input_per_m	open:no-writer
 model_prices.conformance.long_context.output_per_m	open:no-writer
 model_prices.conformance.output_per_m	open:writer-unproven
 model_prices.conformance.web_search_per_1k	open:writer-unproven
+model_routing.conformance.chain.conformance.admit	label:plumbing
+model_routing.conformance.chain.conformance.kind	label:plumbing
+model_routing.conformance.chain.conformance.model	label:plumbing
+model_routing.conformance.chain.conformance.pool	label:plumbing
+model_routing.conformance.chain.conformance.provider	label:plumbing
+model_routing.conformance.match	label:plumbing
 name	label:plumbing
 node_removals.craft_credentials	open:writer-unproven
 node_removals.crafts	open:writer-unproven
@@ -256,6 +268,7 @@ orchestrator.decision_model_per_class	open:writer-unproven
 orchestrator_enabled	open:no-writer
 policy_generation	label:plumbing
 pools.conformance.allowed_users	open:writer-unproven
+pools.conformance.cascade	open:no-writer
 pools.conformance.legacy_open	open:no-writer
 pools.conformance.members	open:writer-unproven
 pools.conformance.name	open:writer-unproven
@@ -281,11 +294,14 @@ reports_commit.dir	open:no-writer
 reports_commit.repo	open:no-writer
 repos.acme/web.claude_accounts	open:writer-unproven
 repos.acme/web.credentials_service_ready	open:no-writer
+repos.acme/web.provider_keys_served	open:no-writer
+repos.acme/web.stage_account_served	open:no-writer
 repos.acme/web.vertex	open:no-writer
 repos.acme/web.workflows	open:writer-unproven
 review_floor	open:no-writer
 rigor.areas	open:writer-unproven
 rigor.default	open:writer-unproven
+rigor.repos	label:file
 rigor_pending	label:plumbing
 routing.claude.models	open:no-writer
 routing.claude.via	open:no-writer
@@ -336,6 +352,7 @@ workspace_pin.firebase_project	open:no-writer
 workspace_pin.issuer	open:no-writer
 workspace_pin.service_account	open:no-writer
 workspace_pin.service_address	open:no-writer
+workspace_shared.conformance.all_members	open:no-writer
 workspace_shared.conformance.covers	open:no-writer
 workspace_shared.conformance.kind	open:no-writer
 workspace_shared.conformance.projects	open:no-writer

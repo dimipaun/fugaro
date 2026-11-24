@@ -285,13 +285,24 @@ func installationPlanWith(t *testing.T, spec InstallationSpec, extra map[string]
 // can only be judged against a state that exists.
 func installationPlanAgainst(t *testing.T, spec InstallationSpec, extra map[string]any, state func(vars map[string]any) map[string]any, dropModule ...string) (*tf.Plan, map[string]plannedResource) {
 	t.Helper()
-	bin, err := exec.LookPath("terraform")
-	if err != nil {
-		t.Fatalf("this test needs terraform on PATH: %v", err)
-	}
 	vars, err := InstallationVars(spec)
 	if err != nil {
 		t.Fatal(err)
+	}
+	return rootPlanAgainst(t, "installation", vars, extra, state, providerOverride, dropModule...)
+}
+
+// rootPlanAgainst is the machinery: it plans the root of the embedded tree
+// named root, against a PRIOR STATE when state is not nil, with the tfvars the
+// caller's own writer produces (plus everything in extra). Every root is
+// planned the same way — a copy in a temp directory, a fake access token, a
+// dead proxy, a local backend — so the roots' tests share one body rather than
+// one each.
+func rootPlanAgainst(t *testing.T, rootName string, vars []byte, extra map[string]any, state func(vars map[string]any) map[string]any, override string, dropModule ...string) (*tf.Plan, map[string]plannedResource) {
+	t.Helper()
+	bin, err := exec.LookPath("terraform")
+	if err != nil {
+		t.Fatalf("this test needs terraform on PATH: %v", err)
 	}
 	if len(extra) != 0 {
 		doc := map[string]any{}
@@ -307,7 +318,7 @@ func installationPlanAgainst(t *testing.T, spec InstallationSpec, extra map[stri
 	}
 	dir := t.TempDir()
 	writeTree(t, dir)
-	root := filepath.Join(dir, "gcp", "roots", "installation")
+	root := filepath.Join(dir, "gcp", "roots", rootName)
 	// The root's own terraform tests are not what this test runs.
 	if err := os.RemoveAll(filepath.Join(root, "tests")); err != nil {
 		t.Fatal(err)
@@ -319,7 +330,7 @@ func installationPlanAgainst(t *testing.T, spec InstallationSpec, extra map[stri
 	}
 	for name, content := range map[string]string{
 		"terraform.tfvars.json": string(vars),
-		"provider_override.tf":  providerOverride,
+		"provider_override.tf":  override,
 		"backend_override.tf":   backendOverride,
 	} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o600); err != nil {

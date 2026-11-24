@@ -1,6 +1,6 @@
 # Reviews check the pull request against its task: implementation plan
 
-This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md). **Nothing in it is implemented, and no task is approved:** each task needs the owner's explicit go. It rests on D2930 (a per-issue `scope` of `unmet`, `beyond` or `differs`), D2931 (fix rounds complete an unmet requirement; the rule is reworded), D2932 as amended twice after review (an orchestrator task's pinned plan section, checked against its SHA-256, or the plan matched by id at the launch ref; never the pull request's base, never a path built from `plan_task`), D2933 as amended (an older image reviews code-only and the launcher says why), D2934 (`fugaro run --recipe review-only` gets the same default and flags), D2935 (a published `false` is a project-wide default off), and resolutions R1–R16. Open items O1–O3 were answered on 2026-11-18, all as recommended: both amendments confirmed, and the bucket residual (R16) accepted and documented in `docs/design/bucket-iam.md` §10.
+This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md). **Nothing in it is implemented, and no task is approved:** each task needs the owner's explicit go. It rests on D2930 (a per-issue `scope` of `unmet`, `beyond` or `differs`), D2931 (fix rounds complete an unmet requirement; the rule is reworded), D2932 as amended twice after review (an orchestrator task's pinned plan section, checked against its SHA-256, or the plan matched by id at the launch ref; never the pull request's base, never a path built from `plan_task`), D2933 as amended (an older image reviews code-only and the launcher says why), D2934 (`fugaro run --recipe review-only` gets the same default and flags), D2935 (a published `false` is a project-wide default off), and resolutions R1–R16. Open items O1–O3 were answered on 2026-11-18, all as recommended: both amendments confirmed, and the bucket residual (R16) accepted and documented in `docs/bucket-iam/spec.md` §10.
 
 ## Conventions every task follows
 
@@ -289,7 +289,13 @@ This line is informational and reserves no budget: it is what the tasks' tiers p
 
 ## Checks
 
-- **Check 750 (owner-run, after the release that carries RA10, not a gate).** After `fugaro update`, on a pull request a Fugaro run opened: `fugaro review --pr <N>`, then `fugaro review show <run>`; it passes when the `against:` line names the opening run, and when a second review of a pull request deliberately missing one item of its brief lists an `unmet` issue with `fix first`. Then `fugaro review --pr <N> --code-only` shows `against: none (--code-only)`.
+- **Check 750 (owner-run, after the release that carries RA10, not a gate; the script is how you run it).** After `fugaro update`, at your own terminal, on a scratch installation you name (**never `belong`**) and from a checkout of the repository the pull request is in:
+
+  ```sh
+  bash scripts/live-checks/check-750-review-against-task.sh --installation <name> --pr <N>
+  ```
+
+  On a pull request a Fugaro run opened — the check reads the run that opened it from `fugaro runs ls --pr N --json` and refuses a pull request no run opened — it passes when the `against:` line names the opening run, and when a second review of a pull request deliberately missing one item of its brief (`--unmet-pr <M>`, a second pull request you arrange) lists an `unmet` issue with `fix first`; without `--unmet-pr` that row reads UNVERIFIED and the check ends INCOMPLETE, never a pass. Then `fugaro review --pr <N> --code-only` shows `against: none (--code-only)`. It launches **two real review jobs** (**three** with `--unmet-pr`), prints the ceiling it read from `fugaro project show --json` before the first one and asks you to confirm nothing; its own test, `scripts/live-checks/check-750-review-against-task_test.sh`, drives every step against a fake `fugaro` and is run by `go test ./scripts`. **No agent runs any step of it.**
 
 Checks 751–759 stay reserved and unused.
 

@@ -3,7 +3,7 @@
 
 # The key-ring root: the KMS key ring of the environment this apply carries, and
 # the one signing key the service mints with (S3.5,
-# docs/design/key-signing-service.md §2-§3, D459 decided by D2194).
+# docs/key-signing-service/spec.md §2-§3, D459 decided by D2194).
 #
 # It is a root of its own, applied before the services one, because the keys
 # outlive the services: S3.8 applies this root on the project the owner created

@@ -6,7 +6,7 @@ import (
 )
 
 // The installation's state bucket of a managed creation (Task 4.5 of
-// docs/plans/2026-10-16-managed-projects.md, D59): a managed project's state
+// docs/managed-projects/implementation-plan.md, D59): a managed project's state
 // must live in the bucket the managed apply reads it from, and the read takes
 // the name from the GCP project and from nowhere else.
 //

@@ -70,6 +70,20 @@ describe('the stub’s command keys', () => {
       // key here whose command path is also a group the never table refuses,
       // so `models ls` is the whole of what the stub may be asked for.
       'models ls',
+      // The models write's two phases (MW1, D2903): `models.add.plan` is the
+      // dry run and `models.add` is the write, so `--dry-run` is the mode word
+      // that tells the two apart -- the same shape `setup`'s `--plan-only` and
+      // the three `--stream` reads have. The model ID behind `--` and the three
+      // `=`-form values are the rows' own arguments and never words of the key.
+      'models add --dry-run',
+      'models add',
+      // The image write's two phases (MW2, D2903), the models write's shape one
+      // group over: `image.add.plan` is the dry run and `image.add` is the
+      // write, and `--dry-run` is the mode word that tells the two apart. The
+      // entry's name behind `--` and the three `=`-form values are the rows' own
+      // arguments and never words of the key.
+      'image add --dry-run',
+      'image add',
       // The settings-edit plan's C1 (`settings.read` / `readSettings`): the
       // Project tab's third read. Its key is the command alone -- the group's
       // other words are not on the spawn table at all -- and the scenario
@@ -94,6 +108,17 @@ describe('the stub’s command keys', () => {
       // declarations the fleet's writers stored, and the one row here with no
       // argument at all -- its words are the whole argv.
       'coordinator intents',
+      // The console-fixes plan's CG7a (`orchestrator.map` / `orchestratorMap`,
+      // D3221): the Coordinator tab's map read, and the second row here with no
+      // argument at all -- its words are the whole argv, so its key is the
+      // command path, `orchestrator map`, and nothing of a caller's reaches the
+      // child. The row is behind `ORCHESTRATOR_MAP_CLI_FLOOR`
+      // (`src/shared/version.ts`), which is unset today, so the read is refused
+      // at the source and no scenario reaches this key through a real spawn --
+      // the key is here because the row is: the list is derived from the table
+      // below, and a row the stub cannot key is the silent fallback this file
+      // exists to catch.
+      'orchestrator map',
       // The managed screens' plan's CM4 (`managed.status` / `managedStatus`):
       // what the two marks say about the project and the newest audit record,
       // with no argument at all -- so its key is its command words, `managed
@@ -131,6 +156,32 @@ describe('the stub’s command keys', () => {
       // `--status` and `--json` are the row's own words -- and `--status` is a
       // word of the row's command path, so no scenario key ever spells it.
       'apply',
+      // The console improvements' eight rows (task AL). Four of them are a
+      // **second row on a command word already above**, and the mode word is
+      // what tells the pair apart -- the same arrangement `logs --url` and
+      // `graph --watch` have: the live read of the runs list (`runs ls
+      // --stream`), the spend report (`report --stream`), the caps
+      // (`budget show --stream`) and the caller's own role (`user ls --me`).
+      // A key shared with the one-shot read above would leave these rows'
+      // scenarios answered by `default`, which is this file's whole subject.
+      'runs ls --stream',
+      'report --stream',
+      'budget show --stream',
+      'user ls --me',
+      // ...and four that are a group's first: the image catalog's one *read*
+      // (`image ls`; the group's writers -- `image rm`, `image promote`, `image
+      // build`, `image gate`, `image record`, `image refresh` -- are on the
+      // never table, and `image add` is a row of its own above) and the
+      // recipes (`recipes ls`; `recipes publish` and `recipes validate` are
+      // not rows). Both carry no argument, so no scenario key can name one.
+      'image ls',
+      'recipes ls',
+      // The first-run wizard's two rows (`setup.plan` / `setup.apply`), and
+      // the second pair here told apart by a mode word: `--plan-only` is the
+      // word that makes the child read instead of create, and it is why the
+      // apply's own key is the bare command word.
+      'setup --plan-only',
+      'setup',
     ])
     // The console's one spawn table, which since the owner's design ruling of
     // 2026-10-25 includes the installation rail's own read (`config list
@@ -161,6 +212,37 @@ describe('the stub’s command keys', () => {
     expect(commandKey(['budget', 'show', '--json', '--project', 'fugaro'])).toBe('budget show')
   })
 
+  it('tells a command word’s two rows apart by the mode word, the console improvements’ included', () => {
+    // The three live reads the console improvements add sit on a command word
+    // that already had a one-shot read, and so does the caller's own role; the
+    // wizard's two rows are the same arrangement with `--plan-only`. These are
+    // real argvs, in the order `argvFor` emits them (`spawn.test.ts` pins the
+    // vectors themselves), because the word has to be read off the argv the
+    // child really gets rather than off a row's `words`.
+    expect(commandKey(['runs', 'ls', '--stream', '--json', '--since', '24h', '--project', 'fugaro'])).toBe(
+      'runs ls --stream',
+    )
+    expect(commandKey(['runs', 'ls', '--json', '--since', '24h', '--project', 'fugaro'])).toBe('runs ls')
+    expect(commandKey(['report', '--stream', '--json', '--project', 'fugaro'])).toBe('report --stream')
+    expect(commandKey(['report', '--json', '--project', 'fugaro'])).toBe('report')
+    expect(commandKey(['budget', 'show', '--stream', '--json', '--project', 'fugaro'])).toBe(
+      'budget show --stream',
+    )
+    expect(commandKey(['budget', 'show', '--json', '--project', 'fugaro'])).toBe('budget show')
+    expect(commandKey(['user', 'ls', '--me', '--json', '--project', 'fugaro'])).toBe('user ls --me')
+    expect(commandKey(['user', 'ls', '--json', '--project', 'fugaro'])).toBe('user ls')
+    // The wizard: the plan's own argv, and the apply's, which is the plan's
+    // less the word that decides whether the child creates anything.
+    expect(
+      commandKey(['setup', '--plan-only', '--answers-file', '-', '--events', '--json', '--project', 'fugaro']),
+    ).toBe('setup --plan-only')
+    expect(commandKey(['setup', '--answers-file', '-', '--events', '--json', '--project', 'fugaro'])).toBe('setup')
+    // The two rows of the console improvements with no mode word at all: each
+    // is its group's first read, so the command path is the whole key.
+    expect(commandKey(['image', 'ls', '--json', '--project', 'fugaro'])).toBe('image ls')
+    expect(commandKey(['recipes', 'ls', '--json', '--project', 'fugaro'])).toBe('recipes ls')
+  })
+
   it('tells the settings write apart from the settings read, under one key for both spellings', () => {
     // The settings group is two operations on one command word, and the write's
     // own words are not a key: `set`/`unset` and the key it names vary per edit,
@@ -187,11 +269,15 @@ describe('the stub’s command keys', () => {
     const directory = freshDirectory()
     installStub(directory, { commands: { version: { stdout: '0.8.1\n' } } })
     const script = readFileSync(join(directory, 'fugaro-stub.mjs'), 'utf8')
-    // The function, as source (the transpiler's own quoting, hence the
-    // quote-agnostic patterns), and the one call that produces the key.
+    // The function, as source (the transpiler's own quoting), and the one call
+    // that produces the key. The lines pinned are the three that read something
+    // other than the command path: `logs` and its positional, the settings
+    // write, and the mode words that tell a command word's two rows apart.
     expect(script).toContain('function commandKey(argv)')
     expect(script).toMatch(/words\[0\] === "logs"/)
     expect(script).toContain('logs --url')
+    expect(script).toMatch(/words\[0\] === "settings"/)
+    expect(script).toContain('"--plan-only"')
     expect(script).toContain('const key = commandKey(argv)')
     // Exactly one place reads argv into a key: the copy the review found is
     // gone, so there is nothing left that can drift from `commandKey`.

@@ -557,7 +557,7 @@ type Layer struct {
 	// the rest of his policy does: read from the owner-only policy node and
 	// put on the ceiling layer (internal/runner's policyCeiling). It is not a
 	// key of fugaro.yaml, of the project layer or of the task, because all
-	// three are written by the launcher (docs/design/bucket-iam.md §10 L1, L2)
+	// three are written by the launcher (docs/bucket-iam/spec.md §10 L1, L2)
 	// — a floor there would be the launcher deciding how much review it gets.
 	// It is merged as a union (see Merge), so a lower layer that writes one
 	// can add a level and never remove one; the merge is what makes that
@@ -604,16 +604,25 @@ func (e Effective) ReviewFloor(mode rigor.Rigor) []Level { return e.Layer.Review
 
 // ReviewFloorFor is the floor a run at mode is held to, given the mode the
 // layers resolved beside its own request (rigor.LayersRigor, "" for every run
-// whose request did not take it off the axis): both rows hold, in the
-// vocabulary's order.
+// whose request did not take it below them): a run whose request lowered its
+// mode is held to both rows, in the vocabulary's order, and a run whose
+// request took it to a mode that reads a row of its own is held to that row
+// alone.
 //
-// A request raises a mode and never lowers a floor (D8, LF5), so a run a
-// request takes to hotfix may not leave the row of the mode the layers
-// resolved behind: an owner floor of `pro l2,l3` is what the owner requires of
-// that repository, and a per-run flag that switched which row applies would
-// lower it — silently, since nothing about the run says the floor was read
-// against another mode. Reading both rows is the only reading that leaves
-// every floor the owner set in force.
+// A request lowers a mode and never a floor (D8, LF5), so a run the request
+// took below the layers may not leave the row of the mode the layers resolved
+// behind: an owner floor of `pro l2,l3` is what the owner requires of that
+// repository, and a per-run flag that switched which row applies would lower
+// it — silently, since nothing about the run says the floor was read against
+// another mode. Reading both rows is the only reading that leaves every floor
+// the owner set in force.
+//
+// Hotfix is the exception, and the owner's ruling of 2026-11-20: a hotfix run
+// is held to hotfix's row of the floor and to nothing beside it, so a floor
+// written for pro or critical does not reach it. That reverses the
+// 2026-11-13 "both rows" behaviour, which was this method's own; hotfix's row
+// is the owner's lever and is unset by default
+// (`fugaro rigor floor set hotfix l2,l3`).
 //
 // The slice aliases the merged policy where only one row is read, exactly as
 // ReviewFloor's does, so a caller that appends to the answer clones it first —
@@ -628,8 +637,13 @@ func (e Effective) ReviewFloorFor(mode, beside rigor.Rigor) []Level {
 // rather than as a merged Effective: the launcher's own read of the policy,
 // which resolves the levels a launch will run before any run exists
 // (internal/cli's launchReviewLevelsAsk).
+//
+// Both rules are read here rather than only at the caller: a mode a run's own
+// request takes it to outright (Rigor.PerRun) reads its own row and nothing
+// beside it whatever beside says, so the answer is the same for the two
+// callers and for one that hands a beside value of its own.
 func FloorFor(floor map[rigor.Rigor][]Level, mode, beside rigor.Rigor) []Level {
-	if beside == "" || beside == mode {
+	if mode.PerRun() || beside == "" || beside == mode {
 		return floor[mode]
 	}
 	return unionFloor(floor[mode], floor[beside])

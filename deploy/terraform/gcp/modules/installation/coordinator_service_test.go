@@ -442,7 +442,7 @@ func TestTheStoreBucketCarriesNoConvenienceBinding(t *testing.T) {
 		"projectOwner:", "projectEditor:", "projectViewer:",
 	} {
 		if named := tfFilesNaming(t, files, bad); len(named) > 0 {
-			t.Errorf("%v write %q: a bucket GCS creates answers to its convenience bindings until they are taken off it, and a basic project Viewer reads the store through them (internal/gcpfake/gcs.go:266, docs/design/bucket-iam.md:47). This task's store names one member and no other, so no file of this module may write one of these (D935)", named, bad)
+			t.Errorf("%v write %q: a bucket GCS creates answers to its convenience bindings until they are taken off it, and a basic project Viewer reads the store through them (internal/gcpfake/gcs.go:266, docs/bucket-iam/spec.md:47). This task's store names one member and no other, so no file of this module may write one of these (D935)", named, bad)
 		}
 	}
 	// And the other route to a member list: an authoritative resource, which

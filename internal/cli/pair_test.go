@@ -25,6 +25,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1532,11 +1533,27 @@ func pairFixedRand(t *testing.T) string {
 	for i := range fixed {
 		fixed[i] = byte(i)
 	}
-	prev := rand.Reader
-	rand.Reader = pairCyclicRand{fixed}
-	t.Cleanup(func() { rand.Reader = prev })
+	prev := pairRandOverride.Swap(&pairCyclicRand{fixed})
+	t.Cleanup(func() { pairRandOverride.Store(prev) })
 	return "p~" + base64.RawURLEncoding.EncodeToString(fixed)
 }
+
+// pairRandOverride is what pairFixedRand sets and pairSwitchRand reads. The
+// package's one write to crypto/rand.Reader is the init below; a test that
+// wrote the variable itself raced with the TLS goroutines an earlier test's
+// server and client leave behind, which read it when they close.
+var pairRandOverride atomic.Pointer[pairCyclicRand]
+
+type pairSwitchRand struct{ real io.Reader }
+
+func (r pairSwitchRand) Read(p []byte) (int, error) {
+	if o := pairRandOverride.Load(); o != nil {
+		return o.Read(p)
+	}
+	return r.real.Read(p)
+}
+
+func init() { rand.Reader = pairSwitchRand{rand.Reader} }
 
 type pairCyclicRand struct{ b []byte }
 
@@ -1894,21 +1911,22 @@ func TestPairJSONCodeEventHoldsNoFingerprint(t *testing.T) {
 	}
 }
 
-// TestPairEmailNotOperatorsRefused is D226 as the plan's §12 reads it: the
-// administered email on a device node is an address this installation has
-// proved the pairing operator holds, so --email is not a free field. The
-// operator's own address is the one that passes.
+// TestPairEmailNotOperatorsRefused is D226 as D2799 amends it: --email is
+// still not a free field. Naming somebody else's address is no longer a
+// refusal of the pairing's own kind — it is an INVITATION, and an operator who
+// is not an admin may not send one — while the operator's own address is the
+// one that pairs a device.
 func TestPairEmailNotOperatorsRefused(t *testing.T) {
-	f := newPairFixture(t, pairMe)
-	out, _, err := pairRun(t, "--email", pairLauncher, "--json")
+	f := newPairFixture(t, pairLauncher)
+	out, _, err := pairRun(t, "--email", pairMe, "--role", "operator", "--json")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want exit 1", err)
 	}
 	events := pairLines(t, out)
-	if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedEmail {
-		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedEmail)
+	if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedInviteAdmin {
+		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedInviteAdmin)
 	}
-	for _, want := range []string{pairLauncher, pairMe} {
+	for _, want := range []string{pairMe, pairLauncher} {
 		if !strings.Contains(events[0].Reason, want) {
 			t.Fatalf("the refusal %q does not name %q", events[0].Reason, want)
 		}
@@ -1920,6 +1938,12 @@ func TestPairEmailNotOperatorsRefused(t *testing.T) {
 		if w != nil {
 			t.Fatalf("a refused email wrote %v", w)
 		}
+	}
+	if v := f.db.Value(pairInviteRoot); v != nil {
+		t.Fatalf("a refused invitation wrote an invite node: %v", v)
+	}
+	if v := f.db.Value(pairMemberRoot); v != nil {
+		t.Fatalf("a refused invitation wrote a member record: %v", v)
 	}
 
 	// The operator's own address, spelled as the operator's provider spells

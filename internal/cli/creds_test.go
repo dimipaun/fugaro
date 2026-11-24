@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
@@ -126,6 +127,53 @@ func (f *credsFixture) reads() int {
 		}
 	}
 	return n
+}
+
+// bundleFixtureFor creates the bundle container the way the installation's
+// Terraform does (C1.18) — named after the Fugaro project, carrying the two
+// ownership marks and NO fugaro_secret label, because the bundle is not one of
+// the project's logical secrets — with doc as its first version, and lets the
+// fake answer the value read every write of it makes (the read-modify-write's
+// own, which the fake refuses until a test allows it). A nil doc is a container
+// with no version: the state a first write starts from and not an error.
+//
+// It answers the container's ID, which is where every provider-key writer's
+// assertion reads: a provider key is entered in this ONE document since KS2
+// (R2, F27), under C1's names, and every writer of one is written against this
+// helper rather than repeating the container's shape.
+func bundleFixtureFor(t *testing.T, sm *gcpfake.Secrets, project string, doc []byte) string {
+	t.Helper()
+	sm.AllowAccess()
+	id := credsvc.BundleSecretID(project)
+	sm.Seed(id, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: project}, doc)
+	return id
+}
+
+// bundleEntry is one repository's entry of C1's named-provider family, read out
+// of the container's newest version through the loader's own accessor
+// (credsvc.ReadProviderKey) rather than by this file parsing the document: what
+// the credentials service would serve a run of that repository is what a
+// provider-key test asserts, and a document this file could read but the
+// service could not would pass an assertion the service fails.
+//
+// The failure names the entries the document DOES hold, which are names and
+// never values (Bundle.Names), because the interesting half of a missing entry
+// is which one was written instead.
+func bundleEntry(t *testing.T, sm *gcpfake.Secrets, id, slug, credential string) credsvc.ProviderKeyEntry {
+	t.Helper()
+	raw := sm.Latest(id)
+	if raw == nil {
+		t.Fatalf("%s holds no version: the write stored nothing", id)
+	}
+	b, err := credsvc.ParseBundle(raw)
+	if err != nil {
+		t.Fatalf("the document the write left is one the service's own loader refuses: %v\n%s", err, raw)
+	}
+	entry, ok := credsvc.ReadProviderKey(b, slug, credential)
+	if !ok {
+		t.Fatalf("the bundle holds no entry for %s and %s, so no run of that repository is served this key; the document holds %v", slug, credential, b.Names())
+	}
+	return entry
 }
 
 // The red step, and the reason the command re-reads at all: a read-modify-write

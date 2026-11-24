@@ -531,3 +531,27 @@ func TestGitHubReadAnswerIsNotCached(t *testing.T) {
 		t.Errorf("the read mint's answer is Content-Type %q, want %q", got, contentTypeJSON)
 	}
 }
+
+// TestGitHubReadServesATokenTheFrontEndChangedInAuthorization: Cloud Run's front
+// end hands the service a valid person token's Authorization header changed
+// (not a bearer), so the call is admitted on the token HeaderPersonIdentity
+// carries and refused when neither header holds one.
+func TestGitHubReadServesATokenTheFrontEndChangedInAuthorization(t *testing.T) {
+	s, _ := githubReadSvc(t, testPersonAccount)
+	tok := s.personToken(testPersonAccount)
+
+	resp, body := s.readGitHub(t, testRepoPath, testAppID, testPersonAccount, func(r *http.Request) {
+		r.Header.Set("Authorization", "front-end-rewritten")
+		r.Header.Set(HeaderPersonIdentity, tok)
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a person's token in %s was refused: HTTP %d %s", HeaderPersonIdentity, resp.StatusCode, body)
+	}
+
+	resp, _ = s.readGitHub(t, testRepoPath, testAppID, testPersonAccount, func(r *http.Request) {
+		r.Header.Set("Authorization", "front-end-rewritten")
+	})
+	if resp.StatusCode != StatusUnverified {
+		t.Errorf("a call with no usable token answered HTTP %d, want %d", resp.StatusCode, StatusUnverified)
+	}
+}

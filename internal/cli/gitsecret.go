@@ -144,7 +144,7 @@ func resolveGitSecretID(ctx context.Context, lc *localcfg.Config, gcpProject, re
 // driftError is resolveGitSecretID's one refusal: the secret ID live state
 // resolves for a logical name is not the one the build account's own grant
 // names, the case the apply that fixed that grant cannot have intended
-// (design docs/design/project-secrets.md §6 step 4a).
+// (design docs/project-secrets/spec.md §6 step 4a).
 type driftError struct {
 	what, logical, resolved, granted, buildSA, repo string
 }

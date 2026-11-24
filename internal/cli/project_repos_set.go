@@ -79,10 +79,16 @@ The repos.* scalars and lists are the generic writer's (D1173):
     fugaro settings set repos.acme/app.base_branch main
     fugaro settings set repos.acme/app.workflows --add docs
 
-This write is a person's own: fugaro update publishes it, and a coding agent's
-session is refused it, in a managed project by that project's gate.
+The write and the publish are one act, through the same chain fugaro settings
+set runs for a key it writes: the keys land in this machine's project config and
+the policy node they are served from is published by this same command, so no
+second command is needed. A repository's workflows selection is a key the
+generic writer spells too; a profile's seven keys are not, and the generic path
+refuses them and names this command's family instead (D853). --no-apply saves
+the write and leaves the publish to fugaro apply.
 
-Every write ends with one line: next: fugaro update.`,
+This write is a person's own: a coding agent's session is refused it, in a
+managed project by that project's gate.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runProjectReposSet(cmd, args, o)
@@ -100,6 +106,7 @@ Every write ends with one line: next: fugaro update.`,
 	f.StringSliceVar(&o.claudeAccounts, "claude-accounts", nil, "profiles.NAME.claude_accounts: the Claude accounts the profile serves, comma-separated; the list is written whole")
 	f.StringSliceVar(&o.workflows, "workflows", nil, "repos.REPO.workflows: which of the repository's own workflows this project runs, comma-separated; the selection is written whole")
 	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed")
+	o.noApply = addNoApplyFlag(cmd)
 	return cmd
 }
 
@@ -124,6 +131,11 @@ type projectReposSetOptions struct {
 	allowRepos     []string
 	claudeAccounts []string
 	workflows      []string
+	// noApply is --no-apply (D1565), the one word that saves the write and
+	// leaves the steps it owes to `fugaro apply` (settingsChain): the flag is
+	// the shared helper's, so this command spells it exactly as every other one
+	// does.
+	noApply *bool
 }
 
 // projectReposMember is one key of a profile's block: the field as the command
@@ -202,6 +214,7 @@ func runProjectReposSetProfile(cmd *cobra.Command, o projectReposSetOptions, sel
 		sel:        sel,
 		lc:         lc,
 		key:        "job_profiles." + name,
+		owed:       "job_profiles." + name + "." + members[0].field,
 		old:        old,
 		next:       next,
 		what:       fmt.Sprintf("write profiles.%s in %s", name, target.path),
@@ -253,6 +266,7 @@ func runProjectReposSetWorkflows(cmd *cobra.Command, repo string, o projectRepos
 		sel:        sel,
 		lc:         lc,
 		key:        "repos." + entry + ".workflows",
+		owed:       "repos." + entry + ".workflows",
 		old:        old,
 		next:       next,
 		what:       fmt.Sprintf("write repos.%s.workflows in %s", entry, target.path),
@@ -436,7 +450,14 @@ type projectReposSetWrite struct {
 	// spelling (job_profiles.NAME, repos.REPO.workflows): it is what the managed
 	// gate's record names, and what a coding agent's session reads in the
 	// allowlist's refusal.
-	key  string
+	key string
+	// owed is the registry key whose row declares the steps this write owes
+	// (settingsChain): the key itself for a repository's selection, and the
+	// first member the write made for a profile's block — the block's own name
+	// is no key of the registry's, and a block write asks the chain for one of
+	// the keys it wrote (accounts_cascade.go, models_provider.go: the member
+	// named is the first this run wrote).
+	owed string
 	old  []byte
 	next []byte
 	// what is the sentence naming what changes, command the same edit spelled
@@ -450,7 +471,11 @@ type projectReposSetWrite struct {
 
 // projectReposSetApply is the write both shapes make: the loader's own read of
 // the edited bytes, the managed gate's read, the write path and the record of
-// it — the same four steps `settings set` takes, in the same order.
+// it — the same four steps `settings set` takes, in the same order — and then
+// the steps the keys it wrote owe, through that command's own chain
+// (settingsChain), which is one code path for the same document and the same
+// keys. A write that stopped at the file would leave a person a second command
+// to run, which is the one thing the composite design does not do (spec rule 1).
 func projectReposSetApply(cmd *cobra.Command, w projectReposSetWrite) error {
 	if !yamledit.Changed(w.old, w.next) {
 		fmt.Fprintf(cmd.OutOrStdout(), "%s: already reads what was asked for\n", w.target.path)
@@ -488,8 +513,12 @@ func projectReposSetApply(cmd *cobra.Command, w projectReposSetWrite) error {
 	if err := gate.recorded(cmd.Context()); err != nil {
 		return err
 	}
-	fmt.Fprintln(cmd.OutOrStdout(), "next: fugaro update")
-	return nil
+	// The policy node the keys written here are served from is published by
+	// this command and not by a later one: the keys are settings keys the table
+	// declares a step for (`repos.REPO.workflows` and `job_profiles.NAME.FIELD`
+	// alike), and `settings set` on the same document runs exactly that step
+	// through this same chain.
+	return settingsChain(cmd, w.lc, w.sel, w.target, w.owed, settingsWriteOptions{noApply: *w.o.noApply})
 }
 
 // projectReposSetProfileCommand is the profile edit spelled for a person's own

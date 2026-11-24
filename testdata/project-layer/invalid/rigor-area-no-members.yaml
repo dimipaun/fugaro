@@ -1,0 +1,8 @@
+version: 1
+project: aurora
+gcp_project: proj-1234
+defaults:
+  rigor:
+    areas:
+      - name: console
+        level: pro

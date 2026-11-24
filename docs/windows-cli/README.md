@@ -6,7 +6,7 @@ plan on how to make the CLI work on Windows."* The owner gave the context the
 same day — the desktop console ships for macOS (and Linux, unsigned, for
 0.10.0) because its data source is the CLI and the CLI has no Windows build,
 and Windows packaging for the console was deferred for that reason and for code
-signing (`docs/design/desktop-console.md`, **D10**).
+signing (`docs/desktop-console/spec.md`, **D10**).
 
 **The owner answered D1–D6 and D16 on 2026-10-20 and approved Slice 0 and Slice 1 only** (**D16**): D1 **both** — WSL documented now, the native port
 behind it; D2 **amd64 only**; D3 **Scoop first**; D4 **unsigned first**; D5 a
@@ -213,7 +213,7 @@ them is a document-level question and is repeated here because it is about
 
 ## Related
 
-- [docs/design/desktop-console.md](../design/desktop-console.md) — **D10**
+- [docs/desktop-console/spec.md](../desktop-console/spec.md) — **D10**
   ("Windows and Linux: package them now, or later? — **Later**"), the ruling
   this work's context comes from; the console joins when the CLI has a Windows
   build and when the code-signing question is answered (F40).

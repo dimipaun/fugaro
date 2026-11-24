@@ -29,7 +29,7 @@ type MachineType struct {
 }
 
 // The VM backend's compute price table (design
-// docs/design/compute-backend.md §5.2, C17): what a machine type costs, how
+// docs/compute-backend/spec.md §5.2, C17): what a machine type costs, how
 // long a VM is billed for, and the source line the estimate is recorded
 // with. It is deliberately data plus a few lookups, so that updating a price
 // is editing one line here and nothing else.

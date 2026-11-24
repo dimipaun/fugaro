@@ -50,7 +50,7 @@ func TestMergeQueuedAddsRowToExistingRepo(t *testing.T) {
 // A queued run shows its own job title when fugaro run --title gave it one,
 // not its workflow: a --batch or --attempts launch would otherwise read
 // alike on every row while it queues, and only come apart once each run
-// goes live (design docs/design/watch-queued.md's one rule, and the same
+// goes live (design docs/watch-queued/spec.md's one rule, and the same
 // one finished rows use: task.Spec.TitleLine).
 //
 // Mutation (queuedRow trusting q.Workflow as the title again): the row shows

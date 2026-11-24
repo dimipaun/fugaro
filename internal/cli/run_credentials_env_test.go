@@ -316,16 +316,21 @@ func TestACascadeRepositoryAppliedHeldOffIsNotHandedTheService(t *testing.T) {
 // repository of a converged installation is in until an operator stores a
 // credential in the bundle.
 //
-// A SHARED PROJECT JOB is judged on the same switch (B5.2, D505, D2078), and
-// the two rows that pin it are here rather than beside the launch they belong
-// to because this is the helper's own table: a shared job of a repository whose
-// record says on and whose document says cascade is handed the address, and one
-// whose repository the switch holds off — no record, or an auth the service
-// does not serve — is handed none. What it is NOT handed is the address on an
-// unreadable document: the repository's own job falls back to the record there
-// (below), and a shared job does not, because its mounts are still on (G17) and
-// a repository whose file says `vertex` would open its git provider keyless for
-// a mint the service refuses.
+// A SHARED PROJECT JOB is judged on its PROFILE's answer (B5.2, D505, D2078),
+// which is the answer B5.7's drop was taken on: a job of a profile one
+// repository of which is on the switch is handed the address whether or not
+// THIS repository's own record says on and whether or not the document was
+// readable. Judging it per repository is the state this task's review found —
+// a run of such a repository had neither the model mount the profile's drop had
+// taken nor an address to fetch one from, and died at its first model call with
+// a remedy that could not put the mount back — and the two rows that part the
+// two answers are here rather than beside the launch they belong to because
+// this is the helper's own table. What a shared job is still not handed is the
+// address for an auth the service does not serve, whose runs read nothing of
+// the service's and would only lose the App key's path to the git provider, and
+// it is never handed one on this machine's tfvars of a repository root: a
+// shared job's grant is the installation root's, made from the same records
+// wherever that root was applied.
 //
 // The last rows are what answers where the document cannot be read, and the
 // fifth argument's whole job is one of the two: an empty auth is a document the
@@ -420,30 +425,63 @@ func TestCredentialsServiceLaunchEnv(t *testing.T) {
 			t.Errorf("%s: credentialsServiceLaunchEnv = %v, want [%s=%s]", name, got, envCredentialsServiceURL, launchCredsURL)
 		}
 	}
-	// The shared job (B5.2): told on the switch a repository's own job is,
-	// judged on the record and the document the run will read, and never on
-	// this machine's tfvars of a repository root — a shared job's grant is the
-	// installation root's, made from that record wherever it was applied.
+	// The shared job (B5.2): told on its PROFILE's answer, which is the one the
+	// drop was taken on (B5.7), and never on this machine's tfvars of a
+	// repository root — a shared job's grant is the installation root's, made
+	// from that record wherever it was applied. The profile is the config's own
+	// (localcfg.Config.Profiles), the same map the deployer reads to compose
+	// the job and to decide its mounts, and the repository the launch works on
+	// is one of the repositories that profile admits.
+	sharedJob := func(repos map[string]localcfg.Repo) *localcfg.Config {
+		return &localcfg.Config{
+			CredentialsService: &localcfg.CredentialsService{URL: launchCredsURL},
+			Repos:              repos,
+			Profiles:           map[string]config.JobProfile{"standard": {Provider: "github"}},
+		}
+	}
+	appOn := map[string]localcfg.Repo{"acme/app": {Provider: "github", CredentialsServiceReady: localcfg.RecordSwitch(true)}}
+	appOff := map[string]localcfg.Repo{"acme/app": {Provider: "github", CredentialsServiceReady: localcfg.RecordSwitch(false)}}
+	// The review's own state: the profile is served because ANOTHER repository
+	// of it is on, while the repository this launch works on has no record —
+	// and, before the profile's answer was read here, was handed nothing to
+	// make a model call with while its mount was already gone.
+	appOffLibOn := map[string]localcfg.Repo{
+		"acme/app": {Provider: "github", CredentialsServiceReady: localcfg.RecordSwitch(false)},
+		"acme/lib": {Provider: "github", CredentialsServiceReady: localcfg.RecordSwitch(true)},
+	}
 	for name, tc := range map[string]struct {
 		lc       *localcfg.Config
 		auth     string
 		deployed bool
 		want     bool
 	}{
-		"a switched profile, the document read": {lc: optedIn, auth: config.AuthCascade, want: true},
-		"a switched profile with no readable document": {
-			lc:       optedIn,
-			deployed: true,
-			want:     false,
+		"a served profile, the document read": {lc: sharedJob(appOn), auth: config.AuthCascade, want: true},
+		"a served profile, this repository's own record off": {
+			lc:   sharedJob(appOffLibOn),
+			auth: config.AuthAPIKey,
+			want: true,
 		},
-		"a switched profile, an auth the service cannot serve": {lc: optedIn, auth: "oauth"},
-		"a record that says off": {
-			lc:   &localcfg.Config{CredentialsService: &localcfg.CredentialsService{URL: launchCredsURL}},
+		"a served profile with no readable document": {
+			lc:       sharedJob(appOn),
+			deployed: true,
+			want:     true,
+		},
+		"a served profile with no readable document and nothing deployed here": {
+			lc:   sharedJob(appOn),
+			want: true,
+		},
+		"a served profile, an auth the service cannot serve": {
+			lc:   sharedJob(appOn),
+			auth: config.DefaultAgentAuth,
+		},
+		"a profile no repository of which is on the switch": {
+			lc:   sharedJob(appOff),
 			auth: config.AuthCascade,
 		},
-		"no service to hand": {lc: &localcfg.Config{}, auth: config.AuthCascade},
+		"a profile this config does not declare": {lc: optedIn, auth: config.AuthCascade},
+		"no service to hand":                     {lc: &localcfg.Config{}, auth: config.AuthCascade},
 	} {
-		got := credentialsServiceLaunchEnv(tc.lc, "fugaro-p-standard-github-abcdef", "acme/app", tc.auth, "", tc.deployed, false)
+		got := credentialsServiceLaunchEnv(tc.lc, "standard", "acme/app", tc.auth, "", tc.deployed, false)
 		if tc.want {
 			if len(got) != 1 || got[0] != envCredentialsServiceURL+"="+launchCredsURL {
 				t.Errorf("%s: a launch on a shared project job put %v in the execution's plain Env, want [%s=%s]: a profile the service serves reaches it from the account the module granted roles/run.invoker to (deploy/terraform/gcp/modules/project/sa.tf)", name, got, envCredentialsServiceURL, launchCredsURL)
@@ -451,14 +489,14 @@ func TestCredentialsServiceLaunchEnv(t *testing.T) {
 			continue
 		}
 		if got != nil {
-			t.Errorf("%s: a launch on a shared project job put %v in the execution's plain Env, want none: the switch is the same predicate a repository's own job is judged with (infra.CredentialsServiceServes), and telling a job where the service is opens its git provider keyless (internal/gitprov/providers/providers.go) for a credential the service cannot hand back", name, got)
+			t.Errorf("%s: a launch on a shared project job put %v in the execution's plain Env, want none: the profile's answer is the drop's own (infra.CredentialsServiceServesProfile and, for the auth, config.ServiceServedAuths), and telling a job where the service is opens its git provider keyless (internal/gitprov/providers/providers.go) for a credential the service cannot hand back", name, got)
 		}
 	}
 	// A review launch is told nothing, whatever the job: the address is part of
 	// what the review-only variant is deployed with (internal/infra's
 	// reviewVariant), so a per-launch entry would be a value every execution
 	// object records and a slip asked for on a path that has never taken one.
-	if got := credentialsServiceLaunchEnv(optedIn, "fugaro-p-standard-github-abcdef", "acme/app", config.AuthCascade, "", false, true); got != nil {
+	if got := credentialsServiceLaunchEnv(optedIn, "standard", "acme/app", config.AuthCascade, "", false, true); got != nil {
 		t.Errorf("a review launch put %v in the execution's plain Env, want none: the variant carries the service's address from its deployment", got)
 	}
 }

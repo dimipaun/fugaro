@@ -6,7 +6,7 @@
 # LC2 and LC3 are human-terminal procedures and are steps in
 # docs/gcp-live-checklist.md's own section; LC4 is the one that is a reading of
 # the cloud, and this is its script. The design behind it is
-# docs/design/named-oauth-tokens.md, option B / T3: one job variant per account.
+# docs/named-oauth-tokens/spec.md, option B / T3: one job variant per account.
 #
 # What it asserts, after LC3's `fugaro accounts add <name> --claude` and the
 # `fugaro update` that deploys it (or after any installation that lists a named

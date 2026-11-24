@@ -22,11 +22,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
-	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
-	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -116,7 +114,7 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	if o.identityURL != "" {
 		be.Tune = func(c *budget.Config) { c.IdentityURL, c.SecureTokenURL = o.identityURL, o.identityURL }
 	}
-	if err := checkTestHooks(o, spend, spendErr, localFileMode(o.workDir)); err != nil {
+	if err := checkTestHooks(o); err != nil {
 		return err
 	}
 	if o.taskFile != "" && o.run != "" {
@@ -228,13 +226,11 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 // checkTestHooks refuses the hidden test flags where they could take the
 // model's credential somewhere else: the gateway's upstream must be on
 // loopback, and the managed settings path can move only with such an
-// upstream, or when no gateway runs (the budget is off). A malformed
-// budget counts as on, since the runner will fail it anyway. The budget is
-// on when the merged mode is: a committed observe or enforce switches the
-// gateway on under an off ceiling, so fileMode, the mode the checkout's own
-// fugaro.yaml asks for, counts with the ceiling's.
-func checkTestHooks(o execOptions, spend runner.Spend, spendErr error, fileMode string) error {
-	on := runner.Spend{Mode: policy.Merge(policy.Layer{Mode: spend.Mode}, policy.Layer{Mode: fileMode}).Mode}.On()
+// upstream. The mode is not read here any more (AB3, D3009, R3): the ceiling
+// and the checkout's own fugaro.yaml used to decide it, and an off in either
+// let the path move, but there is always a budget now, so a real upstream
+// writes Claude Code's real managed settings whatever any layer says.
+func checkTestHooks(o execOptions) error {
 	if o.identityURL != "" && !loopbackUpstream(o.identityURL) {
 		return userErr("--budget-identity-url %q: it must be http://127.0.0.1:<port>", o.identityURL)
 	}
@@ -245,7 +241,7 @@ func checkTestHooks(o execOptions, spend runner.Spend, spendErr error, fileMode 
 		}
 		loopback = true
 	}
-	if o.managedSettings != "" && !loopback && (spendErr != nil || on) {
+	if o.managedSettings != "" && !loopback {
 		return userErr("--managed-settings (or FUGARO_MANAGED_SETTINGS) needs a loopback --gateway-upstream when the budget is on: a job with a real upstream writes Claude Code's real managed settings")
 	}
 	return nil
@@ -265,9 +261,9 @@ func loopbackUpstream(s string) bool {
 // names every job carries since M9a.
 func oldJobEnvReason(missing string) string {
 	if missing == "FUGARO_GCP_PROJECT" {
-		return "job environment lacks FUGARO_GCP_PROJECT (it was set up before M9a): run fugaro update --repo from the repository's checkout; see docs/design/m9-budget-and-dashboard.md §13.1"
+		return "job environment lacks FUGARO_GCP_PROJECT (it was set up before M9a): run fugaro update --repo from the repository's checkout; see docs/m9-budget-and-dashboard/spec.md §13.1"
 	}
-	return "job environment lacks " + missing + ": run fugaro update --repo from the repository's checkout; see docs/design/m9-budget-and-dashboard.md §13.1"
+	return "job environment lacks " + missing + ": run fugaro update --repo from the repository's checkout; see docs/m9-budget-and-dashboard/spec.md §13.1"
 }
 
 // refuseOldJobEnv is nil unless this process is in the cloud and its job
@@ -426,20 +422,4 @@ func execPrices(platform backend.Platform, getenv func(string) string, warn func
 		p = gcp.ListPrices(getenv("FUGARO_REGION"))
 	}
 	return &p
-}
-
-// localFileMode is the budget mode the checkout's fugaro.yaml asks for, ""
-// when there is no readable file or it sets none. A file the policy can't
-// read counts as enforce: the runner will fail it, and the hook is refused
-// the same way a malformed budget is.
-func localFileMode(workDir string) string {
-	data, err := readFugaroYAML(filepath.Join(workDir, "fugaro.yaml"))
-	if err != nil {
-		return ""
-	}
-	p, err := config.PolicyOf(data)
-	if err != nil {
-		return policy.ModeEnforce
-	}
-	return p.Mode
 }

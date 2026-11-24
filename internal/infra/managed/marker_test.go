@@ -2140,7 +2140,7 @@ var runAccountGrants = setOf(
 	// var.catalog_check that name one.
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | google_service_account.build_identity[0].member | for_each= | perms=`,
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=google_storage_bucket.runs.name | google_service_account.build_identity[0].member | for_each=local.credentials_service_on && var.catalog_check != null ? { for r in var.catalog_check.repositories : r.slug => r } : {} [local.credentials_service_on=var.credentials_service != null] | perms=`,
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=each.value.git_secret_id | google_service_account.build_identity[0].member | for_each=local.credentials_service_on && var.catalog_check != null ? { for r in var.catalog_check.repositories : r.slug => r if try(r.git_secret_id, "") != "" } : {} [local.credentials_service_on=var.credentials_service != null] | perms=`,
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=each.value | google_service_account.build_identity[0].member | for_each=local.credentials_service_on && var.catalog_check != null ? merge( { for r in var.catalog_check.repositories : r.slug => r.git_secret_id if try(r.git_secret_id, "") != "" }, { for r in var.catalog_check.repositories : "${r.slug}/own" => r.own_git_secret_id if r.own_git_secret_id != null && r.own_git_secret_id != "" }, ) : {} [local.credentials_service_on=var.credentials_service != null] | perms=`,
 	// Reviewed for B6's other half: the project's catalog check job may act as
 	// that identity, which is what makes every build it submits run as the
 	// project's one build account rather than a repository's. actAs on ONE
@@ -2186,6 +2186,16 @@ var runAccountGrants = setOf(
 	`google_service_account_iam_member | "roles/iam.serviceAccountUser" | service_account_id="projects/${var.project}/serviceAccounts/fugaro-build-identity@${var.project}.iam.gserviceaccount.com" | each.value | for_each=local.credentials_service_on ? toset(var.operators) : toset([]) [local.credentials_service_on=var.credentials_service != null] | perms=`,
 	`google_project_iam_member | "roles/logging.logWriter" | project=var.project | google_service_account.build_identity[0].member | for_each= | perms=`,
 	`google_service_account_iam_member | "roles/iam.serviceAccountTokenCreator" | service_account_id="projects/${var.project}/serviceAccounts/fugaro-verifier@${var.project}.iam.gserviceaccount.com" | each.value | for_each=local.credentials_service_on ? toset(var.operators) : toset([]) [local.credentials_service_on=var.credentials_service != null] | perms=`,
+	// Reviewed for the resident orchestrator (#3650): the operators' token
+	// creation on the orchestrator daemon's account, the verifier row's shape
+	// and the same members (the conditional keeps the for_each out of what
+	// this test resolves, so it is pinned whole). The member is var.operators
+	// and nobody else, people who already write the marker themselves, and no
+	// run, history or scheduler account is added to it. What it lets an
+	// operator do is act as the daemon's account, whose own runs-bucket grant
+	// (orchestrator_runs_launcher) is this scan's to judge on its own row, not
+	// this row's.
+	`google_service_account_iam_member | "roles/iam.serviceAccountTokenCreator" | service_account_id="projects/${var.project}/serviceAccounts/fugaro-orch@${var.project}.iam.gserviceaccount.com" | each.value | for_each=local.orchestrator_on ? toset(var.operators) : toset([]) [local.orchestrator_on=var.orchestrator != null] | perms=`,
 	// Reviewed for M4 (the coordinator's front door): D920 makes the front
 	// door public, and this is therefore the one grant in the tree whose
 	// member is not an identity at all — everyone on the network, including
@@ -2281,9 +2291,14 @@ var runAccountGrants = setOf(
 	// shared job reads is sealed ciphertext (budget-token-channel.md §7.2).
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=var.runs_bucket | google_service_account.job.member | for_each= | perms=`,
 	// A project job account's (phase 3, modules/project/sa.tf): the same
-	// shape, its secrets keyed by the profile's mounts; its bucket grant is
-	// the workflow job's key above, under the widened condition.
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=toset(values(var.job.secret_env)) | perms=`,
+	// shape, its secrets keyed by the profile's mounts — less the model
+	// credentials a profile the credentials service serves gives up, which is
+	// the comprehension local.job_secret_names holds since B5.7's flip (the
+	// class list and the two clauses that read it are pinned by
+	// deploy/terraform's TestSharedJobServedClassesMatchTheModule) — and its
+	// bucket grant is the workflow job's key above, under the widened
+	// condition.
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=local.job_secret_names [local.job_secret_names=toset([ for env, logical in var.job.secret_env : logical if !local.is_shared_job_served_model[env] ])] | perms=`,
 
 	// The build account's (a build's credential): its secrets, its own
 	// registry, the shared ones read-only, builds/ under its condition, actAs
@@ -2478,6 +2493,31 @@ var runAccountGrants = setOf(
 	`google_project_iam_member | "projects/${var.project}/roles/fugaroHistory" | project=var.project | google_service_account.history[0].member | for_each= | perms=run.executions.get,run.executions.list,run.jobs.get,run.jobs.list,run.operations.get`,
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | google_service_account.history[0].member | for_each= | perms=`,
 
+	// The credentials service's own row on the runs' signer (launcher-does-not-mint
+	// plan task LM11; D3121, F7, F8, F33): the ONE grant this design adds, and
+	// the one that makes the people's row above removable. The member is the
+	// credentials service's account (var.issuer_account, empty until the update
+	// that hands the account over, LM13), the role is the Firebase module's own
+	// iam.serviceAccounts.signJwt, and the target is the runs' signer account
+	// and never the project.
+	//
+	// What it costs is stated and not softened: signJwt signs ANY claim set for
+	// ANY uid as the account it is on, so this account becomes the one identity
+	// that mints every run's and every launcher's token — the honest size of the
+	// amendment to .claude/rules/credentials-service.md's sentence on this
+	// account's grants, taken knowingly by the owner (D3121), and a single point
+	// of every launch. What it is NOT is a write path to fugaro/managed.json:
+	// signJwt reaches IAM's sign API and no Cloud Storage object, the account
+	// holds no storage role on the project or the runs bucket anywhere in this
+	// tree, and the reach a signed token buys is bounded by the database rules
+	// and by the service's own route allowlist and auditing, which is what the
+	// rule file and the independent review are for. A second member on this row,
+	// a second grant to this account, or a wider role here is the finding this
+	// list is for — and the row's account and role are literals of the plan
+	// (deploy/terraform's TestIssuerMinterIsOneSpelling holds them to the two
+	// resources), so the review screen names both.
+	`google_service_account_iam_member | "projects/${var.project}/roles/fugaroTokenMinter" | service_account_id="projects/${var.project}/serviceAccounts/${var.names.signer_account_id}@${var.project}.iam.gserviceaccount.com" | "serviceAccount:${var.issuer_account}" | for_each= | perms=?`,
+
 	// The coordinator's writer (coordinator plan task P3): the history
 	// account's database grant above, for the second identity that holds one —
 	// the aggregation job's account, which writes the coordinator's subtree
@@ -2560,6 +2600,23 @@ var runAccountGrants = setOf(
 	// member is a member of one of these three sets.
 	`google_cloud_run_v2_job_iam_member | var.job_runner_role | name=google_cloud_run_v2_job.this[0].name | each.value | for_each=var.workflow.deploy_job ? toset(var.launchers) : toset([]) | perms=?`,
 	`google_logging_log_view_iam_member | "roles/logging.viewAccessor" | name=google_logging_log_view.runs[0].name | each.value | for_each=var.log_isolation ? toset(concat(var.launchers, var.operators, var.viewers)) : toset([]) | perms=`,
+	// ... and the Firebase module's minter row, switch-gated since
+	// launcher-does-not-mint plan task LM11 (D3121). var.people_minter is ON
+	// by default, so this is the row the module has always planned and an
+	// installation taking the change plans nothing new; the plan that turns
+	// the switch off — the one that removes the row, once the credentials
+	// service has proved it signs as this signer — is LM14's (R8), and the
+	// key carries the set it iterates (local.people, the launchers and the
+	// operators) so a member slipped into the switch's on branch is a
+	// different key.
+	//
+	// The members are people and the role is iam.serviceAccounts.signJwt on
+	// the runs' signer, which is the documented limit roles.md §4 states
+	// rather than a gap this scan could close: an operator or a launcher has
+	// always been able to mint an identity in this project, the viewer list
+	// is deliberately not among them, and taking it off every launcher is
+	// what the plan's issuer row (further up this list) and LM14 are for.
+	`google_service_account_iam_member | google_project_iam_custom_role.token_minter.name | service_account_id=google_service_account.signer.name | each.value | for_each=var.people_minter ? local.people : toset([]) [local.people=toset(concat(var.launchers, var.operators))] | perms=iam.serviceAccounts.signJwt`,
 
 	// The viewer list's own grants (RS4 of docs/roles-scopes): the viewer is
 	// a member list of its own, and peopleVars deliberately does not carry
@@ -2599,6 +2656,29 @@ var runAccountGrants = setOf(
 	// the service (G4, F36) refuses every caller that is not one of the class
 	// the roster names.
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | each.value | for_each=local.credentials_service_on ? local.launcher_invoker_members : toset([]) [local.credentials_service_on=var.credentials_service != null] [local.launcher_invoker_members=toset([for m in var.launchers : m if startswith(m, "user:")])] | perms=`,
+	// ... and the roster's own SERVICE ACCOUNTS (LM12 of
+	// docs/launcher-does-not-mint, D3123): the same role on the same service,
+	// to a pipeline's identity rather than a person's, which the row above can
+	// never admit — its set is the roster's user: members, and the class lists
+	// inside the process refuse an account's address by construction. Without
+	// this row such an account is refused at IAM before the container runs, so
+	// a pipeline that launches runs reaches nothing (F4). Its for_each is a
+	// conditional over the local the module builds the account members from and
+	// this test cannot resolve to a set of people, so it is pinned whole like
+	// the four above it.
+	//
+	// Reviewed as a grant to a member that is not a run's credential and not an
+	// account this module creates: the addresses come from
+	// var.credentials_service.roster_service_accounts, which is the roster's own
+	// `serviceAccount:` entries — the machine the owner admitted — and each is
+	// also the value the service admits it by (credentials.tf's
+	// FUGARO_ROSTER_SERVICE_ACCOUNTS, D3137's unscoped class), so the identity
+	// that may knock and the identity that is served are one value read twice.
+	// roles/run.invoker carries no storage permission at all, no permission to
+	// grant a role, no iam.serviceAccounts.actAs and no token minting: what the
+	// member reaches through it is a container, and the class inside the process
+	// is what decides what it is served.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | each.value | for_each=local.credentials_service_on ? local.roster_service_account_members : toset([]) [local.credentials_service_on=var.credentials_service != null] [local.roster_service_account_members=toset([for a in try(var.credentials_service.roster_service_accounts, []) : "serviceAccount:${a}"])] | perms=`,
 
 	// Reviewed for D1931 (the dynamic secret class, DS2.2): the intake's own
 	// account and the credentials service's two new reaches. Every one of these
@@ -2636,12 +2716,19 @@ var runAccountGrants = setOf(
 	// nothing else; the object itself is written by the operator's own update,
 	// not by this account).
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | google_service_account.intake[0].member | for_each= | perms=`,
-	// ... and the intake's own front door: the same roles/run.invoker on the
-	// intake service, to the same roster's people, for the read mint's reasons
-	// above. Invoking the intake hands the caller a write of a secret of THEIR
-	// OWN name (the service derives it from the verified sub), and the class
-	// inside the service refuses every caller the roster does not name.
-	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.intake.service | each.value | for_each=local.intake_on ? local.launcher_invoker_members : toset([]) [local.intake_on=var.intake != null] [local.launcher_invoker_members=toset([for m in var.launchers : m if startswith(m, "user:")])] | perms=`,
+	// ... and the intake's own front door: roles/run.invoker on the intake
+	// service to the installation's launchers AND, on a workspace's own project,
+	// the people of the workspace's roster (WC3, R5, D3143 — the union below,
+	// which is one expression shared with the class the process reads). It is the
+	// intake's grant and NEITHER the credentials service's nor its grant route's:
+	// that service's invoker set stays local.launcher_invoker_members (the row
+	// above) because its read mint reaches the installing person's whole
+	// workspace, which is not what a roster person may be given (F10). Invoking
+	// the intake hands the caller a write of a secret of THEIR OWN name (the
+	// service derives it from the verified sub), the class inside the service
+	// refuses every caller the list does not name, and a caller on it reaches the
+	// `fugaro_u_` half alone — the shared prefix is the derived admin list's.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.intake.service | each.value | for_each=local.intake_on ? local.intake_invoker_members : toset([]) [local.intake_invoker_members=setunion(local.launcher_invoker_members, toset([for e in local.intake_people : "user:${e}"]))] [local.intake_on=var.intake != null] | perms=`,
 
 	// Reviewed for W3 (the workspace's own project): the workspace root's own
 	// grant, the only resource the tree gives that project's service account.
@@ -2683,8 +2770,8 @@ var runAccountGrants = setOf(
 	//     and forge routes a member's run calls, and a typed refusal for
 	//     everything else (R14). It is a member resource and never a binding,
 	//     which is what makes a member leaving the table a deletion and nothing
-	//     else — the ONE deletion internal/infra/tf's WorkspaceNotCovered admits
-	//     (F25) — so no operator repair is ever the answer here.
+	//     else — one of the TWO deletions internal/infra/tf's WorkspaceNotCovered
+	//     admits (F25) — so no operator repair is ever the answer here.
 	//
 	// Neither is bound to a named person, so no row above covers it: the
 	// accessor's member is terraform's own computation of the workspace account
@@ -2693,6 +2780,37 @@ var runAccountGrants = setOf(
 	// here.
 	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.credentials_service.bundle_secret | google_service_account.workspace.member | for_each= | perms=`,
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | "serviceAccount:${each.value}" | for_each=local.credentials_service_on ? local.member_job_accounts : toset([]) [local.credentials_service_on=var.credentials_service != null] [local.member_job_accounts=toset(flatten([for m in values(var.members) : m.job_service_accounts]))] | perms=`,
+	// Reviewed for WC2 (the workspace root admits the roster's people, R6,
+	// D2971): the two grants the workspace root makes to the people of the
+	// workspace's own roster, and neither of them reaches the installation's runs
+	// bucket and its marker.
+	//
+	//   - the person's invoke grant is the row above with another member class:
+	//     roles/run.invoker on the workspace's own service, bound to a `user:`
+	//     address the roster names rather than to a member's job account. It is
+	//     the same reach and the same refusal — that process's front door, the
+	//     model and forge routes and a typed refusal for everything else (R14) —
+	//     carries no storage permission, no permission to grant a role, no actAs
+	//     and no token minting, and is a member resource, so a person the roster
+	//     drops is the second deletion WorkspaceNotCovered admits (F25, WC2) and
+	//     no operator repair;
+	//   - the conditioned accessor is the bundle accessor's row under a
+	//     condition: roles/secretmanager.secretAccessor on the workspace's OWN
+	//     project, fenced to the per-person prefix AND the one name the
+	//     workspace's credentials half serves (fugaro_u_…_claude-oauth-token,
+	//     R6). secretmanager.versions.access carries no storage permission, no
+	//     write of any kind, no actAs and no token minting, the fence is what
+	//     keeps it off every other secret of the project (and off the
+	//     project-shared class), and the project it is in is the workspace's own
+	//     and not the installation's — so fugaro/managed.json is not a thing
+	//     either grant can reach.
+	//
+	// Neither is bound to a named person in the plan, so no row above covers
+	// them: the person's invoker member is a `user:` address resolved from
+	// var.people at apply, and the accessor's member is terraform's own
+	// computation of the workspace account, exactly as the two rows above.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | "user:${each.value}" | for_each=local.credentials_service_on ? local.roster_people : toset([]) [local.credentials_service_on=var.credentials_service != null] [local.roster_people=toset(var.people)] | perms=`,
+	`google_project_iam_member | "roles/secretmanager.secretAccessor" | project=var.project | google_service_account.workspace.member | for_each= | perms=`,
 	// Reviewed for P5.1b (the installation's resident orchestrator, the mobile
 	// design's section 4.3). The account is the installation's own, it exists on
 	// no installation that has not opted in — var.orchestrator is null by
@@ -2876,7 +2994,7 @@ var labelWriteRoles = map[string]bool{
 // same grants checkRunAccountGrant and checkBucketGrant read, and it is the
 // plan's Open item 2 answered by meeting it rather than by falling back to
 // it: the fixture could be written, so the label is not refused for want of
-// one (docs/plans/2026-10-18-managed-projects-task-3.0-decisions.md §6).
+// one (docs/managed-projects/task-3.0-decisions.md §6).
 //
 // Members that are a set of people are skipped, exactly as they are above:
 // the operators' own accounts hold resourcemanager.projects.update by
@@ -4718,5 +4836,436 @@ func TestConvergeMarkerIsConditionedOnTheGenerationItRead(t *testing.T) {
 	}
 	if b, ok := readMarker(t, s, testBucket); !ok || string(b) != string(other) {
 		t.Errorf("gs://%s/%s = %q (present %v), want the other writer's fact %q", testBucket, MarkerObject, b, ok, other)
+	}
+}
+
+// --- RewriteBudget: changing an amount a project already records (D2215) ---
+//
+// The one write that edits a figure rather than adding one. It is needed
+// because the amount became writable with a default (D2212): a creating run
+// that chose nothing records 100 USD, and without a rewrite that number would
+// be the project's for good, since WriteFlag is the only other writer and it
+// adds a budget to a fact that records none. The tests below pin the two
+// things that keep it from being an editor anyone can reach: it writes only
+// this project's own marker of a version that records an amount, and it is
+// reached only when the owner states one — the callers' rule, not this
+// package's (R9; T3 and T4 are the two call sites).
+
+// markerWrites is the writes of the fact the fake has served: the upload an
+// insert sends, and any delete of any key. A test uses it where the object's
+// bytes cannot answer — a write of the same bytes leaves the object looking
+// exactly as it did — so "wrote nothing" is asserted rather than inferred.
+func markerWrites(f *gcpfake.GCS) []gcpfake.Request {
+	var writes []gcpfake.Request
+	for _, r := range f.Requests() {
+		if r.Method == http.MethodDelete || (r.Method == http.MethodPost && strings.HasPrefix(r.Path, "/upload/")) {
+			writes = append(writes, r)
+		}
+	}
+	return writes
+}
+
+// TestDefaultBudgetPassesCheck pins the defaults themselves: the figures
+// D2212 and D2211 chose, and the fact that they are a pair a managed
+// creation could record. The marker's own rule judges them (Budget.Check)
+// because a default outside the range would be refused by the very write
+// that records it, and a version-4 fact recording them is what the write of
+// a defaulted creation produces.
+func TestDefaultBudgetPassesCheck(t *testing.T) {
+	if DefaultBudgetAmount != 100 {
+		t.Errorf("DefaultBudgetAmount = %d, want 100 (D2212)", DefaultBudgetAmount)
+	}
+	if DefaultBudgetCurrency != "USD" {
+		t.Errorf("DefaultBudgetCurrency = %q, want USD (D2211)", DefaultBudgetCurrency)
+	}
+	d := Budget{Amount: DefaultBudgetAmount, Currency: DefaultBudgetCurrency}
+	if err := d.Check(); err != nil {
+		t.Errorf("the default budget %+v is not one a managed creation records: %v", d, err)
+	}
+	b, err := (Marker{Version: MarkerVersionNoBuilds, GCPProject: testProject, Budget: &d}).Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf(`{"version":%d,"gcp_project":"%s","budget":{"amount":%d,"currency":%q}}`,
+		MarkerVersionNoBuilds, testProject, DefaultBudgetAmount, DefaultBudgetCurrency)
+	if string(b) != want {
+		t.Errorf("the fact a defaulted creation records = %q, want %q", b, want)
+	}
+}
+
+// TestRewriteBudgetReplacesAmount is the write half: the figures the owner
+// states replace the ones the marker records, the figures replaced are what
+// the call answers with (so the caller can print both), and neither of the
+// two is carried over silently from what is there — the currency is the
+// owner's, not a default taken over a recorded one (R6).
+func TestRewriteBudgetReplacesAmount(t *testing.T) {
+	ctx := context.Background()
+	s, _ := convergeWorld(t, markerNoBuildsJSON)
+	old, err := RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 400, Currency: "USD"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old != (Budget{Amount: 7, Currency: "USD"}) {
+		t.Errorf("RewriteBudget answered the replaced figures as %+v, want the recorded 7 USD", old)
+	}
+	want := `{"version":4,"gcp_project":"proj-1234","budget":{"amount":400,"currency":"USD"}}`
+	if b, ok := readMarker(t, s, testBucket); !ok || string(b) != want {
+		t.Fatalf("gs://%s/%s = %q (present %v), want %q", testBucket, MarkerObject, b, ok, want)
+	}
+	// The second call replaces the currency alone and answers what the first
+	// one wrote, which is what makes a sequence of rewrites readable to a
+	// caller that prints what it replaced.
+	old, err = RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 400, Currency: "EUR"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old != (Budget{Amount: 400, Currency: "USD"}) {
+		t.Errorf("the second call answered %+v, want the 400 USD the first one wrote", old)
+	}
+	if b, _ := readMarker(t, s, testBucket); string(b) != `{"version":4,"gcp_project":"proj-1234","budget":{"amount":400,"currency":"EUR"}}` {
+		t.Errorf("the second call left %q", b)
+	}
+}
+
+// TestRewriteBudgetFromVersion2And3: the versions installations carry are the
+// ones this meets (F15) — 2, 3, and the 4 this build writes — and every one of
+// them becomes the version this build writes a budget in, recording the
+// figures the owner stated. The count a version-3 object carried does not
+// survive the rewrite, exactly as it does not survive ConvergeMarker (D1543):
+// what a marker records is the amount and the currency, and nothing else.
+func TestRewriteBudgetFromVersion2And3(t *testing.T) {
+	ctx := context.Background()
+	for name, seed := range map[string]string{
+		"the version the flag wrote":                     markerBudgetJSON,
+		"the version that carried the image build bound": markerBuildsJSON,
+		"the version this build writes":                  markerNoBuildsJSON,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := convergeWorld(t, seed)
+			old, err := RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: DefaultBudgetAmount, Currency: DefaultBudgetCurrency})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if old != (Budget{Amount: 7, Currency: "USD"}) {
+				t.Errorf("RewriteBudget answered %+v, want the recorded 7 USD", old)
+			}
+			want := fmt.Sprintf(`{"version":4,"gcp_project":"proj-1234","budget":{"amount":%d,"currency":%q}}`, DefaultBudgetAmount, DefaultBudgetCurrency)
+			if b, ok := readMarker(t, s, testBucket); !ok || string(b) != want {
+				t.Fatalf("gs://%s/%s = %q (present %v), want %q", testBucket, MarkerObject, b, ok, want)
+			}
+		})
+	}
+}
+
+// TestRewriteBudgetEqualIsNoWrite: figures the marker already records are not
+// written at all — not written identically, not written and then compared, but
+// no write of the object. It is asserted on the API rather than on the bytes
+// for that reason, because a write of the same bytes leaves the object looking
+// exactly as it did, and it is what makes the rewrite safe to reach on every
+// update that was given a --budget.
+func TestRewriteBudgetEqualIsNoWrite(t *testing.T) {
+	ctx := context.Background()
+	s, f := convergeWorld(t, markerNoBuildsJSON)
+	old, err := RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 7, Currency: "USD"})
+	if err != nil {
+		t.Fatalf("the call over the figures the marker already records was refused: %v", err)
+	}
+	if old != (Budget{Amount: 7, Currency: "USD"}) {
+		t.Errorf("RewriteBudget answered %+v, want the recorded 7 USD", old)
+	}
+	if writes := markerWrites(f); len(writes) != 0 {
+		t.Errorf("the call over equal figures wrote the fact: %v", writes)
+	}
+	if b, ok := readMarker(t, s, testBucket); !ok || string(b) != markerNoBuildsJSON {
+		t.Errorf("gs://%s/%s = %q (present %v), want it left exactly as %q", testBucket, MarkerObject, b, ok, markerNoBuildsJSON)
+	}
+	// And the same call with another amount does write, so the assertion above
+	// is not the write path being unreachable in this world.
+	if _, err := RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 8, Currency: "USD"}); err != nil {
+		t.Fatal(err)
+	}
+	if writes := markerWrites(f); len(writes) != 1 {
+		t.Errorf("the call over another amount made %d writes of the fact, want 1", len(writes))
+	}
+}
+
+// TestRewriteBudgetRefusesVersion1: the version-1 creation fact records no
+// amount, and the write that replaces it is WriteFlag's — a rewrite here would
+// carry a figure the object never had, and it would do it without the owner's
+// own command, which is what gates that write. The refusal names the command
+// that does the job.
+func TestRewriteBudgetRefusesVersion1(t *testing.T) {
+	ctx := context.Background()
+	s, f := convergeWorld(t, markerJSON)
+	old, err := RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: DefaultBudgetAmount, Currency: DefaultBudgetCurrency})
+	if err == nil {
+		t.Fatal("the version-1 creation fact was rewritten")
+	}
+	if !errors.Is(err, ErrRefused) {
+		t.Errorf("the refusal is not this package's own (ErrRefused): %v", err)
+	}
+	for _, want := range []string{"the version-1 creation fact", "records no amount", "fugaro managed flag"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if old != (Budget{}) {
+		t.Errorf("a refused call answered %+v, want no figures", old)
+	}
+	if writes := markerWrites(f); len(writes) != 0 {
+		t.Errorf("a refused call wrote the fact: %v", writes)
+	}
+	if b, ok := readMarker(t, s, testBucket); !ok || string(b) != markerJSON {
+		t.Errorf("gs://%s/%s = %q (present %v), want it left exactly as %q", testBucket, MarkerObject, b, ok, markerJSON)
+	}
+}
+
+// TestRewriteBudgetRefusesAnotherProject is the subject of every row here: an
+// object that is not this project's own marker recording an amount. None of
+// them is written over and each leaves the object byte for byte, because a
+// rewrite conditioned on an object the caller did not understand is the write
+// this package refuses — including the two OBJECT-level states the managed
+// read refuses whole (an amount outside the shape, and a version-3 count
+// outside its rule), where rewriting the object as one that read accepts would
+// open the gate on this project rather than carry a figure.
+func TestRewriteBudgetRefusesAnotherProject(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		seed       string
+		unreadable bool
+		want       string
+	}{
+		"a fact about another project": {
+			seed: `{"version":4,"gcp_project":"proj-9999","budget":{"amount":7,"currency":"USD"}}`,
+			want: "names project proj-9999, not proj-1234",
+		},
+		"a version this build does not know": {
+			seed: `{"version":5,"gcp_project":"proj-1234"}`,
+			want: "is a version 5 marker",
+		},
+		"an object that is not a marker": {
+			seed: "this is not the marker",
+			want: "not a marker for",
+		},
+		"an object carrying a key this build does not write": {
+			seed: `{"version":4,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"},"image_builds":2}`,
+			want: "not a marker for",
+		},
+		"a fact that records no amount": {
+			seed: `{"version":4,"gcp_project":"proj-1234"}`,
+			want: "records no budget amount",
+		},
+		"a fact whose amount this build refuses": {
+			seed: `{"version":4,"gcp_project":"proj-1234","budget":{"amount":0,"currency":"USD"}}`,
+			want: "the amount it records is one this build refuses",
+		},
+		"a version-3 fact whose bound this build refuses": {
+			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"},"max_image_builds":0}`,
+			want: "image build bound this build refuses",
+		},
+		"an object the caller may not read": {
+			seed:       markerNoBuildsJSON,
+			unreadable: true,
+			want:       "cannot be read",
+		},
+		"nothing there": {want: "it is not there"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, f := convergeWorld(t, tc.seed)
+			if tc.unreadable {
+				f.FailObjectGetsAfter(testBucket, MarkerObject, 0)
+			}
+			old, err := RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 400, Currency: "USD"})
+			if err == nil {
+				t.Fatal("the call rewrote an object that is not this project's own recorded amount")
+			}
+			if !errors.Is(err, ErrRefused) {
+				t.Errorf("the refusal is not this package's own (ErrRefused): %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal does not say %q: %v", tc.want, err)
+			}
+			if old != (Budget{}) {
+				t.Errorf("a refused call answered %+v, want no figures", old)
+			}
+			if writes := markerWrites(f); len(writes) != 0 {
+				t.Errorf("a refused call wrote the fact: %v", writes)
+			}
+			// The knob above refuses every later read of that object too, so it
+			// is turned off before what is there is read back.
+			f.FailObjectGetsAfter(testBucket, MarkerObject, -1)
+			b, ok := readMarker(t, s, testBucket)
+			switch {
+			case tc.seed == "" && ok:
+				t.Errorf("a refused call wrote an object where there was none: %q", b)
+			case tc.seed != "" && (!ok || string(b) != tc.seed):
+				t.Errorf("gs://%s/%s = %q (present %v), want it left exactly as %q", testBucket, MarkerObject, b, ok, tc.seed)
+			}
+		})
+	}
+}
+
+// TestRewriteBudgetRefusesABudgetThatIsNotOne: the figures the caller states
+// are judged by the marker's own rule before anything is read or written, so a
+// pair that is not one is refused without touching the API at all — not even
+// the bucket read every write here otherwise makes first.
+func TestRewriteBudgetRefusesABudgetThatIsNotOne(t *testing.T) {
+	ctx := context.Background()
+	for name, b := range map[string]Budget{
+		"no amount":              {Currency: "USD"},
+		"a zero amount":          {Currency: "USD"},
+		"a negative amount":      {Amount: -1, Currency: "USD"},
+		"no currency":            {Amount: 7},
+		"one above the ceiling":  {Amount: MaxBudgetAmount + 1, Currency: "USD"},
+		"a lower-case currency":  {Amount: 7, Currency: "usd"},
+		"a four-letter currency": {Amount: 7, Currency: "USDX"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, f := convergeWorld(t, markerNoBuildsJSON)
+			old, err := RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, b)
+			if err == nil {
+				t.Fatal("want a refusal: the amount and the currency are a pair, above 0 and in range")
+			}
+			if !errors.Is(err, ErrRefused) {
+				t.Errorf("the refusal is not this package's own (ErrRefused): %v", err)
+			}
+			if old != (Budget{}) {
+				t.Errorf("a refused call answered %+v, want no figures", old)
+			}
+			if reqs := f.Requests(); len(reqs) != 0 {
+				t.Errorf("a call with a budget that is not one touched the API: %v", reqs)
+			}
+			if got, ok := readMarker(t, s, testBucket); !ok || string(got) != markerNoBuildsJSON {
+				t.Errorf("gs://%s/%s = %q (present %v), want it left exactly as %q", testBucket, MarkerObject, got, ok, markerNoBuildsJSON)
+			}
+		})
+	}
+}
+
+// TestRewriteBudgetNeedsTheProjectsOwnRunsBucket is the proof every writer of
+// this object makes before it writes: the project's own runs bucket, by its
+// number and by the installation's label, exactly as WriteFlag proves it. A
+// bucket name is global, so without that proof the object of a stranger's
+// bucket would be rewritten as this project's.
+func TestRewriteBudgetNeedsTheProjectsOwnRunsBucket(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		bucket string
+		number uint64
+		labels map[string]string
+	}{
+		"no bucket number":                  {testBucket, 0, testManaged},
+		"another project's":                 {testBucket, 999, testManaged},
+		"an unlabelled bucket":              {testBucket, testProjectNumber, nil},
+		"a bucket labelled by someone else": {testBucket, testProjectNumber, map[string]string{gcp.LabelManaged: "managed-by-someone"}},
+		"no bucket named":                   {"", testProjectNumber, testManaged},
+		"a bucket that is not there":        {"fugaro-runs-elsewhere", testProjectNumber, testManaged},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, f := newStorage(t)
+			f.AddBucket(testBucket, testProjectNumber, tc.labels)
+			f.Put(testBucket, MarkerObject, []byte(markerNoBuildsJSON))
+			if _, err := RewriteBudget(ctx, s, tc.bucket, testProject, tc.number, Budget{Amount: 400, Currency: "USD"}); err == nil {
+				t.Fatal("want a refusal")
+			}
+			if writes := markerWrites(f); len(writes) != 0 {
+				t.Errorf("a refused call wrote the object: %v", writes)
+			}
+			if b, ok := readMarker(t, s, testBucket); !ok || string(b) != markerNoBuildsJSON {
+				t.Errorf("gs://%s/%s = %q (present %v), want it left exactly as %q", testBucket, MarkerObject, b, ok, markerNoBuildsJSON)
+			}
+		})
+	}
+	// The project's own runs bucket is the one case that works, so the table
+	// above is not passing for the wrong reason — and no storage client, or no
+	// project named, is a refusal rather than a panic or a write somewhere.
+	s, f := newStorage(t)
+	f.AddBucket(testBucket, testProjectNumber, testManaged)
+	f.Put(testBucket, MarkerObject, []byte(markerNoBuildsJSON))
+	if _, err := RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 400, Currency: "USD"}); err != nil {
+		t.Fatalf("the project's own runs bucket was refused: %v", err)
+	}
+	if _, err := RewriteBudget(ctx, nil, testBucket, testProject, testProjectNumber, Budget{Amount: 400, Currency: "USD"}); err == nil {
+		t.Error("the rewrite was made with no storage client")
+	}
+	if _, err := RewriteBudget(ctx, s, testBucket, "", testProjectNumber, Budget{Amount: 400, Currency: "USD"}); err == nil {
+		t.Error("the rewrite was made with no project named")
+	}
+}
+
+// TestRewriteBudgetLosesTheRace: the write is conditioned on the generation
+// this call read (insertMarker), so a writer that got there first — the owner
+// flagging the project while an update runs, or two of the owner's own runs —
+// is never clobbered. What that writer left is what is there afterwards, and
+// the call answers ErrAlreadyMarked rather than a replaced amount.
+func TestRewriteBudgetLosesTheRace(t *testing.T) {
+	ctx := context.Background()
+	_, f := convergeWorld(t, markerNoBuildsJSON)
+	other := []byte(`{"version":4,"gcp_project":"proj-1234","budget":{"amount":9,"currency":"EUR"}}`)
+	racer := &convergeRacer{rt: http.DefaultTransport, f: f, other: other}
+	s, err := storage.NewService(ctx, option.WithoutAuthentication(),
+		option.WithEndpoint(f.URL+"/storage/v1/"), option.WithHTTPClient(&http.Client{Transport: racer}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 400, Currency: "USD"})
+	if !racer.done {
+		t.Fatal("the race never happened: no write of the fact went out")
+	}
+	if err == nil || !errors.Is(err, ErrAlreadyMarked) {
+		t.Fatalf("the rewrite over a fact another writer replaced = %v, want ErrAlreadyMarked", err)
+	}
+	if old != (Budget{Amount: 7, Currency: "USD"}) {
+		t.Errorf("the call answered %+v, want the figures it read", old)
+	}
+	if b, ok := readMarker(t, s, testBucket); !ok || string(b) != string(other) {
+		t.Errorf("gs://%s/%s = %q (present %v), want the other writer's fact %q", testBucket, MarkerObject, b, ok, other)
+	}
+}
+
+// TestRewriteBudgetWritesVersion4 pins the object the rewrite writes: the
+// shape this build has written a budget in since the count went (A3), and not
+// a shape of its own — a version, a project and a two-field budget, nothing
+// else, and no count left over from a version-3 object — and it pins that the
+// object is one the read the managed gate makes believes, which is the whole
+// point of writing a shape rather than a figure.
+func TestRewriteBudgetWritesVersion4(t *testing.T) {
+	ctx := context.Background()
+	s, _ := convergeWorld(t, markerBuildsJSON)
+	if _, err := RewriteBudget(ctx, s, testBucket, testProject, testProjectNumber, Budget{Amount: 250, Currency: "EUR"}); err != nil {
+		t.Fatal(err)
+	}
+	b, ok := readMarker(t, s, testBucket)
+	if !ok {
+		t.Fatalf("gs://%s/%s is not there", testBucket, MarkerObject)
+	}
+	want := `{"version":4,"gcp_project":"proj-1234","budget":{"amount":250,"currency":"EUR"}}`
+	if string(b) != want {
+		t.Fatalf("gs://%s/%s = %q, want %q", testBucket, MarkerObject, b, want)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(b, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 3 {
+		t.Errorf("the fact holds %d fields (%v), want version, gcp_project and budget", len(fields), slices.Sorted(maps.Keys(fields)))
+	}
+	var version int
+	if err := json.Unmarshal(fields["version"], &version); err != nil || version != MarkerVersionNoBuilds {
+		t.Errorf("the fact is version %d (err %v), want %d", version, err, MarkerVersionNoBuilds)
+	}
+	var budgetFields map[string]json.RawMessage
+	if err := json.Unmarshal(fields["budget"], &budgetFields); err != nil {
+		t.Fatal(err)
+	}
+	if len(budgetFields) != 2 {
+		t.Errorf("the budget holds %d fields (%v), want amount and currency", len(budgetFields), slices.Sorted(maps.Keys(budgetFields)))
+	}
+	fact, err := ReadFlagFact(ctx, s, testBucket, testProject, testProjectNumber)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fact.Ours || fact.Budget != (Budget{Amount: 250, Currency: "EUR"}) {
+		t.Errorf("the read answers %+v, want this project's fact recording 250 EUR", fact)
 	}
 }

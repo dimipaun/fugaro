@@ -249,7 +249,7 @@ func TestMarkCreatedWritesOnlyForACreationThisRunCreatedOrResumed(t *testing.T) 
 
 	// (c'') --create-project with --firebase-project set to the same project: the
 	// one-project layout the docs tell the owner to run ("One project or
-	// two: either is supported", docs/design/managed-projects.md, and the live checklist's
+	// two: either is supported", docs/managed-projects/spec.md, and the live checklist's
 	// init step), where the Firebase backend lives in the project the run
 	// creates. It is a different path to the same fact: with --firebase-project the
 	// installation is the Firebase engine's first apply and the installation
@@ -840,7 +840,7 @@ func TestForgetRefusesAManagedInstallation(t *testing.T) {
 		"seven scoped roles",
 		"fugaro_managed",
 		"fugaro/managed.json",
-		"docs/design/managed-projects.md",
+		"docs/managed-projects/spec.md",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the refusal does not carry %q:\n%s", want, msg)
@@ -915,7 +915,7 @@ func TestForgetRefusesAManagedInstallationAndLeavesTheWorkdirAlone(t *testing.T)
 		"flagged managed",
 		"fugaro_managed",
 		"fugaro/managed.json",
-		"docs/design/managed-projects.md",
+		"docs/managed-projects/spec.md",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the refusal does not carry %q:\n%s", want, msg)
@@ -1038,7 +1038,7 @@ func TestForgetRefusesAFenceTheMarksNoLongerAdmitTo(t *testing.T) {
 		t.Fatalf("the fixture's setup wrote tfvars[managed_deployer_scoped] = %v, want true", got)
 	}
 	// The marks come off the project — the object here, which alone is enough,
-	// because the read requires both halves (docs/design/managed-projects.md, "What makes a
+	// because the read requires both halves (docs/managed-projects/spec.md, "What makes a
 	// project managed" is the same step by hand).
 	if err := r.gcs.Bucket(t, initRunsBucket).Delete(context.Background(), managed.MarkerObject); err != nil {
 		t.Fatal(err)
@@ -1072,7 +1072,7 @@ func TestForgetRefusesAFenceTheMarksNoLongerAdmitTo(t *testing.T) {
 		"managed_deployer_scoped",
 		// And that un-managing is not the way past it.
 		"taking the project out of managed mode does not remove it",
-		"docs/design/managed-projects.md",
+		"docs/managed-projects/spec.md",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the refusal does not carry %q:\n%s", want, msg)

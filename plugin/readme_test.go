@@ -27,7 +27,7 @@ func readRepoFile(t *testing.T, rel string) string {
 
 // TestReadmeGettingStartedIsTwoSteps: the section has exactly two numbered
 // steps, `fugaro setup` and `/fugaro:setup`; the third step the skill carries
-// is one sentence, and the plugin note says where setup wires it.
+// is one sentence, and the plugin note says where setup installs it.
 func TestReadmeGettingStartedIsTwoSteps(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
 	_, rest, ok := strings.Cut(readme, "\n## Getting started\n")
@@ -45,7 +45,7 @@ func TestReadmeGettingStartedIsTwoSteps(t *testing.T) {
 	if !strings.Contains(steps[1], "`/fugaro:setup`") {
 		t.Errorf("step 2 is %q, want `/fugaro:setup`", steps[1])
 	}
-	for _, want := range []string{"merge", "`fugaro setup` again", "`.claude/settings.json`", "install"} {
+	for _, want := range []string{"merge", "`fugaro setup` again", "in your own Claude Code", "install"} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Getting started never says %q", want)
 		}
@@ -63,8 +63,9 @@ func TestReadmeNamesNoRetiredSkill(t *testing.T) {
 	retired := regexp.MustCompile("(?i)(fugaro:(onboard|launch|logs|diagnose|followup)\\b|fugaro:status\\b|\\b(onboard|launch|status|logs|diagnose|followup) skill\\b|skills/(onboard|launch|status|logs|diagnose|followup)\\b|six per-command)")
 	// fugaro:status is also the pull request body's status marker.
 	marker := regexp.MustCompile(`\[//\]|<!--|fugaro:status (begin|end)|fugaro:status["')]|rendered description|StripMarkers|fugaro:status\\n`)
-	// docs/plans and the M11 design and brief describe the change itself.
-	skip := regexp.MustCompile(`^(docs/plans/|docs/design/m11-|docs/design/setup-and-skills-spec-source\.md|plugin/.*_test\.go)`)
+	// docs/plans, the M11 folder (its design, brief and plan) and the M9
+	// milestone plans that once sat in docs/plans describe the change itself.
+	skip := regexp.MustCompile(`^(docs/plans/|docs/m11-setup-and-skills/|docs/m9-budget-and-dashboard/implementation-plan-|plugin/.*_test\.go)`)
 	var roots = []string{"README.md", "CONTRIBUTING.md", "docs", "schemas", "scripts", "internal", ".claude-plugin", "plugin/.claude-plugin", "plugin/skills"}
 	n := 0
 	for _, root := range roots {

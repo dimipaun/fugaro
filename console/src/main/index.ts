@@ -60,7 +60,7 @@ import { createSpawnLog } from './spawnlog'
 import type { SpawnLogWriter } from './spawnlog'
 import { parseInstallationsDocument } from './installlist'
 import { createLaunchRunner, DECLINING_CONFIRMER } from './launch'
-import type { FrozenLaunch, LaunchRequest, TargetLookup } from './launch'
+import type { FrozenLaunch, LaunchConfirmer, LaunchRequest, TargetLookup } from './launch'
 import type { CrashReportingHandle } from './crash-electron'
 import { startCrashReportingSafely } from './crash'
 import { createCrashSettings, readCrashSwitch } from './crashstore'
@@ -68,8 +68,13 @@ import { startUpdates } from './updater-electron'
 import { createUpdateSettings } from './updatestore'
 import type { UpdateController } from './updates'
 import { CONFIRM_ENTRY_URL, createConfirmWindow } from './confirm'
-import { createSettingsEdit, DECLINING_SETTINGS_EDITOR } from './settingsedit'
-import type { SettingsEditRunner } from './settingsedit'
+import {
+  createSettingsEdit,
+  createSettingsEditor,
+  DECLINING_SETTINGS_EDITOR,
+  DECLINING_SETTINGS_EDITOR_FLOW,
+} from './settingsedit'
+import type { SettingsEditRunner, SettingsEditorRunner } from './settingsedit'
 import { launchFingerprint } from './launchrules'
 import type { LaunchRecordFacts } from './launchrules'
 import type { InstallationsListReply } from './onboarding'
@@ -81,7 +86,8 @@ import {
   startupCompatibility,
 } from './ipc'
 import type { ConsoleHandlers, ValidatedArguments } from './ipc'
-import { lapseHandlers } from './licence-state'
+import { lapseHandlers, licenceStateOf } from './licence-state'
+import { newOperationHandlers } from './handlers'
 import { handlersFor } from '../source/source'
 import { createBoundSource } from '../source/cli'
 import type { BoundInstallation } from '../source/cli'
@@ -888,6 +894,70 @@ let launchRunner = createLaunchRunner({
 let settingsEditRunner: SettingsEditRunner = DECLINING_SETTINGS_EDITOR
 
 /**
+ * settingsEditorRunner is the flow behind `settings.editor.open`: **the one
+ * modal** (SU1, D2902), where `settingsEditRunner` above is the older shape that
+ * runs the dry run before it shows the diff. It defaults to its own declining
+ * twin for the same reason that one does: before `main` has built the window and
+ * the source there is nothing to read, nothing to show and nowhere to write, and
+ * `DECLINING_SETTINGS_EDITOR_FLOW` answers every open with
+ * `SETTINGS_EDIT_UNBUILT` rather than leaving a half-built flow the surface could
+ * reach. `main` replaces it over the **same** window the launcher and the older
+ * edit use (D1115: one window, two questions).
+ *
+ * **This is what the Project tab's pencil reaches** (SU2b). Its `cancelFor` is
+ * called from the two places the rail learns an installation moved, beside the
+ * other two runners: the window is one, and an edit read for an installation
+ * that has moved must not write to it.
+ */
+let settingsEditorRunner: SettingsEditorRunner = DECLINING_SETTINGS_EDITOR_FLOW
+
+/**
+ * confirmWindow is the one confirmation window as the console improvements'
+ * handlers read it (I-OPS): built in `main` over `createConfirmWindow`, and
+ * `DECLINING_CONFIRMER` until then, so a wizard, a models write or an image
+ * write that somehow arrived before the window exists is declined by name
+ * (`DECLINED_UNBUILT`) rather than shown a half-built one.
+ *
+ * It is read **at message time** and not captured, which is what makes the
+ * default the fail-closed one rather than the shipped one: the surface reaches
+ * `ipcMain` only from `onDecided`, which only `lifecycle.start()` and `choose`
+ * reach, both from inside `main` -- so the order is the launcher's own, and the
+ * two runners beside this name are the same shape.
+ */
+let confirmWindow: LaunchConfirmer = DECLINING_CONFIRMER
+
+/**
+ * newOperations is the console improvements' thirteen rows (I-OPS): the nine of
+ * the contract, and the models and image writes' four.
+ *
+ * It is built here, at module scope, over **readers** rather than values: the
+ * installation, the window and the licence are facts that change under the
+ * surface, and a row that closed over one of them would drive the installation
+ * the console was pointing at when the process started. Nothing is spawned and
+ * nothing is walked when this constant is built -- the binary is resolved once
+ * per installation, at the first message of the set (`src/main/handlers.ts`),
+ * which is the resolution the bound source pays per binding too.
+ *
+ * `lapsed` is the same predicate the lapse gate is built from
+ * (`licenceStateOf` over the store's reply), because the two writes ask it a
+ * second time **where they really start**: the window's own yes reaches
+ * `runApply` with no IPC handler on the path, so the gate on the row is not what
+ * stops a plan made after the lapse (`modelsadd.ts` says so at the field). The
+ * setup wizard is the third flow that asks it, for the same reason and on the
+ * same path: it is handed the bound installation's project when there is one and
+ * no project at all in the no-installation state, where there is no key that
+ * could have lapsed (`src/main/handlers.ts`).
+ */
+const newOperations = newOperationHandlers({
+  binding: activeBinding,
+  confirmer: () => confirmWindow,
+  settingsEditor: () => settingsEditorRunner,
+  lapsed: (project) => licenceStateOf(licenceStore.read(project, new Date())) === 'lapsed',
+  appEnv: process.env,
+  log: createSpawnLog(process.env),
+})
+
+/**
  * gated is the whole surface, and it is the join the two modules describe:
  * `handlersFor` answers the twelve operations that read the CLI -- eleven
  * before console L5b added `runs.stats` (`src/source/source.ts`'s
@@ -961,16 +1031,39 @@ const gated: ConsoleHandlers = {
   // joined here for the reason the four above are: neither is a read of the
   // active installation's *source*, so `handlersFor` leaves them out
   // (`CliBackedHandlers` in `src/source/source.ts` says so from the other side)
-  // -- `command: null` is the same fact from the table's side. Eleven rows of
-  // the surface spawn nothing at all (the nine that answer the console's own
-  // state or open a window, and these two), and these are the only two of the
-  // eleven that keep a **credential**. Both read `licenceStore`, which is built
+  // -- `command: null` is the same fact from the table's side: neither of these
+  // two spawns a child, and of every row there of that kind they are the only
+  // two that keep a **credential**. Both read `licenceStore`, which is built
   // above and answers for the active installation, and both are unreachable in
   // a reduced console's withheld views by not being on one: a lapsed
   // installation is exactly the case in which the box that takes a renewal has
-  // to open (`docs/design/lapse-read-only.md`).
+  // to open (`docs/lapse-read-only/spec.md`).
   'licence.read': () => licenceRead(),
   'licence.save': (args) => licenceSave(args),
+  // **The console-improvements operations, on their real handlers** (I-OPS).
+  // They are spread from one table rather than named one by one, and the table
+  // is `handlers.ts`'s: the nine the contract names, the models and image
+  // writes' four, and the settings editor's own -- thirteen rows over the active
+  // installation, built at the first message of the set and never at startup.
+  // The two setup rows are the exception to "over the active installation", and
+  // they are the state's whole point: with nothing chosen they are the
+  // onboarding wizard (`handlers.ts`'s `loadSetup`), which is what the
+  // no-installation view shows in place of a command line.
+  //
+  // **The spread is what keeps every one of them gated.** They are rows of this
+  // same table, so they pass through `reducedModeHandlers` and `lapseHandlers`
+  // exactly as the launch and the settings write do: a console whose compat is
+  // reduced registers no `spend.stream` and no `budget.stream` handler at all,
+  // and a lapsed installation meets the gate on `setup.apply`, `models.add` and
+  // `image.add` before the handler -- and so before any child -- is reached.
+  //
+  // The surface stays as closed as it was when these rows were stubs named one
+  // by one: `registerConsoleHandlers` still refuses to build a table with a
+  // handler missing, and `test/unit/ops-contract.test.ts` holds this table's row
+  // set to the surface's own names, so a name dropped from
+  // `NEW_OPERATION_HANDLER_NAMES` stops the console rather than being answered
+  // by nothing.
+  ...newOperations.rows,
 }
 
 /**
@@ -1192,6 +1285,14 @@ async function main(): Promise<void> {
     entryUrl: CONFIRM_ENTRY_URL,
     session: session.defaultSession,
   })
+  // **The window the console improvements' flows ask as well** (I-OPS): the
+  // wizard, the models write and the image write all open this same window
+  // (D1115: one modal, and now five questions), and `newOperations` reads it
+  // through this name at message time. Set here, before the picker and before
+  // `lifecycle.start`, for the launcher's own reason: those two are the paths
+  // that put the surface on `ipcMain`, so a row a renderer can reach finds this
+  // window rather than the declining default.
+  confirmWindow = confirmer
   launchRunner = createLaunchRunner({
     lookUp: launchLookUp,
     stillRecorded: launchStillRecorded,
@@ -1208,6 +1309,22 @@ async function main(): Promise<void> {
   // nothing else. Built only from `main`, so the runner the surface reads is
   // either this one or the declining default and never a half-built pair.
   settingsEditRunner = createSettingsEdit({
+    readSettings: async () => ({ document: (await boundSource.readSettings({})).document }),
+    argvForEdit: (args, phase, layer) => boundSource.settingsEditArgv(args, phase, layer),
+    spawnEdit: (args, phase, layer, shown) => boundSource.settingsEdit(args, phase, layer, shown),
+    confirmer,
+  })
+  // **The one modal the Project tab's pencil opens** (SU2b, D2902), over the
+  // same window's two-phase confirmer and the same three seams: the read that
+  // names the row and its layer, and the dry run and the write the flow drives
+  // through the source's own plan. It is built inside `main` for the older
+  // edit's reason: the window it needs exists nowhere else, so the runner the
+  // surface reads is either this one or the declining default and never a
+  // half-built pair. It is what replaces the stub the console
+  // improvements' AL left in the surface's table for `settings.editor.open`, and
+  // the older `settings.edit` stays registered beside it and reachable from
+  // nowhere in the renderer.
+  settingsEditorRunner = createSettingsEditor({
     readSettings: async () => ({ document: (await boundSource.readSettings({})).document }),
     argvForEdit: (args, phase, layer) => boundSource.settingsEditArgv(args, phase, layer),
     spawnEdit: (args, phase, layer, shown) => boundSource.settingsEdit(args, phase, layer, shown),
@@ -1264,11 +1381,19 @@ async function main(): Promise<void> {
       // the active one, so the installation being chosen again is the window
       // that must close. Before `lifecycle.choose`, so the cancel is decided
       // while the old installation's window is still the only one open. The
-      // settings edit's window is the same window (D1115), so the same move
-      // cancels it: an edit read from a project that is no longer the active one
-      // would write to the wrong installation.
+      // settings edit's window is the same window (D1115) -- the older flow's
+      // and the one modal's both, and one subject id between them -- so the same
+      // move cancels all three: an edit read from a project that is no longer
+      // the active one would write to the wrong installation.
       launchRunner.cancelFor(chosen.project)
       settingsEditRunner.cancelFor(chosen.project)
+      settingsEditorRunner.cancelFor(chosen.project)
+      // The console improvements' three window subjects (I-OPS) -- the wizard's
+      // plan, the models write's and the image write's: each is keyed by the
+      // project it affects, so re-choosing an installation closes whichever of
+      // them that project has open rather than letting a plan made for one
+      // installation be applied while another is active.
+      newOperations.cancelFor(chosen.project)
       resolvedBinaries.set(chosen.project, chosen.resolvedBinaryPath)
       return lifecycle.choose(chosen.compatibility).catch(reportAndQuit)
     },
@@ -1286,10 +1411,17 @@ async function main(): Promise<void> {
     // the **active** installation away, and it is handed a record **id**, while
     // a launch in flight names its own installation and the launcher closes a
     // window by project. So every removal this console performs closes the
-    // launch that project has open, active row or not.
+    // launch that project has open, active row or not -- and the settings
+    // window the project has open, either flow's (D1115).
     onRecordRemoved: (project) => {
       launchRunner.cancelFor(project)
       settingsEditRunner.cancelFor(project)
+      settingsEditorRunner.cancelFor(project)
+      // Rule 11's "removed", the console improvements' half (I-OPS): a record a
+      // removal took away closes whatever of the wizard's, the models write's
+      // and the image write's windows that project had open -- active row or
+      // not, exactly as the two runners above.
+      newOperations.cancelFor(project)
     },
     // The crash reporter's checkbox, on the platforms the owner's ruling of
     // 2026-10-30 gives it (`darwin` and `linux`) and not on Windows. It is the

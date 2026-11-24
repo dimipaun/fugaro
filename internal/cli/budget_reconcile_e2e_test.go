@@ -32,15 +32,15 @@ var runnerSpendGolden = filepath.Join("..", "runner", "testdata", "spend_accurac
 //
 //   - the fixture makes three calls of the same usage, two reporting a cost
 //     (0.0021 and 0.0004) and one reporting none, on a route with a 10% fee;
-//   - the table's row for the model bands those two calls at 0.00027 to
-//     0.00272, with no fee in the band, so it compares with the report;
+//   - the table's row for the model bands those two calls at 0.00067 to
+//     0.00392, with no fee in the band, so it compares with the report;
 //   - the charge is what the ledger settles under SA2.1: the provider's own cost
 //     for the two calls that report one, and the policy's price for the third.
 const (
-	spendChargeUSD   = 0.004246
+	spendChargeUSD   = 0.004906
 	spendReportedUSD = 0.0025
-	spendTableLoUSD  = 0.00027
-	spendTableHiUSD  = 0.00272
+	spendTableLoUSD  = 0.00067
+	spendTableHiUSD  = 0.00392
 	spendUnreported  = 1
 	spendCalls       = 3
 	spendModel       = "deepseek/deepseek-v4-flash"

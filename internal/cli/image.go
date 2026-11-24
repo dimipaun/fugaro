@@ -604,7 +604,7 @@ func appliedBuildMountsServed(lc *localcfg.Config, repo string) bool {
 // converge's first build and the daily image check submit. gitSecretID is the
 // secret the build's clone reads (rs.Secrets[ws.GitSecret] would be the
 // repository's own copy, which Readiness may have resolved past: design
-// docs/design/project-secrets.md §5), never looked up here, and "" for a
+// docs/project-secrets/spec.md §5), never looked up here, and "" for a
 // repository the credentials service serves, whose request names no secret
 // (CredentialsServiceURL, which the caller sets).
 func cloudBuildSpec(rs infra.RepoSpec, cfg *config.Config, name, base, machineType, bucket, gitSecretID string) (gcp.BuildSpec, error) {
@@ -1011,7 +1011,7 @@ func loadCheckoutResolved(ctx context.Context, dir string, lc *localcfg.Config, 
 	out, err := exec.CommandContext(ctx, "git", args...).Output()
 	if err != nil {
 		if dir != "" {
-			return "", rf, &ExitError{Code: ExitUserError, Err: fmt.Errorf("%s is not inside a git checkout; point at the repository's checkout", dir)}
+			return "", rf, &ExitError{Code: ExitUserError, Err: fmt.Errorf("%s is not inside a git checkout; it takes the checkout's PATH, not owner/name: run it from inside the checkout (for update, --repo alone), or pass the checkout's path", dir)}
 		}
 		return "", rf, &ExitError{Code: ExitUserError, Err: errors.New("not inside a git checkout; run this from the repository")}
 	}

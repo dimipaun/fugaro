@@ -12,8 +12,8 @@ siblings are `docs/no-prompt-policy` (D1540–D1559, PR #1906) and `docs/composi
 
 | Spec concept | What the repo already has |
 | --- | --- |
-| viewer / operator / admin, ranked | `internal/mobileauth`: `Role`, `RoleViewer`, `RoleOperator`, `RoleAdmin`, `Rank`, `AtLeast`, `ParseRole` (closed set). Used only for device nodes; "recorded authority, not enforced" (`docs/design/roles.md` §1.1) |
-| The roles over the installation's people | **`docs/design/roles.md`** (D680–D695, owner answered 2026-10-30, all as recommended): `launchers` = operator, `operators` = admin, a new viewer list; project-wide IAM lists with no per-repo grant |
+| viewer / operator / admin, ranked | `internal/mobileauth`: `Role`, `RoleViewer`, `RoleOperator`, `RoleAdmin`, `Rank`, `AtLeast`, `ParseRole` (closed set). Used only for device nodes; "recorded authority, not enforced" (`docs/roles/spec.md` §1.1) |
+| The roles over the installation's people | **`docs/roles/spec.md`** (D680–D695, owner answered 2026-10-30, all as recommended): `launchers` = operator, `operators` = admin, a new viewer list; project-wide IAM lists with no per-repo grant |
 | A command that grants and removes | `fugaro user` (`internal/cli/user.go`: `ls`, `add`, `rm`): edits `terraform.launchers` / `terraform.operators` in **this machine's own project config**; nothing applies until the next `fugaro update` |
 | Who the caller is | `internal/cli/roles.go`: `operatorMember`, `launcherMember`, `meMember` read the local config's lists. Deliberately "never shared with anything that authorises" |
 | Repo set, and "every repo incl. later" | the published policy's `allow_repos`, written by `fugaro project repos add/rm` (`internal/cli/project_enroll.go`); `["*"]` is the list's own all-repos entry |
@@ -29,7 +29,7 @@ siblings are `docs/no-prompt-policy` (D1540–D1559, PR #1906) and `docs/composi
 type moves (or is re-exported) into the new `internal/access` package so the CLI, the console's reads and
 the pairing path call one function (RS1).
 
-**F2 — Rule: the roles are already designed, project-wide.** `docs/design/roles.md` fixes what each rank
+**F2 — Rule: the roles are already designed, project-wide.** `docs/roles/spec.md` fixes what each rank
 holds per surface, names the enforcement point of every action and marks which are **boundaries** (an
 API refuses) and which are **conveniences** (the person runs their own CLI). The spec adds the one thing
 that design lacks: scope. *Consequence:* this package extends that design; it does not replace it, and
@@ -199,7 +199,7 @@ scope: it keeps the cloud grant (RS3 keeps deriving it) and is listed by `ls` as
 resolver does not rank it (it cannot know a caller's groups), so a command check treats such a caller by
 their own `user:` grant or as nobody. The migration test covers each form.
 
-**F26 — Rule, round 1: this design reverses answered decisions of `docs/design/roles.md`.** D1580
+**F26 — Rule, round 1: this design reverses answered decisions of `docs/roles/spec.md`.** D1580
 reverses **D690(a)** ("the CLI does not rank its own commands") and **D691(a)** (the console does not
 know a role) and narrows **D446** ("enforced system-wide, the cloud included"); roles.md on main still
 shows D681–D695 with status `open` although the owner answered them on 2026-10-30. *Consequence:*

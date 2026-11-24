@@ -17,7 +17,7 @@ import (
 )
 
 // fugaro mailbox (mobile P4.1, Task T5): the exit contract of
-// docs/plans/2026-10-18-mobile-mailbox-consumer.md §4.4, tested on the
+// the mobile mailbox-consumer plan (mobile/mailbox-consumer-plan.md under docs) §4.4, tested on the
 // command's own RunE, on both sides of every row — plus §4.3's document, which
 // must name the project and must never carry a message's text or a key.
 //

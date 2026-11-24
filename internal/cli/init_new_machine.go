@@ -20,8 +20,9 @@ import (
 // A new machine (design §3.1, "A new team member", and the owner's own second
 // machine): the installation exists (its Terraform state is in the state
 // bucket) and this machine has no local config for it. That is `fugaro
-// update`'s case. `fugaro setup` only starts fresh: it refuses a project that
-// no run of setup created before it gets here (init_project.go), so the one
+// update`'s case. `fugaro setup` makes a project Fugaro's only when it holds
+// nothing of Fugaro's, so it refuses one an earlier run of setup installed
+// into before it gets here (init_project.go), and the one
 // setup run that reaches this is the creator's own resume, after an earlier
 // run applied the installation and stopped before writing its config. The installation
 // stage then does what update --config-only does, writing the config from the
@@ -77,7 +78,7 @@ func (r *initRun) newMachineConfig(ctx context.Context, e *initEngine) error {
 	if !r.o.adminsChanged && len(next.Terraform.Admins) == 0 {
 		next.Terraform.Admins = slices.Clone(outs.Operators)
 	}
-	r.newMachineBudget(ctx, e, outs, &next)
+	r.newMachineBudget(ctx, e, &next)
 	if err := r.configOnly(ctx, e.c, e.t, e.wd, &next, e.spec, e.path, e.old); err != nil {
 		return err
 	}
@@ -140,66 +141,62 @@ func roleNotes(outs infra.InstallationOutputs, door string) []string {
 	}
 }
 
-// newMachineBudget fills next's budget section from the Firebase root's outputs
-// (the realtime database's URL, the Firebase project, its restricted web API
-// key and the token signer), so a teammate's watch and runs find the budget
-// backend without an owner's update --firebase-project. Read only: terraform init and
+// budgetDatabaseFromState fills next's budget block from the Firebase root's
+// recorded outputs — the realtime database's URL, the Firebase project, its
+// restricted web API key and the token signer — so that a machine which has no
+// database of its own adopts the installation's. Read only: terraform init and
 // output in the Firebase root, which needs no variables and changes no state.
-// None of the four is a secret (the API key is restricted by design) and
-// nothing the outputs do not hold is written: not the mode, not the caps. An
-// installation with no budget backend, no Firebase state, or outputs that can't
-// be read or fail validation leaves the section as it is, saying why; the
-// config is still written.
-func (r *initRun) newMachineBudget(ctx context.Context, e *initEngine, outs infra.InstallationOutputs, next *localcfg.Config) {
-	if outs.HistoryServiceAccount == "" {
-		return // no budget backend: nothing to find
-	}
-	skip := func(why string) {
-		fmt.Fprintf(r.w, "the budget section of the local config was left empty (%s); watch and the budget commands need it: an owner's fugaro update --firebase-project %s fills it, or rerun this once the Firebase root's state can be read\n", why, e.spec.Project)
-	}
-	switch ok, err := infra.StateExists(ctx, e.c, e.spec.StateBucket, infra.StatePrefixFirebase); {
+//
+// It is the adoption half of both doors that meet a database which exists and is
+// unknown on this machine: a teammate's new machine (`fugaro update` on a
+// machine that has never held a config for the installation) and `fugaro update`
+// itself with no --firebase-project (AB7, R2). Two rules are its own, and both
+// are about a document anyone who can write the state bucket can write:
+//
+//   - The probe is the Firebase STATE's and never the history account's (F23).
+//     The history account is an output of the installation root and says nothing
+//     about whether the Firebase root was ever applied, while the state is what
+//     that apply wrote.
+//   - Every output is pinned to fp, the installation's OWN project (F24).
+//     CheckFirebaseOutputsFor refuses an rtdb_url that is not that project's
+//     database and a signer that is not its account, so a write to the state
+//     bucket can never point every run's session at a foreign database.
+//
+// None of the four is a secret (the API key is restricted by design) and nothing
+// the outputs do not hold is written: not the mode, not the caps. ok is whether
+// the block was filled; why says why it was not, in one line ready to print.
+func (r *initRun) budgetDatabaseFromState(ctx context.Context, c *infra.Clients, bin, stateBucket, fp string, next *localcfg.Config) (ok bool, why string) {
+	switch exists, err := infra.StateExists(ctx, c, stateBucket, infra.StatePrefixFirebase); {
 	case err != nil:
-		skip("the Firebase root's state could not be listed: " + oneLineCLI(err.Error()))
-		return
-	case !ok:
-		skip("there is no Firebase root state in gs://" + e.spec.StateBucket + ", so the budget backend was not deployed with --firebase-project")
-		return
+		return false, "the Firebase root's state could not be listed: " + oneLineCLI(err.Error())
+	case !exists:
+		return false, "there is no Firebase root state in gs://" + stateBucket + ", so the budget backend was not deployed with --firebase-project"
 	}
-	fdir, err := infra.FirebaseWorkdir(os.Getenv, e.lc.GCPProject)
+	fdir, err := infra.FirebaseWorkdir(os.Getenv, next.GCPProject)
 	if err != nil {
-		skip(oneLineCLI(err.Error()))
-		return
+		return false, oneLineCLI(err.Error())
 	}
-	fwd, ft, err := r.terraform(e.bin, fdir, "firebase")
+	fwd, ft, err := r.terraform(bin, fdir, "firebase")
 	if err != nil {
-		skip(oneLineCLI(err.Error()))
-		return
+		return false, oneLineCLI(err.Error())
 	}
-	backend, err := fwd.WriteBackend(e.spec.StateBucket, infra.StatePrefixFirebase)
+	backend, err := fwd.WriteBackend(stateBucket, infra.StatePrefixFirebase)
 	if err != nil {
-		skip(oneLineCLI(err.Error()))
-		return
+		return false, oneLineCLI(err.Error())
 	}
 	if err := ft.Init(ctx, backend); err != nil {
-		skip("terraform init in the Firebase root failed: " + oneLineCLI(err.Error()))
-		return
+		return false, "terraform init in the Firebase root failed: " + oneLineCLI(err.Error())
 	}
 	raw, err := ft.Output(ctx)
 	if err != nil {
-		skip("the Firebase root's outputs could not be read: " + oneLineCLI(err.Error()))
-		return
+		return false, "the Firebase root's outputs could not be read: " + oneLineCLI(err.Error())
 	}
 	fo, err := infra.DecodeFirebaseOutputs(raw)
 	if err != nil {
-		skip(oneLineCLI(err.Error()))
-		return
+		return false, oneLineCLI(err.Error())
 	}
-	// The outputs are state anyone with the state bucket can write: they must
-	// all be one Firebase project's (the one passed with --firebase-project, else the
-	// one they name), or none is kept.
-	if err := infra.CheckFirebaseOutputsFor(fo, r.o.firebase, e.lc.Endpoints.NoAuth); err != nil {
-		skip(oneLineCLI(err.Error()))
-		return
+	if err := infra.CheckFirebaseOutputsFor(fo, fp, next.Endpoints.NoAuth); err != nil {
+		return false, oneLineCLI(err.Error())
 	}
 	b := localcfg.Budget{}
 	if next.Budget != nil {
@@ -211,14 +208,31 @@ func (r *initRun) newMachineBudget(ctx context.Context, e *initEngine, outs infr
 	// The outputs come from state anyone with the state bucket can write: each
 	// goes through the config's own validation before it is kept.
 	if data, err := trial.Marshal(); err != nil {
-		skip(oneLineCLI(err.Error()))
-		return
+		return false, oneLineCLI(err.Error())
 	} else if _, err := localcfg.Parse(data); err != nil {
-		skip("an output of the Firebase root is not valid: " + oneLineCLI(err.Error()))
-		return
+		return false, "an output of the Firebase root is not valid: " + oneLineCLI(err.Error())
 	}
 	next.Budget = &b
-	fmt.Fprintf(r.w, "the budget section of the local config was filled from the Firebase root's outputs (project %s, its realtime database, web API key and token signer; none is a secret): watch and runs can use the budget backend\n", pluginwire.Printable(fo.FirebaseProject))
+	// The Firebase root's outputs are this run's too, and not only the copy of
+	// them it is about to write into the config: the installation-2 stage runs
+	// behind an adoption that reaches it (F29), and the history job it deploys
+	// is composed from the adopted root's outputs (firebaseHistory refuses to
+	// run without them).
+	r.fb = &fo
+	return true, ""
+}
+
+// newMachineBudget fills next's budget section from the Firebase root's outputs
+// (budgetDatabaseFromState), so a teammate's watch and runs find the budget
+// backend without an owner's update --firebase-project. What it cannot read
+// leaves the section as it is, saying why; the config is still written.
+func (r *initRun) newMachineBudget(ctx context.Context, e *initEngine, next *localcfg.Config) {
+	ok, why := r.budgetDatabaseFromState(ctx, e.c, e.bin, e.spec.StateBucket, e.lc.GCPProject, next)
+	if !ok {
+		fmt.Fprintf(r.w, "the budget section of the local config was left empty (%s); watch and the budget commands need it: an owner's fugaro update --firebase-project %s fills it, or rerun this once the Firebase root's state can be read\n", why, e.spec.Project)
+		return
+	}
+	fmt.Fprintf(r.w, "the budget section of the local config was filled from the Firebase root's outputs (project %s, its realtime database, web API key and token signer; none is a secret): watch and runs can use the budget backend\n", pluginwire.Printable(next.Budget.FirebaseProject))
 }
 
 // The installation's region, and a --region that is not it. `fugaro setup` and

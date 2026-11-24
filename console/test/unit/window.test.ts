@@ -1169,7 +1169,7 @@ describe('startupWindow', () => {
   })
 
   it('builds the window for a dev build too, and says on it that the line is unplaceable', async () => {
-    // The wiring half of the plan's open item 3 (`docs/plans/2026-10-15-desktop-console.md`),
+    // The wiring half of the plan's open item 3 (`docs/desktop-console/implementation-plan.md`),
     // answered on 2026-10-22: a dev CLI opens the dashboard in the reduced mode
     // rather than being refused. So this is the `ok`/reduced path and not the
     // refusal one -- the window is built, it loads the dashboard document, and

@@ -91,10 +91,16 @@ const ServicesEnv = "FUGARO_SERVICES"
 // Cloud Run and one that lands on Batch differ in nothing the launcher's
 // entry is allowed to name — and because they did not: Cloud Run reserved the
 // platform's five and Batch reserved the keys of its own variables map, which
-// holds four of them and no FUGARO_BUCKET (no Batch job writes the runs
-// bucket; Batch's launcher wiring is not built yet), so an entry naming
-// FUGARO_BUCKET was refused on one backend and applied on the other (the
-// review finding on this change).
+// held four of them and no FUGARO_BUCKET, so an entry naming FUGARO_BUCKET was
+// refused on one backend and applied on the other (the review finding on that
+// change). The bucket is no longer the difference: a Batch job carries what
+// the deployed job it stands in for carries (F8, BR8), FUGARO_BUCKET among
+// them, so the shared list and the job's own map now agree on it — and Batch
+// reserves the rest of that set too, which is what "each is reserved against a
+// launch entry" asks of it, the one name in it a launch is itself the writer
+// of excepted (FUGARO_CREDENTIALS_SERVICE_URL: internal/backend/batch/env.go,
+// which would otherwise refuse the launcher's own entry on a switched
+// repository where Cloud Run carries it).
 //
 // A backend whose environment does not hold a name here still reserves it:
 // on Batch the map is the whole of the task's environment, so the entry would

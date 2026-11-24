@@ -4,7 +4,7 @@
 package register
 
 // The lapse limit (RS9 of docs/roles-scopes/implementation-plan.md) at the one
-// point that sets it (design docs/design/ee-boundary-moves.md §5.5): which
+// point that sets it (design docs/ee-reorg/boundary-moves.md §5.5): which
 // actions a lapsed subscription keeps, what a Subscription surface answers
 // because of it, and the set-once rule that keeps a later caller from handing
 // the paid features back. The limit and its installation are one file here

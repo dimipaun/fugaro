@@ -52,14 +52,42 @@ func startable(p Phase) bool {
 	return p == PhaseQueued || p == PhaseFailed || p == PhaseBlocked
 }
 
-// dependenciesDone reports whether every item this one depends on is done. A
-// dependency the list does not carry holds the item rather than being read as
-// done: that is a thing for a person to look at, and holding back is the
+// crossPhases is what the references into other orchestrators resolved to, as
+// the one reading that resolves them keeps them (D3208): the phase of the item a
+// reference names, keyed by the reference exactly as the item wrote it. A
+// reference the reading did not resolve has no entry, and a nil map resolves
+// none — which is the same answer an unresolved local dependency gets, and the
 // direction that starts nothing.
+type crossPhases map[string]Phase
+
+// dependenciesDone reports whether every item this one depends on is done, read
+// off the one node the item is on. It is dependenciesMet with no reading of the
+// other orchestrators: what a caller that holds one — a cycle's plan — uses is
+// that function, and every other caller's items depend on their own node's.
 func dependenciesDone(s State, w WorkItem) bool {
-	for _, id := range w.DependsOn {
-		dep, ok := s.Item(id)
-		if !ok || !dep.Phase.Done() {
+	return dependenciesMet(s, nil, w)
+}
+
+// dependenciesMet reports whether every item this one depends on is done: the
+// items of its own node read off s, and the items of other orchestrators read
+// off the phases a cycle resolved for this node's references (D3208). A
+// dependency either reading does not carry holds the item rather than being read
+// as done: that is a thing for a person to look at, and holding back is the
+// direction that starts nothing.
+//
+// A reference to this node's own orchestrator is a cross reference by shape and
+// resolves like any other, which is what keeps one rule for both spellings: the
+// cycle that resolved it read this node's items anyway.
+func dependenciesMet(s State, other crossPhases, w WorkItem) bool {
+	for _, dep := range w.DependsOn {
+		if _, cross, err := depRef(dep); err == nil && cross {
+			if phase, ok := other[dep]; !ok || !phase.Done() {
+				return false
+			}
+			continue
+		}
+		item, ok := s.Item(dep)
+		if !ok || !item.Phase.Done() {
 			return false
 		}
 	}
@@ -220,7 +248,12 @@ func ladderCoveredDigest(s State, w WorkItem, at time.Time) (Digest, bool) {
 // side owes is this count, and until it holds it the item waits — the direction
 // that starts nothing rather than the one that spends a person's attempt on a
 // run the ladder launched.
-func nextAttempt(s State, w WorkItem) (Action, bool) {
+//
+// other is what this cycle resolved the item's cross references to (D3208), and
+// nil for a caller that holds no such reading: an item depending on another
+// orchestrator's work then waits, which is the direction a plan that cannot see
+// the far end fails in.
+func nextAttempt(s State, other crossPhases, w WorkItem) (Action, bool) {
 	approval := w.Approved
 	if approval == nil || !startable(w.Phase) {
 		return Action{}, false
@@ -231,7 +264,7 @@ func nextAttempt(s State, w WorkItem) (Action, bool) {
 		// another spec, so there is nothing here to start under their go.
 		return Action{}, false
 	}
-	if !dependenciesDone(s, w) {
+	if !dependenciesMet(s, other, w) {
 		return Action{}, false
 	}
 	under := normalRunsUnder(s, w, *approval)
@@ -320,16 +353,55 @@ func recovery(s State, view RunView, w WorkItem, it Intent, now time.Time) (Acti
 // The spec it starts from is read off that item rather than taken from the
 // action, so what the launcher is handed is the state's own spec.
 func reissuable(s State, a Action) (WorkItem, error) {
-	w, ok := s.Item(a.ItemID)
-	if !ok {
-		return WorkItem{}, fmt.Errorf("%w: no work item %q", ErrNotFound, safetext.OneLine(a.ItemID))
+	w, it, err := openAttempt(s, a.ItemID, a.IntentID, a.RunID)
+	if err != nil {
+		return WorkItem{}, err
 	}
-	it, open := openIntentOf(s, a.ItemID)
-	if !open || it.ID != a.IntentID || it.RunID != a.RunID {
-		return WorkItem{}, fmt.Errorf("%w: %q carries no attempt recorded as %q under run %q", ErrInvalid, safetext.OneLine(a.ItemID), safetext.OneLine(a.IntentID), safetext.OneLine(a.RunID))
-	}
-	if w.Phase.Done() || SpecDigest(w) != it.SpecDigest || it.SpecDigest != a.Digest || !(approvalCovers(w, it) || spentBy(w, it)) {
+	if it.SpecDigest != a.Digest {
+		// The plan was made from an earlier read of the node: the attempt is
+		// the one the state still holds, but not under the spec this action
+		// was built over, and a launch is not started from a stale read.
 		return WorkItem{}, fmt.Errorf("%w: the attempt %q of %q is not one to start", ErrInvalid, safetext.OneLine(it.ID), safetext.OneLine(a.ItemID))
 	}
 	return w, nil
+}
+
+// ReissuableAttempt is openAttempt for a caller that holds no plan of its own:
+// the credentials service's ticket route, which is asked for an attempt and a
+// run id and answers with the orchestrator's own gate (LM24 of
+// docs/launcher-does-not-mint, D3136). The attempt is the intent's id — the item
+// it names is read the way the record's own ids are (IntentItem) — and the run
+// id is the one the ask names, so the answer is "this record still carries that
+// attempt, under that run, as one a re-issue may start".
+//
+// It exists so that the issuer and the gate cannot drift: a compromised
+// orchestrator account must not be able to ask the issuer for what the
+// launcher's own gate refuses, and a second copy of these checks in the issuer
+// is exactly where the two would come apart. An error is a refusal of the ask,
+// never the service's own failure.
+func ReissuableAttempt(s State, attempt, runID string) (WorkItem, error) {
+	w, _, err := openAttempt(s, IntentItem(attempt), attempt, runID)
+	return w, err
+}
+
+// openAttempt is reissuable's judgement of the record itself, shared with
+// ReissuableAttempt: the item the id names, the open intent that is exactly
+// this attempt under this run id, and the two things that hold whatever a
+// caller planned from — the item is not finished, the item is still the spec
+// the attempt was committed for, and the approval that covers the attempt
+// still stands or is the one the attempt spent. What a plan adds to it is the
+// digest the plan was built over (reissuable).
+func openAttempt(s State, itemID, intentID, runID string) (WorkItem, Intent, error) {
+	w, ok := s.Item(itemID)
+	if !ok {
+		return WorkItem{}, Intent{}, fmt.Errorf("%w: no work item %q", ErrNotFound, safetext.OneLine(itemID))
+	}
+	it, open := openIntentOf(s, itemID)
+	if !open || it.ID != intentID || it.RunID != runID {
+		return WorkItem{}, Intent{}, fmt.Errorf("%w: %q carries no attempt recorded as %q under run %q", ErrInvalid, safetext.OneLine(itemID), safetext.OneLine(intentID), safetext.OneLine(runID))
+	}
+	if w.Phase.Done() || SpecDigest(w) != it.SpecDigest || !(approvalCovers(w, it) || spentBy(w, it)) {
+		return WorkItem{}, Intent{}, fmt.Errorf("%w: the attempt %q of %q is not one to start", ErrInvalid, safetext.OneLine(it.ID), safetext.OneLine(itemID))
+	}
+	return w, it, nil
 }

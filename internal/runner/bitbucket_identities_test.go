@@ -30,12 +30,15 @@ import (
 	"strings"
 	"testing"
 
+	"gocloud.dev/blob/memblob"
+
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // The three accounts these tests speak in. The first is the one GET /user
@@ -125,6 +128,13 @@ func identitiesRun(t *testing.T, node string, edit func(*run)) *run {
 			// (ident.tok, which the proxy mints as the branch claim) is the
 			// fixture's, and only the read this file is about is filled in.
 			r.ident.done, r.ident.db = true, db
+			// A run with a database is a run with a store: its own credential
+			// route is read by the slug the store names (WS18), and the
+			// forwarder starts on that answer before anything else reads the
+			// node this database holds.
+			bucket := memblob.OpenBucket(nil)
+			t.Cleanup(func() { _ = bucket.Close() })
+			r.d.Store = runstore.Open(bucket, identitySlug(t, "bitbucket", "acme/app"), svcRunID)
 		}
 		if edit != nil {
 			edit(r)
@@ -275,20 +285,25 @@ func TestRunnerWithoutTheTokensKeyKeepsToday(t *testing.T) {
 
 // TestRunnerUnreadableSetIsNotCalledComplete: a set this run could not read is
 // unknown, and unknown is not empty. Both ways of failing to read it are asked
-// -- a node the run's database client cannot reach at all, and a key that is
-// there but will not decode -- and each must come back partial, because the
-// alternative is the adapter claiming SelfKnown: the run asserting it can tell
-// its own comments apart when it cannot name the accounts it may have written
-// with. That claim is the one this task exists to stop making, and a failed read
-// is no better ground for it than the two shapes the key itself leaves
-// incomplete (R14's repository token, R3's legacy record).
+// -- a node the rules refuse this run's read of, and a key that is there but
+// will not decode -- and each must come back partial, because the alternative is
+// the adapter claiming SelfKnown: the run asserting it can tell its own comments
+// apart when it cannot name the accounts it may have written with. That claim is
+// the one this task exists to stop making, and a failed read is no better ground
+// for it than the two shapes the key itself leaves incomplete (R14's repository
+// token, R3's legacy record).
+//
+// The first shape was a client that reached nothing at all until WS18, which
+// reads this run's own credential route through the same client before the
+// forwarder starts: a database nothing can reach is now a run that stops at that
+// read, so the refusal the rules answer is the one a run is left with here.
 //
 // The accounts in the node are the ones GET /user answers for and nothing else:
 // a read that failed names no account, so the set is empty and the run falls
 // back to its own token's account -- marked, but never called the whole set.
 func TestRunnerUnreadableSetIsNotCalledComplete(t *testing.T) {
-	t.Run("a node this run cannot read", func(t *testing.T) {
-		r := identitiesRun(t, noTokensNode, func(r *run) { r.ident.db = unreachablePolicyDB(t) })
+	t.Run("a node this run may not read", func(t *testing.T) {
+		r := identitiesRun(t, noTokensNode, func(r *run) { r.ident.db = unreadablePolicyDB(t) })
 		wantsOwn(t, r, map[string]bool{selfUUID: true, otherUUID: false, plantedUUID: false}, false)
 	})
 
@@ -298,14 +313,17 @@ func TestRunnerUnreadableSetIsNotCalledComplete(t *testing.T) {
 	})
 }
 
-// unreachablePolicyDB is a database client of the run's own making that reaches
-// nothing, the shape of a node the run cannot read: the address is one nothing
-// listens on, so the read fails at once (the client makes one attempt and
-// classifies the transport error as unavailable) rather than waiting out a
-// timeout in the test.
-func unreachablePolicyDB(t *testing.T) *rtdb.Client {
+// unreadablePolicyDB is a database client of the run's own making whose read of
+// the published node is refused, the shape a project's rules leave a run in: the
+// node is there and the run is not granted it (gcpfake.DenyRead is what a rule
+// that does not grant a read answers), and the refusal is about that path alone
+// -- the credential route this same run reads first is answered as usual.
+func unreadablePolicyDB(t *testing.T) *rtdb.Client {
 	t.Helper()
-	db, err := rtdb.New("http://127.0.0.1:1", rtdb.Auth{IDToken: func() string { return "run-id-token" }})
+	fake := gcpfake.NewRTDB(t)
+	fake.Set(projectpolicy.PathShared(), json.RawMessage(noTokensNode))
+	fake.DenyRead(projectpolicy.PathShared())
+	db, err := rtdb.New(fake.URL, rtdb.Auth{IDToken: func() string { return "run-id-token" }})
 	if err != nil {
 		t.Fatal(err)
 	}

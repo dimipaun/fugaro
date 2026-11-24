@@ -10,7 +10,7 @@ item may open the launch confirmation with its subject filled in, and nothing on
 a run on its own.
 
 Two rules the concurrent console run is writing into `.claude/rules/console.md` and
-`docs/design/desktop-console.md` shape the whole drawing, and this page is the first that has to
+`docs/desktop-console/spec.md` shape the whole drawing, and this page is the first that has to
 obey both at once:
 
 - **The progressive-rendering rule.** Each section renders when *its own* read answers. The reads

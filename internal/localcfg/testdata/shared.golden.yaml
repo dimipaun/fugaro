@@ -17,6 +17,19 @@ batch:
         GITHUB_TOKEN: projects/my-project/secrets/github-token
     socket_gid: 412
     task_timeout: 6h0m0s
+    opt_in: in
+    seal_key:
+        version: projects/my-project/locations/us-central1/keyRings/fugaro-batch/cryptoKeys/seal-key/cryptoKeyVersions/1
+        public_key: |
+            -----BEGIN PUBLIC KEY-----
+            MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4HUq0vDPYGjr7BfAyKNA
+            XRXxE0+5elG1+QraI8s+0Bx2uUGppkdd8dP3+ECdhfHtVbV8DNo/2iORKRk7DUcB
+            uCny+sSxOpypEzLxx72Sc8I2Uw1KOVUJ2V35hPgXYrmQuJsGPjJNsNGNvWLS+F0l
+            qLRdw3kuDPmwMU7RgSdGscp3DBonCv+S6Brge+p0nEPWk8NJajRgdrgqsHxdz64O
+            Kdnr98DZILIXM+FZd82Bu+O6e0WkaD71IghXJ423z33tHW7H8A/db2MGylzNisqR
+            QkuUGQEbInUQXAka5n/89eHKLVAI7DqOIs/cdx/zPlf8VjaB6g2MSCpCu80iXSD6
+            mQIDAQAB
+            -----END PUBLIC KEY-----
 build:
     machine_type: E2_HIGHCPU_8
 budget:

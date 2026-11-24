@@ -29,10 +29,10 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 	if spec.Repo.Slug == "" || spec.Workflow == "" || spec.RunID == "" {
 		return backend.ExecutionRef{}, notCreated(fmt.Errorf("launching: a run needs a repository slug, a workflow and a run id (got %q, %q, %q)", spec.Repo.Slug, spec.Workflow, spec.RunID))
 	}
-	// The account is asked for before the timeout, so a workflow on a project
-	// job is refused before anything else about the run is worked out -- the
-	// order this check has always had, and the one BR10's red step names
-	// (account.go).
+	// The account is asked for before the timeout, so a workflow whose
+	// deployed job this installation records no account for is refused before
+	// anything else about the run is worked out -- the order this check has
+	// always had, and the one BR10's red step names (account.go).
 	account, err := b.jobAccount(spec)
 	if err != nil {
 		return backend.ExecutionRef{}, notCreated(err)
@@ -159,13 +159,11 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 	// backend adds, so a run whose own watchdog is late is still bounded by
 	// Batch. maxRunDuration bounds a task once it is running; nothing bounds
 	// the queue, which is the reaper's queue deadline (design §1.4).
+	// The environment's variables are the whole of it: a Batch job mounts no
+	// secret (secrets.go, D3104), so the run's credentials arrive from the
+	// credentials service and nowhere else -- the launcher refuses a launch the
+	// service does not serve, before the mint, so no job is ever built for one.
 	env := &batch.Environment{Variables: vars}
-	// Names, never values: the VM reads the named secrets itself, and secrets.go
-	// is what mounts them (and what refuses a name the job's own variables
-	// already carry).
-	if err := b.secretVariables(env, full); err != nil {
-		return nil, err
-	}
 	return &batch.Job{
 		// The labels go in both fields (C13): Job.labels reach the job and
 		// its LogEntries, AllocationPolicy.labels reach the VMs.
@@ -188,9 +186,10 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 					},
 				},
 			}},
-			// Never the default Compute Engine account: New refuses it. Which
-			// account it is -- the workflow's deployed job's, or the block's
-			// single one today -- is account.go's answer, asked in Launch.
+			// Never the default Compute Engine account: New refuses the
+			// block's, and account.go refuses the one a job is built with.
+			// Which account it is is account.go's answer (BR10): the account
+			// of the deployed job the run stands in for, asked in Launch.
 			ServiceAccount: &batch.ServiceAccount{Email: account},
 			// The VMs carry no external IP (design §1.7, C7). Both names are
 			// sent because Check 57a measured that Batch refuses

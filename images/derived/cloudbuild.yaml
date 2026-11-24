@@ -90,7 +90,7 @@ substitutions:
   _SECRET_ENVS: ""    # space-separated workflow secret variables; each is also in availableSecrets
   _BUCKET: ""         # the runs bucket, gs://<name>, which holds the build record
   _SLUG: ""           # the repository's storage slug: the record is builds/<slug>/<workflow>/image.json
-  _PROJECT_LAYER_SHA256: ""  # the project layer's sha256, "" for none: render reads builds/<slug>/project-layer.yaml and refuses another (docs/design/layered-config.md §8)
+  _PROJECT_LAYER_SHA256: ""  # the project layer's sha256, "" for none: render reads builds/<slug>/project-layer.yaml and refuses another (docs/layered-config/spec.md §8)
   _CREDENTIALS_SERVICE_URL: ""  # the installation's credentials service, "" until a repository is switched to it. The credential step fetches the build's credentials there when it is set (B4.5)
   _CATALOG_TAG: ""    # a catalog build's content tag: the sha256 of the definition it built. A repository's own build never reads it
   _SELFTEST_B64: ""   # a catalog build's smoke spec, base64 (image.SpecForCloud as the submitter rendered it). A repository's own build never reads it

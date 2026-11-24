@@ -23,7 +23,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/identitywire"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
@@ -179,6 +181,12 @@ const (
 	// secret by (internal/credsvc's maxHeaderTokenBytes, unexported there):
 	// the same bound as the token this run presents beside it.
 	maxSlipSecretBytes = 512
+	// maxIdentityTicketBytes bounds the identity ticket this run will carry
+	// into a claim (identitywire.TicketEnv): the service draws it from
+	// crypto/rand, exactly as it draws a slip's claim secret, so this is that
+	// secret's own bound. A longer value is damage to the job's environment,
+	// refused where it is parsed rather than put on the wire.
+	maxIdentityTicketBytes = maxSlipSecretBytes
 )
 
 // slipBeatEvery is how often the beat asks the service to read the slip back
@@ -229,16 +237,31 @@ type Backend struct {
 	// starts (runner.go's addSealKey), and nothing that formats the marker's
 	// value or this field may print it.
 	TokenKey []byte
+	// Ticket is the identity ticket the launcher that started this execution
+	// was issued for it, read out of the job's environment
+	// (identitywire.TicketEnv, LM6): the run claims its identity from the
+	// installation's credentials service with it, instead of opening the
+	// sealed object a signing launcher left (LM7, R7). It is a secret of the
+	// service's, handed to one execution and dying into a token at the claim:
+	// it is registered with the run's redactor before its first use, and
+	// nothing that formats this field may print it.
+	//
+	// Only one of the two is ever set by a launch -- the flag and the ticket
+	// are the two mechanisms of one bridge -- and the ticket wins where both
+	// are, because it is what the launcher of this release asked the issuer
+	// for.
+	Ticket string
 	// MalformedEnv is set, beside BackendErr, when the job's environment
 	// carries the backend URL or the launcher's marker and the value could not
 	// be parsed: the fields above are then only as far as the parse got, and
 	// the run must not read the zero value as "this job has no backend" (L-b
 	// of the security review of PR #379). Losing the marker that way is what
-	// would let a budget-off job skip the read of the project's policy without
-	// a word, which is the one place the marker did not fail closed. A
-	// malformed value that describes no backend at all (a stray grace, an API
-	// key with no URL) leaves it false, and a budget-off run ignores it as it
-	// ignores the rest of the backend's environment.
+	// would let a job skip the read of the project's policy without a word,
+	// which is the one place the marker did not fail closed. A malformed value
+	// that describes no backend at all (a stray grace, an API key with no URL)
+	// leaves it false: such a value is damage to the ceiling's environment
+	// like any other, and from AB1a on (D3009, R3) it stops the run too, but it
+	// is not a state in which the run lost something it was told it had.
 	MalformedEnv bool
 	// Tune, for tests only, adjusts the session's configuration (the fakes'
 	// URLs, short intervals).
@@ -249,6 +272,18 @@ type Backend struct {
 
 // On reports whether a backend is configured.
 func (b Backend) On() bool { return b.RTDBURL != "" }
+
+// Issued reports whether the launcher that started this execution provisioned
+// this run's identity for it: the old marker, whose value is the seal key of
+// the object it left in the runs bucket, or the ticket it asked the issuer for
+// (LM6, LM7). Either one says the same thing about the job's environment --
+// this run has an identity it must be accounted for with, so a job that carries
+// neither a database nor a database key to read is a job that cannot use what
+// it was given, and the run refuses rather than going on outside the shared
+// caps (M2). One predicate for the two mechanisms, because the two answer every
+// question the run asks of them the same way (R7: both live here for one
+// release).
+func (b Backend) Issued() bool { return b.TokenMarked || b.Ticket != "" }
 
 // BackendFromEnv reads the backend from the job's environment. loopbackOK
 // admits a database on a loopback address (a local run against a fake or an
@@ -263,11 +298,16 @@ func BackendFromEnv(lookup func(string) (string, bool), loopbackOK bool) (Backen
 	url, hasURL := lookup(RTDBURLEnv)
 	key, hasKey := lookup(FirebaseAPIKeyEnv)
 	marker, hasMarker := lookup(BudgetTokenEnv)
+	ticket, hasTicket := lookup(identitywire.TicketEnv)
 	grace, hasGrace := lookup(BudgetGraceEnv)
-	// Everything but the two below describes no backend on its own: a stray
-	// grace or an API key with no URL is damage a budget-off run ignores, as it
-	// ignores the rest of the backend's environment.
-	b.MalformedEnv = hasURL || hasMarker
+	// Everything but the ones below describes no backend on its own: a stray
+	// grace or an API key with no URL is damage to the ceiling's environment
+	// rather than a backend this job carries. The three that do are the URL and
+	// the two things a launcher writes to say it provisioned this run's
+	// identity (the seal-key marker and the ticket): each is something only a
+	// launcher that saw a budget writes, so each must not be lost to a parse
+	// that failed (L-b).
+	b.MalformedEnv = hasURL || hasMarker || hasTicket
 	if hasURL {
 		if err := rtdb.ValidateURL(url, loopbackOK); err != nil {
 			return b, fmt.Errorf("%s: %v", RTDBURLEnv, err)
@@ -307,6 +347,25 @@ func BackendFromEnv(lookup func(string) (string, bool), loopbackOK bool) (Backen
 			b.TokenMarked, b.TokenKey = true, key
 		}
 	}
+	if hasTicket {
+		// Only a launcher that was issued a ticket for this run writes it, and
+		// it is a value this run presents to the issuer in a claim (LM6, LM7).
+		// Anything this run cannot carry there is damage to the job's
+		// environment, reported as an infra_error rather than read as "no
+		// ticket": a run that lost the ticket would look for the sealed object
+		// of a launch that minted none, and stop over the wrong cause.
+		//
+		// The value is a secret and this parse runs before any redactor
+		// exists, so the refusal names the variable and the shape it wants and
+		// never the value (the marker's own rule, above). The floor is the one
+		// every other registered value holds (minSecretLen): a ticket shorter
+		// than that cannot be redacted without redacting text that is not a
+		// secret, and no service draws one that short.
+		if len(ticket) < minSecretLen || len(ticket) > maxIdentityTicketBytes || !printableToken(ticket) {
+			return b, fmt.Errorf("%s: it must be the identity ticket a launcher was issued for this run, one printable value of at least %d and at most %d bytes, and only such a launcher sets it", identitywire.TicketEnv, minSecretLen, maxIdentityTicketBytes)
+		}
+		b.Ticket = ticket
+	}
 	if hasGrace {
 		d, err := time.ParseDuration(grace)
 		if err != nil || d < budget.MinGrace || d > budget.MaxGrace {
@@ -317,10 +376,11 @@ func BackendFromEnv(lookup func(string) (string, bool), loopbackOK bool) (Backen
 	return b, nil
 }
 
-// backendOn reports whether this run uses the budget backend: a backend is
-// configured and the merged budget mode is observe or enforce. A run whose
-// budget is off never touches it (D14 exempts off).
-func (r *run) backendOn() bool { return r.d.Backend.On() && r.spend.On() }
+// backendOn reports whether this run reads the budget backend: the job's
+// environment carries the database. The mode is not asked — from AB1a on every
+// run is accounted for (D3009, R3), so no mode decides whether the backend is
+// used.
+func (r *run) backendOn() bool { return r.d.Backend.On() }
 
 // budgetHalt records a halt the session found and stops the run: the
 // running stage is cancelled and the gateway refuses every call and cuts the
@@ -370,7 +430,7 @@ func (r *run) haltExternal(h runstore.Halt) bool {
 //   - 403 (blobx.ErrForbidden): the run goes on. The job account's grant on
 //     tokens/ is a conditioned objectViewer with no storage.objects.list, so
 //     GCS answers its read of a missing object with 403
-//     (docs/design/bucket-iam.md §2.3, live check 7): that is what every run
+//     (docs/bucket-iam/spec.md §2.3, live check 7): that is what every run
 //     of an installation without Firebase meets, since no launcher minted
 //     for it. A job with no tokens/ grant gets the same 403 for a present
 //     object, and no answer of the bucket tells the two apart, so the
@@ -439,27 +499,34 @@ func strayTokenNoBackend() error {
 // reads the caps and the kill switches, halts the run if it may not begin,
 // creates the registry entry and starts the heartbeat and the kill watch.
 // A halt here has outcome none and exit 0: nothing was locked or pushed.
-// startBudgetBackend opens the run's budget session. It is reached only after
-// admissionCheck has admitted this run — bootstrap calls the check before the
-// lock and before this, and nothing else calls either — so the slug the session
-// is keyed by (r.d.Store.Slug, through the identity the policy read built) is
-// the one task.Slug of the job's provider and the task's repository computes,
-// for the profile the job's own name pins (plan task 3.3: the ordering is the
-// security property, and this is the lease it protects).
+// startBudgetBackend opens the run's budget session, and from AB1a on it opens
+// it for every run: every mode is accounted for — a mode left unset is observe
+// (C1, D3009, R3) — so nothing here asks the mode before it takes the run's
+// identity. What a run can still meet is a job it has nothing to open a session
+// against: a marked one with no database, which is the refusal below naming its
+// fix, and a markless one whose token object is not there and whose own
+// environment names no live mode — a launch the launcher minted nothing for,
+// which opens no session and runs on the environment ceiling exactly as it did
+// before AB1a (budgetClient's markless arm; AB4 is what makes every launch
+// mint). Everything else it can meet is a refusal.
+// It is reached only after admissionCheck has admitted this run — bootstrap
+// calls the check before the lock and before this, and nothing else calls
+// either — so the slug the session is keyed by (r.d.Store.Slug, through the
+// identity the policy read built) is the one task.Slug of the job's provider
+// and the task's repository computes, for the profile the job's own name pins
+// (plan task 3.3: the ordering is the security property, and this is the lease
+// it protects).
 func (r *run) startBudgetBackend(ctx context.Context) error {
-	// The launcher's marker says it minted this run a budget token, which it
-	// only does when the project has a shared budget or a published policy.
+	// The launcher's marker says it minted this run a budget token, and the
+	// ticket says it asked an issuer for this run's identity: either way it did
+	// so only because the project has a shared budget or a published policy.
 	// A job with no backend in its environment then cannot read that policy,
-	// and a run whose own mode is off would go on with the environment
-	// ceiling, no session and no kill switch (M2; refuseStrayToken below is
-	// the same refusal for a budget-on job, found by reading the bucket).
-	// The marker is proof enough: nothing else writes it.
-	if r.d.Backend.TokenMarked && !r.d.Backend.On() {
-		return strayTokenNoBackend()
-	}
-	// A run whose budget is off ignores the budget's environment entirely.
-	if !r.spend.On() {
-		return nil
+	// and the run would go on with the environment ceiling, no session and no
+	// kill switch (M2; refuseStrayToken below is the same refusal for a job
+	// that can read the bucket, found there). What the launcher left is proof
+	// enough: nothing else writes either value.
+	if r.d.Backend.Issued() && !r.d.Backend.On() {
+		return noBackendForWhatTheLauncherLeft(r.d.Backend)
 	}
 	// The run's identity, taken out of the runs bucket once and shared with
 	// the project policy's read (projectpolicy.go): one take, so the policy
@@ -503,11 +570,15 @@ func (r *run) startBudgetBackend(ctx context.Context) error {
 			"node", projectpolicy.PathRulesMarker(), "err", r.redact(rerr.Error()))
 	}
 
-	mode := r.spend.Mode
+	// The mode the run is accounted for, read through C1: a mode no layer set —
+	// and the word that was a mode — is observe, which is what result.json
+	// records and what the session enforces at (D3009, R3; the record's enum
+	// holds the two live modes and nothing else).
+	mode := policy.Mode(r.spend.Mode).Effective()
 	// The configuration the policy read already built and Tuned; only the
 	// fields that depend on the merged policy are set here.
 	cfg := ident.cfg
-	cfg.PolicyCap, cfg.CommittedDaily, cfg.LocalEnforce = r.spend.Cap, r.committedDaily(), mode == policyEnforce
+	cfg.PolicyCap, cfg.CommittedDaily, cfg.LocalEnforce = r.spend.Cap, r.committedDaily(), mode == policy.ModeEnforce
 	cfg.RulesGeneration = deployed
 	if r.rec.Deadline != nil {
 		cfg.Deadline = *r.rec.Deadline
@@ -569,6 +640,16 @@ func (r *run) registryEntry() budget.AgentEntry {
 	if runes := []rune(title); len(runes) > 80 {
 		title = string(runes[:80])
 	}
+	// Auth is the whole-run upstream this release still picks, and it is the
+	// only fact about the upstream a stage has until the run's calls follow the
+	// table (model-credentials-routing CS6: the runner stops choosing a
+	// whole-run upstream from agent.auth, and the entry then carries the
+	// stage's own answer instead — the gateway's chain answer, C1's hook that
+	// CS2 makes an option and CS8 reads into the record — as `source` and
+	// `fallback`). Until that lands no run is one "the table serves", so there
+	// is nothing else to write: the registry, the rules' allowlist and every
+	// view already take all three (CS9, D3070), and this member is the whole of
+	// what CS6 changes.
 	e := budget.AgentEntry{
 		Repo: r.spec.Repo, Workflow: r.rec.Workflow, Title: title, Stage: "bootstrap", Auth: r.cfg.Agent.Auth,
 		Coder: r.cfg.Agent.ModelFor(config.RoleCoder), Reviewer: r.cfg.Agent.ModelFor(config.RoleReviewer),
@@ -667,7 +748,7 @@ func (r *run) noteVerify() {
 // stage the run's stage-scoped Claude OAuth account serves is outside the
 // gateway by construction — nobody else can report it, and its figure reaches
 // the repository's and the project's notional counters here alone
-// (docs/design/mixed-credentials.md §5, §11). Asked about the run instead
+// (docs/mixed-credentials/spec.md §5, §11). Asked about the run instead
 // (r.gatewayOn(), true for every mixed run) the account stage's dollars are
 // dropped in silence.
 //
@@ -873,6 +954,11 @@ func (r *run) claimSlip(ctx context.Context) {
 // sentence fit for this call — this package's own checkReviewServiceURL wraps
 // its refusals in the review signature's family, and a slip warning that named
 // the review artifact would be a sentence about the wrong call.
+//
+// Both of this run's own claims hold the address to it: a slip's, which is
+// given up over a refusal here, and the identity claim's (identity_claim.go),
+// which is not — the job's own identity token is on that call, and a run with a
+// ticket has no other way to reach an identity.
 func checkSlipServiceURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
@@ -1148,4 +1234,183 @@ func (r *run) setSlipHold(id, secret, service string) {
 	r.slipMu.Lock()
 	defer r.slipMu.Unlock()
 	r.slip = &slipHold{id: id, secret: secret, service: service}
+}
+
+// workspaceBeat is the run's second beat (WS13, R10, R14, F33, D2985): the
+// keep-warm request a run sends to its workspace's credentials service while it
+// lives, once its own route record serves a kind of its credentials there.
+//
+// It is the slip beat's shape against the other service, and it exists for the
+// same reason: the workspace pays the same cold start the installation's own
+// service does, and a run that routed a paid call there should not pay it
+// inside that call. What it is NOT is the slip beat's call: the workspace's
+// service takes the job's identity and the run's own token and nothing else of
+// the member's (R18, F40), so this call carries no slip id and no claim secret
+// — the route it posts to is the one route of that service which answers
+// nothing about a credential (R14).
+//
+// upstream is the gateway's own second upstream for this run, built where the
+// record was read: the address is the record's (R3), and the two identities are
+// the ones that upstream presents, read per request so a token that turns over
+// under a long run is the fresh one. The beat therefore cannot call a different
+// address, and cannot present a different identity, than the calls it keeps the
+// service warm for.
+type workspaceBeat struct {
+	upstream *gateway.Workspace
+	// cancel ends the beat and done is closed when its goroutine has returned,
+	// as the slip hold's are (startWorkspaceBeat writes both, stopWorkspaceBeat
+	// clears them).
+	cancel context.CancelFunc
+	done   chan struct{}
+	// beatSaid is whether the run has written its one line about a beat that
+	// did not land, so an unreachable service is stated once rather than every
+	// interval. Guarded by workspaceMu, which the beat's goroutine and the run
+	// both hold.
+	beatSaid bool
+}
+
+// startWorkspaceBeat sends the keep-warm request to the workspace's credentials
+// service for as long as the run lives (R10, R14, D2985). It is called where the
+// run's route record is read and the second upstream is built, because that is
+// the one place the run knows it has a kind served there: a record that moves no
+// kind is a run that never calls the workspace at all, and it keeps nothing
+// warm (contract-wire.md, "it builds the second upstream, and starts the beat,
+// on Holder and not on Address").
+//
+// The switch is the run's own (agent.workspace_beat, creds.WorkspaceBeatSetting,
+// C2): off means this run sends no beat, which costs a cold start at a call and
+// never a credential — the owner's doubt of D2985 is why the switch exists and
+// is why it is not a safety setting. The default is on, and it is read here
+// rather than at the call site so the one place a beat is decided is one
+// function.
+//
+// The cadence is the slip beat's (slipBeatEvery): one run keeps one interval,
+// and both beats are the same kind of request to a service that pays the same
+// cold start. The context is detached from the run's for the slip beat's reason
+// — the run's end is stopWorkspaceBeat, and nothing else ends this beat — so a
+// request of the beat is never made on behalf of a finished run.
+func (r *run) startWorkspaceBeat(ctx context.Context, ws *gateway.Workspace) {
+	if ws == nil || ws.Address == "" {
+		return
+	}
+	if !r.workspaceBeatOn() {
+		return
+	}
+	r.workspaceMu.Lock()
+	if r.workspaceBeat != nil {
+		r.workspaceMu.Unlock()
+		return
+	}
+	beatCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	done := make(chan struct{})
+	beat := &workspaceBeat{upstream: ws, cancel: cancel, done: done}
+	r.workspaceBeat = beat
+	r.workspaceMu.Unlock()
+	go func() {
+		defer close(done)
+		t := time.NewTicker(r.slipBeatEvery())
+		defer t.Stop()
+		for {
+			select {
+			case <-beatCtx.Done():
+				return
+			case <-t.C:
+				r.beatWorkspace(beatCtx, beat)
+			}
+		}
+	}()
+}
+
+// workspaceBeatOn is whether this run sends the keep-warm beat to its
+// workspace's credentials service: the run's own switch, on unless
+// agent.workspace_beat says otherwise (R10, D2985, creds.WorkspaceBeatSetting).
+// A run with no resolved configuration at all — which no run of this release
+// is, the config being what selected its workflows — sends none rather than
+// panicking on a nil dereference: the beat is an optimisation, and a run that
+// cannot read its own switch does not guess one.
+func (r *run) workspaceBeatOn() bool {
+	if r.cfg == nil {
+		return false
+	}
+	return r.cfg.Agent.WorkspaceBeatOn()
+}
+
+// stopWorkspaceBeat ends the beat and waits for its goroutine, as stopSlipBeat
+// does for the slip's: a beat still in flight when the run ends would be a
+// request of a finished run, and the workspace's service counts what reaches it
+// (R14). It is safe to call on a run that never had a beat, and safe to call
+// twice.
+func (r *run) stopWorkspaceBeat() {
+	r.workspaceMu.Lock()
+	beat := r.workspaceBeat
+	if beat == nil || beat.done == nil {
+		r.workspaceMu.Unlock()
+		return
+	}
+	cancel, done := beat.cancel, beat.done
+	beat.cancel, beat.done = nil, nil
+	r.workspaceMu.Unlock()
+	cancel()
+	<-done
+}
+
+// beatWorkspace posts one keep-warm request to the workspace's credentials
+// service. The call is made through gateway.Service, which is the one client of
+// that service's contract this run has: it presents the job's Google ID token,
+// the run's own token and the job's name, and it presents the slip only if the
+// Service holds one — this beat's carries none, so no slip id and no claim
+// secret travel (R18, F33), which gateway.Workspace's own upstream states as a
+// property of the shape rather than a rule a later edit could forget.
+//
+// A failure here is not a run's failure — the calls this beats for are the
+// gateway's, and a beat that did not land costs a cold start and nothing else —
+// so it is one warning, once, as the slip beat's is. The one failure that is
+// not the service's is the run's own end: this context is cancelled by
+// stopWorkspaceBeat and by nothing else, so an attempt that ends with it
+// cancelled is this run giving up a request of a run that is over, and there is
+// no next call to warn about.
+func (r *run) beatWorkspace(ctx context.Context, beat *workspaceBeat) {
+	ws := beat.upstream
+	svc := gateway.Service{
+		Job:        ws.Job,
+		RunIDToken: ws.RunIDToken,
+		IDToken:    func(ctx context.Context) (string, error) { return ws.IDToken(ctx, ws.Address) },
+	}
+	status, _, err := svc.Post(ctx, ws.Address, credsvc.WorkspaceKeepWarmPath, nil)
+	switch {
+	case workspaceKeepWarmAbsent(status):
+		// The workspace's service does not serve the keep-warm route: a
+		// version skew, and the shape C1 states before the route is deployed
+		// (WS2 serves it). Nothing of the run's is refused by it — the route
+		// that serves the run's calls is another one — so this is not a
+		// warning, and it is the same reading slipRouteAbsent gives the claim
+		// route.
+		return
+	case err != nil:
+		if ctx.Err() != nil {
+			return
+		}
+		r.workspaceWarnOnce(beat, "the keep-warm beat could not reach this run's workspace credentials service, so the instance serving it may go cold and the next call pays a cold start (R14, D2985)", err)
+	case status != http.StatusOK:
+		r.workspaceWarnOnce(beat, "this run's workspace credentials service refused the keep-warm beat, so the instance serving it may go cold and the next call pays a cold start (R14, D2985)", fmt.Errorf("the service answered %d", status))
+	}
+}
+
+// workspaceKeepWarmAbsent reports whether status is the answer of a workspace
+// service that does not serve the keep-warm route: the same two the claim
+// route's own reading takes (slipRouteAbsent), which is the same skew seen from
+// the other service.
+func workspaceKeepWarmAbsent(status int) bool { return slipRouteAbsent(status) }
+
+// workspaceWarnOnce writes the run's one line about the workspace beat not
+// landing.
+func (r *run) workspaceWarnOnce(beat *workspaceBeat, msg string, err error) {
+	r.workspaceMu.Lock()
+	said := beat.beatSaid
+	beat.beatSaid = true
+	r.workspaceMu.Unlock()
+	if said {
+		return
+	}
+	r.d.Log.Warn(msg, "err", r.redact(err.Error()))
 }

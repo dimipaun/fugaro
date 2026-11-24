@@ -199,7 +199,7 @@ func guardWalk(p *Plan, judges judge) (refused, warned []string) {
 		// of the same line is printed uncut instead (identityText) while this
 		// half is not. A managed root is the owner's own root, so the depth of
 		// addresses in it is theirs to write; the limit is recorded in
-		// docs/design/managed-projects.md §6 item 5 beside the identity's own.
+		// docs/managed-projects/spec.md §6 item 5 beside the identity's own.
 		addr, said := safetext.Field(rc.Address), safetext.Field(strings.Join(acts, ", "))
 		if len(acts) == 0 {
 			refused = append(refused, addr+" (no actions)")

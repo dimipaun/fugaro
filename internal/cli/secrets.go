@@ -25,6 +25,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/yamledit"
 )
@@ -75,7 +76,7 @@ type secretsOptions struct {
 	cloud cloudOptions
 	repo  string
 	// projectWide stores or lists the secret once per Fugaro project rather
-	// than per repository (design docs/design/project-secrets.md §4).
+	// than per repository (design docs/project-secrets/spec.md §4).
 	projectWide bool
 	asJSON      bool
 	// allowDataTo and proxy are the policy write (D1171): the two members of
@@ -275,7 +276,7 @@ var budgetBoolFlags = map[string]bool{
 	"--ask": true,
 	"--all": true, "--json": true, "--compute": true, "--stream": true,
 	// budget history's own, and the --help cobra adds at Execute time.
-	"--sweep": true, "--rollover": true, "--force": true, "--help": true,
+	"--sweep": true, "--rollover": true, "--reindex": true, "--force": true, "--help": true,
 }
 
 // optionalRepoVerb returns the index of the verb (set, kill, resume, ls) that
@@ -875,7 +876,9 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string, hasName bool)
 		}
 		run := stepRunFor(cmd, "secrets-set", cmd.OutOrStdout())
 		defer run.close()
-		_, err := secretsStoreStep(run, name, func() (string, string, error) { return secretsSetProjectWide(run, cmd, env, o, name) })
+		_, err := secretsStoreStep(run, name, func(st *report.Step) (string, string, error) {
+			return secretsSetProjectWide(run, cmd, st, env, o, name)
+		})
 		return err
 	}
 	r, err := resolveSecretRepo(cmd, env, o.cloud, o.repo)
@@ -966,7 +969,16 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string, hasName bool)
 		// left is the repository-level secret this ruling is about.
 		return repoSecretsDisabled(cmd.OutOrStdout())
 	}
-	if repo != "" && projectScopeName(env.lc, name, "") {
+	// Both notes below are about the precedence between a project copy and a
+	// repository's own copy of ONE name, and a provider key has neither since
+	// KS2: it is entered in the credentials service's bundle once per
+	// repository (R2, D3008), so the value a person stores here reaches this
+	// repository's entry and no copy of this name exists to override anything
+	// — the note would describe a container the command no longer writes, and
+	// the line that does answer for this store is the list of entries it left
+	// (providerKeyWrittenLine, below).
+	providerKey := providerKeyName(env.lc, name)
+	if !providerKey && repo != "" && projectScopeName(env.lc, name, "") {
 		// The name has a project-wide meaning that does not reach this
 		// repository, and the person typed no flag: the copy they are about to
 		// store is this repository's own, and saying which entry left them out
@@ -983,7 +995,7 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string, hasName bool)
 			"note: %s is stored project-wide in this project, but not for %s: this value goes to %s's own copy, which overrides the project copy for it. %s\n",
 			pluginwire.Printable(name), pluginwire.Printable(repo), pluginwire.Printable(repo), projectWideHint(env.lc, name))
 	}
-	if repoMayUseProject(env.lc, name, r.repo) {
+	if !providerKey && repoMayUseProject(env.lc, name, r.repo) {
 		// §5's precedence has no override-the-override: a --repo copy of a
 		// name this repository may already read project-wide takes over from
 		// now on, and only disabling the copy's last enabled version gives
@@ -1001,8 +1013,27 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string, hasName bool)
 	// it files under this command's name — begins with it.
 	run := stepRunFor(cmd, "secrets-set", cmd.OutOrStdout())
 	defer run.close()
+	// A provider's own secret is the one store this command makes that writes
+	// no container of its own (KS2, R2): the key goes into the credentials
+	// service's bundle, under C1's name for THIS repository — the one
+	// repository the value was scoped to — and the entries are what a run's
+	// routed call is served from. Which name the store is under is the
+	// config's answer (config.ProviderBySecret), so a provider whose key is
+	// stored under any other name takes this branch too, and the name's own
+	// container is never written.
+	if provider, isProvider := config.ProviderBySecret(env.lc.Providers, name); isProvider {
+		_, err = secretsStoreStep(run, name, func(st *report.Step) (string, string, error) {
+			id, version, werr := providerKeyBundleStore(run, cmd, st, env.lc, provider, name, []string{r.repo}, o.asJSON)
+			if werr != nil {
+				return "", "", werr
+			}
+			fmt.Fprint(cmd.ErrOrStderr(), providerKeyWrittenLine(env.lc, provider, []string{r.repo}, version))
+			return id, version, nil
+		})
+		return err
+	}
 	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: r.label, gcp.LabelSecret: name}
-	_, err = secretsStoreStep(run, name, func() (string, string, error) {
+	_, err = secretsStoreStep(run, name, func(st *report.Step) (string, string, error) {
 		return storeSecret(run, cmd, env, o, gcp.SecretID(r.slug, name), labels, name)
 	})
 	return err
@@ -1021,10 +1052,10 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string, hasName bool)
 // The version comes back because one caller's answer is made of it: `accounts
 // add` names it in its own block, and it is the store's answer rather than a
 // line read back out of the step's.
-func secretsStoreStep(run *stepRun, name string, store func() (id, version string, err error)) (string, error) {
+func secretsStoreStep(run *stepRun, name string, store func(st *report.Step) (id, version string, err error)) (string, error) {
 	st := run.rep.Step("Storing " + pluginwire.Printable(name))
 	defer st.Abandon()
-	id, version, err := store()
+	id, version, err := store(st)
 	if err != nil {
 		// One line, whatever the server said: the step's own line is one line,
 		// and a message with newlines in it would break the account in two.
@@ -1739,11 +1770,59 @@ func projectWideHint(lc *localcfg.Config, name string) string {
 }
 
 // secretsSetProjectWide stores name's value once for the whole Fugaro
-// project (design docs/design/project-secrets.md §4). Eligibility is
+// project (design docs/project-secrets/spec.md §4). Eligibility is
 // projectWideAccepted's decision, and it runs before any value is read.
-func secretsSetProjectWide(run *stepRun, cmd *cobra.Command, env *cloudEnv, o secretsOptions, name string) (string, string, error) {
+func secretsSetProjectWide(run *stepRun, cmd *cobra.Command, st *report.Step, env *cloudEnv, o secretsOptions, name string) (string, string, error) {
 	if !projectWideAccepted(env.lc, name) {
 		return "", "", projectWideRefusal(env.lc, name)
+	}
+	// A provider's own secret stored project-wide is C1's family for every
+	// repository the provider's own allow_data_to names (KS2, R2, D3008): one
+	// key, entered once per repository, because the entry's name carries the
+	// repository and a run asks for its own. It writes no container — the
+	// project's copy included — and what the person reads here is the list of
+	// repositories the key now serves rather than a reach sentence about a
+	// shared container, which is a different question and a different answer.
+	//
+	// The order is the same one every write of this family keeps: the
+	// repositories first, because a list that names none is a refusal that
+	// reads nothing from the person, and then the store.
+	if provider, isProvider := config.ProviderBySecret(env.lc.Providers, name); isProvider {
+		repos := providerKeyProviderRepos(env.lc, provider)
+		if len(repos) == 0 {
+			return "", "", providerKeyNoReposRefusal(env.lc, provider)
+		}
+		// D3006: a provider key is the whole project's, so the person who writes
+		// one is a project owner. That gate is inside the store, before the value
+		// is read; the line printed beside it is the list of repositories the key
+		// is now entered for, which is the one thing the person who stored the
+		// value has to be able to read back.
+		id, version, err := providerKeyBundleStore(run, cmd, st, env.lc, provider, name, repos, o.asJSON)
+		if err != nil {
+			return "", "", err
+		}
+		fmt.Fprint(cmd.ErrOrStderr(), providerKeyWrittenLine(env.lc, provider, repos, version))
+		return id, version, nil
+	}
+	// The credential's own derived name is a provider key's second spelling
+	// (providerKeySecretCredential): the name is in the key credential namespace,
+	// it is a credential a pool may list, and the value under it is the key of
+	// the provider the credential is named after. It writes the same entries as
+	// the provider's own secret does, and no container: `fugaro creds set
+	// credential-<name>-key` is the command that spells this write for a runner
+	// path today, and a container written under this name would be one the
+	// service never reads (F33).
+	if credential, isRunnerKey := providerKeySecretCredential(env.lc, name); isRunnerKey {
+		repos := providerKeyCredentialRepos(env.lc, credential)
+		if len(repos) == 0 {
+			return "", "", providerKeyNoReposRefusal(env.lc, credential)
+		}
+		id, version, err := providerKeyBundleStore(run, cmd, st, env.lc, credential, name, repos, o.asJSON)
+		if err != nil {
+			return "", "", err
+		}
+		fmt.Fprint(cmd.ErrOrStderr(), providerKeyWrittenLine(env.lc, credential, repos, version))
+		return id, version, nil
 	}
 	// Design §5's precedence has no override-the-override, and §6 step 4a is
 	// the state both existing installations are in: a repository copy with an
@@ -1924,23 +2003,11 @@ func storeSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, o secretsOptio
 	if err != nil {
 		return "", "", remote(err)
 	}
-	// The hidden prompt is read with the line in flight taken down: a frame
-	// drawn on the line the prompt is written on swallows it and the answer
-	// typed under it (G1).
-	var value []byte
-	err = run.ask(func() error {
-		var rerr error
-		value, rerr = readSecret(ctx, cmd.InOrStdin(), cmd.ErrOrStderr(), name, name == multilineSecret)
-		return rerr
-	})
+	value, err := readStoreValue(run, cmd, name)
 	if err != nil {
 		return "", "", err
 	}
 	defer clear(value)
-	// The run holds what it just read for the rest of the command, so a server
-	// or a child that echoes it back reaches neither the run's own output nor
-	// its log (F6).
-	run.hold(value)
 	version, err := sm.Set(ctx, id, value, labels)
 	if err != nil {
 		// A server may echo what it received, raw or base64 as sent.
@@ -1959,6 +2026,34 @@ func storeSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, o secretsOptio
 		}
 	}
 	return id, version, nil
+}
+
+// readStoreValue is the ONE read of the value a store is given: from a
+// terminal a hidden prompt on stderr, otherwise stdin to EOF, with one
+// trailing newline dropped and said (readSecret's rules), and the value held by
+// the run for the rest of the command so a server or a child that echoes it
+// back reaches neither the run's own output nor its log (F6).
+//
+// It is storeSecret's own read, extracted when a provider key's store became a
+// second caller of it (KS2): the two stores write different containers and read
+// a value the same way, and two reads would be two places the redaction rules
+// could drift. The caller clears the bytes.
+//
+// The hidden prompt is read with the line in flight taken down: a frame drawn
+// on the line the prompt is written on swallows it and the answer typed under
+// it (G1).
+func readStoreValue(run *stepRun, cmd *cobra.Command, name string) ([]byte, error) {
+	var value []byte
+	err := run.ask(func() error {
+		var rerr error
+		value, rerr = readSecret(cmd.Context(), cmd.InOrStdin(), cmd.ErrOrStderr(), name, name == multilineSecret)
+		return rerr
+	})
+	if err != nil {
+		return nil, err
+	}
+	run.hold(value)
+	return value, nil
 }
 
 // readSecret reads the value of secret name. From a terminal it prompts on

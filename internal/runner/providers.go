@@ -106,10 +106,64 @@ func GatewayRoute(name string, p config.ModelProvider, cred func() (string, erro
 	}
 }
 
+// ServedGatewayRoute is GatewayRoute for a provider whose key the credentials
+// service holds (R12's fact, gateway.Route.Served): the route carries no
+// credential of this job's at all, and the gateway reaches the service's
+// provider route with the provider's name instead of the provider's own
+// address. Everything else about the route — what it claims, its fee, and the
+// price the run charges its calls at — is the same, because the service
+// attaches the key and forwards and the gateway keeps its own routing, price
+// check and settle (R1, KS5).
+func ServedGatewayRoute(name string, p config.ModelProvider) gateway.Route {
+	r := GatewayRoute(name, p, nil)
+	r.Served = true
+	return r
+}
+
+// providerKeysServed is R12's first fact as this job carries it (C1's name,
+// config.ProviderKeysServedEnv): the installation's credentials service holds
+// this repository's provider keys, so a routed call is sent to the service's
+// provider route rather than out with a key the job mounted (KS5).
+//
+// Only the contract's own true value answers true (config.ServedValue): an
+// absent entry is not served, which is every job planned before the fact
+// existed, and the reason a run whose job does not carry it uses its mount as
+// it always has.
+func (r *run) providerKeysServed() bool {
+	return envLookup(r.d.Env, config.ProviderKeysServedEnv) == config.ServedValue
+}
+
+// providerKeysThroughService reports whether THIS run's routed calls are the
+// credentials service's: the job carries R12's fact (providerKeysServed) and
+// this run's own gateway reaches the service at all (serviceModelPath).
+//
+// The second half is R12's own sentence — "the gateway uses the service when
+// it can and the mount when it must": a job whose fact is set but whose calls
+// go straight to Anthropic (a local run, or a repository that is not on the
+// switch) has no service to send a routed call to, and a served route is
+// admitted beside the service upstream alone (gateway.validateRoutes) — so it
+// keeps the key its job mounted, as it did before the fact existed. The fact
+// is what the owner's update recorded about the BUNDLE, and it is not a claim
+// that this job was pointed at the service.
+//
+// It is one function rather than two readers so that the routes the gateway
+// gets and the pool members this run counts as held answer the same question
+// the same way (poolMemberHeld).
+func (r *run) providerKeysThroughService() bool {
+	return r.providerKeysServed() && r.serviceModelPath()
+}
+
 // gatewayRoutes are the routes of the providers the run's models name, with
 // their keys, which are registered for redaction. A run that names no
 // provider model has none, so a provider's key is not even read. A key that
 // is not mounted fails the run (an infra_error) before the gateway starts.
+//
+// Where the job carries R12's fact and this run's calls reach the service
+// (providerKeysThroughService), a route is served instead: its key is the
+// service's, the gateway sends its calls to the service's provider route with
+// the provider's name on them (KS5), and this runner reads the provider's key
+// out of its environment on the other path alone (R12) — so a served
+// repository's job may mount no provider key at all.
 func (r *run) gatewayRoutes() ([]gateway.Route, error) {
 	a := r.cfg.Agent
 	// Every model a stage of this run runs: the three pins, each review
@@ -137,9 +191,14 @@ func (r *run) gatewayRoutes() ([]gateway.Route, error) {
 			used[name] = true
 		}
 	}
+	served := r.providerKeysThroughService()
 	var routes []gateway.Route
 	for _, name := range slices.Sorted(maps.Keys(used)) {
 		p := r.modelProviders()[name]
+		if served {
+			routes = append(routes, ServedGatewayRoute(name, p))
+			continue
+		}
 		cred, value, err := ProviderCredential(r.d.Env, p)
 		if err != nil {
 			return nil, fmt.Errorf("starting the gateway: provider %s: %w", name, err)

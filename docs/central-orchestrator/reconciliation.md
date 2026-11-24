@@ -353,14 +353,14 @@ consequence for its own case; the same holds here (D4, D18).
 **#20 — The seal's own limits are documented, and they bound what a service may be given. — Rule.**
 `SECURITY.md` states what a launcher can reach, that a run is an untrusted agent, that
 *"/proc/<pid>/environ"* reaches the seal key, and that a shared project job's account reaches
-every repository's bucket objects. `docs/design/budget-token-channel.md` is the design. Any
+every repository's bucket objects. `docs/budget-token-channel/spec.md` is the design. Any
 credential handed to a central orchestrator inherits this analysis (D4).
 
 **#21 — Every credential path the spec names runs through unbuilt work. — Gap.**
 `docs/credentials-service/` is plan-only (`README.md`), its D134 gives a run the *existing*
 budget identity, D135 routes credentials through the in-runner **gateway**, D143 makes the
 service *"secrets-only"*, D145 lists what it holds (model credentials and the GitHub App key)
-and **excludes** workflow secrets, and D147 makes it opt-in per installation. `docs/design/project-centric.md`
+and **excludes** workflow secrets, and D147 makes it opt-in per installation. `docs/project-centric/spec.md`
 §7's "OAuth tokens (phase 5)" is the one place a **reference** is described — *"A record
 {account, owner, secret ID, allowed profiles/repositories} in the policy … It holds no
 value"* — and `docs/project-claude-accounts.md` §10 calls today's carrier *"a stopgap"* whose
@@ -448,7 +448,7 @@ the main process"* — delivered as a real header through `serveAppRequest` on t
 scheme; `console/src/main/ipc.ts`'s `CONSOLE_OPERATIONS` / `channelForOperation` /
 `ALLOWED_OPERATION_FLAGS` and `console/src/preload/index.ts`'s `EXPOSED_OPERATIONS` make the
 IPC surface a fixed list; `console/src/main/spawn.ts`'s `SPAWN_COMMANDS` / `argvFor` /
-`startSidecar` bound what may be spawned. `docs/design/desktop-console.md` §5.1 rule 3 and
+`startSidecar` bound what may be spawned. `docs/desktop-console/spec.md` §5.1 rule 3 and
 rule 6 are the design's statement of both. *Consequence:* the console can reach a WebSocket
 only by a deliberate change to a load-bearing property — or through the CLI it already spawns
 (`console/docs/json-contract.md`: `fugaro watch --json` is line-delimited JSON) (D5).
@@ -534,7 +534,7 @@ See C6. The rigor modes work defines findings handling per mode and a determinis
 gate (its D12, D14, D16), refuses to build a scheduler (D15), and never mentions an
 escalation timeout. `internal/localcfg/localcfg.go`'s `BurnAlertUSDPerHour` is a **display**
 threshold passed to `internal/watch/build.go`'s `BurnAlertPerHour`, and a cap-proximity
-threshold is explicitly recorded as absent — `docs/design/desktop-console-v2.md`'s **F29**,
+threshold is explicitly recorded as absent — `docs/desktop-console-v2/spec.md`'s **F29**,
 *"cap alerts have data and no threshold"*, which **D35** then answers by putting the
 threshold in the app rather than in the project record.
 *Consequence:* *"Escalation timeouts depend on rigor mode"* is a proposal to the rigor modes
@@ -593,7 +593,7 @@ rule denies `deniedWebTools` (`WebSearch`, `WebFetch`) when a gateway is on. The
 per-run tool allow-list, no per-run secret narrowing and no path-based tool refusal.
 
 **#46 — "They see only the secrets the fix needs" is not expressible today: secrets follow the job (profile), not the fix. — Wrong.**
-`docs/design/project-centric.md` §4.1 and `SECURITY.md`'s accepted D4/D13 paragraphs: one job
+`docs/project-centric/spec.md` §4.1 and `SECURITY.md`'s accepted D4/D13 paragraphs: one job
 per (profile, provider, account), a shared project job's account holds the whole of `runs/`,
 `cache/` and `locks/` and reads `tokens/` — *"a run on a shared job reaches every repository's
 objects under those three prefixes"*, accepted by the owner on 2026-10-17.
@@ -809,7 +809,7 @@ submission**, and the server verifying the token's **claims** (`mu`-style device
 project's own claim), the device node's existence, and the project the token was minted for —
 never the socket's origin. The console reaches it **through the CLI it already spawns**
 (#29), not by adding a network client to a renderer whose CSP says `connect-src 'none'`.
-**Alternative:** a second local socket owned by the CLI (`docs/design/desktop-console.md`
+**Alternative:** a second local socket owned by the CLI (`docs/desktop-console/spec.md`
 §3.3's Option C, *"a local read-only API served by the CLI"*, rejected for v1 there) — cost:
 the console's designed evolution arrives early and unbuilt. **Cost of the recommendation:**
 the console's chat surface is a CLI-mediated surface, so the CLI must be running for the
@@ -1019,7 +1019,7 @@ sequence.
 ### D24 — The live-check number
 **Recommendation: this work claims **no** check number now, and states its owner-run checks
 by name; the number is taken by whichever task writes the check** (the convention
-`docs/design/voice.md` §5.3 states, quoted by `docs/mobile/voice-session/`: *"the phase that
+`docs/voice/spec.md` §5.3 states, quoted by `docs/mobile/voice-session/`: *"the phase that
 ships the check writes them"* — **it is not in the register itself**, which states the
 numbering *rule* and not who writes a section), because
 the register's claims are unsettled (§7). **Alternative:** claim "the next free
@@ -1092,7 +1092,7 @@ by name for this document:
 | 1–18 | the live checklist's own early work | **summary rows only**, no `## Check N` section |
 | 19–47 | the live checklist | **written** as sections (39's family lives in the retire-image-mirror plan) |
 | 48–56 | the project-centric plan | reserved |
-| 57 | the compute backend | a summary row; its section lives in `docs/design/compute-backend.md` |
+| 57 | the compute backend | a summary row; its section lives in `docs/compute-backend/spec.md` |
 | 58 | the artifact-runs work | reserved |
 | 59a/59b | the console plan | reserved |
 | 60 | the budget-token channel | allocated by the owner; **Check 60 is written** in the register |
@@ -1168,7 +1168,7 @@ this work's to make.
 | U7 | Whether the console can reach the orchestrator without weakening `connect-src 'none'` in a way the design accepts | the CSP is byte-identical in two places and asserted by `console/test/unit/window.test.ts` | a design decision and a console test |
 | U8 | Whether a job's agent can be given a *narrower* toolset than `internal/agent/settings.go`'s `deniedWebTools` allows, without `--dangerously-skip-permissions` becoming per-tool | the runner passes every prompt off by design | a prototype and an owner-run check |
 | U9 | What Sentry's webhook actually sends (its signature header, its retry behaviour, its issue-id field) | no Sentry integration exists anywhere in the tree | reading the provider's documentation, and a live webhook |
-| U10 | Whether an alert job on a dedicated profile actually narrows secrets as D4 assumes | `docs/design/project-centric.md` §4.1's profile model has not been exercised for this purpose | an owner-run check on a real profile |
+| U10 | Whether an alert job on a dedicated profile actually narrows secrets as D4 assumes | `docs/project-centric/spec.md` §4.1's profile model has not been exercised for this purpose | an owner-run check on a real profile |
 | U11 | Whether a shared session in Firestore can be listed and compacted within the runtime's memory and the request timeout at the sizes a project reaches | nothing in the tree stores a conversation in Firestore | a load probe |
 | U12 | The exact number of live checks this work needs, and their collision settlement | see §7 | reading the register at merge time |
 | U13 | Whether `fugaro watch`'s stream can carry the lease without a second stream or a rules change | `internal/watch/source.go`'s `Supervisor.paths()` is a fixed four | writing it |

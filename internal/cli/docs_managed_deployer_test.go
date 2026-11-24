@@ -275,7 +275,7 @@ func TestChecklistHasCheck68(t *testing.T) {
 	// evidence rather than a guess: belong moved on 2026-10-06, and the design
 	// that records the move names the project it moved to. A guard citing a
 	// document that does not say that is a guard citing nothing.
-	const moveEvidence = "docs/design/adopt-firebase-root.md"
+	const moveEvidence = "docs/adopt-firebase-root/spec.md"
 	if !strings.Contains(guardProse, moveEvidence) {
 		t.Errorf("Check 68's belong stop does not cite %q, where the 2026-10-06 move to fugaro-belong is recorded", moveEvidence)
 	}
@@ -511,8 +511,8 @@ func TestManagedDeployerDocsCountTemplatePlaceholdersRight(t *testing.T) {
 	countRE := regexp.MustCompile(`\b(one|two|three|four)[- ]placeholders?\b`)
 	checked := 0
 	for _, path := range []string{
-		"../../docs/design/managed-deployer-fence.md",
-		"../../docs/design/managed-projects.md",
+		"../../docs/managed-deployer-fence/spec.md",
+		"../../docs/managed-projects/spec.md",
 	} {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -561,7 +561,7 @@ func TestManagedDeployerDocsCountTemplatePlaceholdersRight(t *testing.T) {
 // pins above could not see. One was the ID: the stop compared $P with belong's
 // OLD project (`edge-devel-dimi`, what the fifth live run read out of its
 // project.json) while belong moved to `fugaro-belong` on 2026-10-06
-// (docs/design/adopt-firebase-root.md:7), so CHK68_PROJECT=fugaro-belong passed
+// (docs/adopt-firebase-root/spec.md:7), so CHK68_PROJECT=fugaro-belong passed
 // the guard and every write the check makes would have landed in belong's live
 // project. The other was the refusal itself: turning the stop's `exit 1` into
 // `true` printed the same message and carried on, and no test noticed, because
@@ -1150,7 +1150,7 @@ func TestChecklistCheck68HardStopCountsAgree(t *testing.T) {
 // note on the old page carried the disabled-mode reason — the deployer's scoped
 // role "is not an IAM condition GCP accepts yet", with the redesign still ahead
 // ("after the fence is redesigned") — while docs/release.md's bullet and
-// docs/design/managed-projects.md's 0.10.0 note state what this tree actually
+// docs/managed-projects/spec.md's 0.10.0 note state what this tree actually
 // has: the redesign is written and in the tree, 0.10.0 ships it (the owner's
 // ruling of 2026-10-22), and what is missing is the live measurement (Check 68,
 // written and NOT RUN). An operator reading the note is deciding whether to turn
@@ -1214,7 +1214,7 @@ func TestGcpSetupSaysTheManagedPathShipsUnmeasured(t *testing.T) {
 // time — each fails here, naming its file.
 func TestManagedDeployerStepFourDenialIsPrecise(t *testing.T) {
 	for _, path := range []string{
-		"docs/design/managed-deployer-fence.md",
+		"docs/managed-deployer-fence/spec.md",
 		"docs/gcp-live-checklist.md",
 	} {
 		doc := flattenDoc(readDoc(t, path))
@@ -1344,7 +1344,7 @@ func TestChecklistCheck68IndexRowKeepsC3AndSecretManagerApart(t *testing.T) {
 
 // TestManagedDeployerCitationsNameThePlaceNotTheLine: the redesign's documents
 // point a reader at places in `deployer.tf`, `cover.go` and the design, and the
-// convention this repository records (docs/plans/2026-10-19-compute-backend.md,
+// convention this repository records (docs/compute-backend/implementation-plan.md,
 // the release fact: "a citation by line is a second fact that an edit anywhere
 // above it falsifies, while the anchor a reader finds the place by does not
 // move") is to cite them by the anchor rather than by a line number. The
@@ -1366,23 +1366,23 @@ func TestManagedDeployerCitationsNameThePlaceNotTheLine(t *testing.T) {
 	cites := []struct {
 		doc, file, anchor string
 	}{
-		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "SHIPPED IN 0.10.0, AND NOT YET MEASURED"},
-		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "ONE BINDING PER SERVICE"},
-		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "Two halves and not one role bound twice"},
-		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "The deployer account of D75"},
-		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "The conditions, one per service"},
-		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "What none of them holds, and why"},
-		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "deployer_condition_account"},
-		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "Binding (1)"},
-		{"docs/design/managed-deployer-fence.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "fugaro_deployer_scheduler_job"},
-		{"docs/gcp-live-checklist.md", "docs/design/managed-deployer-fence.md", "### Option 2 — fence by project, not by name"},
-		{"docs/gcp-live-checklist.md", "docs/design/managed-deployer-fence.md", "| C7 |"},
+		{"docs/managed-deployer-fence/spec.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "SHIPPED IN 0.10.0, AND NOT YET MEASURED"},
+		{"docs/managed-deployer-fence/spec.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "ONE BINDING PER SERVICE"},
+		{"docs/managed-deployer-fence/spec.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "Two halves and not one role bound twice"},
+		{"docs/managed-deployer-fence/spec.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "The deployer account of D75"},
+		{"docs/managed-deployer-fence/spec.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "The conditions, one per service"},
+		{"docs/managed-deployer-fence/spec.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "What none of them holds, and why"},
+		{"docs/managed-deployer-fence/spec.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "deployer_condition_account"},
+		{"docs/managed-deployer-fence/spec.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "Binding (1)"},
+		{"docs/managed-deployer-fence/spec.md", "deploy/terraform/gcp/modules/installation/deployer.tf", "fugaro_deployer_scheduler_job"},
+		{"docs/gcp-live-checklist.md", "docs/managed-deployer-fence/spec.md", "### Option 2 — fence by project, not by name"},
+		{"docs/gcp-live-checklist.md", "docs/managed-deployer-fence/spec.md", "| C7 |"},
 		// The two tests C7's paragraph rests on, cited by name: the line numbers
 		// it used to carry (1491 and 1649) had each drifted 176 lines by the
 		// time this branch's file growth was merged, and the names had not.
 		{"docs/gcp-live-checklist.md", "internal/infra/tf/cover_test.go", "TestExtractSegmentModelsTheRecordedReading"},
 		{"docs/gcp-live-checklist.md", "internal/infra/tf/cover_test.go", "TestDeployerConditionFencesOnlyTheManagedPrefix"},
-		{"docs/plans/2026-10-16-managed-projects.md", "internal/infra/tf/cover.go", "accountClause"},
+		{"docs/managed-projects/implementation-plan.md", "internal/infra/tf/cover.go", "accountClause"},
 	}
 	docs := map[string]string{}
 	for _, c := range cites {
@@ -1403,7 +1403,7 @@ func TestManagedDeployerCitationsNameThePlaceNotTheLine(t *testing.T) {
 	// lines and nothing in the tree noticed, because the ban was written for
 	// the file this branch rewrote and not for the tests it cites.
 	for _, wrong := range []struct{ doc, citation string }{
-		{"docs/design/managed-deployer-fence.md", "deployer.tf:"},
+		{"docs/managed-deployer-fence/spec.md", "deployer.tf:"},
 		{"docs/gcp-live-checklist.md", "managed-deployer-fence.md:"},
 		{"docs/gcp-live-checklist.md", "cover_test.go:"},
 	} {
@@ -1416,21 +1416,21 @@ func TestManagedDeployerCitationsNameThePlaceNotTheLine(t *testing.T) {
 // TestManagedDeployerD75QuoteIsD75sWords: §7 quoted D75 as saying
 // `fugaroDeployerScoped` is "bound exactly once under the name-prefix
 // condition", and D75 does not say that — it says "bound only under the
-// name-prefix condition" (docs/design/managed-projects.md §5), and "bound
+// name-prefix condition" (docs/managed-projects/spec.md §5), and "bound
 // exactly once" is this redesign's own banner for the seven roles it writes. A
 // quotation that attributes wording to a decision the owner answered is how a
 // reader comes to believe D75 ruled something it did not.
 //
 // Mutations (verified, run and restored): the design's quote changed back to
 // "bound exactly once under the name-prefix condition" → FAIL; D75's own words
-// changed in docs/design/managed-projects.md → FAIL (this test's own marker).
+// changed in docs/managed-projects/spec.md → FAIL (this test's own marker).
 func TestManagedDeployerD75QuoteIsD75sWords(t *testing.T) {
 	const quote = "bound only under the name-prefix condition"
-	d75 := flattenDoc(readDoc(t, "docs/design/managed-projects.md"))
+	d75 := flattenDoc(readDoc(t, "docs/managed-projects/spec.md"))
 	if !strings.Contains(d75, quote) {
 		t.Fatalf("D75 no longer says %q; update this test's marker", quote)
 	}
-	design := flattenDoc(readDoc(t, "docs/design/managed-deployer-fence.md"))
+	design := flattenDoc(readDoc(t, "docs/managed-deployer-fence/spec.md"))
 	if !strings.Contains(design, quote) {
 		t.Errorf("the design's §7 does not quote D75's own words (%q): the quotation has to be what D75 says, and \"bound exactly once\" is this redesign's banner for the seven roles it writes rather than D75's", quote)
 	}
@@ -1455,7 +1455,7 @@ func TestManagedDeployerD75QuoteIsD75sWords(t *testing.T) {
 // it" put back → FAIL; API keys dropped from the "why not 1b" sentence → FAIL;
 // API keys put back into the option-1b location bullet → FAIL.
 func TestManagedDeployerFactsCountTheirServicesRight(t *testing.T) {
-	doc := flattenDoc(readDoc(t, "docs/design/managed-deployer-fence.md"))
+	doc := flattenDoc(readDoc(t, "docs/managed-deployer-fence/spec.md"))
 	for _, want := range []string{
 		"named in F4a, and F3 does not cover it",
 		"five of the seven services take the anchor form rather than a whole-name one",
@@ -1463,11 +1463,11 @@ func TestManagedDeployerFactsCountTheirServicesRight(t *testing.T) {
 		"- **API keys** — the location is not the unknown here",
 	} {
 		if !strings.Contains(doc, want) {
-			t.Errorf("docs/design/managed-deployer-fence.md does not say %q: F3's off-project reach is F4a's, and the five services the anchor form is for include API keys, whose location is the constant `global` and not a value the plan chooses", want)
+			t.Errorf("docs/managed-deployer-fence/spec.md does not say %q: F3's off-project reach is F4a's, and the five services the anchor form is for include API keys, whose location is the constant `global` and not a value the plan chooses", want)
 		}
 	}
 	if strings.Contains(doc, "Cloud Scheduler jobs, API keys**") {
-		t.Errorf("docs/design/managed-deployer-fence.md's option-1b bullet still groups API keys with the services whose location the managed plan chooses: an API key's location is the constant `global` (`internal/gcpfake/apikeys.go`'s `AddKey`), so the location is not what is unknown for it")
+		t.Errorf("docs/managed-deployer-fence/spec.md's option-1b bullet still groups API keys with the services whose location the managed plan chooses: an API key's location is the constant `global` (`internal/gcpfake/apikeys.go`'s `AddKey`), so the location is not what is unknown for it")
 	}
 }
 
@@ -1484,7 +1484,7 @@ func TestManagedDeployerFactsCountTheirServicesRight(t *testing.T) {
 // Mutations (verified, run and restored): the old sentence put back → FAIL; the
 // register's "U3 honoured" removed → FAIL (the two are held together).
 func TestManagedProjectsTaskOneFiveRecordsCheck52U3AsRun(t *testing.T) {
-	const path = "docs/plans/2026-10-16-managed-projects.md"
+	const path = "docs/managed-projects/implementation-plan.md"
 	plan := flattenDoc(readDoc(t, path))
 	for _, want := range []string{
 		"Check 52's U3 — **which the checklist now records as RUN 2026-10-16",

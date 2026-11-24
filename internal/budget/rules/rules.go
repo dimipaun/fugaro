@@ -50,7 +50,7 @@
 // update with keys like runs/<slug>/<run>/reserved). Writing a whole ledger,
 // or deleting a field, is denied: validation rules do not run on a delete.
 //
-// The project policy (docs/design/project-centric.md §5). config/policy is
+// The project policy (docs/project-centric/spec.md §5). config/policy is
 // readable *per child*, never on the parent, because an RTDB read grant
 // cascades to children: config/policy/shared is readable by any token of the
 // project, config/policy/repos/$slug only by the token whose fs claim is that
@@ -636,8 +636,10 @@ func wordMacro(m string, depth int) (string, error) {
 	case "TARGETOK":
 		// D169's verb/target agreement, as the schema resolves it: `merge`
 		// resolves to a repository and a pull request, `cancel` to a run,
-		// `confirm` to either. A target that carries both shapes, or neither,
-		// is refused on both sides.
+		// `confirm` to either, and `launch` — the verb O10 adds (mobile plan
+		// task J5r) — to a repository alone, because a start names the
+		// repository it starts in and nothing else. A target that carries both
+		// shapes, or neither, is refused on both sides.
 		//
 		// Every arm is *exclusive*: the node has exactly the fields its shape
 		// names and none of the other shape's. The negative half is not
@@ -648,8 +650,10 @@ func wordMacro(m string, depth int) (string, error) {
 		v := "newData.parent().child('verb').val()"
 		run := "(newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists())"
 		pull := "(newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists())"
+		repo := "(newData.hasChildren(['repo']) && !newData.child('run').exists() && !newData.child('pr').exists())"
 		return "(" + v + " == 'merge' ? " + pull + " : (" +
-			v + " == 'cancel' ? " + run + " : (" + run + " || " + pull + ")))", nil
+			v + " == 'cancel' ? " + run + " : (" +
+			v + " == 'launch' ? " + repo + " : (" + run + " || " + pull + "))))", nil
 	case "SHAOK":
 		// A merge's head SHA: present only on a merge (the record has no field
 		// for it on any other verb), and one of Git's two object-name lengths.
@@ -661,8 +665,34 @@ func wordMacro(m string, depth int) (string, error) {
 		// the key, which is D171's and never passes through the database, so the
 		// rules can require a well-formed tag and nothing more (P6.7 is what
 		// verifies one). PARENTMACOK applies the same expression one node up,
-		// through the shared helper.
+		// through the shared helper, and SIGOK/PARENTSIGOK are the same pair for
+		// the device signature O6 puts in `sig`'s place.
 		return macOK("newData"), nil
+	case "SIGOK":
+		// A device signature's shape (O6, mobile plan task J5r): a string of
+		// exactly MaxSigLength characters of unpadded base64url, checked for
+		// shape alone. Which scheme a device must use is not this document's to
+		// say — a node with a public key accepts signatures, one without accepts
+		// a MAC (J5b) — and both are accepted here because a phone paired the
+		// old way keeps its MAC until it re-pairs.
+		return sigOK("newData"), nil
+	case "TAGOK":
+		// Exactly one of the two tags, on a message and on the heartbeat: `mac`
+		// (D171) or `sig` (O6), never both and never neither. It replaces the
+		// `mac` member of the message's own hasChildren list, so a message with
+		// no tag at all is refused here rather than stored untagged — which is
+		// the whole of what the tag buys (§6.4: without one, a launcher that can
+		// mint a token for the account writes into the mailbox).
+		return exactlyOneTag("newData"), nil
+	case "MODEOK":
+		// A launch action's `mode` (O10, mobile plan task J5r): a bounded
+		// identity string and nothing more. The vocabulary is internal/rigor's
+		// and the costly modes are the published policy's
+		// (mobile.costly_modes), so which modes need a read-back is the gate's
+		// decision (J5a) and this document's job is only to see that the field
+		// is a well-formed short string — a bound rather than a list, because a
+		// sixth rigor mode must not be a rules generation.
+		return boundedMatch(MaxModeLength, patternIdentity), nil
 	case "AGENTID":
 		// An agent id: the schema's identity, at most AGENT_MAX.
 		return boundedMatch(MaxAgentLength, patternIdentity), nil
@@ -736,13 +766,21 @@ func wordMacro(m string, depth int) (string, error) {
 	case "PARENTMACOK":
 		// The tag of the message a field sits on, read from the field: the shape
 		// MACOK checks, one node up. It is a restatement — hasChildren on the
-		// message already requires `mac`, and `mac`'s own node already refuses a
-		// malformed one — and the registration's three fields carry it because
+		// message already requires a tag and each tag's own node already refuses
+		// a malformed one — and the registration's three fields carry it because
 		// they are the fields a consumer trusts with a device's address and the
 		// token that reaches it: what gates them is then the tag itself and not a
 		// list on another node, so an edit that shortens that list cannot leave
 		// them valid on a message whose tag is absent or badly shaped.
 		return macOK("newData.parent().child('mac')"), nil
+	case "PARENTSIGOK":
+		// The device signature of the message a field sits on, read from the
+		// field: the shape SIGOK checks, one node up, and PARENTMACOK's sibling.
+		// The registration's three fields carry both, because the scheme a
+		// device writes under is the device node's (J5b) and this document
+		// cannot read one: a re-paired phone registers with a signature and has
+		// no MAC to offer.
+		return sigOK("newData.parent().child('sig')"), nil
 	case "REPORTSJOB":
 		// The reports job's own identity (E12, F27): the one reader of the
 		// ladder's ledger. It is a custom-token claim and deliberately not the
@@ -809,7 +847,7 @@ const reportsJobClaim = "(auth != null && auth.token.rj != null && auth.token.rj
 // coordinator's own writer (deploy/terraform/gcp/modules/firebase/iam.tf:141),
 // and every one of those reads and writes every node past these rules — the
 // fact the package comment above states for config/admin and
-// docs/design/roles.md:104 for the database as a whole. So the node is written
+// docs/roles/spec.md:104 for the database as a whole. So the node is written
 // as a refusal beside the IAM grants rather than as a grant of its own, and the
 // exposure those grants leave is not one a rule here can close: it is an open
 // item on the plan's M3 (docs/mcp-server/implementation-plan.md) for the owner
@@ -918,6 +956,65 @@ const PathOrchestrator = "orchestrator"
 // this file to resolve a pinned citation.
 const PathVoice = "config/policy/voice"
 
+// PathLaunchEnvelope is the launch envelope of Q9's answer (mobile plan task
+// P5.1g, the design's section 4.5 E1 and section 4.8): the values the owner
+// publishes from the operator's local config — **the named safe recipe an
+// unconfirmed launch may run** at `recipe`, and, under `devices`, **one entry
+// per paired device** carrying that device's repository allow-list (narrowed
+// from the project's own `allow_repos`), its launch rate and its daily cost
+// ceiling.
+//
+// **One node for the installation, and one entry per device under it**, which
+// is P5.1-Q11's own ruling: the alternative the owner refused is a node *per
+// device* ("a second place the same policy lives"), not a node at all — the
+// values belong to the policy subtree, so the operator publishes them where
+// they publish every other policy and no device gets a node of its own.
+//
+// **It is a sibling of `shared` and not a member of it**, and that is not a
+// style choice: `config/policy/shared` (projectpolicy.PathShared) *is* the
+// published policy document, which decodes strictly — an unknown member is an
+// error — so a launch block inside it would be a policy *version* bump and a
+// migration for a value the policy's own reader never reads. A child of the
+// policy subtree carries the grant with no change to that document, which is
+// what the voice policy node (PathVoice, generation 5) does one sibling over.
+//
+// **The entry is keyed by the device's Firebase Auth uid**, exactly as
+// `config/admin/devices/$uid` (PathDevices) is, and the two are read together
+// on purpose: `USER` already holds the device node's *existence* as a
+// conjunct, so a revoked pairing reads no envelope entry — deleting one node
+// takes the allow-list away with the identity, and the allow-list cannot be
+// read by an account that is not paired at all.
+//
+// **The grant is the device's own entry and the recipe, and nothing else.** A
+// device reads `devices/<its own uid>` — the rules compare `$uid` with
+// `auth.uid`, so one device cannot read another's allow-list — and the
+// installation's one `recipe`. It reads no sibling of the envelope and no
+// other part of the policy, which is the state `USER` is in for
+// `config/policy/**` generally (PathVoice's own note): a read granted on
+// `devices` itself would cascade to every paired device's entry, and one on
+// `config/policy/launch` to the recipe and every entry at once.
+//
+// **What the rules do NOT do here is enforce the envelope.** They hand the
+// phone its own values and nothing more; the launch a phone asks for is a
+// message, and a message's free text is not a shape the rules can resolve a
+// repository out of. The decision is the consumer's and the app's, which is
+// where Q9's answer puts it ("real work in the consumer"), and the app refuses
+// an utterance outside its allow-list before it signs anything — so an
+// unreadable envelope is an app that refuses every launch rather than one that
+// launches unbounded.
+//
+// It is what the document's generation 10 adds (internal/projectpolicy's
+// RulesVersion), and it bumps for generation 4's, 5's and 8's reason: it is a
+// *read grant*, so a device under the older document is refused a read rather
+// than shown a degraded one. Generation 10 carries P5.1g's other half in the
+// same document — the stop request's `kind`, a write the phone holds and the
+// older document refuses — which bumps for generation 6's reason.
+//
+// It sits below the macro table for PathMCPAuth's reason: a constant added
+// above it would move the lines internal/cli's voice-switch test reads out of
+// this file to resolve a pinned citation.
+const PathLaunchEnvelope = "config/policy/launch"
+
 // boundedMatch is a non-empty string of at most max characters, every one of
 // them in the pattern's set.
 func boundedMatch(max int, pattern string) string {
@@ -1016,12 +1113,64 @@ const (
 // `Europe/Berlin` is one and a path, an offset or a blank label is not.
 const patternZone = `/^[A-Za-z][A-Za-z0-9._+-]*(\/[A-Za-z0-9._+-]*[A-Za-z0-9_+-][A-Za-z0-9._+-]*)*$/`
 
-// macOK is a tag's shape at one snapshot: a string of exactly MaxMacLength
-// characters, every one of them the schema's lowercase hex. Shared by MACOK
-// (the message's own `mac`) and PARENTMACOK (the message's, read from a field),
-// so the two cannot drift.
-func macOK(at string) string {
-	return fmt.Sprintf("(%s.isString() && %s.val().length == %d && %s.val().matches(%s))", at, at, MaxMacLength, at, patternHex)
+// MaxSigLength is the length of a device signature in the mailbox's `sig`
+// field: the unpadded base64url encoding of a 64-byte Ed25519 signature, which
+// is 86 characters (mobile plan task J5r, O6, which amends D171). The rules
+// check the length and the characters (patternSignature) and never the value,
+// for MaxMacLength's reason: verifying a signature needs the device's public
+// key, which the device node holds and this document does not read — J5b's gate
+// verifies one.
+//
+// MaxModeLength bounds a launch action's `mode`, the rigor mode a phone asks a
+// run to start in (O10, D162 as amended by D2786). It is a bound and not the
+// vocabulary: the modes are internal/rigor's, and a mode the consumer has never
+// heard of is refused there, at the gate J5a owns, so a sixth rigor mode is not
+// a rules generation — which is the whole reason this is a bound.
+//
+// They sit below the macro table with the protection above them, for that
+// comment's reason: a constant added above those citations moves the lines the
+// tests that resolve them read.
+const (
+	MaxSigLength  = 86
+	MaxModeLength = 64
+)
+
+// patternSignature is the character set of a device signature: unpadded
+// base64url, which is how a pairing key already travels in this tree
+// (internal/budget/token's base64.RawURLEncoding). It is this package's own,
+// like patternPublicKey and patternZone: the shared schema does not model the
+// signature until mobile plan task J5b.
+const patternSignature = `/^[A-Za-z0-9_-]+$/`
+
+// macOK and sigOK are one tag's shape at one snapshot: a string of exactly n
+// characters, every one of them in the pattern's set. MACOK and PARENTMACOK
+// take the first (the D171 MAC: MaxMacLength lowercase-hex characters) and
+// SIGOK and PARENTSIGOK the second (the O6 device signature: MaxSigLength
+// characters of unpadded base64url).
+func macOK(at string) string { return fixedMatch(at, MaxMacLength, patternHex) }
+
+func sigOK(at string) string { return fixedMatch(at, MaxSigLength, patternSignature) }
+
+// fixedMatch is boundedMatch's fixed-length sibling: a string of exactly n
+// characters, every one of them in the pattern's set. Requiring the length
+// exactly is what makes a tag an identity of one shape rather than a body, and
+// it is checked beside the characters because a signature of the wrong length
+// is one no verifier will accept.
+func fixedMatch(at string, n int, pattern string) string {
+	return fmt.Sprintf("(%s.isString() && %s.val().length == %d && %s.val().matches(%s))", at, at, n, at, pattern)
+}
+
+// exactlyOneTag is TAGOK's expression at one snapshot: the node carries exactly
+// one of the two tags — the D171 MAC or the O6 device signature — and never
+// both and never neither. It has to be written out because the rules language
+// has no "one of these keys": `hasChildren` names the keys it requires, and the
+// message's own validator no longer names `mac` for the reason J5r exists —
+// a phone paired the new way has no MAC to write. Each tag's own node still
+// refuses a malformed one, whichever of the two is there.
+func exactlyOneTag(at string) string {
+	mac := at + ".child('mac')"
+	sig := at + ".child('sig')"
+	return "((" + mac + ".exists() && !" + sig + ".exists()) || (" + sig + ".exists() && !" + mac + ".exists()))"
 }
 
 // PathByModel is the parent of one model's counters under a repository's day

@@ -22,7 +22,7 @@ The shape of the reading: **almost everything the spec needs already exists, in 
 
 **Claim of the spec:** §10, that revocation is two manual writes today.
 
-**What the code does.** `internal/cli/managed_apply.go:87`'s `newManagedCmd` registers `newManagedApplyCmd()` and `newManagedFlagCmd()` and nothing else. `internal/cli/managed_flag.go`'s own output prints the undo: delete `gs://<runs bucket>/fugaro/managed.json` yourself as the operator — *"no command of ours removes the marker in this release"* — and `gcloud projects update <gcp-project-id> --remove-labels=fugaro_managed`, which `docs/design/managed-projects.md` §10.2 and `plugin/skills/setup/reference/managed.md` both mark unverified until an operator has run it.
+**What the code does.** `internal/cli/managed_apply.go:87`'s `newManagedCmd` registers `newManagedApplyCmd()` and `newManagedFlagCmd()` and nothing else. `internal/cli/managed_flag.go`'s own output prints the undo: delete `gs://<runs bucket>/fugaro/managed.json` yourself as the operator — *"no command of ours removes the marker in this release"* — and `gcloud projects update <gcp-project-id> --remove-labels=fugaro_managed`, which `docs/managed-projects/spec.md` §10.2 and `plugin/skills/setup/reference/managed.md` both mark unverified until an operator has run it.
 
 **Consequence.** The command the owner would expect to exist does not. D1020 is about building it, and the spec's §10 is written to that recommendation.
 
@@ -158,7 +158,7 @@ The shape of the reading: **almost everything the spec needs already exists, in 
 
 **Claim of the spec:** §9.4 and §6.
 
-**What the code does.** `docs/design/desktop-console.md` (read-only by allow-list, no credential); `internal/cli/api.go:286` (`ReportIntentTimeout`), `:290`, `:299`, `:321`, `:338` — the moved report command's window, degraded path and by-mode bounds, re-exported from core for the `ee` report to read.
+**What the code does.** `docs/desktop-console/spec.md` (read-only by allow-list, no credential); `internal/cli/api.go:286` (`ReportIntentTimeout`), `:290`, `:299`, `:321`, `:338` — the moved report command's window, degraded path and by-mode bounds, re-exported from core for the `ee` report to read.
 
 **Consequence.** §6's "the reader lives in core, the section lives where the report lives" is the tree's own arrangement and adds no core symbol for a report section. And the console gains nothing at all — which is a ruling, not an omission.
 
@@ -262,7 +262,7 @@ git grep -h -o -E '\bD[0-9]{3,4}\b' FETCH_HEAD -- docs/ | sort -u | tail
 
 Two notes a later task needs, recorded rather than acted on:
 
-- **The false positive.** A scan for four-digit numbers is a scan for `D1…`, and `UID1000` appears in `docs/plans/2026-09-30-m9a-gateway-and-project-identity.md`. It is not a decision; `docs/models-commands/README.md` records the same shape of false positive for `D800` (`U+D800`).
+- **The false positive.** A scan for four-digit numbers is a scan for `D1…`, and `UID1000` appears in `docs/m9-budget-and-dashboard/implementation-plan-m9a.md`. It is not a decision; `docs/models-commands/README.md` records the same shape of false positive for `D800` (`U+D800`).
 - **The overlap in the open pull requests** (#1481 and #1485 both write D901–D919/D920) is **noticed and not done here**: both are other runs' pull requests, and the brief reserves their files. Whoever merges second re-checks.
 
 ---

@@ -2,7 +2,7 @@
 // See ee/LICENSE for the terms.
 
 // Command mint is the owner's hand-minting tool (licence-key-v2 plan K1.3,
-// subscriptions plan S2.10, design docs/design/key-signing-service.md §11 step
+// subscriptions plan S2.10, design docs/key-signing-service/spec.md §11 step
 // 2): it turns one claim set into one licence key, signing through a KMS key's
 // signing API, for the interim in which the issuing service does not exist yet
 // (T13).
@@ -49,8 +49,8 @@
 //     they say, and a renewing key
 //     must carry the hash of the secret it renews with, which is signed in and
 //     cannot be added afterwards.
-//   - **The ring is the owner's, not the build's.** The compiled keyring is
-//     empty until S2.9 publishes the owner's production half, and the interim
+//   - **The ring is the owner's, not the build's.** The compiled keyring holds
+//     the published production half (S2.9) and nothing else, and the interim
 //     this tool exists for starts at S3.8, so the tool checks against the public
 //     half named on the command line.
 //
@@ -337,9 +337,10 @@ func verifier(ring licence.Keyring, firebaseProjectID string) Verifier {
 
 // ringFromPublicKey reads the public half the owner names, in the spelling a
 // keyring entry carries: the 32 raw bytes of an Ed25519 public key, base64url
-// and unpadded (ee/licence/testdata/vectors_v1.json's keyring). S2.9 publishes
-// the owner's production half in this spelling, so what the tool checks against
-// and what a verifier holds are one text of one key.
+// and unpadded (ee/licence/testdata/vectors_v1.json's keyring, and the app's
+// ring since S2.9). The published production half is held in this spelling, so
+// what the tool checks against and what a verifier holds are one text of one
+// key.
 func ringFromPublicKey(keyID, text string) (licence.Keyring, error) {
 	raw, err := base64.RawURLEncoding.Strict().DecodeString(strings.TrimSpace(text))
 	if err != nil {

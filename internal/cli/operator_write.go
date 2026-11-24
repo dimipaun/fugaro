@@ -8,7 +8,7 @@ import (
 )
 
 // writeDenied is errors.Is(err, blobx.ErrForbidden) || isAccessDenied(err),
-// shared by operatorWriteErr and checkWriteErr (docs/design/bucket-iam.md
+// shared by operatorWriteErr and checkWriteErr (docs/bucket-iam/spec.md
 // H8, "errors.Is(err, blobx.ErrForbidden) || isAccessDenied(err)", matched
 // verbatim).
 //
@@ -25,7 +25,7 @@ func writeDenied(err error) bool {
 }
 
 // operatorWriteErr is the refusal of a write to the runs bucket that only
-// admins may make (docs/design/bucket-iam.md H8). The two lists those
+// admins may make (docs/bucket-iam/spec.md H8). The two lists those
 // sentences were written for are the same two roles under the old words: the
 // role the releases name a launcher reads the whole bucket but writes only
 // runs/ and tokens/ (the sealed budget token, since 0.9.0) and issues/ (the shared issue store), and the role they
@@ -49,7 +49,7 @@ func operatorWriteErr(url, key string, err error, lead ...string) error {
 }
 
 // checkWriteErr is writeState's refusal of a check.json write the daily
-// check job's build service account could not make (docs/design/bucket-iam.md
+// check job's build service account could not make (docs/bucket-iam/spec.md
 // H8). The job runs as that account, scoped to builds/<repository>/ by its
 // own Terraform IAM condition, not the operator/admin grants
 // operatorWriteErr explains: unlike every other operatorWriteErr caller,
@@ -68,5 +68,5 @@ func checkWriteErr(url, key string, err error) error {
 	if !writeDenied(err) {
 		return err
 	}
-	return remote(fmt.Errorf("writing %s in %s was refused: the repository's build service account may be missing its builds/ write grant; an admin needs to check this repository's Terraform IAM condition (docs/design/bucket-iam.md): %w", key, url, err))
+	return remote(fmt.Errorf("writing %s in %s was refused: the repository's build service account may be missing its builds/ write grant; an admin needs to check this repository's Terraform IAM condition (docs/bucket-iam/spec.md): %w", key, url, err))
 }

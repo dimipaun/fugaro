@@ -15,7 +15,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/mirror"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
+	"gopkg.in/yaml.v3"
 )
 
 // The credentials service's image, and the two names the release publishes it
@@ -81,6 +84,75 @@ const credentialsKind = "credentials"
 // credsServiceSince is the release that carries the credentials service, for
 // the gates that name what to upgrade to.
 const credsServiceSince = "0.10.0"
+
+// providerEntriesSince is the first fugaro release whose credentials service
+// reads C1's named-provider entries (RepoCredentialPrefix): the release KS1
+// lands in, and the second of R12's first fact's three conditions — a bundle
+// holding the entry is served only by a service that can load the document
+// that holds it, because the loader refuses a document carrying a key it does
+// not know (ErrBundleUnknownKey) and a service older than this one answers
+// every call of that installation with that refusal.
+//
+// It is read here rather than in internal/credsvc because the question is
+// about the service an installation has DEPLOYED — the image its own
+// `fugaro update` pinned, `installationServiceRelease` — and never about the
+// release this CLI is: an operator running a newer CLI against an installation
+// whose service was never re-applied is exactly the state this condition
+// exists for.
+//
+// It names 0.27.0, the release this work ships in, which is not tagged yet
+// (docs/release-streams.yaml has 0.26.1 current and Xerus 0.27.0 next), and
+// the name is a claim this tree can be held to rather than one to trust: the
+// service a release ships is built from that release's own loader, so a tree
+// whose loader has no arm for the family cannot build the service this
+// constant names — providerEntriesLoaderShipped below is that loader's own
+// answer, readCredentialsBundle refuses the whole reading while it is false,
+// and TestProviderEntriesSinceIsTheLoaderThisTreeBuilds ties the two together.
+// It is the release that ships the entry, so it must not RISE once that
+// release is tagged: a value above it withholds C1's first fact from
+// installations whose deployed service already reads the entry.
+const providerEntriesSince = "0.27.0"
+
+// providerEntriesLoaderShipped is whether the loader this tree's service is
+// built with knows C1's named-provider family — the arm KS1 added to
+// credsvc.CredentialKey, the key rule internal/credsvc/bundle.go reads every
+// document key with. It is TRUE in this tree because KS1 has landed: a
+// document carrying a key of the family is one this loader reads. Before the
+// arm it was false, because the loader refused such a document WHOLE
+// (credsvc.ErrBundleUnknownKey answers the document and not the entry alone).
+//
+// It is what readCredentialsBundle gates the whole reading on. It is a
+// variable so that a test can put the tree in the state the release that lands
+// KS1 leaves it in — config.ServiceHeldSecretNames' own lever, set and
+// restored by a helper — while TestProviderEntriesSinceIsTheLoaderThisTreeBuilds
+// holds it to the loader's own key rule, so that flipping it without the arm,
+// or landing the arm without flipping it, fails there instead of in a release.
+var providerEntriesLoaderShipped = true
+
+// errProviderEntriesUnreadable is what a bundle holding a key of that family
+// is answered with while providerEntriesLoaderShipped is false: the reading is
+// refused whole, the way every read that could not be made is (unreadable),
+// and not taken around the family. What the refusal states is a fact about the
+// document — the service the same run deploys cannot read it — which is the
+// kind of fact the switch is read from, and not a read that failed at a store.
+var errProviderEntriesUnreadable = fmt.Errorf("the document holds an entry of %s (C1's named-provider family) and the loader this release's service is built with knows no key of that family, so that service answers the whole document with credsvc.ErrBundleUnknownKey rather than serving the entries around it", credsvc.RepoCredentialPrefix)
+
+// stageAccountServedSince is the first fugaro release whose credentials
+// service serves a mixed stage account — the release KS9 lands in — and it is
+// the third condition of R12's second fact: a record naming a stage account is
+// a fact about the repository, and whether the deployed service selects that
+// account "like any named account" (R9) is a fact about the service, so a
+// service older than this one must not be told the stage account is served —
+// the runner would hold no token for an account whose calls the service
+// refuses.
+//
+// It is a constant of its own and not providerEntriesSince, although the two
+// releases are the same one today: they are two capabilities of the service
+// (reading a named-provider entry; admitting a stage account for its stage),
+// and a release that slips or moves takes one of them with it. It names
+// 0.27.0, this work's release, not tagged yet, on providerEntriesSince's
+// reasoning.
+const stageAccountServedSince = "0.27.0"
 
 // readCredentialsBundle is the installation's credentials service's bundle as
 // this run read it: the NAME of every model credential it holds, or record
@@ -227,16 +299,41 @@ func (r *initRun) readCredentialsBundle(ctx context.Context, lc *localcfg.Config
 	if err != nil {
 		return unreadable(err)
 	}
-	b, err := credsvc.ParseBundle(doc.raw)
+	// C1's named-provider entries are read off the document's OWN keys — they
+	// are what R12's first fact is over — and taken out of the bytes the loader
+	// parses (withoutRepoCredentials), so that every other rule of the loader
+	// is still the loader's own and this reading cannot disagree with the
+	// service about any other key.
+	//
+	// The family is also why this reading can be refused whole, and it is
+	// refused: the loader answers a document carrying a key it does not know
+	// with ErrBundleUnknownKey, and the loader that matters is the one the
+	// service is built with — the service of every release, by the constant
+	// above. A tree whose own loader has no arm for the family (KS1, unmerged)
+	// is a tree whose service would answer every call of this installation with
+	// that refusal, so a bundle holding one of the family's keys is not read
+	// around: it is not read at all — the state it was in before this reading
+	// learned to take the family out. Reading it anyway would record the switch
+	// and both facts true — the plan drops the job's model mounts on the switch
+	// — while the service the same run deploys refuses every call of it.
+	held, stripped := withoutRepoCredentials(doc.raw)
+	if len(held) > 0 && !providerEntriesLoaderShipped {
+		return unreadable(errProviderEntriesUnreadable)
+	}
+	b, err := credsvc.ParseBundle(stripped)
 	if err != nil {
 		return unreadable(err)
 	}
+	r.credsRepoCredentials = held
 	// Two facts and not one, because two questions are asked of them
 	// (credentialsBundleServes): the model credentials, by the name each is
 	// served under — the account's for tier A, config.AnthropicSecret for the
 	// paid key — and the GitHub App's private key, which a repository on
 	// GitHub needs the service to mint with and which is no model credential
-	// at all.
+	// at all. The provider key is read beside them and kept apart (credsProviderKey):
+	// it IS a model credential, but it is reached under the account name
+	// config.ProviderKeyAccount rather than its own, so it is not one of
+	// `names` and a caller that needs it reads the flag.
 	// The same reading answers the gate on the flip's drop: whether the bundle
 	// holds the upstream Bitbucket token, which is a question about the document
 	// just parsed and not a second read of the secret (bundleBitbucketToken,
@@ -252,7 +349,148 @@ func (r *initRun) readCredentialsBundle(ctx context.Context, lc *localcfg.Config
 		names[c.Name] = true
 	}
 	_, r.credsAppKey = b.AppKey()
+	_, r.credsProviderKey = b.ProviderKey()
 	return answer(names)
+}
+
+// withoutRepoCredentials is a bundle document with C1's named-provider entries
+// taken out, and the document keys of that family it held: the reading R12's
+// first fact is made over (credentialsProviderEntries), taken from the
+// document's own top-level keys through C1's own naming rule.
+//
+// It is the same node walk bundleHoldsKey takes (creds.go), for the same
+// reason — the question is about keys of C1's own naming rule — and it differs
+// in one thing: the keys are REMOVED, so that what the loader is handed is a
+// document it reads, with the family judged by the fact over the keys this
+// function answers (credentialsProviderEntries). The loader's other rules are
+// untouched by the removal — an unknown key, a duplicate, a value that is not
+// a scalar still refuse this reading exactly as they refuse the service's —
+// and a document holding a member of the family is refused WHOLE before this
+// point wherever the loader this tree builds cannot read one
+// (readCredentialsBundle, providerEntriesLoaderShipped).
+//
+// A document holding no member of the family — every bundle a release before
+// this one wrote — comes back unchanged, byte for byte: the loader's own
+// answer, its error messages included, is what answers about it, and nothing
+// here reads or rewrites a document the fact is not about.
+func withoutRepoCredentials(raw []byte) (held map[string]bool, stripped []byte) {
+	_, root, err := bundleNodes(raw)
+	if err != nil || root.Kind != yaml.MappingNode {
+		// A document yaml cannot read, or one whose root is not a mapping:
+		// credsvc.ParseBundle answers both, with the refusal it answers the
+		// service's own reader with, and this reading adds nothing to it.
+		return nil, raw
+	}
+	kept := make([]*yaml.Node, 0, len(root.Content))
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		k, v := root.Content[i], root.Content[i+1]
+		if _, _, ok := credsvc.RepoCredentialByKey(k.Value); !ok {
+			kept = append(kept, k, v)
+			continue
+		}
+		if held == nil {
+			held = map[string]bool{}
+		}
+		held[k.Value] = true
+	}
+	if held == nil {
+		return nil, raw
+	}
+	root.Content = kept
+	out, err := yaml.Marshal(root)
+	if err != nil {
+		// Unreachable: a node tree that decoded from yaml encodes. Answering
+		// the document unchanged hands the loader the family key and it
+		// refuses the whole document, which is the fail-closed direction.
+		return nil, raw
+	}
+	return held, out
+}
+
+// credentialsProviderEntries is R12's first fact for this repository: whether
+// the bundle holds an entry for every provider credential the repository's
+// config names, whether the deployed service can read that entry kind, and
+// whether the project publishes an allow-list (F32). It is what the owner's
+// own `fugaro update` records, and a run's gateway then sends a routed provider
+// call through the service instead of using the key its job mounts (KS5).
+//
+// The three conditions, and each of them is somebody else's answer:
+//
+//   - the credentials. "The provider credentials the repository's config
+//     names" is runner.ProvidersFor's own set — the providers a run of this
+//     repository has, allow_data_to applied — and not a second reading of the
+//     providers block: a provider the repository may not send its code to is
+//     not one its runs route a call through, so it is not one the service
+//     needs an entry for. Each name is turned into the document key by C1's
+//     own rule (credsvc.RepoCredentialKey, over the slug task.Slug derives for
+//     this repository and this provider) and looked up in what the reading
+//     held, so the key this asks about is the key KS12's copy writes and KS1's
+//     loader reads, byte for byte.
+//   - the deployed service's release (providerEntriesSince): the entry kind is
+//     one only a service at or after that release loads, and one older answers
+//     every call of the installation with the loader's unknown-key refusal.
+//     A release that cannot be read — no workdir on this machine, no tfvars,
+//     no image (installationServiceRelease's "not known") — is not "at or
+//     after" it, and the fact stays false: the direction this fails in is the
+//     one that changes nothing, the run keeping the key its job mounts.
+//   - the allow-list (F32): the service pins a routed call to the project's
+//     published budget.allowed_models and refuses a call under none
+//     (credsvc's requestNoAllowListRefusal, fail closed), so a project that
+//     publishes no list is served no routed call at all and the fact would
+//     send the run to a refusal. An unread policy (pol nil) is the same answer
+//     for the same reason.
+//
+// A repository whose config names no provider is not a hole: the set is empty,
+// every credential of it is held by construction, and the fact then says the
+// service serves this repository's provider keys while there is no provider
+// call to send — which changes nothing a run does and is the honest reading of
+// "every provider credential the repository's config names".
+func credentialsProviderEntries(lc *localcfg.Config, pol *projectpolicy.Policy, held map[string]bool, repo, provider string) bool {
+	if pol == nil || len(pol.Budget.AllowedModels) == 0 {
+		return false
+	}
+	rel, _, ok := installationServiceRelease(lc)
+	if !ok || imagePredates(rel, providerEntriesSince) {
+		return false
+	}
+	slug, err := task.Slug(provider, repo)
+	if err != nil {
+		return false
+	}
+	for name := range runner.ProvidersFor(lc.Providers, repo) {
+		key, err := credsvc.RepoCredentialKey(slug, name)
+		if err != nil || !held[key] {
+			return false
+		}
+	}
+	return true
+}
+
+// credentialsStageAccount is R12's second fact for this repository: the mixed
+// variant's second account is selected by the service like any named account,
+// so the runner holds no token for it (R9, F44; KS10 reads this one where the
+// runner picks the account its stages go out on).
+//
+// Its three conditions are the switch's own — the caller writes the fact only
+// where the record says the service serves this repository — plus:
+//
+//   - the record names a stage account at all: infra.MixedStageAccounts is the
+//     set the repository's jobs are built from, and it is empty for every
+//     repository that mixes nothing (a cascade repository, an oauth one, an
+//     api-key one whose stages name no account), which is the whole of "there
+//     is nothing here for the service to serve".
+//   - the deployed service is at or after the release that serves one
+//     (stageAccountServedSince): a service older than that refuses the stage
+//     account's calls, and the runner would then hold no token for an account
+//     it must use. "Not known" is the same answer as "older", on
+//     credentialsProviderEntries' reasoning, and the direction is again the one
+//     that changes nothing: the run keeps the token the job mounts.
+func credentialsStageAccount(lc *localcfg.Config, cfg *config.Config, repo string) bool {
+	if len(infra.MixedStageAccounts(cfg, lc, repo)) == 0 {
+		return false
+	}
+	rel, _, ok := installationServiceRelease(lc)
+	return ok && !imagePredates(rel, stageAccountServedSince)
 }
 
 // credentialsBundleReady is whether the bundle holds at least one MODEL
@@ -497,8 +735,21 @@ func (e *initEngine) makeOnboardingRepoEntry() {
 // off for every machine of the installation. This repository keeps the record
 // the last reading left on it either way.
 //
-// outs is the installation root's own outputs, and it is TWO things here.
+// This door writes R12's two facts as well, on the same entry and in the same
+// write (KS19, F31): "this repository's provider keys are served" and "this
+// repository's stage account is served", each judged from the reading this
+// function already made and recorded beside the switch, so the repository
+// root's plan hands the fact to its jobs from one value rather than judging it
+// again (infra's repoCtx reads the record; a second judgement there could not
+// be made at all — internal/infra reads no cloud — and a second judgement here
+// would be a second reading of the bundle for a question about the one already
+// read). cfg is the repository's own document (the one the spec beside this is
+// built from, repoEngine's cfg), which is what decides whether the repository
+// mixes a stage account at all, and pol is the published node this door already
+// read for the budget mode — R12's third condition is that the project
+// publishes an allow-list, and the node is the only place that answer is.
 //
+// outs is the installation root's own outputs, and it is TWO things here.
 // It is the first condition of the switch, read from the same source the spec
 // beside this reads it from (infra.Inputs.Installation, which withDefaults
 // never fills from the local config), so a record cannot say on for a root the
@@ -518,7 +769,7 @@ func (e *initEngine) makeOnboardingRepoEntry() {
 // PRESENCE is read for that — the bundle's container is derived from the
 // project and the installation's name (openBundleStore) — so a URL the first
 // apply could not know yet is not a reason to answer false.
-func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcfg.Config, outs infra.InstallationOutputs, repo, provider, auth string, accounts []string, mode string) {
+func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcfg.Config, outs infra.InstallationOutputs, cfg *config.Config, pol *projectpolicy.Policy, repo, provider, auth string, accounts []string, mode string) {
 	if lc == nil {
 		return
 	}
@@ -576,7 +827,26 @@ func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcf
 	// block is known — and mode is the node's own, the one the spec reads out
 	// of Inputs.Policy for the `api-key` and `oauth` arm (D2071). So the record
 	// cannot come out differently from the plan it is the record of.
-	entry.CredentialsServiceReady = localcfg.RecordSwitch(infra.CredentialsServiceServes(installed, ready, auth, mode))
+	serves := infra.CredentialsServiceServes(installed, ready, auth, mode)
+	entry.CredentialsServiceReady = localcfg.RecordSwitch(serves)
+	// R12's two facts, recorded beside the switch and read from the same
+	// reading (KS19, F31, F44): the repository's provider keys are served, and
+	// its stage account is served. Each is written as the reading's answer and
+	// never as "the switch is on" alone — the switch says a run may reach the
+	// service, while a fact says the service has what that run would ask it for
+	// — and each is hung off the switch because a fact is planned into a job
+	// that can only be reached where the switch is on (ProviderKeysServed's own
+	// comment, infra's repoCtx).
+	//
+	// They are written false as well as true, exactly as the switch is: the
+	// conditions move in both directions — a provider is added to the config
+	// and its key has not been copied into the bundle yet, the bundle is
+	// emptied, the project stops publishing an allow-list, a stage account is
+	// removed — and the next `fugaro update` has to be able to take the fact
+	// away again, or a run would keep sending calls to a service that refuses
+	// them while its job still mounts the key that works.
+	entry.ProviderKeysServed = localcfg.RecordSwitch(serves && credentialsProviderEntries(lc, pol, r.credsRepoCredentials, repo, provider))
+	entry.StageAccountServed = localcfg.RecordSwitch(serves && credentialsStageAccount(lc, cfg, repo))
 	if lc.Repos == nil {
 		lc.Repos = map[string]localcfg.Repo{}
 	}
@@ -738,6 +1008,18 @@ func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, c *infra.
 		// someone else wrote.
 		return
 	}
+	// This door writes the switch alone and leaves R12's two facts exactly as
+	// the person's last `fugaro update --repo` recorded them (KS19). It fills
+	// the roots no checkout here applies, so it has neither the bundle
+	// document's entries, nor the published policy's allow-list, nor a
+	// repository's own document to judge a fact from: a value written from a
+	// readiness answer would be a guess the repository door then contradicts,
+	// and one that took a recorded true away would clear a fact for a
+	// repository this run never looked at. A stale fact beside a switch this
+	// loop has just written `false` is inert rather than wrong — the spec plans
+	// each fact only where the same record's switch is on (infra's repoCtx) —
+	// and the next `fugaro update --repo` in that repository writes both again
+	// from its own reading.
 	for _, key := range switched {
 		entry := lc.Repos[key]
 		entry.CredentialsServiceReady = localcfg.RecordSwitch(ready)

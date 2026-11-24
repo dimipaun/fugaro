@@ -119,7 +119,7 @@ func batchValidateProblems(lc *localcfg.Config, cfg *config.Config, rcp *recipe.
 	// (doctorBatchBudgetSeal asks budgetMintOn itself, so the two readers of
 	// the pair cannot disagree about the shapes a config can hold).
 	if on, _ := budgetBackendOn(lc); on {
-		ps = append(ps, config.Problem{Path: "backend", Message: "this installation selects backend: cloud-batch and its budget backend is on (budget.mode with budget.rtdb_url), so every launch of it mints a budget token -- and a Batch job has no carrier for the token's seal key, so every launch is refused before the job is created (docs/design/budget-token-channel.md; docs/design/compute-backend.md §1.6). Minting is the installation's, not a run's: there is no per-run fallback, and the installation has to stay on backend: cloud-run"})
+		ps = append(ps, config.Problem{Path: "backend", Message: "this installation selects backend: cloud-batch and its budget backend is on (budget.mode with budget.rtdb_url), so every launch of it mints a budget token -- and a Batch job has no carrier for the token's seal key, so every launch is refused before the job is created (docs/budget-token-channel/spec.md; docs/compute-backend/spec.md §1.6). Minting is the installation's, not a run's: there is no per-run fallback, and the installation has to stay on backend: cloud-run"})
 	}
 
 	// The artifact boundary (Global Constraint 13, design artifact-runs.md
@@ -161,7 +161,7 @@ func batchValidateProblems(lc *localcfg.Config, cfg *config.Config, rcp *recipe.
 	limit := batch.MaxRunDuration - backend.TaskTimeoutSlack
 	if d := lc.BatchTaskTimeout(); d > limit {
 		ps = append(ps, config.Problem{Path: "batch.task_timeout", Message: fmt.Sprintf(
-			"batch.task_timeout is %v, and the job's maxRunDuration is that plus the %v every backend adds as its slack: Batch fails a task after 14 days RUNNING (%v), so a task timeout above %v is a job Batch refuses at create (docs/design/compute-backend.md §1.3, §9)",
+			"batch.task_timeout is %v, and the job's maxRunDuration is that plus the %v every backend adds as its slack: Batch fails a task after 14 days RUNNING (%v), so a task timeout above %v is a job Batch refuses at create (docs/compute-backend/spec.md §1.3, §9)",
 			d, backend.TaskTimeoutSlack, batch.MaxRunDuration, limit)})
 	}
 	return ps
@@ -192,7 +192,7 @@ func artifactOnBatchRefusal(backendName string, rcp *recipe.Recipe) (string, boo
 // than two spellings of it. It names the design and its decision, and what the
 // boundary is waiting for, because the next reader of it is the plan that
 // removes it.
-const artifactOnBatchMessage = "an artifact-producing run is never launched on cloud-batch: this repository's recipe is mode: artifact, so its runs deliver into the runs bucket rather than opening a pull request, and a Batch run's account is not per-repository -- the same run's inputs, artifacts and record would be readable and overwritable by every run on the profile (docs/design/artifact-runs.md §8.5 and D11). What this waits for is a per-run prefix condition or a per-run account; until one of them exists, an artifact-producing run stays on backend: cloud-run, and nothing in this build removes the refusal"
+const artifactOnBatchMessage = "an artifact-producing run is never launched on cloud-batch: this repository's recipe is mode: artifact, so its runs deliver into the runs bucket rather than opening a pull request, and a Batch run's account is not per-repository -- the same run's inputs, artifacts and record would be readable and overwritable by every run on the profile (docs/artifact-runs/spec.md §8.5 and D11). What this waits for is a per-run prefix condition or a per-run account; until one of them exists, an artifact-producing run stays on backend: cloud-run, and nothing in this build removes the refusal"
 
 // artifactUnreadOfflineRefusal is the offline arm's fail-closed shape of the
 // same boundary: an installation on cloud-batch whose recipe this checkout
@@ -202,7 +202,7 @@ const artifactOnBatchMessage = "an artifact-producing run is never launched on c
 // boundary that passes what it cannot read is not a boundary. The launch's gate
 // refuses the same shape for the same reason (artifactUnreadOnBatchRefusal,
 // artifactShadowedOnBatchRefusal).
-const artifactUnreadOfflineRefusal = "this installation is on cloud-batch and the recipe its runs use could not be resolved from this checkout (agent.recipe in fugaro.yaml, else .fugaro/recipes/default.yaml, else the catalog), so nothing here can tell an artifact-producing recipe from any other -- and an artifact-producing run is never launched on cloud-batch, because a Batch run's account is not per-repository (docs/design/artifact-runs.md §8.5 and D11). Name a recipe this checkout can read and parse, and it is judged on its own mode"
+const artifactUnreadOfflineRefusal = "this installation is on cloud-batch and the recipe its runs use could not be resolved from this checkout (agent.recipe in fugaro.yaml, else .fugaro/recipes/default.yaml, else the catalog), so nothing here can tell an artifact-producing recipe from any other -- and an artifact-producing run is never launched on cloud-batch, because a Batch run's account is not per-repository (docs/artifact-runs/spec.md §8.5 and D11). Name a recipe this checkout can read and parse, and it is judged on its own mode"
 
 // artifactUnreadOnBatchRefusal is the launch's other shape of the same
 // boundary (Global Constraint 13): on cloud-batch a launch whose recipe the
@@ -219,7 +219,7 @@ const artifactUnreadOfflineRefusal = "this installation is on cloud-batch and th
 // plainly: a Batch launch from outside the repository's own checkout is refused
 // until the recipe can be read there, and the Fix says so.
 func artifactUnreadOnBatchRefusal(repo string) string {
-	return fmt.Sprintf("a run on cloud-batch whose recipe this launcher cannot read is refused: the recipe of %s is not readable from this directory (a repository recipe is read from a checkout whose origin is %s, and a first run's recipe is the one that checkout's agent.recipe names), so nothing on this path can tell an artifact-producing recipe from any other -- and an artifact-producing run is never launched on cloud-batch, because a Batch run's account is not per-repository (docs/design/artifact-runs.md §8.5 and D11). Run this launch from a checkout of %s that holds the ref it launches, and it is judged on the recipe the run reads there", repo, repo, repo)
+	return fmt.Sprintf("a run on cloud-batch whose recipe this launcher cannot read is refused: the recipe of %s is not readable from this directory (a repository recipe is read from a checkout whose origin is %s, and a first run's recipe is the one that checkout's agent.recipe names), so nothing on this path can tell an artifact-producing recipe from any other -- and an artifact-producing run is never launched on cloud-batch, because a Batch run's account is not per-repository (docs/artifact-runs/spec.md §8.5 and D11). Run this launch from a checkout of %s that holds the ref it launches, and it is judged on the recipe the run reads there", repo, repo, repo)
 }
 
 // artifactShadowedOnBatchRefusal is the launch's third shape of the same
@@ -242,7 +242,7 @@ func artifactUnreadOnBatchRefusal(repo string) string {
 // launch carrying a project or catalog recipe is refused unless this
 // directory's checkout holds the ref it launches.
 func artifactShadowedOnBatchRefusal(name, repo, ref string) string {
-	return fmt.Sprintf("a run on cloud-batch whose recipe this launcher cannot resolve is refused: the recipe %s travels in this task as text, but a run does not necessarily read it -- the repository layer at %s is read first, so a .fugaro/recipes/%s.yaml at %s is the recipe that runs, its mode included, whatever text the task carries. Nothing here can read %s's repository layer (%s is read from a checkout of its own; this directory has none that holds the ref), so nothing on this path can tell an artifact-producing recipe from any other -- and an artifact-producing run is never launched on cloud-batch, because a Batch run's account is not per-repository (docs/design/artifact-runs.md §8.5 and D11). Run this launch from a checkout of %s that holds %s, and the recipe the run reads there is the one judged", name, ref, name, ref, repo, ref, repo, ref)
+	return fmt.Sprintf("a run on cloud-batch whose recipe this launcher cannot resolve is refused: the recipe %s travels in this task as text, but a run does not necessarily read it -- the repository layer at %s is read first, so a .fugaro/recipes/%s.yaml at %s is the recipe that runs, its mode included, whatever text the task carries. Nothing here can read %s's repository layer (%s is read from a checkout of its own; this directory has none that holds the ref), so nothing on this path can tell an artifact-producing recipe from any other -- and an artifact-producing run is never launched on cloud-batch, because a Batch run's account is not per-repository (docs/artifact-runs/spec.md §8.5 and D11). Run this launch from a checkout of %s that holds %s, and the recipe the run reads there is the one judged", name, ref, name, ref, repo, ref, repo, ref)
 }
 
 // artifactRepoRecipeAtRefRefusal is the launch's fourth shape of the same
@@ -267,7 +267,7 @@ func artifactShadowedOnBatchRefusal(name, repo, ref string) string {
 // readErr is the read's own failure, carried into the message so its reader can
 // tell "fetch the ref" from "repair the checkout".
 func artifactRepoRecipeAtRefRefusal(readErr error, repo, ref string) string {
-	return fmt.Sprintf("a run on cloud-batch whose recipe this launcher cannot resolve is refused: this launch's recipe is the repository's own file, read from this launcher's working tree, while a run reads the same file at %s out of %s (so a tree whose recipe is mode: implement says nothing about a ref whose file of that name is mode: artifact). The ref could not be read from this checkout (%s), so nothing on this path can tell an artifact-producing recipe from any other -- and an artifact-producing run is never launched on cloud-batch, because a Batch run's account is not per-repository (docs/design/artifact-runs.md §8.5 and D11). Run this launch from a checkout of %s that holds %s, and the recipe the run reads there is the one judged", ref, repo, oneLineCLI(readErr.Error()), repo, ref)
+	return fmt.Sprintf("a run on cloud-batch whose recipe this launcher cannot resolve is refused: this launch's recipe is the repository's own file, read from this launcher's working tree, while a run reads the same file at %s out of %s (so a tree whose recipe is mode: implement says nothing about a ref whose file of that name is mode: artifact). The ref could not be read from this checkout (%s), so nothing on this path can tell an artifact-producing recipe from any other -- and an artifact-producing run is never launched on cloud-batch, because a Batch run's account is not per-repository (docs/artifact-runs/spec.md §8.5 and D11). Run this launch from a checkout of %s that holds %s, and the recipe the run reads there is the one judged", ref, repo, oneLineCLI(readErr.Error()), repo, ref)
 }
 
 // isSelectableBackend reports whether name is one of the backends

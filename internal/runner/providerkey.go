@@ -19,6 +19,13 @@ import (
 // The value is registered for redaction already, because the job lists the
 // variable in SecretEnvsVar (addMountedSecrets); the second return is the
 // value so a caller that builds its own redactor can add it.
+//
+// It is the MOUNT path's reader and nothing else (R12, KS5): a run whose job
+// carries the fact that this repository's provider keys are served routes its
+// calls through the credentials service and reads no provider key out of its
+// environment at all — gatewayRoutes and poolMemberHeld are its two callers,
+// and both ask it only where the fact is absent or the service is out of
+// reach.
 func ProviderCredential(env []string, p config.ModelProvider) (cred func() (string, error), value string, err error) {
 	name := p.SecretEnv()
 	value = envLookup(env, name)

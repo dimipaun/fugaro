@@ -67,7 +67,7 @@ writer per level**: CM10, alone at level 4.
 **Why CM10 and CM11 are level 4 and both after the sections.** CM10 registers the sections and settles
 the **source line each panel draws**; CM11 writes the classes those panels are drawn with. They share
 no file, and neither waits for the other: the console renders unstyled markup without the stylesheet —
-that is what `docs/design/console-styling.md` §1.3 records about the golden frames — so a level that
+that is what `docs/console-styling/spec.md` §1.3 records about the golden frames — so a level that
 lands the wiring without the classes is a level of correct, plain markup rather than a broken screen.
 They are two tasks rather than one because the tab's own three tests and the policy panel's flip come
 with the wiring, which is six files already (§2).
@@ -89,12 +89,12 @@ of one file** — that is the invariant the levels above exist to hold, and this
 | --- | --- | --- |
 | `internal/cli/docs_desktop_console_test.go` | CM2 (0), CM3 (1) | CM2 adds the new document's structs to the shape list and the new command to the flag inventory; CM3 adds the two argvs to rule 6's `want` list and moves the command count 21 → 23 |
 | `console/docs/json-contract.md` | CM2 (0) | §6.21, the new document's own section (F27) |
-| `docs/design/desktop-console.md` | CM3 (1) | §5.1 rule 6's table gains two rows and rule 5's operation count moves |
+| `docs/desktop-console/spec.md` | CM3 (1) | §5.1 rule 6's table gains two rows and rule 5's operation count moves |
 | `console/src/main/spawn.ts`, `console/src/main/ipc.ts`, `console/src/preload/index.ts` | CM4 (2) | the two spawn rows and the two operations, with the preload's written-out method list |
 | `console/test/unit/spawn.test.ts`, `ipc.test.ts`, `preload-surface.test.ts` | CM4 (2) | the ordered words list, the operations snapshot, the method list |
 | `console/src/renderer/screens/projects.ts`, `console/src/renderer/entry.ts` | CM10 (4) | the four new panels, the policy panel's flip, and the wiring |
 | `console/test/unit/projects.test.ts`, `entry-wiring.test.ts`, `build-files.test.ts`, `console/test/e2e/projects.spec.ts` | CM10 (4) | the source line the policy panel draws, the wiring, the panel list, and the frames |
-| `console/src/renderer/theme/screens.css`, `docs/design/console-styling.md` | CM11 (4) | the panels' class hooks and the document that names them (§2.5) |
+| `console/src/renderer/theme/screens.css`, `docs/console-styling/spec.md` | CM11 (4) | the panels' class hooks and the document that names them (§2.5) |
 | `console/test/fixtures/bin/fugaro` | CM12 (5) | an arm for each of the two reads CM4 added; the fixture already answers `settings --json` for the account keys section and the tab's existing panels |
 | `docs/gcp-live-checklist.md` | CM12 (5) | Check 360's own section, and the register's row |
 | `docs/releases/console/v0.121.0.md`, `docs/releases/console/README.md`, `console/package.json` | CM13 (6) | the notes, the next fruit in that directory's own table, and the version line |
@@ -170,7 +170,7 @@ panel draws and the frames it draws them in, and which move with any panel anyon
 - **Files:** `internal/cli/project.go` (`consoleReadPaths` gains `fugaro managed status` and `fugaro
   project policy show`), `internal/cli/docs_desktop_console_test.go` (rule 6's `want` list 22 → 24, and
   the command count 21 → 23), `internal/cli/checkouts_test.go` (both reads in
-  `TestConsoleAllowListedReadsWriteNothing`), `docs/design/desktop-console.md` (§5.1 rule 6's table
+  `TestConsoleAllowListedReadsWriteNothing`), `docs/desktop-console/spec.md` (§5.1 rule 6's table
   gains the two rows, rule 5's operation count moves).
 - **Interface:** the two rows, spelled exactly as the console will spawn them — `managed status --json
   --project <name> [--config <path>]` and `project policy show --json --project <name> [--config
@@ -336,7 +336,7 @@ panel draws and the frames it draws them in, and which move with any panel anyon
 ### CM11. The sections' styles, and the document that names them (F7, F8, D1488). **size S**
 
 - **Files:** `console/src/renderer/theme/screens.css` (the four new panels' class hooks and the policy
-  panel's read state), `docs/design/console-styling.md` (§2.5, the same classes).
+  panel's read state), `docs/console-styling/spec.md` (§2.5, the same classes).
 - **Interface:** the class names CM5–CM9's modules draw with, defined once — no module writes the
   stylesheet, which is why this is one task and not five.
 - **The licence these two files are written under,** and why they are one commit: `console-styling.md`
@@ -461,7 +461,7 @@ twenty-five minutes.
 test:e2e` for CM12. Goldens are **skipped in CI** and are re-recorded only by the coordinator on the
 owner's machine — **no task here re-records one**.
 
-**Every task that touches `docs/design/desktop-console.md`, `console/docs/json-contract.md` or
+**Every task that touches `docs/desktop-console/spec.md`, `console/docs/json-contract.md` or
 `docs/gcp-live-checklist.md`** runs the `Docs` filter in the same commit, because the Go tests that pin
 them live there (F26, F27) and a document changed without them is a red test on `main`.
 

@@ -22,12 +22,15 @@
 //
 // **What this file deliberately is not.** It does not drive the Coordinator
 // screen: the operation behind `runs.stream` reaches the bridge in SRC's handler
-// (`src/source/new-reads.ts`), wired by I-OPS, and until that lands the window's
-// own `window.fugaro` has no such member -- which is exactly the fallback case
-// below. The read is the subject, and the drawing around it is the probe's own
-// small one (a list, a count, and the sentence an interrupted read draws in the
-// list's place): the console's own caller is `entry.ts`, whose queue is drawn by
-// `screens/coordinator.ts`, and its wiring is held by `entry-wiring.test.ts`.
+// (`src/source/new-reads.ts`), wired by I-OPS, and the window's own bridge
+// refuses it at the unset floor (`RUNS_STREAM_CLI_FLOOR` is `null` while no CLI
+// release carries `--stream`) rather than streaming anything -- so this file
+// hands the read a bridge of its own, and one of the cases below hands it one
+// with no such member at all. The read is the subject, and the drawing around it
+// is the probe's own small one (a list, a count, and the sentence an interrupted
+// read draws in the list's place): the console's own caller is `entry.ts`, whose
+// queue is drawn by `screens/coordinator.ts`, and its wiring is held by
+// `entry-wiring.test.ts`.
 //
 // **The scheduler is the production one.** No `paint` is passed, so `readStream`
 // uses `stream.ts`'s own `NODE_PAINT` (`setTimeout(step, 0)`): each row's drawing
@@ -193,7 +196,7 @@ function bundle(body: string): string {
  * --json`'s array holds, with the line's own `type` beside it. The four members
  * a row must carry are the ones `decodeRunsList` reads. */
 function aLine(run: string): Record<string, unknown> {
-  return { type: 'row', run, repo: 'acme/widgets', status: 'failed', terminal: true }
+  return { type: 'row', row: { run, repo: 'acme/widgets', status: 'failed', terminal: true } }
 }
 
 /** RUNS is the three runs every case streams, in the order the CLI writes them:

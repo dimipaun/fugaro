@@ -237,6 +237,12 @@ func TestMe(t *testing.T) {
 	// `git config --global` below can succeed; this keeps the developer's
 	// real global config out of the test, same as IsolateGit intends.
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "gitconfig"))
+	// Me runs `git config user.email`, which is the merged config: the
+	// checkout this test runs in is a repository, so a user.email set in its
+	// own .git/config would answer over the temp global above. A GIT_DIR of a
+	// directory that is no repository takes the checkout's config out of the
+	// read, so only the global this test wrote answers.
+	t.Setenv("GIT_DIR", t.TempDir())
 	c, _ := Parse([]byte(sample + "user: someone@example.com\n"))
 	if me, err := c.Me(context.Background()); err != nil || me != "someone@example.com" {
 		t.Fatalf("Me = %q, %v", me, err)
@@ -1907,7 +1913,7 @@ func TestReviewFloorDecodeStrict(t *testing.T) {
 // drops it the way it drops update_check and base_branch, and MergeShared
 // never takes it back from a published object: a floor in the runs bucket's
 // shared file would be the launcher the floor exists to bind, setting it
-// (docs/design/bucket-iam.md §10 L1, L2).
+// (docs/bucket-iam/spec.md §10 L1, L2).
 func TestReviewFloorNotInShared(t *testing.T) {
 	c, err := Parse([]byte(sample + "review_floor:\n  pro: [l2]\n"))
 	if err != nil {
@@ -2794,7 +2800,7 @@ func TestWorkspaceMemberEntryValidation(t *testing.T) {
 	// leave every command in that project — `fugaro update` among them —
 	// unable to read the file the release behind wrote. The service holds a
 	// run's verified slug to this list, so an account with none is served
-	// nothing; `fugaro workspace member add` is where writing one is refused.
+	// nothing; `fugaro workspace project add` is where writing one is refused.
 	none, err := Parse([]byte(account("")))
 	if err != nil {
 		t.Fatalf("an account that names no repos was refused: %v", err)
@@ -2802,6 +2808,51 @@ func TestWorkspaceMemberEntryValidation(t *testing.T) {
 	if got := (*none.WorkspaceMembers)["aurora"].JobAccounts; len(got) != 1 ||
 		got[0].Account != "marker-job@aurora-gcp.iam.gserviceaccount.com" || len(got[0].Repos) != 0 {
 		t.Fatalf("job accounts = %+v, want the account with no repositories", got)
+	}
+}
+
+// TestWorkspaceSharedEntryIsOneOfTwoDeclarations: a written entry states the
+// members it may be served to, and there are exactly two ways to say it — the
+// list of projects it names, or the key that offers it to every member of the
+// workspace (D2977, contract C3's rule 5). The loader asks the pair the way the
+// node's own reader does, so a file that says both, or neither, is refused here
+// rather than reaching the writer: an entry read as one of the two when the
+// owner wrote the other is a pool wider or narrower than the declaration beside
+// it.
+func TestWorkspaceSharedEntryIsOneOfTwoDeclarations(t *testing.T) {
+	doc := func(fields string) string {
+		return sample + "workspace_shared:\n  anthropic-api-key:\n" + fields
+	}
+	for name, tc := range map[string]struct{ yaml, msg string }{
+		"both declarations":   {doc("    kind: model\n    all_members: true\n    projects: [aurora]\n"), "carries both all_members and projects"},
+		"neither declaration": {doc("    kind: model\n"), "names no project and does not offer the credential to every member"},
+		"the members it names": {
+			doc("    kind: model\n    projects: [aurora]\n"), ""},
+		"every member": {doc("    kind: model\n    all_members: true\n"), ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.yaml))
+			if tc.msg == "" {
+				if err != nil {
+					t.Fatalf("a declaration the loader accepts was refused: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.msg) {
+				t.Fatalf("err = %v, want ~%q", err, tc.msg)
+			}
+		})
+	}
+	// The key is read INTO the entry and not only accepted: what the writer
+	// publishes is the declaration the owner wrote, so an entry carrying it
+	// carries no projects beside it.
+	c, err := Parse([]byte(doc("    kind: model\n    all_members: true\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh := (*c.WorkspaceShared)["anthropic-api-key"]
+	if !sh.AllMembers || len(sh.Projects) != 0 {
+		t.Fatalf("the entry is %+v, want all_members with no projects", sh)
 	}
 }
 

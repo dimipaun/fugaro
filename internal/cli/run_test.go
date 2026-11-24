@@ -1426,7 +1426,7 @@ func TestTheArtifactLaunchGateJudgesTheRefNotTheWorkingTree(t *testing.T) {
 	if err == nil {
 		t.Fatal("a launch whose ref this checkout does not hold was passed: nothing here can then say whether the run reads an artifact recipe")
 	}
-	for _, want := range []string{"docs/design/artifact-runs.md", "§8.5", "D11", "release"} {
+	for _, want := range []string{"docs/artifact-runs/spec.md", "§8.5", "D11", "release"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the fail-closed refusal does not name %q: %v", want, err)
 		}
@@ -1673,6 +1673,7 @@ func TestFollowUpDoesNotInheritThePlanTask(t *testing.T) {
 	root := firstRunSpec(rootID)
 	root.PlanTask = "setup-wizard/W1.3"
 	seedSpec(t, f, root, false)
+	seedTitleAwareImage(t, f)
 	rec := prRecord(rootID, "", 7, 1)
 	rec.StartedAt = time.Now().Add(-72 * time.Hour)
 	writeRecord(t, f, rootID, rec)

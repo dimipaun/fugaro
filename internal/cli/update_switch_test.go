@@ -719,6 +719,10 @@ func TestTheCredentialsStageAppliesForAMovedRecord(t *testing.T) {
 	// release's image, so the stage has no image of its own to move and its
 	// skip has nothing to decide on but the records.
 	seedCredentialsService(t, r, r.credentialsRef())
+	// The installation already holds the resident orchestrator's block: this
+	// test is about the records, and a block still to be written is the other
+	// reason the stage has an apply to make.
+	seedOrchestratorBlock(t, r, r.credentialsRef())
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 
 	// The records have not moved: the door derived the jobs from them, nothing
@@ -739,7 +743,7 @@ func TestTheCredentialsStageAppliesForAMovedRecord(t *testing.T) {
 	// The door's own write, after the spec was built: the entry of the checkout
 	// this run converges, recorded as the plan of that root was made with it.
 	moved := rigEngine(t, r.initRig, &initOptions{door: updateDoor.name, yes: true})
-	moved.r.recordCredentialsServiceReady(t.Context(), moved.lc, switchOutputs(), "acme/sandbox", "github", config.AuthCascade, nil, "")
+	moved.r.recordCredentialsServiceReady(t.Context(), moved.lc, switchOutputs(), servedCallConfig("github", config.AuthCascade), nil, "acme/sandbox", "github", config.AuthCascade, nil, "")
 	if !moved.lc.Repos["acme/sandbox"].CredentialsServiceOn() {
 		t.Fatalf("the door recorded nothing for %s, so this test is not the state it is about: the bundle has to hold a model credential and the repository's auth has to be the cascade\n%s", slug, readFileString(t, r.cfg))
 	}
@@ -1079,6 +1083,16 @@ func TestTheRootIsDeployedForTheAuthTheRunsRead(t *testing.T) {
 // install writes the config's block out of these): a rig carrying the block in
 // its config carries it here too, or the two say different things about the
 // installation, which is the state the door below is judged against.
+// servedCallConfig is the checkout document the door's own call takes, built
+// from the fields these tests drive the switch with: the provider and the
+// agent.auth. The two facts KS19 records beside the switch are not what the
+// callers below are about, and no fixture here publishes an allow-list, so
+// they are left off (the nil policy is the door's "the project publishes no
+// allow-list" state).
+func servedCallConfig(provider, auth string) *config.Config {
+	return &config.Config{Git: config.Git{Provider: provider}, Agent: config.Agent{Auth: auth}}
+}
+
 func switchOutputs() infra.InstallationOutputs {
 	return infra.InstallationOutputs{CredentialsService: &infra.CredentialsService{
 		Name:   infra.CredentialsServiceName,
@@ -1111,7 +1125,7 @@ func recordForRepoDoc(t *testing.T, r *initRig, yaml, mode string, outs infra.In
 	if cfg == nil {
 		t.Fatalf("the fixture's fugaro.yaml does not parse: %v", problems)
 	}
-	e.r.recordCredentialsServiceReady(t.Context(), e.lc, outs, "acme/sandbox", cfg.Git.Provider, cfg.Agent.Auth, infra.WorkflowAccounts(cfg, e.lc, "acme/sandbox"), mode)
+	e.r.recordCredentialsServiceReady(t.Context(), e.lc, outs, cfg, nil, "acme/sandbox", cfg.Git.Provider, cfg.Agent.Auth, infra.WorkflowAccounts(cfg, e.lc, "acme/sandbox"), mode)
 	spec := infra.RepoSpec{Name: "acme/sandbox", Provider: "bitbucket", BaseBranch: "master"}
 	if err := e.r.writeRepoConfig(t.Context(), e.lc, spec, cfg, r.cfg, e.old); err != nil {
 		t.Fatalf("the repository stage's config write failed: %v", err)
@@ -1610,7 +1624,7 @@ func TestAFailedReadIsNotAnsweredByTheRunsSecondDoor(t *testing.T) {
 		t.Fatalf("the run's first door did not leave the records this test judges the second door against (sandbox %v, other %v): the backfill reads the bundle once and writes nothing from a read that failed",
 			e.lc.Repos["acme/sandbox"].CredentialsServiceOn(), e.lc.Repos["acme/other"].CredentialsServiceOn())
 	}
-	e.r.recordCredentialsServiceReady(t.Context(), e.lc, switchOutputs(), "acme/sandbox", "bitbucket", config.AuthCascade, nil, "")
+	e.r.recordCredentialsServiceReady(t.Context(), e.lc, switchOutputs(), servedCallConfig("bitbucket", config.AuthCascade), nil, "acme/sandbox", "bitbucket", config.AuthCascade, nil, "")
 	spec := infra.RepoSpec{Name: "acme/sandbox", Provider: "bitbucket", BaseBranch: "master"}
 	cfg, problems := config.Parse([]byte(checkoutYAML("bitbucket", config.AuthCascade, "aurora", "")))
 	if cfg == nil {

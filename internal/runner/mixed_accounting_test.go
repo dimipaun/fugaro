@@ -15,7 +15,7 @@ import (
 )
 
 // The accounting of the one run the owner's B0 ruling admits
-// (docs/design/mixed-credentials.md §5, §11; task B4). A stage the run's
+// (docs/mixed-credentials/spec.md §5, §11; task B4). A stage the run's
 // stage-scoped Claude OAuth account serves sends its calls straight to
 // Anthropic, so the gateway's ledger never sees them and the only figure the
 // run has for that stage is Claude Code's own: notional dollars, recorded
@@ -28,7 +28,7 @@ const accountToken = "oauth-token-abcdef"
 
 // accountNode is the published policy node that names the stage account: the
 // rung the ruling admits, and the only rung that may opt an api-key run into
-// the mix (docs/design/mixed-credentials.md §11).
+// the mix (docs/mixed-credentials/spec.md §11).
 func accountNode(account string) string {
 	return fmt.Sprintf(`{"version":%d,"claude_account_stages":{"review":%q}}`, projectpolicy.Version, account)
 }
@@ -238,7 +238,7 @@ func crossCheckedStage(logs, stage string) bool {
 // model credentials its own environment holds (registerModelCredentials) at
 // the top of Run, before bootstrap starts the gateway or the first stage. The
 // registration does not ride on the stage that happens to use the token
-// (docs/design/mixed-credentials.md §11, "Who holds the token, and when"): a
+// (docs/mixed-credentials/spec.md §11, "Who holds the token, and when"): a
 // mixed run holds the account's token in the runner's environment for the
 // whole run, so there must be no stage — the coder's, a review's, or one a
 // later recipe adds — whose transcript or log line could carry it because the

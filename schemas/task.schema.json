@@ -66,6 +66,10 @@
     "branch": { "type": "string", "pattern": "^fugaro/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
     "pr": { "type": "integer", "minimum": 1 },
     "previous_run": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
+    "resumes": {
+      "type": "string",
+      "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$",
+      "description": "The run whose pause this one picks up (task.Spec.Resumes, runstore.PauseMemberResumes, docs/model-credentials-routing): the run that suspended itself on this pull request, whose pause.json names the stage it was in, the session it saved and the commit it pushed, and where this run enters rather than at the first stage (R18, D3185). Written only by the orchestrator's launcher, and only for a pause the credentials service recorded (R19, D3189). A resumed run is a follow-up of the run it continues, so branch, pr and previous_run are required beside it and name the same run: the chain link carries the chain's remaining budget (D1045 to D1047), the pull request's branch holds the checkpoint, and a task naming one run for the chain and another for the pause is refused by task.Spec.Validate. Needs a runner that reads the member: task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than starting the work at its first stage." },
     "owner_ruled": {
       "type": "string",
       "minLength": 1,
@@ -204,7 +208,7 @@
     },
     "inputs": {
       "type": "array",
-      "description": "The files the launching CLI attached (fugaro run --attach, docs/design/artifact-runs.md §4), in the order --attach named them: each one is stored under runs/<slug>/<run>/inputs/<name> and downloaded by a mode: artifact run into <checkout>/inputs/. Absent for every launch that attached nothing. The name's own shape is checked where it becomes a filesystem path (the launcher's, then the runner's), never here. Needs a 0.8.0 runner, which is why an --attach launch at an older job image is refused at launch.",
+      "description": "The files the launching CLI attached (fugaro run --attach, docs/artifact-runs/spec.md §4), in the order --attach named them: each one is stored under runs/<slug>/<run>/inputs/<name> and downloaded by a mode: artifact run into <checkout>/inputs/. Absent for every launch that attached nothing. The name's own shape is checked where it becomes a filesystem path (the launcher's, then the runner's), never here. Needs a 0.8.0 runner, which is why an --attach launch at an older job image is refused at launch.",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -242,7 +246,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "source"],
-      "description": "The recipe the launching CLI resolved; absent means, for a first run, agent.recipe in fugaro.yaml at the ref, else default; for a follow-up, default (docs/design/recipes.md).",
+      "description": "The recipe the launching CLI resolved; absent means, for a first run, agent.recipe in fugaro.yaml at the ref, else default; for a follow-up, default (docs/recipes/spec.md).",
       "properties": {
         "name": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$" },
         "source": { "enum": ["repo", "project", "catalog"] },
@@ -254,7 +258,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["sha256", "yaml"],
-      "description": "The project layer the launching CLI read (docs/design/layered-config.md §8); the runner resolves fugaro.yaml against it. Absent: none. Needs a 0.6.0 runner.",
+      "description": "The project layer the launching CLI read (docs/layered-config/spec.md §8); the runner resolves fugaro.yaml against it. Absent: none. Needs a 0.6.0 runner.",
       "properties": {
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "generation": { "type": "integer", "minimum": 0 },
@@ -271,11 +275,11 @@
         { "const": "anthropic-api-key--project" },
         { "const": "provider-key--project" }
       ],
-      "description": "The named Claude OAuth account this run holds (docs/design/named-oauth-tokens.md): the account an agent.auth: oauth workflow used, and, for a mixed agent.auth: api-key run, the one Claude account its review and adversarial stages are served by beside the provider key the gateway holds (docs/design/mixed-credentials.md §11) — either way it names the job variant the run is on. Absent, or \"default\" itself, name the repository's unnamed claude-oauth-token secret; \"default\" is therefore never a value here, which is why the pattern alone (matching \"default\") is not enough. The not clause's second name is bitbucket-token, the one name the credentials bundle reserves for the platform's own git credential: both it and \"default\" pass the pattern and the length cap, so the not clause is the only rule that refuses them, and task.Spec.Validate refuses them in the same words (config.ReservedClaudeAccountName). maxLength is required alongside the pattern: each of the pattern's {0,30} repetitions may consume one character or, via the dash alternative, two (\"-\" plus the alphanumeric it must precede), so the pattern alone admits names up to 61 characters (e.g. \"a\" + 30 repetitions of \"-a\") — config.MaxClaudeAccountNameLen (internal/config/claude_accounts.go) is 31, and this must match it exactly. The anyOf's second and third branches are the account axis's non-account values (config.AnthropicKeyAccount and config.ProviderKeyAccount, docs/api-key-review D1417 and AK6a): the sentinels the project's own Anthropic API key and the project's provider key are named by, outside the pattern by construction, and a review launch writes one here as the run's own credential — so each is written as its own alternative rather than by widening the pattern, and each literal is pinned to the Go constant by schemas' own test."
+      "description": "The named Claude OAuth account this run holds (docs/named-oauth-tokens/spec.md): the account an agent.auth: oauth workflow used, and, for a mixed agent.auth: api-key run, the one Claude account its review and adversarial stages are served by beside the provider key the gateway holds (docs/mixed-credentials/spec.md §11) — either way it names the job variant the run is on. Absent, or \"default\" itself, name the repository's unnamed claude-oauth-token secret; \"default\" is therefore never a value here, which is why the pattern alone (matching \"default\") is not enough. The not clause's second name is bitbucket-token, the one name the credentials bundle reserves for the platform's own git credential: both it and \"default\" pass the pattern and the length cap, so the not clause is the only rule that refuses them, and task.Spec.Validate refuses them in the same words (config.ReservedClaudeAccountName). maxLength is required alongside the pattern: each of the pattern's {0,30} repetitions may consume one character or, via the dash alternative, two (\"-\" plus the alphanumeric it must precede), so the pattern alone admits names up to 61 characters (e.g. \"a\" + 30 repetitions of \"-a\") — config.MaxClaudeAccountNameLen (internal/config/claude_accounts.go) is 31, and this must match it exactly. The anyOf's second and third branches are the account axis's non-account values (config.AnthropicKeyAccount and config.ProviderKeyAccount, docs/api-key-review D1417 and AK6a): the sentinels the project's own Anthropic API key and the project's provider key are named by, outside the pattern by construction, and a review launch writes one here as the run's own credential — so each is written as its own alternative rather than by widening the pattern, and each literal is pinned to the Go constant by schemas' own test."
     },
     "compression_off": {
       "type": "boolean",
-      "description": "task.Spec.CompressionOff, written by fugaro run --no-compression: it disables agent.compression for this run only, overriding the repository's own reviewed choice (docs/design/headroom-compression.md §4). There is no field and no flag to force compression on, so this is the only direction the override goes. Needs a 0.12.0 runner, which is why the launcher gates at launch (internal/cli/recipes_skew.go's compressionSince) every launch whose task carries it: one that writes it, which --no-compression does only when the resolved configuration turns compression on, and a --pr follow-up or a --retry, which inherits it from the run it continues and so carries it even after the repository's key has been removed. task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task without it."
+      "description": "task.Spec.CompressionOff, written by fugaro run --no-compression: it disables agent.compression for this run only, overriding the repository's own reviewed choice (docs/headroom-compression/spec.md §4). There is no field and no flag to force compression on, so this is the only direction the override goes. Needs a 0.12.0 runner, which is why the launcher gates at launch (internal/cli/recipes_skew.go's compressionSince) every launch whose task carries it: one that writes it, which --no-compression does only when the resolved configuration turns compression on, and a --pr follow-up or a --retry, which inherits it from the run it continues and so carries it even after the repository's key has been removed. task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task without it."
     },
     "digest_runs": {
       "type": "array",
@@ -443,6 +447,7 @@
     "branch": ["pr", "previous_run"],
     "pr": ["branch", "previous_run"],
     "previous_run": ["branch", "pr"],
+    "resumes": ["branch", "pr", "previous_run"],
     "owner_ruled": ["branch", "pr", "previous_run"],
     "mutate": ["review_prs"],
     "own_text": ["from_findings"]

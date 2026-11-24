@@ -1,5 +1,5 @@
 # The installation's project-wide secret containers (design
-# docs/design/project-secrets.md §4). They hold no value here: values are
+# docs/project-secrets/spec.md §4). They hold no value here: values are
 # added with fugaro secrets set NAME --project-wide, so none ever reaches
 # Terraform or its state. The labels are the marks that command sets and
 # that fugaro update's discovery checks before adopting one.

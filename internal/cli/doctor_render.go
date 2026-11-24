@@ -119,8 +119,17 @@ var doctorShownSecurityIDs = map[string]bool{
 // this binary's generation, whose fix is the newer binary. And cli-version's
 // line names the upgrade first: the newer release is not installed yet, so
 // `fugaro update` alone would run the old binary.
+//
+// cli-below-required is cli-version's pair, and its line is the same two
+// commands for the same reason: the project's stamp names a release this binary
+// is below, so the upgrade comes first and `fugaro update` behind it is what
+// brings the installation and the checkout to the version. One of its states
+// keeps its own line (ownFix): a stamp this binary cannot read at all, which no
+// `fugaro update` repairs — the node has to be corrected in the console (T7) or
+// a newer binary has to read it.
 var doctorUpdatePrefixes = []string{
 	"cli-version",
+	"cli-below-required",
 	"plugin-pin",
 	"plugin-install",
 	"orchestrator-unit",
@@ -311,6 +320,12 @@ var doctorActionableInfoIDs = map[string]bool{
 	// and one `fugaro update` moves them, so the reader has to see the line —
 	// but nothing is broken, which is why it is info and never a failure.
 	"repo-bound-jobs": true,
+	// The run index not keeping up (RI6, F9): an index still building or one
+	// whose fold stopped is the ordinary state of a young installation and never
+	// a failure, but the one thing to do about it is `fugaro runs reindex`, and
+	// the pointer line alone would hide a command the reader has to run before a
+	// listing means anything.
+	"run-index-incomplete": true,
 }
 
 // doctorClassOf is the classification, and it is the only place a class is
@@ -726,6 +741,20 @@ func doctorSeverityWord(c doctorCheck) string {
 	return "error"
 }
 
+// cliBelowRequiredFix is the one line the default view prints for cli-version
+// and for cli-below-required, and the same words the latter carries itself: the
+// newer release is not installed yet, so the upgrade comes first, and the update
+// behind it is what brings the installation and the checkout to the version
+// (CLAUDE.md's hard rule: those two commands are the whole upgrade). The two
+// checks differ in what they ask — is a newer release available, is this binary
+// below the one this project requires — and not in what repairs them.
+//
+// It is one string for both, and it is defined here rather than in
+// doctor_required.go because a sentence that sends a reader to a command is
+// pinned to its file by a checker over the whole tree
+// (testdata/next_step_allow.golden, apply_enforce_test.go).
+const cliBelowRequiredFix = "run `brew upgrade fugaro`, then `fugaro update`"
+
 // doctorUpdateFixes is the one fix of an update-class item, per ID where the
 // command needs a flag or comes after another one, and `fugaro update` plain
 // otherwise. A check whose remedy is not what update does is not in the class
@@ -738,7 +767,8 @@ var doctorUpdateFixes = map[string]string{
 	// The newer release is not installed yet, so the upgrade comes first; the
 	// update behind it is what brings the installation and the checkout to the
 	// version (CLAUDE.md's hard rule: those two commands are the whole upgrade).
-	"cli-version": "run `brew upgrade fugaro`, then `fugaro update`",
+	"cli-version":        cliBelowRequiredFix,
+	"cli-below-required": cliBelowRequiredFix,
 	// A check that cannot even be read outside a checkout says so in its own
 	// text: update is the whole upgrade, and it runs in the repository.
 	"plugin-pin": "run `fugaro update` in the repository's checkout",
@@ -876,7 +906,12 @@ type doctorShort struct {
 // its own sentence, which the default view prints whole.
 var doctorShorts = map[string]doctorShort{
 	"cli-version": {"a newer Fugaro release is available.", ""},
-	"plugin-pin":  {"the Claude Code plugin is pinned to another version than this Fugaro.", ""},
+	// The project's own stamp names a release this binary is below, so every
+	// command that acts on the project is refused until it upgrades. The class's
+	// line is the whole fix (the upgrade, then `fugaro update`), which is why this
+	// entry carries none.
+	"cli-below-required": {"this project requires a newer Fugaro release than this binary.", ""},
+	"plugin-pin":         {"the Claude Code plugin is pinned to another version than this Fugaro.", ""},
 	// The login unit the daemon runs under was written from an older template,
 	// and `fugaro update` re-renders it in place (init_stages.go's unit stage),
 	// so the entry carries no fix of its own: the class's command is the whole
@@ -984,20 +1019,21 @@ var doctorShorts = map[string]doctorShort{
 	// T10's three other token lines. The per-token half of
 	// bitbucket-token-valid is the prefix below: doctor emits one line per typed
 	// token and the ID carries the token's name.
-	"bitbucket-tokens-uncovered": {"a proxied repository no stored Bitbucket token covers is refused before its first git call.", ""},
-	"bitbucket-token-broken":     {"a stored Bitbucket token was refused with 401 and the credential state holds it as broken.", ""},
-	"bitbucket-token-expiry":     {"a stored Bitbucket token's recorded expiry is near or past.", ""},
-	"bitbucket-direct":           {"a job of a proxied Bitbucket repository still mounts its own token, or that could not be read.", ""},
-	"model-key-in-agent":         {"a model credential reaches a workflow's agent's own environment.", ""},
-	"launcher-jobs":              {"which Cloud Run jobs a launcher can start could not be checked.", ""},
-	"launcher-jobs-public":       {"a Cloud Run job can be started by allUsers or allAuthenticatedUsers, which is anyone.", ""},
-	"launcher-jobs-unread":       {"the IAM policy of some Cloud Run jobs could not be read, so whether a launcher can start them is unknown.", ""},
-	"batch-launcher-iam":         {"the launchers' roles/batch.jobsEditor grant in this project is not the one Fugaro writes, or could not be read.", ""},
-	"allow-list-uncovered":       {"the published policy does not admit a repository this machine's config names.", ""},
-	"creds-broken":               {"a Claude account's token was refused, and no work routes to it until an operator clears the mark.", ""},
-	"creds-unknown-state":        {"a credential mark carries a state this Fugaro does not read, so the account is held rather than available.", ""},
-	"creds-rules":                {"the deployed budget rules do not carry the credentials family this Fugaro writes, or could not be read.", ""},
-	"token-signers":              {"who can sign the budget database's sign-in tokens could not be read.", ""},
+	"bitbucket-tokens-uncovered":  {"a proxied repository no stored Bitbucket token covers is refused before its first git call.", ""},
+	"bitbucket-token-broken":      {"a stored Bitbucket token was refused with 401 and the credential state holds it as broken.", ""},
+	"bitbucket-token-expiry":      {"a stored Bitbucket token's recorded expiry is near or past.", ""},
+	"bitbucket-direct":            {"a job of a proxied Bitbucket repository still mounts its own token, or that could not be read.", ""},
+	"model-key-in-agent":          {"a model credential reaches a workflow's agent's own environment.", ""},
+	"launcher-jobs":               {"which Cloud Run jobs a launcher can start could not be checked.", ""},
+	"launcher-jobs-public":        {"a Cloud Run job can be started by allUsers or allAuthenticatedUsers, which is anyone.", ""},
+	"launcher-jobs-unread":        {"the IAM policy of some Cloud Run jobs could not be read, so whether a launcher can start them is unknown.", ""},
+	"batch-launcher-iam":          {"the launchers' roles/batch.jobsEditor grant in this project is not the one Fugaro writes, or could not be read.", ""},
+	"allow-list-uncovered":        {"the published policy does not admit a repository this machine's config names.", ""},
+	"layer-rigor-repo-unadmitted": {"the project layer's rigor names a repository the published policy does not admit, so no run takes its level.", ""},
+	"creds-broken":                {"a Claude account's token was refused, and no work routes to it until an operator clears the mark.", ""},
+	"creds-unknown-state":         {"a credential mark carries a state this Fugaro does not read, so the account is held rather than available.", ""},
+	"creds-rules":                 {"the deployed budget rules do not carry the credentials family this Fugaro writes, or could not be read.", ""},
+	"token-signers":               {"who can sign the budget database's sign-in tokens could not be read.", ""},
 	// The managed deployer's own grants, the sweep's one warning that is the
 	// module's own binding: it carries no remove command, so its own sentence
 	// is the one the default view must print, and the sentence above is the

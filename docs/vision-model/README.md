@@ -21,7 +21,7 @@ Messages request as a base64 image block, and the gateway refuses the whole call
 price row carries no per-image token ceiling: `internal/gateway/forward.go:550`. There is no way out
 of that refusal today — `model_prices`, the owner's only lever over a provider's price, sets token
 rates only (`internal/pricing/overrides.go`), and the built-in provider price catalog refuses a model
-that prices an image (`docs/design/provider-price-catalog.md` D8) — so a repository whose work
+that prices an image (`docs/provider-price-catalog/spec.md` D8) — so a repository whose work
 involves a screenshot, an icon or a golden PNG cannot be coded by a cheap model at all.
 
 This work adds one model slot, `agent.models.vision`, resolved and checked like the three that exist

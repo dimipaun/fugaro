@@ -10,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/place"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
@@ -247,9 +248,14 @@ func (s *wizardStage) ask(ctx context.Context) error {
 	if !s.creating {
 		// The config a first run wrote when it paused at billing, this run's to
 		// finish: it creates, so it is the run the questions about a new project
-		// are asked on, and the one it still owes is the rigor answer — the
-		// paused run asked it and stopped before the layer stage, which is the
-		// only writer of it (wizardResumesCreation).
+		// are asked on, and the ones it still owes are the answers the paused run
+		// could not carry anywhere — the rigor answer, which the paused run gave
+		// before it stopped and which only the layer stage writes, and the budget
+		// answer, which no config member holds either and which a resumed
+		// creation records like any other creating run (R8 of
+		// docs/managed-flag-ergonomics; askBudget). The bake answer is not among
+		// them: the paused run wrote it into the config itself
+		// (carryBakeAnswer), which is why it needs no question here.
 		if r.wizardResumesCreation(ctx) {
 			if len(s.missing) > 0 && !r.canAsk() {
 				s.stop(initflow.LeftCommand, wizardFlagsLeft(s.missing))
@@ -258,7 +264,19 @@ func (s *wizardStage) ask(ctx context.Context) error {
 			if err := r.settleCreation(true); err != nil {
 				return s.answer(err)
 			}
-			return s.answer(s.askRigor())
+			if err := s.askRigor(); err != nil {
+				return s.answer(err)
+			}
+			if err := s.askBudget(); err != nil {
+				return s.answer(err)
+			}
+			// settleBudget follows the question here for the reason it follows it
+			// on a first run: a budget is an alert on a billing account, and this
+			// run links none (the pause is past), so an amount with no account is
+			// dropped with the one line that says what adds it rather than
+			// reaching the installation's Terraform, whose own rule refuses a
+			// budget without an account.
+			return s.answer(s.settleBudget())
 		}
 		// A project config is selected: this run's inputs are already settled
 		// and nothing is asked. Nothing is created either.
@@ -266,6 +284,16 @@ func (s *wizardStage) ask(ctx context.Context) error {
 		// --rigor is refused here rather than ignored (task W): the mode of a
 		// project that already exists is the project's own, and the one command
 		// that changes it is `fugaro rigor set`.
+		// --location is refused first, and for the same reason (LP4's review):
+		// a run that selects a project config creates nothing either, and the
+		// answer would be materialized into the place's default region and then
+		// meet the region-move guard — which names a --region the caller never
+		// typed — or be dropped in silence where the two agree. It comes before
+		// --rigor below because the place is the question the wizard reaches
+		// first (setupQuestions).
+		if err := setupLocationRefusal(o.location); err != nil {
+			return err
+		}
 		if err := setupRigorRefusal(o.rigor); err != nil {
 			return err
 		}
@@ -298,23 +326,62 @@ func (s *wizardStage) ask(ctx context.Context) error {
 		}
 		o.cloud.gcpProject = v
 	}
-	if o.cloud.region == "" {
-		q := questionFor("--region")
-		s.a.asked = append(s.a.asked, q.label)
-		v, err := r.prompt(valueSpec{what: q.what, flag: q.flag}, defaultRegion, func(v string) error {
-			if !regionRE.MatchString(v) {
-				return errors.New("a region looks like us-east5 or europe-west4")
+	if o.cloud.region == "" && o.location == "" {
+		// The place question (LP4, D3080, D3081): where the installation
+		// lives, with US as the suggestion. It is the wizard's region question
+		// in a person's words rather than a second question (F2) — the answer
+		// may be a place or a region typed in full — and it is asked on the
+		// run that creates the installation only: `fugaro update` on a machine
+		// with no config asks for the region itself, because the installation
+		// it is looking for has one already (setupCreates).
+		if o.setupCreates(true) {
+			q := questionFor("--location")
+			s.a.asked = append(s.a.asked, q.label)
+			v, err := r.prompt(valueSpec{what: q.what, flag: q.flag}, string(place.US), func(v string) error {
+				_, _, verr := placeAnswer(v)
+				return verr
+			})
+			if err != nil {
+				return s.answer(err)
 			}
-			return nil
-		})
-		if err != nil {
-			return s.answer(err)
+			p, region, err := placeAnswer(v)
+			if err != nil {
+				// The prompt validated the same value one line above, so this
+				// cannot be reached; the region is set only from an answer
+				// that read back.
+				return err
+			}
+			// A region typed in full settles the answer by itself, and the
+			// place is derived from it wherever it is read (D3080) — so only
+			// a place is recorded as the place, and a region is recorded as
+			// the region. Neither has a second copy to drift from.
+			if region != "" {
+				o.cloud.region = region
+			} else {
+				o.location = string(p)
+			}
+		} else {
+			q := questionFor("--region")
+			s.a.asked = append(s.a.asked, q.label)
+			v, err := r.prompt(valueSpec{what: q.what, flag: q.flag}, defaultRegion, func(v string) error {
+				if !regionRE.MatchString(v) {
+					return errors.New("a region looks like us-east5 or europe-west4")
+				}
+				return nil
+			})
+			if err != nil {
+				return s.answer(err)
+			}
+			o.cloud.region = v
 		}
-		o.cloud.region = v
+	}
+	if err := o.settleLocation(); err != nil {
+		return s.answer(err)
 	}
 	// An installation may already be there (one this machine has no project
-	// config for: the owner's second machine, or a teammate's). `setup` only
-	// starts fresh, so it refuses the ID before the name is asked and says
+	// config for: the owner's second machine, or a teammate's). `setup` adopts
+	// only a project that holds nothing of Fugaro's, so it refuses an ID that
+	// holds an installation before the name is asked and says
 	// which command reads that installation's config instead. `update` is that
 	// command: what it settles here is the name — the installation's own, so
 	// it is not asked — and its installation stage then writes this machine's
@@ -331,8 +398,9 @@ func (s *wizardStage) ask(ctx context.Context) error {
 			return nil
 		}
 	}
-	// The project: a first run of `setup` creates it (settleCreation). There
-	// is no question to ask: Fugaro only starts fresh.
+	// The project: a first run of `setup` makes it Fugaro's (settleCreation),
+	// creating it or adopting one that is already there and holds nothing of
+	// Fugaro's. There is no question to ask.
 	if err := r.settleCreation(true); err != nil {
 		return s.answer(err)
 	}
@@ -368,6 +436,18 @@ func (s *wizardStage) ask(ctx context.Context) error {
 	if err := s.askRigor(); err != nil {
 		return s.answer(err)
 	}
+	// The budget question (T2b of docs/managed-flag-ergonomics; D2210) is asked
+	// after the rigor one: it is about the project the answers above settled,
+	// and it is asked only on a run that creates the installation, where a
+	// project that is already there keeps the budget its own (askBudget). A run
+	// that cannot ask takes the default here rather than stopping: the question
+	// is a value with a default (D2212), which is what its own empty missing
+	// says (setupQuestions).
+	if err := s.askBudget(); err != nil {
+		// The question's own no-answer stops the phase here like the two above
+		// it, and the rerun resumes at this one (s.answer).
+		return s.answer(err)
+	}
 	// The bake question (IS7, D1901) is asked after the name and before the
 	// billing one: it is about the project the answers above settled rather
 	// than about an input, and it is asked only on a run that creates the
@@ -380,13 +460,127 @@ func (s *wizardStage) ask(ctx context.Context) error {
 		// at this one (s.answer).
 		return s.answer(err)
 	}
+	// Where each thing goes (R7): the one thing the run says about the
+	// placement rather than asks — it is printed once the region is settled
+	// and before anything is created, so a person reading it can still change
+	// an answer or stop, and the question the placement is spelled in is the
+	// region question above, never one of its own.
+	if o.setupCreates(true) && o.cloud.region != "" {
+		r.printWhereEachThingGoes()
+	}
 	// The billing question is the last of the wizard's questions (W4.3): it is
 	// about the GCP project the answers above settled, and it is asked only
 	// where the answer is one this run acts on (asksBilling, billing_prompt.go).
 	// Its own "no answer came" is the phase's Left like any other question's:
 	// the run resumes at it, and the refusal is the one line it has always
 	// been.
-	return s.answer(r.askBilling(ctx))
+	if err := r.askBilling(ctx); err != nil {
+		return s.answer(err)
+	}
+	// The questions are all answered, and the one thing a question's answer
+	// still needs is settled here: the account a budget's alert is on
+	// (settleBudget). It is after the billing question because that is where
+	// the account the run links appears, and it is not reached where the run
+	// stopped at that question.
+	return s.settleBudget()
+}
+
+// budgetNoAccount is the line a run prints when it has a budget and no billing
+// account for the alert to sit on: what happens to the amount, and what adds
+// the alert later. It is one line and asks nothing (settleBudget).
+const budgetNoAccount = "no billing account is linked, so this run creates no budget alert: the amount it has (%d) is not written into the installation's variables. A budget is an alert on a billing account — add it later with --budget, --budget-currency and --billing-account together, on a run whose project has an account"
+
+// settleBudget is what the phase does with the budget its question answered,
+// once the billing question has answered too: a budget is an alert on a
+// billing account, so the account the run links is the one the alert is on
+// (D2216) — and a run that links none carries no budget at all, because the
+// alternative is an installation the Terraform validation refuses (its budget
+// object needs a billing account ID,
+// deploy/terraform/gcp/modules/installation/variables.tf) or an alert on an
+// account nobody chose.
+//
+// T2a of docs/managed-flag-ergonomics owns this rule at the run's own door
+// (D2216's other half: the amount recorded in the creation fact, and the one
+// command that adds the alert printed). This is the smaller thing the phase
+// owes the answer it collected: the door's own check has already run by the
+// time these questions are asked (init.go's trio check runs before the
+// wizard), so an answer collected here never meets it, and the invariant it
+// states — a budget takes an amount, a currency and an account together — is
+// kept here for the answer instead of refused later by a cloud step.
+//
+// It says nothing where nobody can answer this run (canAsk: --json,
+// --print-vars, --yes, --non-interactive, a pipe): a run nobody answers writes
+// nothing, and the line is a transcript's.
+func (s *wizardStage) settleBudget() error {
+	r, o := s.r, s.r.o
+	if o.budget <= 0 && o.budgetCurrency == "" {
+		return nil
+	}
+	if o.billingAccount == "" {
+		o.billingAccount = o.linkBilling
+	}
+	if o.billingAccount != "" {
+		return nil
+	}
+	// A run nobody answers asks nothing and writes nothing (T7,
+	// docs/no-prompt-policy), and a run whose stdout is a document (--json,
+	// --print-vars) is one of those here: the line below is a transcript's, and
+	// the fact is in the run's own result either way. The amount a person
+	// answered on a run that paused at billing is the one case this leaves
+	// silent, and it is the door's to say (D2216, T2a).
+	if r.canAsk() {
+		fmt.Fprintf(r.w, budgetNoAccount+"\n", o.budget)
+	}
+	o.budget, o.budgetCurrency = 0, ""
+	return nil
+}
+
+// whereEachThingGoesIntro is the line above the mapping: what the block is,
+// and the one thing a reader has to know about it — there is nothing to answer
+// here, because the placement is the region answer they have already given
+// (R7).
+const whereEachThingGoesIntro = "where each thing goes (the region above decides it; the fallbacks are stated under their own line, and there is nothing to answer here):"
+
+// printWhereEachThingGoes is R7: where each thing the installation creates
+// will go, one line per row of the mapping, with every fallback's reason under
+// the line it belongs to — before anything is created, and asking nothing.
+//
+// It says the region itself for the things that follow it (the compute, the
+// registry, the buckets and the builds), the run history's Firestore database,
+// the budget's Realtime Database, the secret containers and the run log
+// bucket, in the mapping's own words (place.For), so a fallback cannot be
+// described here as anything other than what it is. A region in neither place
+// (London, Zürich, anything but us-* and europe-*) is said to carry no promise,
+// which is what D3081 promises it: nothing is refused, and everything it falls
+// back to is on a line above.
+//
+// The scheduler is not one of the things that follow the region, and so is not
+// named among them: its own region is gcp.SchedulerRegion's answer, which for
+// the US default is us-east4 rather than us-east5 (F3), and R7's mapping has no
+// row for it to be read from. Saying nothing about it is better than saying
+// where it goes in a line that is the region's own.
+func (r *initRun) printWhereEachThingGoes() {
+	m := place.For(r.o.cloud.region)
+	fmt.Fprintf(r.w, "%s%s\n", r.o.programPrefix(), whereEachThingGoesIntro)
+	fmt.Fprintf(r.w, "  the installation's own region: %s (the jobs, the image registry and the runs bucket)\n", m.Region)
+	rows := []struct {
+		what string
+		loc  place.Location
+	}{
+		{"the run history (Firestore)", m.Firestore},
+		{"the budget's database (the Realtime Database)", m.RealtimeDatabase},
+		{"the secret containers", m.Secrets},
+		{"the run log bucket", m.LogBucket},
+	}
+	for _, row := range rows {
+		fmt.Fprintf(r.w, "  %s: %s\n", row.what, row.loc.Where)
+		if row.loc.Reason != "" {
+			fmt.Fprintf(r.w, "    %s\n", row.loc.Reason)
+		}
+	}
+	if m.Place == place.None {
+		fmt.Fprintf(r.w, "  %s is in neither US nor EU: it carries no promise, so every fallback above is stated rather than assumed\n", m.Region)
+	}
 }
 
 // wizardOptions is the input phase's run: the run's own conditions — nobody is

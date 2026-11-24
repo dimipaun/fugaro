@@ -1500,7 +1500,11 @@ func doctorModelKeyInAgent(lc *localcfg.Config, rf *resolvedFile, repo string) *
 	default:
 		return nil
 	}
-	mode := lc.BudgetMode()
+	// C1's reading of the local config's mode (AB3, D3009): an unset mode, or
+	// one a hand edit left as the old word, is observe, which is the mode the
+	// switch below admits — so no branch of this check has a mode that is
+	// neither of the two any more.
+	mode := policy.Mode(lc.BudgetMode()).Effective()
 	if runner.GatewayOn(auth, mode) {
 		return nil
 	}
@@ -1521,11 +1525,6 @@ func doctorModelKeyInAgent(lc *localcfg.Config, rf *resolvedFile, repo string) *
 	}
 	var why string
 	switch {
-	case mode != policy.ModeObserve && mode != policy.ModeEnforce:
-		// An api-key repository reaches here only in this state — GatewayOn
-		// above is the same mode question asked of its own auth — so the mode
-		// is the reason the gateway, and the service behind it, hold nothing.
-		why = fmt.Sprintf("budget.mode is off, so neither the gateway nor the credentials service behind it holds it: the switch admits an %s repository under budget.mode observe or enforce alone, with %s in the service's bundle", auth, needs)
 	case !installed:
 		why = fmt.Sprintf("the installation has no credentials service to hold it, and the switch would need %s in its bundle", needs)
 	default:
@@ -1542,10 +1541,28 @@ func doctorModelKeyInAgent(lc *localcfg.Config, rf *resolvedFile, repo string) *
 	if auth == "api-key" {
 		fix = "to take it out of the agent's reach, turn the budget on (budget.mode observe or enforce: the gateway holds the key), or " + route + " — the same mode is what the service is reached through"
 	}
+	// The two facts the update record carries beside the switch (KS19) are said
+	// in the line that reports the switch, because a fact the record says is on
+	// while the switch is held off is the reading worth having: the bundle, the
+	// service and the allow-list hold for it, so the half that is missing is the
+	// one named above and nothing else.
+	facts := fmt.Sprintf("the record %s leaves for this repository says its provider keys are %s and its stage account is %s",
+		selfCommand()+" update --repo", servedFact(local.ProviderKeysServedOn()), servedFact(local.StageAccountServedOn()))
 	return &doctorCheck{ID: "model-key-in-agent", Severity: "info",
-		Problem: fmt.Sprintf("this repository's workflows (%s) run with agent.auth %s, and the model credential reaches the agent's own environment as %s (%s)",
-			strings.Join(printableNames(slices.Sorted(maps.Keys(rf.Cfg.Workflows))), ", "), auth, env, why),
+		Problem: fmt.Sprintf("this repository's workflows (%s) run with agent.auth %s, and the model credential reaches the agent's own environment as %s (%s, and %s)",
+			strings.Join(printableNames(slices.Sorted(maps.Keys(rf.Cfg.Workflows))), ", "), auth, env, why, facts),
 		Fix: fix}
+}
+
+// servedFact is what the update record says about one of the two facts it
+// decides beside the switch, in the record's own words: the field is written as
+// a switch (localcfg.RecordSwitch), so a fact written off reads exactly as one
+// that was never written.
+func servedFact(on bool) string {
+	if on {
+		return "served"
+	}
+	return "not served"
 }
 
 // oauthSwitchBundleEntries are the bundle's own DOCUMENT keys for an oauth

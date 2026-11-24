@@ -31,7 +31,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
-// fugaro restore (docs/design/managed-projects.md, D66) rebuilds a managed
+// fugaro restore (docs/managed-projects/spec.md, D66) rebuilds a managed
 // project from zero: the project that was lost is gone — the state, the
 // bucket, the marker, the delete list and the data with it — and what comes
 // back is a NEW GCP project, a from-zero apply of the repository's
@@ -129,7 +129,8 @@ closed, not yours to read) the restore proceeds only on --budget and
 --budget-currency. The billing account is always yours to give: the creation
 fact is not a credential and records none.
 
-NEW_PROJECT_ID must not exist: an existing project is refused (Fugaro only starts fresh).
+NEW_PROJECT_ID must not exist: restore creates a project, and adopts nothing
+(setup is the command that adopts one that holds nothing of Fugaro's).
 If the creation fails or does not end in a project this run created and
 marked, the local project config file is put back as it was and the restore
 can be run again; what the creation did in the cloud (the project, its
@@ -428,7 +429,7 @@ func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (
 			// refusal names the condition and not the command, because a
 			// refusal is what a coding agent's session reads (Task 3.0 §5).
 			moved = false
-			return fail(restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so the project config keeps naming it (its previous content is in the backup %s) and the checkout's gcp_project: line did not move. What is missing is the project's %s=%s label, which only the owner writes, in their own terminal: docs/design/managed-projects.md has that one line. Run it, then change the checkout's line to gcp_project: %s and run fugaro managed apply %s to finish. If the project is unwanted instead, shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
+			return fail(restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so the project config keeps naming it (its previous content is in the backup %s) and the checkout's gcp_project: line did not move. What is missing is the project's %s=%s label, which only the owner writes, in their own terminal: docs/managed-projects/spec.md has that one line. Run it, then change the checkout's line to gcp_project: %s and run fugaro managed apply %s to finish. If the project is unwanted instead, shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
 				rr.newID, rr.backup, managed.ProjectLabelKey, managed.ProjectLabelValue, rr.newID, rr.rootArg, rr.newID, rr.newID))
 		default:
 			return fail(err)
@@ -646,7 +647,7 @@ func restoreConfigPath(sel localcfg.Selection, lc *localcfg.Config) (string, err
 // 4.2), and the billing account it is linked to — and it is where a restore
 // of a project that is not managed is refused.
 //
-// The rule (stated in the PR and in docs/design/managed-projects.md's D66
+// The rule (stated in the PR and in docs/managed-projects/spec.md's D66
 // row), whatever flags are given:
 //
 //   - The OLD project's creation fact is read whenever the old project can be

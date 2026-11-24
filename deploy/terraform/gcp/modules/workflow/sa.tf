@@ -35,7 +35,7 @@ resource "google_storage_bucket_iam_member" "job" {
 # The repository's own budget token objects, tokens/<slug>/, read-only: the
 # launcher writes the sealed token there and the run reads it, and a run can
 # neither delete nor replace a queued run's token (objectViewer has no
-# delete or create; docs/design/budget-token-channel.md section 7.2, D16).
+# delete or create; docs/budget-token-channel/spec.md section 7.2, D16).
 # The runs/, cache/ and locks/ grant above never covers tokens/. The
 # precondition re-checks the bucket and the prefix, beside the variable's own
 # validation of the shape and the slug.
@@ -176,7 +176,7 @@ locals {
   # One entry per mount: this mount is the Claude account token on a mixed STAGE
   # ACCOUNT's own variant job — the one mount B2.7's flip leaves standing. An
   # api-key repository may declare stage keys (B0's ruling of 2026-11-04,
-  # docs/design/mixed-credentials.md §11), and its `review`, `adversarial` and
+  # docs/mixed-credentials/spec.md §11), and its `review`, `adversarial` and
   # `triage` stages then go out on a job of that account's own, mounting
   # CLAUDE_CODE_OAUTH_TOKEN so the RUNNER can hand the account's token straight
   # to Anthropic. The run's gateway never sees those calls, so the credentials

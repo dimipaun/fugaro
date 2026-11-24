@@ -99,20 +99,20 @@ does not apply (F11).
   3's shared project jobs serve GitHub repositories").
 - `SECURITY.md` "Narrow git credentials", which `TestDocsWarnAboutAProjectWideGitCredential` pins.
 - The same text in `website/content/security.md`.
-- `docs/design/project-centric.md` §4.1 ("GitHub only") and §4.5 (D5).
-- `docs/design/project-secrets.md` (the "Stated, not implied" paragraph).
+- `docs/project-centric/spec.md` §4.1 ("GitHub only") and §4.5 (D5).
+- `docs/project-secrets/spec.md` (the "Stated, not implied" paragraph).
 - `docs/project-layer.md` ("Bitbucket repositories never reach one").
 - `docs/gcp-live-checklist.md` Check 52 §2 (the U1 ruling), pinned by
   `internal/cli/docs_project_centric_test.go` ("Bitbucket stays on the per-repository path",
   "**Phase 3's shared project jobs serve GitHub repositories.**").
-- `docs/plans/2026-10-14-project-centric.md` (D5 amendment).
+- `docs/project-centric/implementation-plan.md` (D5 amendment).
 - `docs/releases/v0.9.0.md` (released notes: historical, never edited).
 - Statements that a Bitbucket token is a repository token (review round 1): `docs/git-providers.md`
   "What the agent gets" ("this repository's own long-lived token") and "For Bitbucket this is the
   repository access token itself"; `SECURITY.md` and `website/content/security.md` "Give Fugaro its
   own … a repository access token on Bitbucket"; `README.md`'s Bitbucket line; `docs/multi-model.md`
   ("a repository access token serves one repository", pinned by
-  `TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository`); `docs/design/project-centric.md`
+  `TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository`); `docs/project-centric/spec.md`
   §6.3; `docs/coordinator/reconciliation.md` (historical, left as is). In code comments and messages:
   `config.BitbucketSecret`, `infra.GitSecret` ("never stored project-wide", already false),
   `config.ServiceHeldSecretNames`, the `providers.FromEnv` error ("a Bitbucket repository access
@@ -301,7 +301,7 @@ for 0.12.1. Approving those tasks is the owner's separate act, recorded in the p
 | --- | --- | --- | --- | --- |
 | **D460** | Scope: a project-wide token only, or Bitbucket in shared project jobs too? | **A project-wide token, set once, with the existing per-repository jobs** (F1). It is mostly docs, and it is what the spec asks | **Also run Bitbucket repositories in shared project jobs, as GitHub has since phase 3.** That is real code: the deploy check, the launcher, phase 3's pins and a live check (F11–F13, slice S2) | **2026-10-27: shared project jobs as well. Not the recommendation.** (Sizing, not the owner's words: S1 is the first useful slice, S2 follows; §6) |
 | **D461** | Which credential? | A Bitbucket **workspace access token or project access token**. The operator picks the narrowest that covers the Fugaro project's repositories: a project token when they sit in one Bitbucket project (F6). Both are Premium and long-lived (§3) | Repository tokens only. That is today's default, and it is the spec's problem | **2026-10-27: either a workspace or a project access token, the operator picks the narrowest that fits.** The existing `project_secrets.bitbucket-token` allow-list names which Fugaro repositories mount it |
-| **D462** | Accept that the token's reach is the agent's reach (F7)? | Accept, with mitigations: the allow-list, the narrowest token type, minimum scopes (D470), an optional expiry, and a plain statement in `SECURITY.md` and `docs/git-providers.md` | Refuse, and keep per-repository tokens. That leaves the spec unmet | **2026-10-27: accepted, with the allow-list, minimum scopes, and a plain statement in `SECURITY.md` and `docs/git-providers.md`.** (The narrowest token type and an optional expiry are this document's additions.) This **reverses** the owner's position of 2026-10-26 (docs/bitbucket-credentials D363 as amended: runs keep per-repository tokens), **for operators who opt in** through the allow-list. It **amends** the ruling of 2026-10-15 ("Bitbucket stays per repository": `docs/git-providers.md`, `docs/design/project-centric.md` §4.5 and D5, `docs/design/project-secrets.md`). Every pin is listed in F5 |
+| **D462** | Accept that the token's reach is the agent's reach (F7)? | Accept, with mitigations: the allow-list, the narrowest token type, minimum scopes (D470), an optional expiry, and a plain statement in `SECURITY.md` and `docs/git-providers.md` | Refuse, and keep per-repository tokens. That leaves the spec unmet | **2026-10-27: accepted, with the allow-list, minimum scopes, and a plain statement in `SECURITY.md` and `docs/git-providers.md`.** (The narrowest token type and an optional expiry are this document's additions.) This **reverses** the owner's position of 2026-10-26 (docs/bitbucket-credentials D363 as amended: runs keep per-repository tokens), **for operators who opt in** through the allow-list. It **amends** the ruling of 2026-10-15 ("Bitbucket stays per repository": `docs/git-providers.md`, `docs/project-centric/spec.md` §4.5 and D5, `docs/project-secrets/spec.md`). Every pin is listed in F5 |
 | **D463** | Which release carries what? | 0.12.1: S1 only, if it is genuinely small. 0.13.0: everything else | Put S2 in 0.12.1. It is not small (§6) | **2026-10-27: 0.12.1 must be quick; anything big goes to 0.13.0, the "control the spend" release, and live checks go there too.** (Applied, not the owner's words: S1 is 0.12.1, everything else 0.13.0, §6; D468 asked to reopen the live-check part for Check 180 alone, and was answered no) |
 
 **Decisions this reconciliation raises.** All are answered (2026-10-27). D474, D475 and D477 came

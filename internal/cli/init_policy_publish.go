@@ -53,8 +53,32 @@ type policyDrift struct {
 	Node   string // the published node's value, the same way
 }
 
+// publishedMode is the mode a local config's spelling asks for (AB8a): the word
+// the mode's vocabulary dropped (D3009) is no mode of its own, and the answer
+// the vocabulary gives for it is the mode it means. Every reader of a file's
+// mode on the way to the published node asks it here, so neither the drift
+// comparison nor the node a publish builds can put the word back into the node
+// the migration has just taken it out of — which is what the update would
+// otherwise do to the very node it converged, on every run of it. A live mode,
+// and the empty spelling a config that states none carries, come back
+// unchanged; the file itself loses the word in AB8b, not here.
+func publishedMode(mode string) string {
+	if policy.Mode(mode).Removed() {
+		return policy.Mode(mode).Effective()
+	}
+	return mode
+}
+
 // policyConfigDrift is the members of the published node the local config is
 // the source of and that the node does not carry, in the order a diff reads.
+//
+// Two members are not the config's: the mobile block and the app's
+// crash-report switch beside it, whose source is the publisher's own default
+// for a node that carries neither (projectpolicy.MobileForPublish and
+// MobileCrashReportsForPublish, O9), and the rows are there for the same reason
+// the config's own are — a publish would write a member the node does not
+// carry, and a stage that could not see it would leave the node at the release
+// behind for ever. They are the only members of the list a config cannot state.
 //
 // The comparison is the JSON both sides spell, so a member the node omits and a
 // config that states nothing for it are one value (the carrier's omitempty is
@@ -66,6 +90,9 @@ type policyDrift struct {
 // the project is admitted by. The credentials block is not in that list any
 // more: this release's local config carries it (credential_cascade), so it is
 // compared below through the publisher's own merge (D2607).
+//
+// The file's mode is compared as the mode it asks for (publishedMode), which is
+// AB8a's rule and the reason the comparison is not the two spellings.
 func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities map[string]string) []policyDrift {
 	if lc.Budget == nil || p == nil {
 		// A config with no budget block names no budget backend, so the stage
@@ -84,7 +111,17 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 		}
 		out = append(out, d)
 	}
-	add("budget.mode", lc.Budget.Mode, p.Budget.Mode, true)
+	// The file's own mode is asked through the vocabulary (AB8a): the word the
+	// mode's vocabulary dropped (D3009) is no mode of its own — a file that
+	// spells it asks for the mode it means, which is the mode the migration has
+	// just written into the published node — so a row comparing the two
+	// spellings would report this stage's own rewrite as a difference, and the
+	// publish that followed would put the word back into the node the step
+	// exists to take it out of. The node's side is its own bytes: a node that
+	// carries no mode at all is a member this file states and the node does not,
+	// which is what the settings read marks unpublished. The file itself loses
+	// the word in AB8b, not here.
+	add("budget.mode", publishedMode(lc.Budget.Mode), p.Budget.Mode, true)
 	add("budget.per_run_usd", lc.Budget.PerRunUSD, p.Budget.PerRunUSD, true)
 	add("budget.max_run_tokens", lc.Budget.MaxRunTokens, p.Budget.MaxRunTokens, true)
 	add("budget.allowed_models", lc.Budget.AllowedModels, p.Budget.AllowedModels, false)
@@ -326,7 +363,7 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 	// The account-choice keys are compared too — the project's
 	// default_claude_account and each stage's own claude_account — because
 	// this file is their only store and the publish is what carries them
-	// (docs/design/mixed-credentials.md §11): the runner reads them off the
+	// (docs/mixed-credentials/spec.md §11): the runner reads them off the
 	// published node alone (resolveMixedStages, mixedDefaultAccount), so a
 	// config that names an account while the node does not carry it is a
 	// launch that admits the mix and a job that mounts the token beside a
@@ -435,6 +472,38 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 		return out
 	}
 	add(projectpolicy.BitbucketTokensKey, tokens, p.BitbucketTokens, false)
+	// The mobile block is one of the two members of this comparison whose source
+	// is neither this machine's config nor the node: a publish writes the node's
+	// own block when it carries one and O9's defaults when it does not
+	// (projectpolicy.MobileForPublish), so the row is silent for a node that
+	// carries a block — the switches are the project's own answers and this
+	// machine has no opinion about them — and fires for a node published before
+	// the key existed, which is the node an installation at the release behind
+	// holds.
+	//
+	// It is the typed Bitbucket tokens' argument and the whole of what makes
+	// O9's "on in policy, answering only after `update` publishes it" true: the
+	// key is new with a release that does not move the node's version, so an
+	// installation whose node is already at this version has NO migration step
+	// that would carry it, and without this row the stage would find nothing to
+	// do about a node that is current in every other member — the pairing route
+	// would answer `mobile_disabled` for every installation that ran the update,
+	// and the block would reach a node only where an operator had written one by
+	// hand. It is compared through the publisher's own function rather than by a
+	// rule of its own here, so the node this stage decides on and the node the
+	// publish writes cannot disagree (F40, the plan's global constraint).
+	add("mobile", projectpolicy.MobileForPublish(p.Mobile), p.Mobile, false)
+	// The app's crash-report switch is the row above's twin and it is a key of
+	// its own, beside the block and never inside it (policy.go's
+	// Policy.MobileCrashReports): a member added inside the block would be
+	// refused by every reader of the release behind — the block decodes strictly
+	// — which is exactly what update promises never to do while runs are in
+	// flight. So the switch travels as a tolerated top-level key, and this row
+	// is what carries it: the node's own answer where it carries one, and the
+	// publish's default otherwise (MobileCrashReportsForPublish), so a node
+	// published before the key existed is a difference this stage reports and
+	// publishes once, and the run after finds nothing.
+	add(projectpolicy.MobileCrashReportsKey, projectpolicy.MobileCrashReportsForPublish(p.MobileCrashReports), p.MobileCrashReports, false)
 	return out
 }
 
@@ -847,7 +916,7 @@ func policyLoosening(old, new *projectpolicy.Policy) []policyCeiling {
 // It is a widening in the sense the typed name is asked for, and it is measured
 // member by member against the node it replaces for that reason. The account is
 // the credential a mixed run's review goes out on
-// (docs/design/mixed-credentials.md §11), so a node that starts naming one hands
+// (docs/mixed-credentials/spec.md §11), so a node that starts naming one hands
 // a stage a credential it did not hold — and, to an api-key run, the mix the
 // ruling admits, which the launch resolver reads off this node and nothing else,
 // while the credential itself is mounted into the job's environment from this
@@ -1764,6 +1833,13 @@ func reseedPolicyKeys(old []byte, lc *localcfg.Config, p *projectpolicy.Policy, 
 			})
 		case "base_branch":
 			set(member, []string{"base_branch"}, p.BaseBranch, func() { lc.BaseBranch = p.BaseBranch })
+		case "mobile", projectpolicy.MobileCrashReportsKey:
+			// The block and the crash-report switch beside it are the node's own
+			// and no config key carries either: the publish writes the node's
+			// block back (MobileForPublish) and the switch's value back
+			// (MobileCrashReportsForPublish), so there is nothing in this file
+			// for a re-seed to bring in line, and sending the operator to a hand
+			// edit for it would ask for a key the config has no place for.
 		default:
 			// The account-choice members — default_claude_account and each
 			// claude_account_stages.<stage> — land here, and the refusal above

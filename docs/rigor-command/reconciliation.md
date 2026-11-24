@@ -15,7 +15,7 @@ still appends none, and `internal/cli/doctor_layer.go` is byte for byte the file
 
 **Re-checked at `4053a300`** (2026-10-31), the merge of `origin/main` (`48754c01`) into this
 branch: `main`'s side of it gained the console's graph redesign (`console/**` and
-`docs/design/console-styling.md`) and the settings design's own folder (`docs/settings-commands`),
+`docs/console-styling/spec.md`) and the settings design's own folder (`docs/settings-commands`),
 and **not one file or symbol this folder names changed with it** — `internal/initflow/stage.go`,
 `internal/cli/init_stages.go`, `internal/cli/init.go`, `internal/cli/doctor_layer.go`,
 `internal/cli/config_publish.go`, `internal/localcfg/localcfg.go`, `internal/cli/layer_resolve.go`,
@@ -117,8 +117,9 @@ extend.
 **F8: Exists. `--mode` and its vocabulary check.** `fugaro run --mode` is the run's own request (its
 flag help and `internal/cli/run.go`'s `rigorFlags`), validated against the closed vocabulary before
 any cloud work (`rigorFlags`), with `--path` declaring the paths area rules match. A request that
-cannot take effect is reported once per launch by `noteRigorRequest` (same file), which is the
-raise-only rule D6 stated to the launcher. *Consequence:* `set` reuses the same vocabulary check and
+cannot take effect — the one naming the mode the layers already resolve, since LD3 made the
+request the narrowest rank of the order — is reported once per launch by `noteRigorRequest`
+(same file), which is that rule stated to the launcher. *Consequence:* `set` reuses the same vocabulary check and
 the same spelling of the list (`rigor.ModeList`), so a near miss is refused the same way in both
 commands.
 
@@ -166,7 +167,9 @@ a fifth helper under a rigor name.
 `internal/cli/followup.go` repeats that sentence when it refuses a follow-up's hotfix. No
 `rigor.hotfix` key exists anywhere: `schemas/fugaro.schema.json`'s `rigor` block carries `default`
 and `areas` only, `internal/config/scope.go` has two rigor rows and neither is it, and no code reads
-one. So a first run's `--mode hotfix` is refused by nothing but the raise-only rule. *Consequence:*
+one. So a first run's `--mode hotfix` was refused by nothing but the raise-only rule, and since the
+owner's ruling of 2026-11-13 it is refused by nothing at all: the request takes it whole
+(§4, R7). *Consequence:*
 this changes what D834 may *claim*, and §3 says how: refusing `set hotfix` as a **default** is right
 on its own terms and does not close the gate, and this design does not pretend otherwise. The
 missing opt-in is reported in §4 and is another work's, not a gate this design may invent.
@@ -225,7 +228,7 @@ checkout is shown as unknown (D839, spec §2.3) rather than read from the workin
 answer for this machine instead of for the branch the run will use.
 
 **F17: Exists. The console reads no rigor configuration.** Its sources are the CLI documents listed
-in `docs/design/desktop-console.md` §2.1; rigor reaches it only through each run's `rigor` block in
+in `docs/desktop-console/spec.md` §2.1; rigor reaches it only through each run's `rigor` block in
 `fugaro watch --json` (`console/docs/json-contract.md` §5). The console's project view is planned,
 not built: it is plan **P6** in `docs/coordinator/implementation-plan.md` (§5, "The console's
 project view"), which `docs/console-dependency-graph/implementation-plan.md` cites as
@@ -319,8 +322,9 @@ Reported rather than fixed, because each needs its own decision and its own revi
   task override, the recipe, the repository or the project layer sets either number up or down within
   the recipe's bounds, which are the only ceiling there is.
   So a hand-written `rigor.default: hotfix` in a layer or in a `fugaro.yaml` already reaches a mode
-  that tolerates almost everything, with no gate at all, while `fugaro run --mode hotfix` cannot take
-  effect (raise-only, D6). This design refuses to *write* hotfix as a default — a different check,
+  that tolerates almost everything, with no gate at all, while `fugaro run --mode hotfix` could not take
+  effect under the raise-only rule (D6) — which the owner's ruling of 2026-11-13 changed: it takes
+  effect with no opt-in (§4, R7). This design refuses to *write* hotfix as a default — a different check,
   owed on its own terms (D834) — and it does not close that gate: R7 does, and its first step is a
   question to the owner rather than code (see the plan).
 

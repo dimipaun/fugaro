@@ -50,7 +50,7 @@ is check a tag's **value**: they hold no key, the key is D171's and never passes
 the database, so P6.7 (`fugaro mailbox`) is what verifies a tag rather than merely
 requiring a well-formed one.
 
-`command/` (P6.1) is the wake-word router and the app-command grammar: built, with its own tests and its own mutation proof; see `command/README.md`.
+`command/` (P6.1) is the wake-word router and the app-command grammar: built, with its own tests and its own mutation proof; see `command/README.md`. Since J4 it also holds the phone's job verbs (`verbs.js`, re-exported from its one entry point): a start and a cancel, the role each needs and the mailbox write each composes, which `mobile/src/mailbox/client.js` then writes through the app's one write path.
 
 `confirm/` (P6.2) is the spoken-confirmation state machine — the read-back, the fixed phrase, the timeout, the replay ledger and D128's refusals — with its own tests, its own mutation proof and `vectors.json` for P6.7's Go parity test; see `confirm/README.md`. It reuses `lease/`'s timestamp bound, recognises the phrase through `command/` (P6.1) and authorises `mailbox-schema/`'s action record (P6.3) field for field.
 
@@ -144,4 +144,4 @@ is `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`.
 Where the reasoning lives: [implementation-plan.md](../docs/mobile/implementation-plan.md)
 (P0.1, and the "shared files" table that gives this package's manifest to this task alone),
 [reconciliation.md](../docs/mobile/reconciliation.md) (D119, and D50's amendment),
-[voice.md](../docs/design/voice.md) (D50, D53).
+[voice.md](../docs/voice/spec.md) (D50, D53).

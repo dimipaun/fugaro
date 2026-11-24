@@ -16,8 +16,8 @@ the CLI validates. That changes where every part of the spec lands.
 | Dependency edge A to B with a reason | `plan.Edge{Task, Needs, Reason}`: the reason is already required |
 | Contracts first, stubs and fakes | Already two of the three job-max techniques in the `parallelism` skill (docs/review-levels-ab-jobmax D729). The spec adds the procedure around them, not the idea |
 | Critical path before and after | `plan.Graph.CriticalPath`, `Levels`, per-node `critical_path_length` and `downstream` (`internal/plan/analyze.go`); counted in tasks, no sizes |
-| Rigor levels POC / Startup / Pro / Critical / Hotfix | `internal/rigor` (`rigor.Mode`, `rigor.Resolve`): project < repo < area, and a per-run request may only raise |
-| "Review contract tasks at least at the parent's rigor" | `fugaro run --mode <mode>` is raise-only (`internal/cli/run.go`), which is exactly "at least" |
+| Rigor levels POC / Startup / Pro / Critical / Hotfix | `internal/rigor` (`rigor.Mode`, `rigor.Resolve`): D6's order, seven ranks weakest first, the per-run request the narrowest of them (LD3) |
+| "Review contract tasks at least at the parent's rigor" | `fugaro run --mode <mode>` settles the mode the run is at (`internal/cli/run.go`, LD3), so the mode named there is the mode the contract's run runs at — which is exactly "at least" |
 | Bundled planner skill, on by default | The plugin's five skills; `TestSkillSetIsFive`. `parallelism` is the planning skill |
 | "Turn off or tune per project, area, repo or task" | The settings registry (`internal/settings/registry.go`) and the two config layers; no skill-level switch exists |
 | Notify dependents and have them rebase | Nothing automatic. `fugaro run --pr N` follow-up runs exist; the orchestrator tick (docs/stateless-orchestrator O5/O7) is unmerged |
@@ -175,7 +175,7 @@ Resolutions with one defensible answer (not questions):
 | --- | --- |
 | **D1817** | One integration node per contract, covering every edge the contract broke (F12). Each broken edge still has an integration node that depends on both of its endpoints. |
 | **D1818** | "Critical: fully specified contracts and strong integration tests" is skill prose and a task-text requirement (the integration node names its end-to-end test), not a machine check (F13). "Hotfix: usually skip" is the resolved mode read from `rigor.Resolve` of the plan's footprint paths; the skill skips the pass in Hotfix. |
-| **D1819** | The contract task is launched with `fugaro run --mode <highest consumer mode>`; the flag is raise-only, which is the spec's "at least the parent's rigor". Security-relevant contracts are `opus + mandatory independent review` (F10). |
+| **D1819** | The contract task is launched with `fugaro run --mode <highest consumer mode>`; the flag is the run's own request and settles the mode it runs at (LD3), so the highest consumer mode named there is that run's mode, which is the spec's "at least the parent's rigor". Security-relevant contracts are `opus + mandatory independent review` (F10). |
 | **D1820** | The decoupling pass adds no spend path (F11): contract and integration tasks are ordinary tasks under the same caps and the same go-ahead rule; the planner output states the added task count. |
 | **D1821** | The skill never parses the graph: the CLI does (the same rule as the `/jobmax` section of docs/review-levels-ab-jobmax's implementation plan: plan text is untrusted, `fugaro plan graph` validates it). Stub paths are validated as literal repo-relative paths (F9). |
 | **D1822** | First slice is skill-only on schema 2 (contract and integration tasks as ordinary nodes, the reason on each edge); schema 3 and the setting follow. Slice 1 ships something useful alone and teaches nothing the CLI cannot read. |

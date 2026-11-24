@@ -3,11 +3,11 @@
 # The JSON contract the console reads
 
 Tasks 0.1 and 0.2 of
-[docs/plans/2026-10-15-desktop-console.md](../../docs/plans/2026-10-15-desktop-console.md).
+[docs/desktop-console/implementation-plan.md](../../docs/desktop-console/implementation-plan.md).
 This document is the console's whole data plane written down: every `--json`
 document the console consumes, field by field, with the symbol on `main` that
 proves each one. The design is
-[docs/design/desktop-console.md](../../docs/design/desktop-console.md).
+[docs/desktop-console/spec.md](../../docs/desktop-console/spec.md).
 
 Sections 1 to 9 are Task 0.1's: the shapes, field by field. **§10 is Task
 0.2's**: what the one long-lived command in the set — `watch --json` — does
@@ -107,10 +107,14 @@ The columns below say which field needs which state. The recurring shapes:
 
 Emitted **compact, one object per line** (`json.NewEncoder(d.Out).Encode(...)`,
 `WatchDeps.emit`, `internal/cli/watch.go`), which is what makes the feed
-line-delimited JSON — one of the three line-delimited documents the console
-reads, the others being `logs RUN --json` (§6.2) and the graph's own live feed
-(§6.22 — CG9b's row, the one that puts that document in the console's set;
-§9.2).
+line-delimited JSON — one of the **seven** line-delimited documents the
+console reads. The other six are `logs RUN --json` (§6.2) and the graph's own
+live feed (§6.22 — CG9b's row, the one that puts that document in the console's
+set), and the console improvements plan's four: the runs listing's live form,
+`runs ls --stream --json` (§5), the spend report's, `report --stream --json`
+(§4), the caps', `budget show --stream --json` (§3), and the first run's own
+account, `setup --events --json` (§6.32). §9.2 counts the seven and states the
+one further line-delimited document this file describes outside that set.
 
 ### `JSONDoc` (`internal/watch/json.go`)
 
@@ -284,6 +288,7 @@ reading a document will meet.
 | `auth` | string | — | no | the run's auth mode, from the live registry entry. `oauth` means `spent_usd` is notional: such a run has no gateway, so `budget.AgentEntry.Spent` is its whole notional total (`snapshotEntry`, `internal/budget/registry.go`), while a cascade run's row carries the billed part its gateway charged and leaves its tier-A dollars to the notional counters (`notional_usd`) |
 | `mode` | string | — | no | the **rigor mode** the run resolved and is running at (`runstore.RigorRecord.Mode`, through the run's own registry entry — `budget.AgentEntry.Mode`, which the runner writes from its record at bootstrap and again at every moment that folds a new one in, so a live row follows a mid-run raise). It is **the same value** `runs ls --json`'s `rigor.mode` prints and the record keeps: one resolution, shown in two windows. **CLI 0.23.0.** Always present, `"-"` when the entry carries none — a run under rules that predate the child, which the run then goes without (the rules' `$other` refuses the whole entry for a child they do not know, so the field's arrival cost a rules deploy; `fugaro update` is the whole of it) — which is **"not recorded", never a mode the CLI picked**. Not an authority: no policy, admission or budget rule reads a feed value (design §5.1 rule 2), and the console's own live chip joins the run list's block by id today, so a reader that takes this one must not draw both |
 | `from` | string | — | no | the **layer that decided `mode`** (`internal/rigor`'s `Layer`: `area`, `repo`, `project`, `default` or `request`, D24): `area` for a rule the run's paths matched, then the repository's, the project's, Fugaro's built-in default, and the run's own request. Always present with `mode` and `"-"` with it — the two are one value, and a reader that has one has the other. **CLI 0.23.0.** A word from the CLI's own table, never text a job wrote, and never an authority |
+| `source` | string | — | no | what the run's **running stage goes out on**, as the project's routing table answered it (`budget.AgentEntry.Source`, the live half of the record's `stages[].source`): the kind of the source that served the stage, and the name after a colon when the kind names one — `pool:team`, `anthropic` (`internal/routing`'s `SourceName`; the record's member is that object, this one is the same two facts spelled as the one string a row has room for). **The CLI release after 0.28.0.** Always present, `"-"` when the entry carries none — a run the project's table does not serve, and a run under rules that predate the member, which the run then goes without (the rules' `$other` refuses the whole entry for a child they do not know, so the member's arrival cost a rules deploy; `fugaro update` is the whole of it) — which is **"not recorded", never "no source"**. For a run the table serves the entry's `auth` is written as nothing and every view prints `-` for it (D3070): `auth` keeps its member and its meaning, and a release-behind reader sees no change to it. A name a run wrote, sanitised like every other database-derived string here, and **never an authority** — no policy, admission or budget rule reads it |
 | `notional` | bool | — | no | **the availability state of `spent_usd`**: true when `spent_usd` is a subscription's list price, which for a live row is `auth == "oauth"` (`internal/watch/build.go`). It is a fact about this **live** row, never a reading of a recorded run's `model_basis`: a recorded run's split is `model_notional_usd` (C1.16/P12 — a cascade run the plan served in full has an api-list basis and billed nothing) |
 | `spent_usd` | `*float64` | USD | no | **null = unavailable** |
 | `age_seconds` | `*float64` | seconds | no | **null = unavailable** |
@@ -481,8 +486,36 @@ bool°. `°` = `omitempty`.
 `JSONKill`.
 
 **Flags, read off the cobra command** (`newBudgetShowCmd`): `--repo`, `--all`,
-`--json`, `--compute`, plus `addCloudFlags`' `--config`, `--project`,
-`--gcp-project`, `--region`.
+`--json`, `--compute`, `--stream` (with `--json`: one line per repository and
+per kill switch, then the line that ends the feed, the live form below), plus
+`addCloudFlags`' `--config`, `--project`, `--gcp-project`, `--region`.
+
+### `fugaro budget show --stream --json` — the caps as a live feed (the console improvements plan's RS4, the console's `budget.stream`)
+
+**Command:** the same `internal/cli/budget.go` `newBudgetShowCmd` /
+`runBudgetShow`, with `--stream`; `internal/cli/budget_stream.go` is the writer.
+**The document without the flag is unchanged, member for member and byte for
+byte** — a stream is a new flag and never a member of an existing document
+(D2906, O3, R8), which is also why the feed carries a version of its own.
+**Its lines are the shape `runs ls --stream` writes**
+(`schemas/runs-stream.schema.json`, `budgetStreamDocVersion`):
+`{"type":"row","row":…}` for one row, `{"type":"end","count":N,"version":1}` as
+the last line of a feed that ran to completion, and `{"type":"error","…"}` for a
+feed that failed after at least one row had gone out. A `row` is **one element
+of this document's `repos` array, unchanged**, in the document's own order (by
+slug) — or the project's own kill switch as a row whose `slug` is the literal
+`kill`, which no repository's slug can be, and that is how a reader tells the
+two apart. **The feed carries nothing else of this document**: not `global`,
+`defaults`, `running`, `warnings`, `mode` or the day counters, so a consumer
+that needs one of those reads the whole document. A feed with no `end` line is
+an interrupted read, and the count is what tells an empty window from a
+truncated one. `schemas/budget-stream.schema.json` is the authority for the
+line, and `internal/cli/testdata/budget_stream.golden.ndjson` is a golden
+recorded from the CLI's own output. **The console reads it as `budget.stream`**
+(design §5.1 rule 5), under the per-line, row and byte caps that rule states, on
+a child of the caps screen's own; it is withheld in the reduced mode with the
+rest of the caps view, and a CLI below the row's floor (still `null` today) is
+refused rather than read.
 
 ## 4. `fugaro report --json`
 
@@ -593,7 +626,34 @@ the exported writer, not a `cli`-side struct. Indented two spaces
 int64, none `omitempty`.
 
 **Flags** (`NewReportCmd`, `ee/report/cli/report.go`): `--repo`, `--since`, `--until`, `--by`, `--json`,
-`--csv` (the allow-list excludes `--csv`), plus the cloud flags.
+`--csv` (the allow-list excludes `--csv`), `--stream` (with `--json`: one line
+per record, then the line that ends the feed, the live form below), plus the
+cloud flags.
+
+### `fugaro report --stream --json` — the report as a live feed (the console improvements plan's RS3, the console's `spend.stream`)
+
+**Command:** the same `ee/report/cli/report.go` `NewReportCmd` / `runReport` with
+`--stream`; `ee/report/cli/report_stream.go` is the writer, and it is that
+package's own because RS1's writer is unexported in `cli` (`.claude/rules/ee.md`
+applies to it, its golden included). **The document without the flag is
+unchanged, member for member and byte for byte**, so the flag is a feed of its
+own rather than a member of §4's (D2906 as widened by O3, R8).
+
+**Its lines are the `row`/`end`/`error` shape RS1's schema states**
+(`schemas/report-stream.schema.json`, `reportStreamDocVersion`): a `row` is
+**one element of this document's `rows` array, unchanged**, in the document's
+own order, `end` is the last line of a feed that ran to completion and carries
+`count`, the same `version`, and **the document's own `totals`** — the one member
+a reader cannot get from a row — and `error` is a feed that failed after its
+first row. **The feed carries the document's header and its `warnings` nowhere**:
+`project`, `source`, `degraded`, `notice`, `by`, `since`, `until` and `weeks`
+are not rows and no line of this shape holds them, so a consumer that needs one
+of them reads `report --json`. A feed with no `end` line is an interrupted read,
+and it is what §4's `unreadable` marks and its `warnings` would have explained.
+The window's own `--since`, `--until`, `--by` and `--repo` mean exactly what they
+mean without the flag, and `--csv` is still not the console's. **The console
+reads it as `spend.stream`** (design §5.1 rule 5), under the caps that rule
+states, and withholds it in the reduced mode with the rest of the Spend view.
 
 ## 5. `fugaro runs ls --json` (and the degraded feed's body)
 
@@ -606,7 +666,7 @@ int64, none `omitempty`.
 | `project` | string | no | the Fugaro project |
 | `runs` | `[]runview.Row` | no | `[]` when none |
 | `totals` | `runview.Totals` | no | below |
-| `groups` | `[]object` | **yes** | **only under `runs ls --group-by failure_class`** (`internal/cli/runs_group.go`): the window's failures grouped, one object per class of the closed vocabulary of `docs/design/failure-classes.md` §3 that some run of the window ended in, beside the `runs` array rather than instead of it. Each group carries `class` (one of the nineteen names), `runs` (how many of the window's runs ended in it), `share` (that count's share **of the window's runs**, never of the spend — D1465) and `spend_usd` (what those runs cost). The order is the vocabulary's own (`failure.Classes()`), so two readers of one window read the same block. **`omitempty` is what keeps the phone's degraded feed alive**: the degraded watch document embeds this shape and the app refuses a key it does not know, so a block printed by a listing that never grouped would break the degraded screen (`internal/cli/watch.go`) |
+| `groups` | `[]object` | **yes** | **only under `runs ls --group-by failure_class`** (`internal/cli/runs_group.go`): the window's failures grouped, one object per class of the closed vocabulary of `docs/failure-classes/design.md` §3 that some run of the window ended in, beside the `runs` array rather than instead of it. Each group carries `class` (one of the nineteen names), `runs` (how many of the window's runs ended in it), `share` (that count's share **of the window's runs**, never of the spend — D1465) and `spend_usd` (what those runs cost). The order is the vocabulary's own (`failure.Classes()`), so two readers of one window read the same block. **`omitempty` is what keeps the phone's degraded feed alive**: the degraded watch document embeds this shape and the app refuses a key it does not know, so a block printed by a listing that never grouped would break the degraded screen (`internal/cli/watch.go`) |
 | `warnings` | `[]string` | no | the lines a human listing prints before its table |
 
 `runview.Row` (`internal/runview/runview.go`) is the run shape behind
@@ -623,7 +683,7 @@ reads:
 | `recipe`, `config_sha256` | string | **yes** | |
 | `project_layer` | `*runstore.ProjectLayerRecord` | **yes** | absent before 0.6.0 |
 | `status`, `stage`, `reason` | string | `status` no, other two yes | |
-| `failure_class` | `failure.Class` | **yes** | why the run did not end `succeeded`, as one value of the closed vocabulary of `docs/design/failure-classes.md` §3: the class the runner wrote beside the terminal status, and — for a record written before the field shipped — the reader's reading of the record's own `reason` (`runview.ClassOf`). **A reading and never written back**: the bucket keeps the bytes it had, so the same record read twice reads the same. Absent for a run that did not fail — a `succeeded` run, a run still going and a run that never started name no cause — and for a row the read side ended itself: a preemption, a lost execution and a cancel before launch, none of which left a record that ever settled, so nothing named a cause and the row's own account of what happened to it is `derived`; and `error`, the row for a run whose execution could not be followed at all, whose record the row may not claim to have read. `reason` keeps its text and its meaning byte for byte, and a value a reader does not know reads as `unclassified`, so the vocabulary may grow inside the field |
+| `failure_class` | `failure.Class` | **yes** | why the run did not end `succeeded`, as one value of the closed vocabulary of `docs/failure-classes/design.md` §3: the class the runner wrote beside the terminal status, and — for a record written before the field shipped — the reader's reading of the record's own `reason` (`runview.ClassOf`). **A reading and never written back**: the bucket keeps the bytes it had, so the same record read twice reads the same. Absent for a run that did not fail — a `succeeded` run, a run still going and a run that never started name no cause — and for a row the read side ended itself: a preemption, a lost execution and a cancel before launch, none of which left a record that ever settled, so nothing named a cause and the row's own account of what happened to it is `derived`; and `error`, the row for a run whose execution could not be followed at all, whose record the row may not claim to have read. `reason` keeps its text and its meaning byte for byte, and a value a reader does not know reads as `unclassified`, so the vocabulary may grow inside the field |
 | `derived` | string | **yes** | **what the read side derived, and not a status of its own** — the CLI's 2026-10-21 ruling. Written only on a row whose record was never finalized and whose Cloud Batch job the platform preempted: `status` stays `failed` (the vocabulary every reader already switches on) and `derived` carries the fact (`preempted`, `runview.DerivedPreempted`), with `reason` saying so in a sentence. Absent for every other row, which is what keeps the shape additive. See **the derived status** below |
 | `halt` | `*runstore.Halt` | **yes** | why a run halted |
 | `batch`, `requested_by` | string | **yes** | `requested_by` is a person's address |
@@ -817,6 +877,44 @@ a page costs what the window costs — and therefore `totals.runs`, the counts b
 and every dollar figure in it stay the window's however small the page is. A reader
 that divided one of those figures by the rows it drew would print a number this
 document does not carry, which is the one wrong answer the two flags could produce.
+### `fugaro runs ls --stream --json` — the listing as it arrives (the console improvements plan's RS1, the console's `runs.stream`)
+
+**Command:** the same `internal/cli/runs.go` `newLsCmd` / `runLs`, with
+`--stream`; `internal/cli/runs_stream.go` is the writer. **The document without
+the flag is unchanged, member for member and byte for byte** — `runs ls --json`
+and the degraded feed that embeds it (§2, fact (iii)) are untouched by the flag,
+so it is a feed of its own with a version of its own (`runsStreamDocVersion`,
+D2906, R8). `--stream` is accepted only with `--json`.
+
+**Its lines are three kinds and a reader may rely on nothing else**: a `row`
+carries **one element of this document's `runs` array, unchanged, in the
+document's own order** (created descending, then the run descending) under the
+line's `row` key; `end` is the last line of a feed that ran to completion, with
+`count` — how many `row` lines went before it — and the same `version`; `error`
+is a feed that failed after its first row, carrying the sentence the command
+would have printed, in one line. **A feed with no `end` line is an interrupted
+read**, which is why the count is carried: an empty window and a truncated read
+are otherwise the same bytes. `schemas/runs-stream.schema.json` is the authority
+for the line — it is the schema of ONE line and not of the feed, and no object
+in it is closed, because members are added within a version and a consumer that
+refused one it does not know would refuse a newer CLI's feed — and
+`internal/cli/testdata/runs_stream.golden.ndjson` is a golden recorded from the
+CLI's own output.
+
+**The feed carries the runs and nothing else of the document**: not `totals`,
+not `groups` (so `--group-by failure_class` is not a pairing the console uses)
+and not `warnings`, so a consumer that needs one of those reads the whole
+document. **The console reads it as `runs.stream`** (design §5.1 rule 5), always
+with `--since 24h` as it spawns the one-shot read — and `--since <w>` in this
+feed is **the console's own closed set and not the command's grammar** (`24h`,
+`RUNS_STREAM_SINCE_WINDOWS`, `src/main/ipc.ts`): `runs ls` reads `parseSince`,
+whose `0` is no lower bound at all, and a live read opened on it is every run the
+installation ever made, one line at a time, so every other form the command takes
+is refused before a child exists — with the caps that rule states
+(per line, 10,000 rows, 16 MiB), and it draws each run as its line arrives
+instead of holding the listing; a feed that reaches a cap is ended, the child
+killed and the section shown as an interrupted read with a Retry, never as a
+partial list drawn as complete.
 
 ## 6. The other documents
 
@@ -831,7 +929,7 @@ exactly its own tags and nothing is nested under a `process` or `checks` key:
 |---|---|---|---|
 | `project` | string | no | the Fugaro project |
 | `row` | `runview.Row` | no | §5 — this is where a live run's PR number and `pr_url` come from (design gap 6). *Note 2026-10-27:* the live row of `watch --json` now carries `pr_number` too (GV2.5), a draft PR's number parsed from the run's PR URL with the GitHub URL pattern; `pr_url` is still only here |
-| `failure_class` | `failure.Class` | **yes** | why the run did not end `succeeded`, as one value of the closed vocabulary of `docs/design/failure-classes.md` §3 (D1460): the same value `row.failure_class` carries (§5), on this shape because diagnose is the command a person runs to be told why the run stopped, and a reader of this document is never sent into the row for it. Absent for a run that did not fail, and for a row the read side ended itself (§5) |
+| `failure_class` | `failure.Class` | **yes** | why the run did not end `succeeded`, as one value of the closed vocabulary of `docs/failure-classes/design.md` §3 (D1460): the same value `row.failure_class` carries (§5), on this shape because diagnose is the command a person runs to be told why the run stopped, and a reader of this document is never sent into the row for it. Absent for a run that did not fail, and for a row the read side ended itself (§5) |
 | `halt` | `*runstore.Halt` | **yes** | why a halted run was halted |
 | `verify` | `[]verify.Record` | **yes** | `result.json`'s verify records |
 | `failed`, `flaky` | `[]string` | **yes** | the last test record's failed and flaky tests |
@@ -873,8 +971,8 @@ they cannot be combined**: `runLogs` refuses `--url` with `--json` or
 - `logs RUN --json` prints **one compact `logLine` object per line** — not an
   indented document: `printLogEntry` marshals each entry with
   `json.Marshal` and writes it with a trailing newline, the same one-object-
-  per-line shape as the `watch` feed, and one of the three line-delimited
-  documents the console reads (§6.22's live feed is the third). `logLine`: `time` (RFC 3339),
+  per-line shape as the `watch` feed, and one of the seven line-delimited
+  documents the console reads (§2 names them and §9.2 counts them). `logLine`: `time` (RFC 3339),
   `severity`, `stage`°, `stream`°, `event`°, `message` (no `omitempty` on
   time/severity/message). Every field is **redacted** (`redactEntry`,
   `redactEntry`), and `message` is job-written text: the display layer
@@ -901,9 +999,9 @@ future v1.1 button would consume. `cancelResult`:
 (§6.2) rather than the indented one every command in the console's set emits:
 `printCancel` marshals the struct with `json.Marshal` and
 writes it with a trailing newline. A v1.1 button that parsed it as an indented
-document would read nothing; `cancel` is one of the four commands this file
-describes that are line-delimited, and the only one outside the console's set
-(§9.2).
+document would read nothing; `cancel` is one of the **eight** commands this
+file describes that are line-delimited — the seven of the console's own set and
+this one, **the only one outside the console's set** (§9.2).
 
 ### 6.4 `fugaro doctor --json`
 
@@ -1615,9 +1713,18 @@ keeps the view the CLI resolved out of a screen's hands: an admin of the
 installation sees every user's rows, a plain operator sees their own row
 alone, and an identity the installation's own lists do not place stays
 private. It is read-only —
-the figures come from the run records (`launch.json`'s `launched_by`, and
-`result.json`'s outcome and settled cost), never from the budget database, so
-there is no write path behind it and no counter a screen has to reconcile.
+the figures come from the run index, one page of entries for the window and no
+run object read at all (IR6, F32) — or, while the index has never finished a
+walk, from the run records themselves (`launch.json`'s `launched_by`, and
+`result.json`'s outcome and settled cost), which is the read this command made
+before the index existed; `index_complete` says which of the two it was. The two
+reads answer the same question and do not always answer it alike — the index
+windows a run by its entry's own last change where the records window it by the
+day its run id places its start, and a run the index has not folded yet reaches
+it with no launcher, so it is a row under `unknown` there and under the launcher
+its own launch recorded here — so a screen renders both the same way but must not
+treat them as one read. Never from the budget database, so there is no write path
+behind it and no counter a screen has to reconcile.
 
 | Field | Type | omitempty | Availability state |
 |---|---|---|---|
@@ -1631,9 +1738,10 @@ there is no write path behind it and no counter a screen has to reconcile.
 | `until` | string | no | the window's last UTC day. Both are UTC days, like `runs ls`'s window |
 | `max_runs` | int | no | the bound the read ran under (`--max-runs`, default 5000) |
 | `truncated` | bool | no | **the window held more runs than `max_runs`**: every figure is over its newest `max_runs` alone. The bound is on the read and not on a person: it is applied before the view is, so a private view can be over fewer of the caller's own runs than `max_runs` suggests. A console must show this the way it shows a gap, never as the window's own total |
+| `index_complete` | bool | no | whether the figures are the **run index**'s own page: `true` when they are, read as one page of entries for the window with no run object read at all (F32), and `false` while the index has never finished a walk, when the run records are read instead — one object read per run. It is the one field this document gained for the index (IR6), and it is the whole of the difference a consumer sees: **the two reads answer the same question and are not the same read**, so a screen renders them the same way and reads this only to know which it is looking at. They agree on every run **both windows hold** and part in two places. The window: the index windows a run by its entry's own last change (a settled run's finish), where the records window it by the day its run id places its start, so a run that started and settled on opposite sides of an edge is in one read and not the other. The run the index has not folded yet — an overlay row, in flight or inside the fold gap — reaches it with its run id, its slug and its status alone, no launcher and no record, so the index read puts it under `unknown` with no record where the record read names the launcher its own `launch.json` recorded. A folded run both windows hold reads the same either way |
 | `rows` | `[]userstats.Row` | no | `[]` when none. One row per (user, currency) — dollars are never added across currencies |
 | `totals` | `[]userstats.Row` | no | one per currency, in currency order, with `user` `""` |
-| `unlaunched` | int | no | runs in the window with neither a launch nor a record (never launched, cancelled before launch, or a stale claim). They never started: they are in no row and no total. It is the window's count, over everyone's runs, so it is **not** the caller's own in the `"own"` view any more than `truncated` is |
+| `unlaunched` | int | no | runs in the window that **never started**: neither a launch nor a record, and no status settled for them (never launched, cancelled before launch, or a stale claim). A run the overlay lists with a status and no records yet — in flight, or finished inside the fold gap — started, so it is not one of these: it is a row with no record, under the unknown launcher. They are in no row and no total. It is the window's count, over everyone's runs, so it is **not** the caller's own in the `"own"` view any more than `truncated` is |
 | `notes` | `[]string` | no | the lines the human table prints before and after its own: whose numbers these are, what the money counts, and what the read left out. The document and the table say the same things |
 
 **The `"own"` view filters a read that is not its own.** It holds the runs
@@ -1751,11 +1859,12 @@ it on the surface (`plan.status` in `console/src/main/ipc.ts`), as the data
 behind the graph screen's per-task state (console v2 plan GV1.6). The section
 stays here for §6.11's reason — the screen reads a shape off the code rather
 than assuming one from a design. Its argv is design §5.1 rule 6's
-`plan status --json` row: at most `--all` (GD6's "everything" toggle), plus
-`--project <name>` and `--config <path>` like every other cloud row, and **no
-path** — the checkout reaches the CLI as the spawn's own working directory, from
-the installation's record and never from the renderer. The console asks for it
-at most once a minute per installation and arguments.
+`plan status --json` row: at most `--all` (GD6's "everything" toggle) and
+`--no-merges` (D3217 as amended, below), plus `--project <name>` and
+`--config <path>` like every other cloud row, and **no path** — the checkout
+reaches the CLI as the spawn's own working directory, from the installation's
+record and never from the renderer. The console asks for it at most once a
+minute per installation and arguments.
 
 **It is a cloud read, unlike `plan graph`.** A task's state is a *run's* state,
 and a run lives in the runs bucket of the selected project — so this command
@@ -1767,19 +1876,26 @@ naming the same task is not theirs to claim. It writes nothing — the remembere
 checkouts included: `plan status` is one of the console's reads
 (`consoleReadPaths`), so resolving the checkout records nothing.
 
-**What it reads is bounded, and the lookups are bounded more tightly, because
-they are what a console pays for.** The runs it lists are every run the bucket
-still holds — the ninety-day window `fugaro run --pr` reads with, which is the
-bucket's own lifecycle, since a run older than that has been deleted with its
-run and can join nothing. Every run in that window is read. What is scoped is
-the merge lookup below: it spawns the operator's `gh`, one spawn per distinct
-pull request, and it is asked only about the pull requests of the runs that
-**join at least one plan here**, at most **32** per read, the newest runs'
-first; a pull request past the cap has no answer (`merge unknown`, and a
-warning says how many). The answers are not kept between invocations (that
-cache lives in `internal/watch`'s process, and this command is one process). A
-repository whose history is full of runs naming no task of any plan in this
-checkout spends no lookup on them.
+**What it reads is bounded by the checkout's plans, not by the repository's
+history.** The runs come from the run index (C-INDEX: the collection the
+history job's fold writes, one document per run), and the read asks it one
+question per plan task of the checkout's plans, plus one per pull request the
+runs those questions answered carry — the second pass is how a follow-up, which
+records no `plan_task` of its own, is joined (rule iii below). **No listing of
+the runs bucket is made at all**, so a plan of four tasks asks four questions
+however much history the repository has, and a run older than the bucket's own
+life cycle still joins as long as the index holds it. The estimate's history is
+the summary document's own table, so it is one read rather than a scan (F15).
+What is scoped is the merge lookup below: it spawns the operator's `gh`, one
+spawn per distinct pull request, and it is asked only about the pull requests
+of the runs that **join at least one plan here**, at most **32** per
+read, the newest runs' first; a pull request past the cap has no answer
+(`merge unknown`, and a warning says how many). The answers are not kept
+between invocations (that cache lives in `internal/watch`'s process, and this
+command is one process). A repository whose history is full of runs naming no
+task of any plan in this checkout spends no lookup on them. `--no-merges` is
+the new console's first paint: it asks `gh` nothing at all, and says so in the
+document (below).
 
 The document:
 
@@ -1790,6 +1906,9 @@ The document:
 | `totals` | object | never | never | every plan's figures added up, below. A header line a screen draws before the plans |
 | `streams` | array | never | never | the release streams catalogue, in the file's own order, below; `[]` when the catalogue could not be read (`warnings` says why, and a release's name and version are then simply absent) |
 | `warnings` | array | never | never | the lines a human read prints before its table, below; `[]` when there is nothing to say |
+| `index_complete` | bool | never | never | whether the run index has ever finished a walk (C-INDEX, D3215). While it is **`false`** the text listing prints one line saying the index is still building, and the runs joined here are the ones folded so far: a reader never prints a silently short list as the whole truth |
+| `folded_through` | string (RFC 3339) | **yes** | never | how fresh the indexed runs are: the moment the index is folded through, and the point after which a run's own change comes from the overlay rather than a document. Absent before the first fold — never a zero timestamp |
+| `merges_read` | bool | **yes** | never | **present, and `false`, only under `--no-merges`** (D3217 as amended): the read spawned no `gh`, so every task whose run recorded a ready pull request reads `done` with the `merge unknown` mark and nothing is counted `closed`. Its presence is what lets a screen tell "no merges were read" from "there was no merge to read"; the default read does not carry it at all |
 
 one entry of `plans`:
 
@@ -1820,7 +1939,7 @@ one entry of `nodes`:
 | `run` | string | **yes** | never | the **suffix** of the run this task is joined to — the four characters after the last dash of a run id, which is the part a person reads out loud, and the short form `fugaro watch` shows a run by (`internal/task`'s `ShortRun`; where two shown rows collide it is longer, and `DisplayRuns` extends it); `runs ls` prints the whole id |
 | `stage` | string | **yes** | never | the stage that run is in. **Job-written display text**: it arrives sanitised (`safetext.Field`) and is rendered as text |
 | `pr_number` | number | **yes** | never | the pull request number this task shows, **whenever the run has recorded one** — running or finished. It is the run's `record_pr` (F9) when it has one, the run's own number otherwise, and it is absent rather than `0` when there is none: a repository that numbers its pull requests from 1 makes `0` no number at all. It is never a link (§5.1 rule 2) |
-| `mark` | string | **yes** | never | `"merge unknown"`, and nothing else today: the task's run recorded a ready pull request and no lookup could say whether it merged (below). A screen shows it beside the state, never instead of it |
+| `mark` | string | **yes** | never | `"merge unknown"`, and nothing else today: the task's run recorded a ready pull request and no lookup could say whether it merged — because none answered, or because `--no-merges` made none (below). A screen shows it beside the state, never instead of it |
 
 one entry of `releases`:
 
@@ -1857,7 +1976,8 @@ the CLI's, not a screen's rule:
   or `launching`), and `stage` comes from it. The task is being worked on now.
 - `done` — a joined run's pull request is **merged**, according to the
   operator's own `gh` (GitHub only, fail-open); or a finished run recorded a
-  ready or reviewed pull request and **no lookup could answer at all**, and then
+  ready or reviewed pull request and **no lookup could answer at all** (the
+  default read's cap reached, or `--no-merges`, which asks nothing), and then
   `mark` is `merge unknown`. Either way the work is in.
 - `cancelled` — the latest run was cancelled **and it is the task's only run**.
   The work was dropped.
@@ -1876,7 +1996,8 @@ subprocess. A URL that matches but names **another repository** than the
 checkout's is not asked about either, and answers *not merged*: a run's
 `pr_url` is job-written, and a job must not mark its own task done by pointing
 at somebody else's merged pull request. Where there is no answer (no `gh`, a
-Bitbucket repository, a failed or timed-out lookup, one past the cap), a task
+Bitbucket repository, a failed or timed-out lookup, one past the cap, or
+`--no-merges`, which asks nothing at all), a task
 whose run's record says its pull request is ready shows `done` with the mark,
 rather than staying open forever: a screen that waited for an answer nobody can
 give would be a screen that never settles. A `done` **with** the mark is **not** counted closed — only a confirmed merge is
@@ -3237,10 +3358,16 @@ and the console sends only a value a previous read listed (F21):
 | `orchestrator:<id>` | one orchestrator's state node under `orchestrator/`, read through the caller's own credential (D1357) |
 | `local:<id>` | one orchestrator this machine's daemon drives: the same node, and the cached brief when the node is not there (CG5, D1358) |
 
-An id is one lower-case letter or digit, then up to 39 more of those or a hyphen,
-and nothing else. So a leading `-` (which would reach argv as a flag), a path
-separator, an uppercase letter, whitespace, a `.`, an `@` and a 41-character id
-are each refused, by `graph.ParseScope`'s anchored pattern.
+An id is an orchestrator id and nothing else: a project's own name, or a project
+name, `~` and a name for a named one — the form the rule gained when named
+orchestrators landed — which is how the tree under `/orchestrator` is keyed
+(`orchestrator.ValidScopeID`, F40). `graph.ParseScope` reads that one rule
+rather than a pattern of its own: each half is 1 to 40 characters of `a-z`, `0-9`
+and `-`, starting with a letter or a digit, and the name half may end in a `-`
+where a project name may not. So a leading `-` (which would reach argv as a
+flag), a path separator, an uppercase letter, whitespace, a `.`, an `@`, a second
+`~` and an id longer than a project name, a `~` and a name together are each
+refused, before anything is read.
 
 The document:
 
@@ -3997,6 +4124,268 @@ against this machine's config. The
 write half — the bare `apply` — is a rule 6 row and **not** an operation: the
 console shows what is owed and does not run the chain yet.
 
+### 6.29 `fugaro user ls --me --json` — the caller's own role (WH1, the console's `whoami`)
+
+**Command:** `internal/cli/user_ls.go` `newUserLsCmd` / `userLs` with `--me`.
+**Document:** `whoamiDoc` (`whoamiDocVersion`, `1`), indented. **It is a read of
+its own rather than a member of the roster's document** (D2907): `user ls --json`
+is unchanged, member for member, and `--me` answers about the caller instead of
+listing everybody. It is also the one form that reads no roster: with `--me` the
+command refuses rather than fall back to the IAM lists a legacy member would come
+from.
+
+| Field | Type | omitempty | Note |
+|---|---|---|---|
+| `version` | int | no | `1` |
+| `role` | string | no | `viewer` / `operator` / `admin` / `none` — resolved by `internal/access.Self` over the same input the gates judge with, so the console's answer and the CLI's refusal can never disagree (`TestUserLsMeMatchesTheGate`). **A word outside that set is read as `none`**: a role a newer grammar adds is not a rank to guess at |
+| `scope` | string | no | `all` / `project` / `repos` / `none` — the console's own word for the kind of scope (`all` is the resolver's `all-repos`) |
+| `repos` | `[]string` | no | the patterns the scope names, `[]` when it names none. **Never the repositories a machine knows** — that would be a claim the grant does not make |
+
+`schemas/whoami.schema.json` is the authority for the shape and
+`internal/cli/testdata/whoami.golden.json` is a golden recorded from the CLI's
+own output. It is not refused in an agent session: it reads only the caller's own
+role. **The console reads it as `whoami`** (design §5.1 rule 5) at startup, and
+maps it to disabled-with-a-reason controls; it decides no role of its own
+(D2907, RB4), and with no answer — an old CLI, a refusal — every control stays
+enabled and the CLI's own refusal is what the operator sees.
+
+### 6.30 `fugaro image ls --json` — the project's image catalog (the console's `image.catalog.ls`)
+
+**Command:** `internal/cli/image_catalog.go` `newImageLsCmd` / `runImageLs`.
+**Document:** `catalogLsOut`, indented, and **two inventories with one flag**:
+without `--shared` it is the project's catalog, with it the installation's
+shared-image lock. The catalog's document:
+
+| Key | Type | omitempty | Note |
+|---|---|---|---|
+| `project` | string | no | the Fugaro project |
+| `entries` | array | no | `[]` when the catalog is empty — **empty, not unavailable**: a project with no catalog of its own lists nothing |
+| `entries[].name` | string | no | the entry's name |
+| `entries[].tags` | `[]string` | yes | the tags it provides |
+| `entries[].default` | bool | yes | whether it is the catalog's default |
+| `entries[].source` | string | no | what the image is built from, as one line |
+| `entries[].description` | string | yes | |
+| `entries[].digest` | string | yes | the digest the last build of it recorded, absent when none has |
+
+**It is offline and read-only**, and the group's writers — `image add`,
+`image rm`, `image promote`, `image build` and `image refresh` — are the never
+table's (§5.1 rule 6) **save one exception by name**: the add §6.34 documents,
+whose two operations the same rule grants the console (`image.add.plan` and
+`image.add`), which is what makes this read no longer the whole of the group's
+reach. A **catalog the CLI cannot
+read from the cloud is not a refusal for this read**: the command answers with the
+catalog this machine's configuration holds, and a console draws it. The console's
+row is `image ls --json` (design §5.1 rule 6), with no argument and no flag but
+`--json`.
+
+### 6.31 `fugaro recipes ls --json` — the recipes in force, and which one wins (the console's `recipes.ls`)
+
+**Command:** `internal/cli/recipes.go` `newRecipesLsCmd` / `listRecipes`.
+**Document:** one object, indented: `recipes` (the rows, `[]` when there are
+none) and `notes` (`[]` of the CLI's own sentences, shown verbatim).
+
+| Key | Type | omitempty | Note |
+|---|---|---|---|
+| `recipes[].name` | string | no | the recipe's name |
+| `recipes[].source` | string | no | which layer it came from (this checkout, the project, the catalog) |
+| `recipes[].description` | string | yes | |
+| `recipes[].use_when` | string | yes | the sentence a routing decision reads |
+| `recipes[].steps` | array | yes | the steps, present in the JSON form; each carries `kind`, `max_rounds`°, `bounce`°, `command`°, `autofix`° |
+| `recipes[].launchable` | bool | no | **false when `problem` is set** — an invalid or misnamed recipe, which a routing decision must not pick |
+| `recipes[].shadowed_by` | string | yes | the layer whose recipe wins this name |
+| `recipes[].problem` | string | yes | why it is not launchable |
+
+**One name has one winner**, whichever layer it came from, and the losing rows
+are still printed with `shadowed_by` naming what beat them — the answer a screen
+needs to explain a name rather than a bare list. **It is offline**, so it is the
+whole of the recipes group's reach in the console: `recipes publish` and
+`recipes validate` are the never table's, each as a word of `recipes` and
+`publish` as a command too. The console's row is `recipes ls
+--json` (design §5.1 rule 6), and its `--verbose` text form is not the console's.
+
+### 6.32 `fugaro setup --plan-only --answers-file - --events --json` — the wizard's plan, its apply and its event feed (the console improvements plan's ST1, ST2, SW3a; the console's `setup.plan` and `setup.apply`)
+
+**Command:** `internal/cli/setup.go` `newSetupCmd` (`newInitCmdWith`, the
+converge the wizard drives) with `--answers-file`, `--plan-only` and `--events`;
+`internal/cli/setup_events.go` is the feed's writer. **The command without the
+new flags is unchanged, and its one `--json` document is unchanged too**: the
+feed takes that document's place on stdout, the run's progress stays on stderr
+where `--json` already puts it, and the final exit code is the run's own.
+
+**`--answers-file -` is the wizard's other half.** The five questions
+(`gcp_project`, `region`, `name`, `rigor`, `bake` — `setupQuestions`, and the
+bake switch is `--bake-repos` beside the file) arrive as one JSON document with
+its own `version`; `-` means **stdin**, and the console passes the dash and never
+a path — the document reaches the child on its stdin as bytes main holds in
+memory, so no file exists for another process of the same user to change between
+main's validation and the CLI's read, and no word of the argv is a path. A flag
+given beside the file wins over it, and the run says which. **The file answers
+questions and confirms nothing**: the steps that need a person — creating the GCP
+project, linking its billing, the permanent Firestore location, every secret
+value — have no member in it, so a `--json` run with a whole answers file applies
+only what needs no confirmation (`unconfirmedWhy`, `internal/cli/init.go`; F27,
+O6).
+
+**`--plan-only` reads and creates nothing.** The plan document is one object; a
+run with `--plan-only` is the console's `setup.plan` (design §5.1 rule 5), and
+the same command without it is `setup.apply`, the console's **fourth write**.
+
+**`--events --json` is the feed of §9.2's seven line-delimited documents.** Its
+lines are a closed set of kinds (`schemas/setup-events.schema.json`, the console's
+own `SETUP_EVENT_TYPES` in `console/src/shared/new-ops.ts`, which with
+`internal/cli/testdata/setup_events.golden.ndjson` is the authority):
+`{"type":"step",…}` is the run reaching a stage, `{"type":"stage",…}` is one
+stage it settled — **with the very members the `--json` document's `stages`
+element carries** — `{"type":"left_for_you",…}` is one thing only the user can do,
+carrying the step's own line to run, and the last line is `{"type":"done",
+"exit_code":N}` or `{"type":"error",…}`. **A run that ends with steps left for
+you ends `done` with exit code 1** — it did not fail, and the handed-back steps
+are the `left_for_you` lines above it — while an `error` line names the stage the
+run stopped at with the CLI's sentence and fix, or, where it refused before any
+stage, the refusal itself with `stage` empty. **No member of the feed is a
+consent and no line waits for one**: a `left_for_you` line is emitted and the run
+moves on, which is what makes a feed with nobody at a terminal a true account of
+the run rather than a hang. A feed with no last line is an interrupted read. The
+steps' text is the CLI's own and is sanitized where it is drawn, like every other
+document's.
+
+**Flags** (`newSetupCmd`): `--json`, `--plan-only`, `--answers-file`,
+`--events`, `--name`, `--rigor`,
+`--gcp-project`, `--region`, `--bake-repos`, plus the cloud flags. **The
+console's two rows use four of them** — `--plan-only`, `--answers-file -`,
+`--events` and `--json` — and nothing else (design §5.1 rule 6): no `--name`, no
+`--gcp-project`, no `--region`, no `--bake-repos`, no `--shared`-style extra
+word, and no argument at all. **And they carry neither of the two project flags
+every other row of the allow-list carries**: no `--project` and no `--config`,
+and the child is handed no `FUGARO_PROJECT` either (`takesProject: false`,
+`console/src/main/spawn.ts`; design §3.4 rule 3's third exception). The CLI reads
+`--project` and that variable as the same selection
+(`localcfg.SelectInput.EnvProject`), and the answers file *names the project the
+run is about to create*, so a child aimed at an existing installation refuses the
+wizard's own answers as a rename of it (`loadInitConfig`, `internal/cli/init.go`)
+— and a first run, with no installation selected at all, could not build the
+argv. So the one way a project name reaches the CLI from the console is the
+answers main validated and showed in the confirmation window (design §3.4 rule
+3's amendment, D2904). Nor
+does either row pass a flag that confirms a step, and there is none to pass: the
+command has no confirmation flag of its own, on the ruling that being at a real
+terminal is what confirms (`docs/no-prompt-policy/`). The
+wizard's deadline is its own (`SETUP_DEADLINE_MS`, 60 minutes) because the reads'
+`READ_TIMEOUT_MS` would kill an apply part-way.
+
+**The two write operations of the console improvements' console half are here,
+and only one of them writes.** `setup.apply` is the write above, with the
+payload `{}`: the answers file is the one main held when it showed the plan
+window, so a renderer cannot slip a different project, region or rigor in between
+the window and the write, and the window shows those answers as main parsed them
+beside their SHA-256. The other, `settings.editor.open`, **spawns nothing** — it
+opens the main process's own modal for one key of §6.19's document, and the
+entry, the validation, the dry run and the confirmation are that modal's
+(D2902, §6.20) — so it has no command line and no document of this file; it is
+named here because it is the second of the pair, not because it reads anything.
+
+
+### 6.33 `fugaro models add <id> --dry-run --json` — the models write's dry run (the console improvements plan's MW1; the console's `models.add.plan` and `models.add`)
+
+**Command:** `internal/cli/models_add.go` `newModelsAddCmd` / `runModelsAdd`.
+**Document:** `modelsAddPlanDoc`, indented, one object
+(`schemas/models-add-plan.schema.json`, and the golden file
+`internal/cli/testdata/models_add_plan.golden.json`):
+
+| Key | Type | Note |
+|---|---|---|
+| `version` | int | `modelsAddPlanVersion`, `1` today (D848: a member is added within a version, and removing or retyping one bumps it) |
+| `layer` | string | the layer the change would land in — `local` and never another, because the command edits the selected installation's own file (D780). One word of the same vocabulary the settings write's `layer` uses |
+| `path` | string | the file the change would be written to, as the caller's read or `--config` resolved it |
+| `model` | string | the id the command was given, exactly as it would be written. Never a pattern: a claim is the one model the owner named (D785) |
+| `route` | string | the provider entry the model would be claimed on |
+| `changed` | bool | whether the file would change at all. **False is a classification and not an error** — an add the file already holds exits 0 with this document and an empty `steps` |
+| `claim` | object | `key` (`providers.<route>.models`), `entry` (the id appended there) and `claimed_by` (the existing entry or pattern that already covers the model). **The last two are never both set, and one of them always is** |
+| `allowed_models` | object | `key` (`budget.allowed_models`), `entry` and `present`: an absent list stays absent rather than becoming a list of one (D786), so a consumer reads `present` before it reads `entry` |
+| `prices` | object | `key` (`model_prices.<id>`), `input_per_m`, `output_per_m` and `source` (`given`, `catalog` or `local`). The entry is written only for `given` — a model the catalog or the file already prices needs none |
+| `steps` | array | the follow-up the change owes, in the order it would run: `name` (the apply chain's own step name, `policy` today) and `state` (`run`, or `saved` under `--no-apply`). Empty exactly when `changed` is false |
+| `refusal` | string | **empty in every document this CLI prints**: a refused add is the CLI's own sentence with a non-zero exit and no document at all, which is what a consumer branches on |
+
+**It is the change as data**, and the write it stands in for is the same
+command less `--dry-run --json`: `models.add` is the console's **fifth write**
+(design §5.1 rule 6), and the only argv of the surface that reaches an add of a
+model.
+
+**The console's two rows carry four arguments.** Three are `=`-form words the
+renderer sends — `--route=<r>`, `--price-in=<usd>`, `--price-out=<usd>` — so no
+value of either row can be read as a flag, and every one of them is held to a
+grammar in main before the argv exists (`console/src/main/ipc.ts`'s `modelId`,
+`modelRoute` and `modelPrice`). The fourth is the model id, passed as the
+positional **behind `--`** (`terminatedValue` in
+`console/src/main/spawn.ts`), which is the word `models add <id>` reads. **The
+write's row declares the plan's own four and no others**, so the argv the
+operator confirmed is the argv that runs.
+
+**`--no-apply` is on both rows, and it is a word of the command path and never
+a payload's.** It is what keeps the write's follow-up step — the published
+policy node's migration in place — saved for the operator's own `fugaro apply`
+(D1565), so `steps[].state` is `saved` in every document either row prints. A
+CLI whose `models add` has neither `--no-apply` nor `--dry-run` is a CLI this
+console refuses to drive at all: below that floor the Manage kind offers the
+Copy-command instead (`MODELS_ADD_CLI_FLOOR`,
+`console/src/shared/version.ts`, asked on main's side too by
+`console/src/main/modelsadd.ts`).
+
+**The window is drawn from this document and from nothing a renderer sends.**
+Main reads the members strictly (`console/src/main/modelsview.ts`), holds the
+document's own SHA-256 and the exact argv the yes spawns, and re-runs *that*
+argv — the digest re-checked first — which is why the plan window shows the
+command line rather than a description of it (design §5.1 rule 11). The
+document is a **widening**: it changes what every run of the project may name and
+spend on, so the window's confirming button is gated by the tick the console
+draws (`MODELS_ADD_TICK_LABEL`) and a yes without it is refused. `fugaro models
+add` is otherwise the never table's, as a command and as a word of `models`.
+
+### 6.34 `fugaro image add <name> --dry-run --json` — the image write's dry run (the console improvements plan's MW2; the console's `image.add.plan` and `image.add`)
+
+**Command:** `internal/cli/image_catalog.go` `newImageAddCmd` / `runImageAdd`.
+**Document:** `imageAddPlanDoc`, indented, one object
+(`schemas/image-add-plan.schema.json`, and the golden file
+`internal/cli/testdata/image_add_plan.golden.json`):
+
+| Key | Type | Note |
+|---|---|---|
+| `version` | int | `imageAddPlanVersion`, `1` today |
+| `command` | string | the door the document is for — `image add`, and a plan for another command is refused by main's reader |
+| `project` | string | the installation the entry would land in. **Main compares it against the installation the console is acting on** and refuses a plan for another, because the confirmed write would otherwise land somewhere the screen never named |
+| `entry` | object | `name`, `tags` (`[]` when the entry provides none), `description` (`""` when the caller gave none), `default` (false for every write this console can make: `--default` is a definition flag no row of the spawn table emits) and `source` (the one-line definition `image ls` prints, `dockerfile owner/name:path`, with `@branch` where the entry names one) |
+| `steps` | array | the follow-up the add owes, in the order it would run: `name` (`catalog-build`, `repository`, `policy`) and `saved` (true under `--no-apply`, which is every document either console row prints). **The build is the one step here that bills** |
+| `refusal` | — | no member: the shape carries none, and a refused add is the CLI's own sentence with a non-zero exit and no document at all |
+
+**It is the change as data too**, and `image add` is the console's **sixth
+write** (design §5.1 rule 6). `--dry-run` builds the entry from its flags, asks
+every refusal the real add would ask — the definition's own rules, a name the
+catalog already has, a definition no build could fetch, D1573's agent refusal and
+the installation's skew gate — prints this document and writes nothing: no
+catalog entry, no build, no saved step, and nothing priced.
+
+**The console's two rows carry four arguments**, on the same rule as §6.33's:
+`--dockerfile=<owner/name:path>`, `--tags=<a,b>` and `--description=<text>` are
+`=`-form words held to main's grammars (`console/src/main/ipc.ts`'s
+`imageName`, `imageDockerfile`, `imageTags` and `imageDescription`), and the
+entry's name is the positional behind `--`. **`--inline`, `--image`, `--default`
+and `--branch` are words of neither row**: they are the other definitions of one
+entry, they write executable content from a renderer's text or name an image that
+already exists, and `assertArgvFlags` refuses each of them for every operation
+but the rows that declare it. **`--no-apply` keeps the add's three steps off the
+operator's machine** until they run them (D1565), the build included — which on
+this surface matters more than anywhere else, because that step bills by itself.
+
+**The write is a project admin's, and the window says so before the click**: the
+Manage control is enabled only for a project admin (RB4's gating), because
+`image add` refuses anyone else (`accessGateProject`, and the CLI's own skew
+gate), and a role that changed between the window and the write is refused by the
+CLI's own sentence, which the screen draws like any other refusal. Unlike §6.33's
+the document is a **narrowing** — it raises no limit — so the window's yes is one
+deliberate click and no tick. `fugaro image add` is otherwise the never table's,
+as a command and as a word of `image`.
+
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
@@ -4013,7 +4402,7 @@ does not move, and its row carries the closure in place, as gap 5's does.
 |---|---|---|---|
 | 1 | The degraded path prints a **plain sentence to stdout** on the same stream as the documents | `runWatchDegraded`, `internal/cli/watch.go` (`"%s\nrun records unavailable (retrying): %s\n"`) | Skip any line that is not a JSON object; show it as a header warning (§2, fact (iii)) |
 | 2 | `version` has **no `--json`** and no flags at all | `newVersionCmd`, `internal/cli/root.go` — `cobra.NoArgs`, no `Flags()` | Parse the human line, pinned by a test |
-| 3 | **`project show --json` does not exist on this tree** — there is no `fugaro project` command at all | no `newProjectCmd` in `internal/cli`; `docs/plans/2026-10-14-project-centric.md` phase 1 (PR #390) ships `project show`, `project policy publish` and `project repos add` — and only that one verb of the `repos` group comes with phase 1: the plan's phase 4 (Enrollment and migration, Task 4.1) is where `project repos ls`, `rm` and `sync` ship — **and no `project ls`** | The Project screen renders the caps, kill state and repositories it can see, and says the policy object is not readable yet |
+| 3 | **`project show --json` does not exist on this tree** — there is no `fugaro project` command at all | no `newProjectCmd` in `internal/cli`; `docs/project-centric/implementation-plan.md` phase 1 (PR #390) ships `project show`, `project policy publish` and `project repos add` — and only that one verb of the `repos` group comes with phase 1: the plan's phase 4 (Enrollment and migration, Task 4.1) is where `project repos ls`, `rm` and `sync` ship — **and no `project ls`** | The Project screen renders the caps, kill state and repositories it can see, and says the policy object is not readable yet |
 | 4 | **No schema version in the `watch --json` document** | `JSONDoc` (`internal/watch/json.go`) — no version field | Infer from the CLI version and from which shape arrived (the `degraded` key) |
 | 5 | **Nothing enumerates installations** | `fugaro config` is `example\|show\|layer\|init\|publish` (`internal/cli/configcmd.go`); no `fugaro project` command exists; that phase's commands describe the *selected* project's policy and repositories, not the machine's installations | The operator adds each installation by hand (D13): binary picker, typed project name, optional checkout directory. **Closed 2026-10-18: `fugaro config list --json` exists (§6.8), so the typed name becomes a pick from the list of names the CLI prints — the field stays for an installation the operator adds before the CLI is updated** |
 | 6 | **No PR URL on a run that has not finished** | `JSONRun` carries `repo` and no `pr_url`/`pr` — `pr_url` exists only on `JSONFinished`, and `runview.Row` spells the pair `pr_url` + `pr` — and it does carry `pr_number` (§2), for a run that has recorded a draft PR | A live row shows no link; the detail screen takes it from `diagnose RUN --json`'s `row`. **Half closed 2026-10-27: `pr_number` landed** (GV2.5, §2) — the run's own `record_pr`, read from the registry entry the live row is already built from, so the graph screen shows a running node's number from the feed alone. The URL half is still open, so the row stays in this list and the link is still rebuilt from `diagnose` |
@@ -4062,8 +4451,12 @@ and **not** off this document or the design:
 | `coordinator show` | yes (`newCoordinatorShowCmd`, §6.15) — the pull request read (coordinator v2 C3, D816): `--repo` and `--pr` are its own two arguments, both required, and it carries `--project` and `--config` like the rest because it resolves the repository's provider the way the project view does. **The second row here whose child mints a credential of the host's** — the first is `run`'s below, whose child is a run and mints the write-capable token it pushes and opens the pull request with; this row's is the person read set's own read-only installation token (contents, pull requests and metadata, all read), revoked when the command is done — so its argv is the whole of what a renderer may influence about it |
 | `coordinator intents` | yes (`newCoordinatorIntentsCmd`, §6.16) — the declarations read (coordinator v2 C4, D827): it has **no argument of its own** (`--all` and `--json` are the console row's fixed words), and it carries `--project` and `--config` like the rest because it resolves the local config the way the project view does. **The one row here whose child asks nothing of the host at all**: the declarations are the caller's own database node, read through the same credentials §6.13's stored read uses, so there is no App key, no installation token and no provider anywhere in it |
 | `settings set\|unset` | yes (`newSettingsCmd`, §6.20) — **the second row here that writes** (the settings-edit plan's C3, design §5.1 rule 12): the dry run and the confirmed write are the same command with the same aiming pair, and the layer written is §6.19's `target_layer` rather than a flag a renderer chose. The write carries `--no-apply` (the composite-commands plan's AP8, D1572), so the change is saved and its follow-up steps are owed rather than run — and it carries it only at or above the floor that registers the word (`NO_APPLY_CLI_FLOOR`, 0.26.0, where that plan's AP5 and AP6 ship it, §6.20), so a CLI older than that gets no word |
+| `user ls` | yes (`newUserLsCmd`, §6.29) — the Members view's roster read (the roles-and-scopes plan's RS7, roles.md D691(b)), and with `--me` the caller's own role, which reads no roster at all. Both forms carry the aiming pair, and the five words of the group that change a roster are the never table's |
+| `image ls` | yes (`newImageLsCmd`, §6.30) — the project's image catalog, and with `--shared` the installation's shared-image lock. **It is offline** and writes nothing, and the group's writers — `image add`, `image rm`, `image promote`, `image build`, `image refresh` — are the never table's as commands and as words of `image`, **save the add §6.34 documents, whose two operations that same rule grants the console by name** — so this read is not quite the group's whole reach any more, and the write's own two rows are the other half of it |
+| `recipes ls` | yes (`newRecipesLsCmd`, §6.31) — the recipes in force, one winner per name. **It is offline** and writes nothing, and `recipes publish` and `recipes validate` are the never table's as words of `recipes` (`publish` as a command too) |
 | `apply --status` | yes (`newApplyCmd`, §6.28) — **the third row here that writes**, and the only one with a read arm: `fugaro apply` runs the follow-up steps a management command saved for later (the composite-commands plan's D1560). The console is admitted to `apply --status --json` and nothing else (D1569, design §5.1 rule 6): the bare `apply` is a row of that table the console does not spawn yet, and the read costs no cloud, so the pair here is what aims it at an installation |
-| **`run`** | yes (`newRunCmd`, §6.14) — **the other row here that writes**: the launch (design §5.1 rule 11) is cut for a project like every cloud command, so it carries `--project` and `--config` too, and the task itself arrives on stdin rather than as a flag |
+| `setup` | yes (`newSetupCmd`, §6.32) — **the first row here whose argv arrives partly on stdin as a document rather than as a word**: `--answers-file -` is the wizard's five answers, which the console passes as `-` and never a path. With `--plan-only` the row reads and creates nothing (the console's `setup.plan`), and without it the row is `setup.apply`, **the fourth row here that writes** (design §5.1 rule 5) and the console's fourth write overall. **The console gives both of the command's rows no project selection at all** — no `--project`, no `--config` and no `FUGARO_PROJECT` — because the answers name the project the run creates (§6.32) |
+| **`run`** | yes (`newRunCmd`, §6.14) — **the first row here that writes**: the launch (design §5.1 rule 11) is cut for a project like every cloud command, so it carries `--project` and `--config` too, and the task itself arrives on stdin rather than as a flag |
 
 So the console passes `--project <name>` (and `--config <path>` when the
 installation is not the ambient one) on **every spawn except the handshake**,
@@ -4076,52 +4469,77 @@ table against the live constructors.
 
 ## 9. What the console may do with all this
 
-1. **Every document in the console's set is read-only** — with **three
-   exceptions, and all three are writes the console's own confirmation
+1. **Every document in the console's set is read-only** — with **six
+   exceptions, and all six are writes the console's own confirmation
    answers**: the launch (§6.14, design §5.1 rule 11), which was the console's
    **first write**; the settings edit (§6.20, design §5.1 rule 12, the
-   settings-edit plan's C3), which is its **second write**; and the record's
+   settings-edit plan's C3), which is its **second write**; the record's
    move (§6.25, design §5.1 rule 14, the dependency-graph plan's GV3.2), which
    is its **third write** — the first two behind a window the main process opens
    (rules 11 and 12), and the move behind a sheet of the Graph screen's own
    whose every word is still the main process's, so a confirmation authorises
-   nothing the preview did not draw. **A fourth write
-   reads no document of this file at all**, so it neither widens nor narrows
-   this sentence: `licence.save` (design §5.1 rule 5, the subscriptions plan's
+   nothing the preview did not draw; the first run's apply (§6.32, design
+   §5.1 rule 5, the console improvements plan's SW3a), which is its **fourth
+   write** — behind the same window rule 11 opens, on the plan that window drew
+   and the answers main held, so no renderer word reaches the child and a
+   different project, region or rigor cannot be slipped in between the plan and
+   the write (design §3.4 rule 3's amendment, D2904); and the two Manage writes,
+   the models add (§6.33, design §5.1 rule 6, the plan's MW1) and the image add
+   (§6.34, the plan's MW2), which are its **fifth** and **sixth** — both behind
+   rule 11's window, drawn from the CLI's own `--dry-run` document, whose SHA-256
+   and exact argv main holds and re-runs, so the command line the operator
+   confirmed is the one that runs and no renderer value reaches the child
+   (D2903). **A seventh write reads no document of this file at all**, so it
+   neither widens nor narrows this sentence: `licence.save` (design §5.1 rule 5,
+   the subscriptions plan's
    S2.7) keeps the licence key the operator pasted in the console's own store
    (design §5.1 rule 10), spawns nothing, consumes none of the documents below,
    and needs no confirmation window because there is no child and no cloud
    object to confirm — what it writes is a file of the console's own, and what
    it refuses is a key that does not verify. The allow-list is by
-   exact argv (design §5.1 rule 6), and all three are on it: `run.launch`,
-   `settings.edit` and `roadmap.move` are the three **spawning** operations of
-   the surface that write
-   — `licence.save` is the fourth that writes and spawns nothing, which is why
+   exact argv (design §5.1 rule 6), and all six are on it: `run.launch`,
+   `settings.edit`, `roadmap.move`, `setup.apply`, `models.add` and `image.add`
+   are the six **spawning** operations of
+   the surface that write — four of them showing the operator a document first,
+   from a dry run of the same command they then run (`settings.edit`'s
+   `--dry-run --json` phase, `setup.plan`, `models.add.plan` and
+   `image.add.plan`) — and `licence.save` is the seventh that writes and spawns
+   nothing, which is why
    there is no row of §8 for it (V2.5.1a,
    2026-10-28/29, took the surface to twenty-four; K2a's
    `link.openPullRequest` took it to twenty-five and writes nothing, and C4c's
    `coordinator.intents` took it to twenty-six and writes nothing — **the
    counts in this parenthesis are the history up to that commit, and rule 5's
-   forty is today's**), and no other argv that writes is reachable
+   fifty-two is today's**), and no other argv that writes is reachable
    from a renderer. Two further commands this file
    describes are writes, and **neither is in the console's set**: `fugaro cancel
    RUN --json` (§6.3), which is on the design's "never" table and which no v1
    console spawns, and `fugaro accounts clear NAME` (§6.5a, credentials-service
    C1.21), the operator's own write to the cascade's state. Nothing else here
    names a write.
-2. **Three of the commands in the console's set are line-delimited:
-   `watch --json`, `logs RUN
-   --json` and `graph --watch --json`** (§2, §6.2, §6.22 — the feed through
+2. **Seven of the commands in the console's set are line-delimited:
+   `watch --json`, `logs RUN --json`, `graph --watch --json` and the console
+   improvements' four** (§2, §6.2, §6.22, §5, §4, §3, §6.32 — the feed through
    `json.NewEncoder` with no `SetIndent`, the log lines through
    `json.Marshal`, the graph's stream through `WriteDoc`, which marshals the
-   whole document and writes one newline). **Every other command in that set is indented over several
+   whole document and writes one newline, and the improvements' four through
+   the shared writer RS1 landed, which marshals one line at a time, and
+   `setup --events`'s own event writer). **Every other command in that set is indented over several
    lines** — `version` is the exception that is no document at all: it prints
-   one plain line (§6.7) — so a line-based parser is right for those three and
+   one plain line (§6.7) — so a line-based parser is right for those seven and
    wrong for the rest of the set. **The graph's one-shot read is not one of
    them**: `graph --json` prints §6.22's document indented, and the stream is
-   the sibling argv that carries `--watch`. The one command outside the set that is line-delimited too
+   the sibling argv that carries `--watch`. **Each of the console improvements'
+   three live reads is a new argv on a command whose one-shot read is indented**,
+   so the same command is on both sides of this sentence: `runs ls --stream
+   --json` is line-delimited while `runs ls --json` (§5) is not, `report
+   --stream --json` while `report --json` (§4) is not, and `budget show --stream
+   --json` while `budget show --json` (§3) is not — the parser follows the argv
+   and never the command word. The one command outside the set that is
+   line-delimited too
    is `fugaro cancel RUN --json` (§6.3, a write): compact, one object per line,
-   the same parser as `logs`.
+   the same parser as `logs` — the eighth such document this file describes, and
+   the only one of the eight the console never spawns.
 3. **A null, an absent key and an empty array are three different things**, and
    each maps to a different availability state (§1). A `0` is never a
    substitute for any of them.

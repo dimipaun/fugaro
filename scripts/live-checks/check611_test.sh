@@ -16,7 +16,7 @@
 # cases below assert both logs are empty.
 #
 # Every document a case bends is a file the case wrote — a policy that defines a
-# profile, does not broker the repository, or is off; a job list whose implicit
+# profile, does not broker the repository, or carries no budget mode; a job list whose implicit
 # job carries the Bitbucket token or a secret, or is not there at all; a launch
 # document that named another job or another account; a row that pushed, read
 # another pull request or had not finished; a verdict about another repository; a
@@ -385,7 +385,6 @@ out("policy-other-provider.json", lambda x: x["policy"].__setitem__("profiles", 
 out("policy-no-proxy.json", lambda x: x["policy"]["bitbucket_token"].__setitem__("proxy", False))
 out("policy-token-not-admitted.json", lambda x: x["policy"]["bitbucket_token"].__setitem__(
     "allow_repos", ["bitbucket/other-owner/elsewhere"]))
-out("policy-mode-off.json", lambda x: x["policy"]["budget"].__setitem__("mode", "off"))
 out("policy-no-mode.json", lambda x: x["policy"]["budget"].pop("mode"))
 out("policy-not-admitted.json", lambda x: x["policy"].__setitem__(
     "allow_repos", ["bitbucket/other-owner/elsewhere"]))
@@ -1056,23 +1055,13 @@ test_a_node_that_does_not_admit_the_repository_is_a_finding() {
   assert_no_launch "$dir" "a node that does not admit the repository"
 }
 
-test_a_budget_mode_of_off_is_a_finding() {
-  local dir=$work/mode-off
-  prepare "$dir"
-  run_check "$dir" FAKE_POLICY_FILE=policy-mode-off.json
-  expect_status "$status" 1 "a budget mode of off"
-  expect_contains "$out" "FACT policy: FAIL — $repo is on no profile and the published budget mode is 'off'" "a budget mode of off: the row"
-  expect_contains "$out" "the gateway is what reaches the credentials service" "a budget mode of off: why nothing would run"
-  assert_no_launch "$dir" "a budget mode of off"
-}
-
 test_a_policy_with_no_budget_mode_is_not_measured() {
   local dir=$work/no-mode
   prepare "$dir"
   run_check "$dir" FAKE_POLICY_FILE=policy-no-mode.json
   expect_status "$status" 2 "a policy with no budget mode"
   expect_contains "$out" "FACT policy: FAIL — $repo is on no profile and the policy document carries no budget mode (it reads '<none>')" "a policy with no budget mode: the row"
-  expect_contains "$out" "a mode the document does not carry is not a mode that is not off" "a policy with no budget mode: why it is not a finding"
+  expect_contains "$out" "a mode the document does not carry is neither" "a policy with no budget mode: why it is not a finding"
   assert_no_launch "$dir" "a policy with no budget mode"
 }
 
@@ -1660,7 +1649,6 @@ t test_a_repository_a_profile_admits_is_a_finding
 t test_a_profile_of_another_provider_does_not_admit_the_repository
 t test_a_repository_the_node_does_not_broker_is_a_finding
 t test_a_node_that_does_not_admit_the_repository_is_a_finding
-t test_a_budget_mode_of_off_is_a_finding
 t test_a_policy_with_no_budget_mode_is_not_measured
 t test_a_doctor_that_is_not_a_document_stops_the_check
 t test_a_doctor_that_never_answers_stops_the_check

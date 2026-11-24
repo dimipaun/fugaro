@@ -188,7 +188,7 @@ func (r *reads) merge(o reads) {
 // not a checkout, which is what a test's fixture is, is walked as it stands
 // instead, .git left out because a walk of it costs more than the map is worth.
 func (s *scanner) index() error {
-	if files, ok := s.gitFiles(); ok {
+	if files, ok := checkoutFiles(s.root); ok {
 		for _, rel := range files {
 			s.record(rel)
 		}
@@ -238,15 +238,19 @@ func (s *scanner) bucket() {
 	}
 }
 
-// gitFiles lists the paths the checkout holds: the tracked files and the
-// untracked ones the ignore files do not cover. ok is false when git cannot
-// answer — no git, or a directory that is not a repository — which is the
-// caller's cue to walk the tree instead. The ignore files are the checkout's own
+// checkoutFiles lists the paths the checkout at root holds: the tracked files
+// and the untracked ones the ignore files do not cover. ok is false when git
+// cannot answer — no git, or a directory that is not a repository — which is the
+// caller's cue to read the disk instead. The ignore files are the checkout's own
 // and git reads them, so a rule this repository adds later — a nested
 // .gitignore, a negation, an exclude file — needs no second implementation here
 // and cannot change what the map means.
-func (s *scanner) gitFiles() ([]string, bool) {
-	cmd := exec.Command("git", "-C", s.root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+//
+// The scan and CS2b's trace both read the checkout with this: a path a commit
+// does not hold is in no diff, and recording a read of one would make the map
+// differ between two checkouts of the same commit.
+func checkoutFiles(root string) ([]string, bool) {
+	cmd := exec.Command("git", "-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 	// No home directory and no system config: what the checkout holds must not
 	// depend on the machine the scan runs on.
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_OPTIONAL_LOCKS=0")

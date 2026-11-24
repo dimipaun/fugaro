@@ -2,13 +2,15 @@ package eeboundary
 
 // The seam pin (design ee-boundary-moves.md §5.5): every package-level seam the
 // moved code fills is set once, and by `ee/register` alone. The core defines the
-// setters -- cli.SetLaunchDeclarer and cli.RegisterCommand (E1.1),
+// setters -- cli.SetLaunchDeclarer, cli.RegisterCommand and
+// cli.RegisterSubcommand (E1.1),
 // policy.SetGovernance, runner.SetStage, digest.SetSections (E1.2),
 // runner.SetGatewayStageLimit (T7.2's gateway half),
 // cli.SetEditionEE (E1.3), orchestrator.SetHandoff, orchestrator.SetBatch and
 // orchestrator.SetWorkspace
 // (O17, O18 and O19 of the stateless orchestrator plan) and
-// access.SetSubscriptionLimit (the lapse limit, RS9 of docs/roles-scopes) --
+// access.SetSubscriptionLimit (the lapse limit, RS9 of docs/roles-scopes),
+// access.SetSeatLimit (the seat limit, K3.4 of docs/licence-key-v2) --
 // and a core caller that called one could set a seam
 // to something the tagged build did not intend, or switch enforcement off in a
 // binary that carries it. So no non-test file outside ee/register may call one,
@@ -51,6 +53,7 @@ const seamRule = "only ee/register sets a seam"
 var seamSetterNames = []string{
 	"SetLaunchDeclarer",
 	"RegisterCommand",
+	"RegisterSubcommand",
 	"SetSections",
 	"SetGovernance",
 	"SetStage",
@@ -60,6 +63,7 @@ var seamSetterNames = []string{
 	"SetBatch",
 	"SetWorkspace",
 	"SetSubscriptionLimit",
+	"SetSeatLimit",
 	"RegisterLaunchPlanner",
 }
 
@@ -175,7 +179,7 @@ func TestOnlyEERegisterSetsTheSeams(t *testing.T) {
 		t.Fatalf("the scan parsed %d non-test Go files: it did not see the module, so an empty result would prove nothing", parsed)
 	}
 	assertNoFindings(t, &report{findings: findings}, seamRule,
-		"Every seam is a package-level value whose default is the core implementation, and ee/register sets it once (design ee-boundary-moves.md §5.5). A core caller that set cli.SetLaunchDeclarer, cli.RegisterCommand, policy.SetGovernance, runner.SetStage, runner.SetGatewayStageLimit, digest.SetSections, cli.SetEditionEE, orchestrator.SetHandoff, orchestrator.SetBatch or access.SetSubscriptionLimit could halve the enforcement a tagged binary registered or switch a seam off. Move the call into ee/register, or reach the seam's value instead of setting it.")
+		"Every seam is a package-level value whose default is the core implementation, and ee/register sets it once (design ee-boundary-moves.md §5.5). A core caller that set cli.SetLaunchDeclarer, cli.RegisterCommand, cli.RegisterSubcommand, policy.SetGovernance, runner.SetStage, runner.SetGatewayStageLimit, digest.SetSections, cli.SetEditionEE, orchestrator.SetHandoff, orchestrator.SetBatch, access.SetSubscriptionLimit or access.SetSeatLimit could halve the enforcement a tagged binary registered or switch a seam off. Move the call into ee/register, or reach the seam's value instead of setting it.")
 }
 
 func TestSeamSetterScanCatchesPlantedCalls(t *testing.T) {
@@ -183,7 +187,7 @@ func TestSeamSetterScanCatchesPlantedCalls(t *testing.T) {
 	writeFixture(t, root, "go.mod", []byte(goModFixture))
 	for name, body := range map[string]string{
 		// A core file calling a setter, once per package the seam lives in.
-		"internal/cli/x.go":  "package cli\n\nfunc init() { _ = RegisterCommand(\"x\", nil) }\n",
+		"internal/cli/x.go":  "package cli\n\nfunc init() { _ = RegisterCommand(\"x\", nil); _ = RegisterSubcommand(\"orchestrator\", \"map\", nil) }\n",
 		"internal/web/y.go":  "package web\n\nimport \"github.com/dimipaun/fugaro/internal/digest\"\n\nfunc init() { _ = digest.SetSections(nil) }\n",
 		"ee/governance/z.go": "package governance\n\nimport \"github.com/dimipaun/fugaro/internal/policy\"\n\nfunc init() { _ = policy.SetGovernance(policy.GovernanceFuncs{}) }\n",
 		// The one allowed file: ee/register may call any of them.
@@ -214,6 +218,7 @@ func TestSeamSetterScanCatchesPlantedCalls(t *testing.T) {
 	slices.Sort(got)
 	want := []string{
 		"internal/cli/x.go: it uses RegisterCommand, a seam setter only ee/register may call",
+		"internal/cli/x.go: it uses RegisterSubcommand, a seam setter only ee/register may call",
 		"internal/web/y.go: it uses SetSections, a seam setter only ee/register may call",
 		"ee/governance/z.go: it uses SetGovernance, a seam setter only ee/register may call",
 		"internal/runner/assign.go: it uses SetStage, a seam setter only ee/register may call",

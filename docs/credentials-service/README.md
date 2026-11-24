@@ -32,7 +32,7 @@ A reserved number is never reused and never renumbered.
 
 ## Related
 
-- [docs/design/mixed-credentials.md](../design/mixed-credentials.md) and the held [docs/plans/2026-10-14-oauth-reviewer-stage.md](../plans/2026-10-14-oauth-reviewer-stage.md): the parked design this spec answers (D130).
-- [docs/design/project-centric.md](../design/project-centric.md) §7 (phase 5, the OAuth pool; D131).
-- [docs/design/m9-budget-and-dashboard.md](../design/m9-budget-and-dashboard.md) §11 (D2, the external gateway this service is) and [docs/design/budget-token-channel.md](../design/budget-token-channel.md) (the seal, D134).
+- [docs/mixed-credentials/spec.md](../mixed-credentials/spec.md) and the held [docs/mixed-credentials/oauth-reviewer-stage-plan.md](../mixed-credentials/oauth-reviewer-stage-plan.md): the parked design this spec answers (D130).
+- [docs/project-centric/spec.md](../project-centric/spec.md) §7 (phase 5, the OAuth pool; D131).
+- [docs/m9-budget-and-dashboard/spec.md](../m9-budget-and-dashboard/spec.md) §11 (D2, the external gateway this service is) and [docs/budget-token-channel/spec.md](../budget-token-channel/spec.md) (the seal, D134).
 - [SECURITY.md](../../SECURITY.md) (the claims this service would change, D148).

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -383,7 +384,10 @@ func (e *initEngine) accessLists(ctx context.Context) []access {
 		{what: "operators", members: e.announced(e.spec.Launchers), source: src(o.operatorsChanged), note: "start runs; also mint run tokens when --firebase-project's token signer is applied"},
 		{what: "admins", members: e.announced(e.spec.Operators), source: src(o.adminsChanged), note: "onboard repositories and submit builds"},
 	}
-	if o.firebase != "" || e.lc.Terraform.BudgetBackend {
+	// F29: the budget admins' review follows the budget backend's presence, not
+	// the flag that used to be the only way to build one: a plain update of an
+	// installation whose database this run created or adopted shows them.
+	if e.budgetBackendOn() {
 		bs := "from the local config"
 		if o.budgetAdminsChanged {
 			bs = "from a flag"
@@ -437,7 +441,7 @@ func (e *initEngine) announced(members []string) []string {
 // groups, which the Firebase root makes budget admins; read once, read-only,
 // and empty when it cannot be read (then a plan granting them is not covered).
 func (e *initEngine) projectAdmins(ctx context.Context) []string {
-	if e.adminsRead || (e.r.o.firebase == "" && !e.lc.Terraform.BudgetBackend) {
+	if e.adminsRead || !e.budgetBackendOn() {
 		return e.admins
 	}
 	e.adminsRead = true
@@ -452,6 +456,23 @@ func (e *initEngine) projectAdmins(ctx context.Context) []string {
 	return e.admins
 }
 
+// billingAccount is the billing account this run's budget block is on, with
+// where it came from in the words the review screen shows: --billing-account
+// where the run was given one, and the account the carry took out of the
+// installation's own state where it was not (initRun.budgetAccount, R7 of
+// docs/managed-flag-ergonomics/reconciliation.md). Both the cover and the
+// screen read it here, so the account a plan's budget resource is admitted on
+// is exactly the one the screen showed.
+func (e *initEngine) billingAccount() (account, source string) {
+	if b := e.r.o.billingAccount; b != "" {
+		return b, "from --billing-account; the only account a budget may name"
+	}
+	if b := e.r.budgetAccount; b != "" {
+		return b, "from the installation's state, which records the account its alert was created with"
+	}
+	return "", ""
+}
+
 // cover is what the run's one confirmation may cover: grants to the listed
 // members and to Fugaro's own service accounts of the installation's project
 // and the Firebase project.
@@ -461,7 +482,12 @@ func (e *initEngine) cover() tf.Cover {
 	if host, err := infra.RegistryHost(e.lc); err == nil {
 		c.Registry, _, _ = strings.Cut(host, "/")
 	}
-	if b := e.r.o.billingAccount; b != "" {
+	// The account the plan's budget resource may name, read off the RUN and not
+	// off the flags alone: a carried block's account names no flag, so a cover
+	// built from --billing-account alone would refuse the create or update of
+	// the alert the run itself carried the account for (billingAccount, R7 of
+	// docs/managed-flag-ergonomics/reconciliation.md).
+	if b, _ := e.billingAccount(); b != "" {
 		c.Billing = []string{b}
 	}
 	// The licence renewal job's container: the one grant the cover reads a
@@ -559,8 +585,9 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	}
 	if todo[initflow.Firebase] {
 		_, fpWhy := e.firebaseVerified(ctx)
-		fmt.Fprintf(w, "  firebase:       Terraform applies of the installation root (GCP project %s) and of the Firebase root in %s, then the budget database's marks and rules and Identity Platform (planned when applied)\n", pluginwire.Printable(r.gcpProject), pluginwire.Printable(o.firebaseProject()))
-		fmt.Fprintf(w, "                  the Firebase project %s: %s\n", pluginwire.Printable(o.firebaseProject()), fpWhy)
+		fp := cmp.Or(o.firebaseProject(), r.gcpProject)
+		fmt.Fprintf(w, "  firebase:       Terraform applies of the installation root (GCP project %s) and of the Firebase root in %s, then the budget database's marks and rules and Identity Platform (planned when applied)\n", pluginwire.Printable(r.gcpProject), pluginwire.Printable(fp))
+		fmt.Fprintf(w, "                  the Firebase project %s: %s\n", pluginwire.Printable(fp), fpWhy)
 	}
 	if todo[initflow.Images] {
 		fmt.Fprintln(w, "  "+e.images.reviewLine(ctx))
@@ -624,8 +651,8 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	}
 	alert, asrc := e.alertEmail()
 	fmt.Fprintf(w, "  %-15s %s (%s)\n", "alert email:", pluginwire.Printable(alert), asrc)
-	if o.billingAccount != "" {
-		fmt.Fprintf(w, "  %-15s %s (from --billing-account; the only account a budget may name)\n", "billing account:", pluginwire.Printable(o.billingAccount))
+	if b, src := e.billingAccount(); b != "" {
+		fmt.Fprintf(w, "  %-15s %s (%s)\n", "billing account:", pluginwire.Printable(b), src)
 	}
 	// The project's rigor mode, resolved the one way (task W of
 	// docs/rigor-command/implementation-plan.md; D900): what every run of this
@@ -779,7 +806,12 @@ func (e *initEngine) alertEmail() (string, string) {
 // root and its database writes take their own typed names.
 func (e *initEngine) firebaseVerified(ctx context.Context) (bool, string) {
 	r := e.r
-	fp := r.o.firebase
+	// The project this run's Firebase steps write into: the flag's value, or the
+	// installation's own project where no flag was given (AB7, R2 — the no-flag
+	// stage adopts or creates the database in that project and nowhere else).
+	// The two are the same answer here, which is why the second case below is
+	// the common one for both doors.
+	fp := cmp.Or(r.o.firebase, r.gcpProject)
 	switch {
 	case fp == "":
 		return false, ""

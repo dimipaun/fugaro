@@ -4,7 +4,7 @@
 // It is the generator without the command: internal/clidoc is `package main`
 // and cannot be imported, and the reference is written from the tree a
 // *released* binary builds, which is the tree the ee build tag reaches through
-// ee/register (design docs/design/ee-boundary-moves.md §9). So the renderer
+// ee/register (design docs/ee-reorg/boundary-moves.md §9). So the renderer
 // lives here, in a package both generators can read, and the caller supplies
 // the tree: `cliref.Generate(cli.NewRootCmd())`.
 //

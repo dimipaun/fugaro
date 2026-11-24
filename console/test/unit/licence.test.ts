@@ -45,10 +45,11 @@
 // security-sensitive and has its own review. What this file holds instead is
 // the shape that half rests on: the verifier reads **no environment at all**,
 // so a key can only arrive as an argument. The production keyring's *contents*
-// are S2.9's, once the owner has created the keys (S3.8) -- so what is held
-// here is the rule that survives that task: no test id is in it, and every
-// entry it does hold is an Ed25519 public key. And one set of vectors for all
-// three verifiers is S2.6's.
+// are S2.9's: they are the PEM in `ee/licence/keys/production.pub`, held to that
+// file by `TestKeyringMatchesThePublishedKey`, and the ring ships empty while no
+// CLI takes a key back out of its own environment (`LICENCE_KEY_CLI_FLOOR`,
+// `spawn.test.ts`). Every entry it does hold is an Ed25519 public key, no test
+// id is in it, and one set of vectors for all three verifiers is S2.6's.
 //
 // **No key material is in this file.** Every key below is generated at run
 // time, and a signature is computed from it; the design admits a public key and
@@ -84,6 +85,7 @@ import {
   type LicenceV1Refusal,
   type LicenceV1State,
 } from '../../src/main/licence'
+import { LICENCE_KEY_CLI_FLOOR, licenceKeySupported } from '../../src/shared/version'
 
 const DAY = 86_400
 
@@ -251,11 +253,49 @@ describe('the licence key', () => {
     const test = signer('test-2026')
 
     expect(PRODUCTION_KEYRING[test.id]).toBeUndefined()
-    // S2.9 adds the owner's published production key here; what must survive
-    // that task is the shape of every entry.
+    // The ring holds the owner's published production key (S2.9); what this
+    // case keeps is the shape of every entry.
     for (const [id, pem] of Object.entries(PRODUCTION_KEYRING)) {
       expect(createPublicKey(pem).asymmetricKeyType, `${id} is not an Ed25519 public key`).toBe('ed25519')
     }
+  })
+
+  it('TestKeyringMatchesThePublishedKey: the ring is the published key the day a CLI can take a key back', () => {
+    // The one file the owner's production public half is published as, read as
+    // it is written: the Go verifier's ring is built from this file and the
+    // app's holds the same bytes, so the console is held to it rather than to a
+    // second copy of the PEM.
+    const PUBLISHED = fileURLToPath(new URL('../../../ee/licence/keys/production.pub', import.meta.url))
+    const pem = readFileSync(PUBLISHED, 'utf8')
+    const PRODUCTION_ID = 'fugaro-licence-production'
+
+    // The file is one Ed25519 public key in the shape a ring entry has, and the
+    // ring that holds it refuses a stranger who signs a key under the
+    // production id: the id is the one part nothing decodes, so a ring that
+    // held it for the id alone would be a ring a throwaway keypair mints
+    // against.
+    expect(createPublicKey(pem).asymmetricKeyType, 'the published production key is not a key this ring can hold').toBe('ed25519')
+    const publishedRing: LicenceKeyring = { [PRODUCTION_ID]: pem }
+    const stranger = signer(PRODUCTION_ID)
+    expect(refusalOf(verifyLicenceKey(mint(stranger, claimsFor()), at(ISSUED), publishedRing))).toContain('signature')
+    // The same key verifies under the ring its own keypair is in, so the
+    // refusal is the published key's and not the key text's.
+    expect(verified(verifyLicenceKey(mint(stranger, claimsFor()), at(ISSUED), stranger.keyring)).state).toBe('valid')
+
+    if (LICENCE_KEY_CLI_FLOOR === null) {
+      // No CLI release takes the key back out of its own environment yet, so
+      // this console keeps no key at all: the ring is empty and the hand-off
+      // gate answers false for every version (`spawn.test.ts` holds the two
+      // together, and this case is the other half -- the entry the day the
+      // floor is named).
+      expect(Object.keys(PRODUCTION_KEYRING)).toEqual([])
+      expect(licenceKeySupported('99.99.99')).toBe(false)
+      return
+    }
+
+    // Once a release carries the removal the ring is that file's key, under the
+    // published id and nothing else.
+    expect(PRODUCTION_KEYRING).toEqual(publishedRing)
   })
 })
 
@@ -535,7 +575,7 @@ describe('the negative vectors', () => {
   })
 
   it('a ring entry that is not an Ed25519 public key is refused, and never thrown from', () => {
-    // The ring is the build's own and S2.9 hand-edits it, so an entry that is
+    // The ring is the build's own, hand-edited from the published file, so an entry that is
     // not an Ed25519 public key is a defect in the console rather than in the
     // key -- and it still has to be an answer, because the module's contract is
     // that it throws nothing. X25519 is the shape that makes the difference:

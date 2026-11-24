@@ -1,12 +1,37 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
-// The console's two onboarding states (owner's ruling of 2026-10-20; design
-// sections 3.4 rules 4 and 7, 6.3).
+// The console's two onboarding states (owner's ruling of 2026-10-20, **as D2904
+// amended it**; design sections 3.4 rules 4 and 7, 6.3).
 //
 // The owner's ruling is one sentence: **the console asks the operator for
-// nothing.** Not the binary, not the config. So a first run is not a form --
-// it is a list of the installations the CLI finds on this machine, and, when
-// there is nothing to list, one screen that says what to do about it.
+// nothing** -- not the binary, not the config. So a first run is not a form
+// about the *installation*: it is a list of the installations the CLI finds on
+// this machine, and, when there is nothing to list, one screen that says what to
+// do about it.
+//
+// **D2904's amendment (2026-11-18, confirmed by O2/O6) adds one form and takes
+// nothing away.** Where there is no installation at all, the screen below still
+// ends in the one command -- and the console may now also offer the **setup
+// wizard** in front of it (SW3a/SW3b/SW3c): the wizard collects `fugaro
+// setup`'s five answers (project, region, name, rigor, bake) and sends them to
+// the main process, which shows them in the confirmation window beside their
+// SHA-256 and runs, on the operator's yes, exactly what a `setup --json` run
+// applies. What the amendment does **not** change is what this ruling is about:
+//
+//   - **no secret value is ever asked for in the console.** Creating the GCP
+//     project, linking its billing account, the permanent Firestore location and
+//     every secret are steps a person takes, and `setup --json` confirms none of
+//     them, so each one comes back as a `left_for_you` line for the operator's
+//     own terminal (F15, F27);
+//   - **the console opens no terminal prompt and asks nothing at one.** It never
+//     passes `--onboard-repo`, so the repository question is not asked either
+//     (O7);
+//   - **the window's yes is the operator's go to run the CLI, and never a
+//     consent the CLI accepts** (O6). No consent mechanism is planned, and an
+//     agent's own command line must not be able to pass one.
+//
+// The four sentences the window says this in are `setupview.ts`'s, and the flow
+// behind it is `wizardrun.ts`'s.
 //
 // There are exactly two of those screens, and this module is the whole of their
 // copy:

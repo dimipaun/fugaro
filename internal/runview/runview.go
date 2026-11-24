@@ -78,7 +78,7 @@ type Row struct {
 	Repo     string `json:"repo"`
 	Workflow string `json:"workflow,omitempty"`
 	// OAuthAccount is the named Claude OAuth account the run used ("" for
-	// the repository's default account, docs/design/named-oauth-tokens.md):
+	// the repository's default account, docs/named-oauth-tokens/spec.md):
 	// the record's own value when it has one (confirmed by the runner
 	// itself at finalize), else the launching task's OAuthToken (Join falls
 	// back to it when the record has none — a run that died before
@@ -98,7 +98,7 @@ type Row struct {
 	// reader derives the title from the task itself any more.
 	Title string `json:"title,omitempty"`
 	// ProjectLayer is the project layer the run's task carried, and
-	// ConfigSHA256 its resolved config's sum (docs/design/layered-config.md
+	// ConfigSHA256 its resolved config's sum (docs/layered-config/spec.md
 	// §8); both absent before 0.6.0 and for a run that has not started.
 	ProjectLayer *runstore.ProjectLayerRecord `json:"project_layer,omitempty"`
 	ConfigSHA256 string                       `json:"config_sha256,omitempty"`
@@ -107,7 +107,7 @@ type Row struct {
 	Stage        string                       `json:"stage,omitempty"`
 	Reason       string                       `json:"reason,omitempty"`
 	// FailureClass is why the run did not end succeeded, in the closed
-	// vocabulary of docs/design/failure-classes.md §3: the class the runner
+	// vocabulary of docs/failure-classes/design.md §3: the class the runner
 	// wrote beside the status, and — for a record written before the field
 	// shipped — the reader's reading of the record's own reason (ClassOf).
 	//

@@ -21,7 +21,7 @@ agent:
   # is what the review levels' guardrail (D721, docs/review-levels-ab-jobmax/) refuses by exact
   # model ID: this pair is why the refusal does not fire here.
   # The independent review can now run INSIDE the cloud loop on a Claude account: the per-stage
-  # account setting exists (mixed credentials, the tasks B1-B6, docs/design/mixed-credentials.md
+  # account setting exists (mixed credentials, the tasks B1-B6, docs/mixed-credentials/spec.md
   # §11), so an api-key run may name ONE stage-scoped account for its `review`, `adversarial` and
   # `triage` stages — `stages.<stage>.claude_account`, or the project's `default_claude_account`
   # where that stage's own model is an Anthropic one — and those three stages go direct to Anthropic on an Opus
@@ -39,7 +39,7 @@ agent:
   # The senior review's brief is this repository's own (.fugaro/review.md). It is read
   # from the run's base and never from the pull request's own branch (docs/design/v1.md),
   # so a change cannot review itself. It is here because of the owner's ruling of
-  # 2026-11-06 — recorded in docs/design/mixed-credentials.md §11, beside the two rulings
+  # 2026-11-06 — recorded in docs/mixed-credentials/spec.md §11, beside the two rulings
   # it builds on — that a run whose in-job review ran on Opus and passed gets no second
   # review by a person (until the job mounts the account's token, a DeepSeek review still gets a local one): the reviewer is told to read the whole change and check the claims against the
   # code, to run the targeted tests by name, to mutation-check a security-sensitive change

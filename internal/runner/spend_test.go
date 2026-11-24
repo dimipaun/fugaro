@@ -27,9 +27,14 @@ func TestSpendFromEnv(t *testing.T) {
 		on      bool
 		wantErr string
 	}{
-		"unset":                {env(), "off", 0, false, ""},
-		"off with the rest":    {env(BudgetModeEnv, "off", MaxRunUSDEnv, "5"), "off", 5_000_000, false, ""}, // the ceiling holds whatever the mode
-		"cap, mode unset":      {env(MaxRunUSDEnv, "5"), "off", 5_000_000, false, ""},
+		// A mode left unset, and the word that was a mode, are observe (C1,
+		// D3009, R3): the run is accounted for either way, and the string
+		// survives exactly as the job wrote it, because the gateway's own
+		// question still reads it and AB1b is what makes that question
+		// unconditional.
+		"unset":                {env(), "", 0, true, ""},
+		"off with the rest":    {env(BudgetModeEnv, "off", MaxRunUSDEnv, "5"), "off", 5_000_000, true, ""}, // the ceiling holds whatever the mode
+		"cap, mode unset":      {env(MaxRunUSDEnv, "5"), "", 5_000_000, true, ""},
 		"bad cap, mode off":    {env(BudgetModeEnv, "off", MaxRunUSDEnv, "five"), "", 0, false, "FUGARO_MAX_RUN_USD"},
 		"bad cap, mode unset":  {env(MaxRunUSDEnv, "0"), "", 0, false, "FUGARO_MAX_RUN_USD"},
 		"bad prices, mode off": {env(BudgetModeEnv, "off", ModelPricesEnv, "{nope"), "", 0, false, "FUGARO_MODEL_PRICES"},
@@ -124,22 +129,28 @@ func TestSpendFromEnvPolicyKeys(t *testing.T) {
 }
 
 // The owner's price overrides hold whatever the mode: a repository that
-// escalates an off ceiling to enforce is charged at the owner's prices.
-func TestSpendFromEnvPricesHoldWhenOff(t *testing.T) {
+// escalates a ceiling which named none to enforce is charged at the owner's
+// prices. From AB1a on every run is priced (D3009, R3), so the table is built
+// for a mode left unset and for the word that was a mode, exactly as it is for
+// observe and enforce.
+func TestSpendFromEnvPricesHoldWhateverTheMode(t *testing.T) {
 	const sonnet = `{"claude-sonnet-5-5":{"input_per_m":30,"output_per_m":150}}`
 	for _, e := range []func(string) (string, bool){
 		env(ModelPricesEnv, sonnet), env(BudgetModeEnv, "off", ModelPricesEnv, sonnet),
+		env(BudgetModeEnv, "enforce", ModelPricesEnv, sonnet),
 	} {
 		s, err := SpendFromEnv(e)
-		if err != nil || s.On() || s.Prices == nil {
+		if err != nil || !s.On() || s.Prices == nil {
 			t.Fatalf("spend = %+v, %v", s, err)
 		}
 		if m, ok := s.Prices.Lookup("claude-sonnet-5-5"); !ok || m.Rates.InputPerM != 30 {
 			t.Fatalf("sonnet = %+v", m)
 		}
 	}
-	// No keys: exactly M9a's off.
-	if s, err := SpendFromEnv(env()); err != nil || s.Prices != nil || s.Cap != 0 || s.Mode != "off" {
+	// No keys at all: the run is accounted for with no cap, no overrides and
+	// the built-in catalog, which is what every job of an installation whose
+	// ceiling names no figure gets.
+	if s, err := SpendFromEnv(env()); err != nil || !s.On() || s.Prices == nil || s.Cap != 0 || s.Mode != "" {
 		t.Fatalf("%+v, %v", s, err)
 	}
 }
@@ -147,21 +158,28 @@ func TestSpendFromEnvPricesHoldWhenOff(t *testing.T) {
 // TestSpendFromEnvReportsACatalogThatWillNotLoad pins the run's half of the
 // one builder's contract: a catalog the loader refuses is an error out of
 // SpendFromEnv — reported as an infra_error at bootstrap, never a silent off
-// that leaves the run unpriced. The shipped file is valid, so the seam stands
-// in for a bad one.
+// that leaves the run unpriced. Every run prices from AB1a on (D3009, R3), so
+// a mode left unset is in the list: the file is loaded before any mode is
+// asked. The shipped file is valid, so the seam stands in for a bad one.
 func TestSpendFromEnvReportsACatalogThatWillNotLoad(t *testing.T) {
 	old := loadCatalog
 	loadCatalog = func() (*catalog.File, error) {
 		return nil, errors.New("the built-in price catalog is malformed: version is 2: this build reads version 1")
 	}
 	t.Cleanup(func() { loadCatalog = old })
-	for _, mode := range []string{"enforce", "observe"} {
-		s, err := SpendFromEnv(env(BudgetModeEnv, mode))
+	for _, tc := range []struct{ name, mode string }{
+		{"unset", ""}, {"enforce", "enforce"}, {"observe", "observe"},
+	} {
+		e := env()
+		if tc.mode != "" {
+			e = env(BudgetModeEnv, tc.mode)
+		}
+		s, err := SpendFromEnv(e)
 		if err == nil {
-			t.Fatalf("%s: a malformed catalog built a table: %+v", mode, s)
+			t.Fatalf("%s: a malformed catalog built a table: %+v", tc.name, s)
 		}
 		if !strings.Contains(err.Error(), "malformed") || !strings.Contains(err.Error(), "version is 2") {
-			t.Errorf("%s: the error does not say what is wrong with the file: %v", mode, err)
+			t.Errorf("%s: the error does not say what is wrong with the file: %v", tc.name, err)
 		}
 	}
 }

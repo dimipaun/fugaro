@@ -121,6 +121,37 @@ const (
 // never has to guess it or drift from them.
 var PlatformEnv = []string{BucketEnv, BackendEnv, GCPProjectEnv, ProjectEnv, RegionEnv, VertexRegionEnv, VertexProjectEnv}
 
+// JobEnvNames is every environment variable name a deployed job of a workflow
+// may carry in its plain environment, both shapes a job comes in together: a
+// per-repository workflow job (the template Workflow builds) and a shared
+// project job (projectJobEnv, plus the two values that follow from the
+// profile). The names are the constants the two builders write, so this list
+// cannot drift from either of them without the constants moving first; the
+// secrets' own variables are not here, because a secret travels by name under
+// secretVariables and never as a plain variable's value.
+//
+// It exists for the Cloud Batch backend (batch-run-identity F8, BR8). A Cloud
+// Run run is handed the deployed job's own environment by the platform: the
+// execution's override is merged into it, so nothing has to restate it. A
+// Batch job is created per run from nothing, so the launcher reads the
+// installation's values under exactly these names and passes them to the
+// backend (batch.Options.JobEnv), which writes them into the task's variables
+// — the run's whole environment on a VM. internal/infra's
+// TestABatchJobCarriesEveryVariableADeployedJobDoes holds the list to a real
+// template and the job to the list: a variable the template gains and this
+// list does not is a variable a Batch run would not carry. Not to be written
+// to.
+var JobEnvNames = []string{
+	BucketEnv, BackendEnv, GCPProjectEnv, ProjectEnv, RegionEnv,
+	VertexRegionEnv, VertexProjectEnv,
+	ImageEntryEnv, CheckoutEnv, RemoteEnv,
+	providers.EnvGitHubAppID, providers.EnvCredentialsServiceURL,
+	ComputePricesEnv,
+	BudgetModeEnv, MaxRunTokensEnv, AllowedModelsEnv, MaxRunUSDEnv,
+	ModelPricesEnv, RTDBURLEnv, FirebaseAPIKeyEnv, BudgetGraceEnv,
+	ModelProvidersEnv, runner.SecretEnvsVar,
+}
+
 // githubGitUser is the HTTPS username of a GitHub App installation token.
 const githubGitUser = "x-access-token"
 
@@ -503,7 +534,7 @@ type WorkflowSpec struct {
 	// (mixedStageAccountJob): the job a run's `review`, `adversarial` and
 	// `triage` stages go out on when an api-key repository mixes a Claude
 	// account with the provider key its coder's stages keep (B0's one mix,
-	// docs/design/mixed-credentials.md §11). Those stages reach Anthropic on
+	// docs/mixed-credentials/spec.md §11). Those stages reach Anthropic on
 	// that account's token through the RUNNER and never through the run's
 	// gateway, so the credentials service has no call of theirs to serve and
 	// B2.7's flip leaves this job's Claude OAuth mount and its accessor alone
@@ -608,7 +639,7 @@ type CheckJobSpec struct {
 	BaseImages map[string]string `json:"base_images"`
 	// GitSecretID is the secret ID of the provider credential as Readiness
 	// resolved it for this repository (the repository's own copy, or the
-	// project-wide one; design docs/design/project-secrets.md §5, §7), so
+	// project-wide one; design docs/project-secrets/spec.md §5, §7), so
 	// the rebuild the check job submits names the secret the job itself
 	// reads. Empty in a spec written before this field existed: the in-job
 	// rebuild falls back to the repository's own ID (imagecheck.go).
@@ -762,7 +793,7 @@ type RepoSpec struct {
 	// for a name only the node admits it refuses --project-wide and its bare
 	// form writes the repository's own copy -- the copy that then wins over
 	// the project's forever, the silent flip project-wide secrets exist to
-	// avoid (design docs/design/project-secrets.md §5). What such a name is
+	// avoid (design docs/project-secrets/spec.md §5). What such a name is
 	// given instead is the run's own door, whose secrets stage stores the
 	// value in the container its own node-read decision picks: SecretFix's
 	// node-only branch, and initsecrets' Left, which spells the same line.
@@ -832,6 +863,23 @@ type repoCtx struct {
 	// from Inputs.Policy: the switch's fourth condition for an `api-key` or
 	// `oauth` repository (D2071). It is "" where the caller read no node.
 	budgetMode string
+	// providerKeysServed and stageAccountServed are R12's two facts as this
+	// repository's entry in the local config records them, read once by
+	// resolve: the owner's own `fugaro update` judged each of them and wrote
+	// the answer there, and this root's plan hands the fact to the job from
+	// that record (KS19, F31). They are the RECORD's values and not a second
+	// judgement — the bundle, the deployed service's release and the published
+	// allow-list are not readable here (internal/infra reads no cloud), which
+	// is exactly why the record exists.
+	//
+	// Neither is honoured unless the switch is on, and that is a condition
+	// rather than the record's own: a fact that says the service serves this
+	// repository's provider keys is only usable where the job was planned to
+	// reach the service at all (an address, an invoker grant), so a config
+	// hand-edited to state the fact with the switch off — no run writes that
+	// state, but a file is a file — plans no fact and the job keeps the key it
+	// mounts, which is the direction every reader of these records fails in.
+	providerKeysServed, stageAccountServed bool
 }
 
 var appIDRE = regexp.MustCompile(`^[0-9]{1,20}$`)
@@ -921,6 +969,8 @@ func resolve(in Inputs) (*repoCtx, error) {
 		c.budgetMode = in.Policy.Budget.Mode
 	}
 	c.credentialsServiceOn = CredentialsServiceServes(c.inst.CredentialsService != nil, local.CredentialsServiceOn(), in.Cfg.Agent.Auth, c.budgetMode)
+	c.providerKeysServed = local.ProviderKeysServedOn()
+	c.stageAccountServed = local.StageAccountServedOn()
 	return c, nil
 }
 
@@ -1009,7 +1059,28 @@ func (c *repoCtx) resolveBitbucketProxied() error {
 // and handed in as Inputs.Policy, exactly as the proxy's half is
 // (resolveBitbucketProxied, same reason: internal/infra holds no client that
 // could read one and Repo is a pure function of its Inputs).
-func (c *repoCtx) sharedRepo() bool { return SharedRepo(c.in.Policy, c.provider, c.in.Repo) }
+//
+// A repository with a workflow whose tools live in its own derived image
+// (checkout other than clone) keeps its per-repository jobs until the shared
+// job carries that image (SharedJobBaked), because fugaro run launches that
+// workflow on the per-repository job: enrolling the repository as shared would
+// leave update creating no job for the launch to find.
+func (c *repoCtx) sharedRepo() bool {
+	if !SharedJobBaked && c.in.Cfg != nil {
+		for _, w := range c.in.Cfg.Workflows {
+			if w.Checkout != config.CheckoutClone {
+				return false
+			}
+		}
+	}
+	return SharedRepo(c.in.Policy, c.provider, c.in.Repo)
+}
+
+// SharedJobBaked is whether a shared project job carries a baked workflow's
+// tools; S10 flips it in the change that deploys the catalog default image.
+// It is a variable so S4's and S10's tests admit the workflow the way
+// production will.
+var SharedJobBaked = false
 
 // buildServes is whether the credentials service serves the secrets of class
 // to this repository's BUILDS (B4.9, the S4 flip; D2076, D2077): the class
@@ -1322,7 +1393,7 @@ func unbuiltOnBaked(workflow string, e config.Entry) error {
 
 // Workflow is the spec of one workflow of the repository, its default
 // Claude account (config.DefaultClaudeAccount). Repo builds one WorkflowSpec
-// per account a repository may choose among (docs/design/named-oauth-tokens.md
+// per account a repository may choose among (docs/named-oauth-tokens/spec.md
 // §4); this exported helper only ever builds the default one, which is what
 // every caller outside this package wants.
 func Workflow(in Inputs, name string) (WorkflowSpec, error) {
@@ -1490,6 +1561,20 @@ func runnerKeyCredential(lc *localcfg.Config, provider, repo string) (string, bo
 	return secret, true
 }
 
+// RunnerKeyCredential is runnerKeyCredential for a reader outside this package:
+// the container the runner-path key credential of provider's own name holds the
+// key in, for the repositories claude_accounts.<provider>.allow_data_to names.
+//
+// The reader is internal/cli's copy of the installation's model keys into the
+// credentials service's bundle (KS12): which container a repository's runs are
+// served a provider's key from is this function's answer and nobody else's, and
+// an entry the copy wrote holding a key the repository's own job does not mount
+// is a key no released run is served (F27, R6). It is exported rather than
+// spelled a second time there so the two cannot disagree.
+func RunnerKeyCredential(lc *localcfg.Config, provider, repo string) (string, bool) {
+	return runnerKeyCredential(lc, provider, repo)
+}
+
 // runnerKeyCredentialName is the credential a logical secret is the derived
 // container of, when this installation declares it as a RUNNER-path key
 // credential (D1670, MC23). It is the one place that reads the half off a
@@ -1588,7 +1673,7 @@ func RequiredSecrets(cfg *config.Config, lc *localcfg.Config, repo string) ([]st
 // variant gcp.WorkflowVariant(name, token) (identity for the repository's
 // default account, so an installation with no named accounts gets a job,
 // account and labels byte-identical to before this field existed, design
-// docs/design/named-oauth-tokens.md §5). Only the job's own identity (Job,
+// docs/named-oauth-tokens/spec.md §5). Only the job's own identity (Job,
 // ServiceAccount, the fugaro_workflow label) and its mounted Claude secret
 // (SecretMounts) vary by token; the image, commands and resources are the
 // one fugaro.yaml workflow entry's, shared by every variant (they are built
@@ -1763,7 +1848,7 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// that go direct to Anthropic rather than through the run's gateway, so the
 	// service never serves it and the mount stays — with its accessor, which
 	// sa.tf exempts by the same field (B0's one mix,
-	// docs/design/mixed-credentials.md §11).
+	// docs/mixed-credentials/spec.md §11).
 	//
 	// c.credentialsServiceOn and not the block's presence: the installation
 	// having a service says nothing about THIS repository. A repository
@@ -1772,6 +1857,39 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// credential at all — which is the whole of what this gate is for
 	// (CredentialsServiceServes).
 	ws.StageAccount = mixedStageAccountJob(c.in.Cfg, c.lc, c.in.Repo, token)
+	// R12's two facts, from the record the owner's own `fugaro update` wrote
+	// for this repository (KS19, F31, C1's names): this job's provider calls
+	// may be sent through the service rather than on the key it mounts, and
+	// the mixed variant's second account is one the service selects like any
+	// named account, so the runner holds no token for it. They are planned and
+	// never left to the run to guess, because the two things they are about —
+	// the bundle's entries, the deployed service's release and the published
+	// allow-list — are the owner's own read and are not in this process.
+	//
+	// A false fact is not planned at all and not planned as "0": a run reads a
+	// fact by the entry's presence and its value together (config.ServedValue),
+	// so an absent entry is the one way "not served" is said, and a job planned
+	// by an installation that never wrote the record reads exactly as it does
+	// today (an absent entry, R12's "any other run uses its mounted key as
+	// today").
+	//
+	// Both are hung off the switch, which is the state they were judged in: a
+	// fact is reported to a run by the job it is launched on, and a job with no
+	// switch has no service address and no invoker grant, so a fact planned over
+	// it would send a provider call to a service that refuses the caller.
+	//
+	// Whether the FACTS are true is what a released `fugaro update` decided
+	// (R12's three conditions and, for the second, the release the service must
+	// be at), and release A's `ready` is deliberately not widened by them
+	// (F30): the mounts this spec drops below are the switch's answer alone.
+	if c.credentialsServiceOn {
+		if c.providerKeysServed {
+			ws.Env[config.ProviderKeysServedEnv] = config.ServedValue
+		}
+		if c.stageAccountServed {
+			ws.Env[config.StageAccountServedEnv] = config.ServedValue
+		}
+	}
 	if served := ModelSecretsServed(c.credentialsServiceOn, c.in.Cfg.Agent.Auth); served != config.ModelSecretServedNone {
 		dropModelMounts(&ws, served)
 	}
@@ -1966,7 +2084,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 	var checked []string
 	for _, name := range slices.Sorted(maps.Keys(in.Cfg.Workflows)) {
 		// One WorkflowSpec per Claude account this repository may choose for
-		// an oauth workflow (design docs/design/named-oauth-tokens.md §4 T3):
+		// an oauth workflow (design docs/named-oauth-tokens/spec.md §4 T3):
 		// config.AllowedClaudeAccounts is the one place that decides the
 		// set, so a name not on it never gets a key here at all (the hard
 		// backstop of the allow-list, design §6b.3). Every other auth kind
@@ -2032,7 +2150,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 // to: every name its workflows (and the check job) mount that
 // ProjectSecretCandidate accepts. Being here says nothing about whether the
 // name actually resolves to the project copy -- Readiness decides that
-// against live state (design docs/design/project-secrets.md §5).
+// against live state (design docs/project-secrets/spec.md §5).
 //
 // The second answer is the subset only the node admits (RepoSpec's
 // ProjectSecretNodeOnly), asked of each name only once the local config's own
@@ -2409,7 +2527,7 @@ func (c *repoCtx) check(rs RepoSpec, checked []string) (*CheckSpec, error) {
 // of a real `terraform plan` of the real root, and
 // TestRepoAddressesMatchTheRealPlanGolden fails when a module gains a
 // resource this function does not name (Review Focus 8 of
-// docs/plans/2026-10-14-config-transitions.md).
+// docs/config-transitions/implementation-plan.md).
 func (rs RepoSpec) Addresses() []string {
 	const root = "module.repo."
 	q := strconv.Quote
@@ -2578,7 +2696,7 @@ func (rs RepoSpec) Addresses() []string {
 // provider keys, and a mixed stage account's own Claude OAuth token — is a
 // mount the job's account keeps a grant on, so a mirror that answered "held"
 // for every model variable would report a live accessor as one the plan
-// retires (R6, D1634; B0's mix, docs/design/mixed-credentials.md §11).
+// retires (R6, D1634; B0's mix, docs/mixed-credentials/spec.md §11).
 //
 // proxied is the repository's own fact (RepoSpec.BitbucketProxied), and it is
 // the second way a mount comes to be held: a name config.ProxiedGitSecretNames
@@ -2715,7 +2833,7 @@ func Schedule(slug string) string {
 // (mixedDefaultAccount). The stages of the mix — the senior review, the
 // adversarial review and the triage that weighs their findings — may name one
 // account and no other stage may name any
-// (docs/design/mixed-credentials.md §11): that is the one mix the owner's B0
+// (docs/mixed-credentials/spec.md §11): that is the one mix the owner's B0
 // ruling admits, the coder's own stages keeping the provider key the gateway
 // holds.
 //
@@ -2762,6 +2880,16 @@ func mixedStageAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []
 	return out
 }
 
+// MixedStageAccounts is mixedStageAccounts for the readers outside this
+// package that have to ask whether a repository mixes a stage account at all:
+// internal/cli's recordCredentialsServiceReady decides R12's second fact with
+// it — "the record names a stage account" — and it must read the same set the
+// job set is built from, or a record could say the fact true for an account no
+// job of the repository exists for, and withhold it where one does (KS9, KS19).
+func MixedStageAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []string {
+	return mixedStageAccounts(cfg, lc, repo)
+}
+
 // mixedStageAccountJob is whether token is one of the repository's mixed stage
 // accounts: the job that account gets is its OWN variant (gcp.WorkflowVariant),
 // the one a run of this repository is launched on when the mix's stages go out
@@ -2769,7 +2897,7 @@ func mixedStageAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []
 // mount is a credential of the stage's rather than the run's.
 //
 // The mix is api-key's alone (resolveMixedStages, internal/runner; B0's ruling
-// of 2026-11-04, docs/design/mixed-credentials.md §11), which is why the auth
+// of 2026-11-04, docs/mixed-credentials/spec.md §11), which is why the auth
 // is read here: a name a stage key of an oauth repository names is not one of
 // these jobs — under oauth the key keeps the meaning the accounts design gives
 // it, and the account's token is the run's own, served by the service like
@@ -2792,7 +2920,7 @@ func mixedStageAccountJob(cfg *config.Config, lc *localcfg.Config, repo, token s
 // mixedDefaultAccount is rung 4's account for an api-key repository: the
 // project's default_claude_account where the owner's ruling of 2026-11-05
 // admits it as one of this repository's mixed accounts, "" otherwise
-// (docs/design/mixed-credentials.md §11). It is the job set's half of the rung
+// (docs/mixed-credentials/spec.md §11). It is the job set's half of the rung
 // the launch (mixedStageAccount, internal/cli/run.go) and the run
 // (r.mixedDefaultAccount, internal/runner) resolve, so a run that may hold the
 // account's token is a run a job exists for — and a repository the ruling

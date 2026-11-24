@@ -1302,11 +1302,9 @@ func TestBudgetPreviewUsesTheProjectsRigorMode(t *testing.T) {
 		repoRigor  string
 		noCheckout bool
 		// request is --mode, for the cases that ask for a mode over the one
-		// the layers give; note is what stderr has to say about it, if
-		// anything, so a request the resolver refuses to act on is pinned
-		// where it is refused as well as where it takes.
+		// the layers give: the request settles the mode, so these rows pin
+		// what the preview prices on either side of the layers' own answer.
 		request string
-		note    string
 		mode    string
 		first   int
 		rounds  int
@@ -1318,13 +1316,14 @@ func TestBudgetPreviewUsesTheProjectsRigorMode(t *testing.T) {
 		{name: "no checkout: the project layer's default", layer: "startup", noCheckout: true, mode: "startup", first: 2, rounds: 2, stages: 17},
 		// --mode is resolved over the layers a preview without a checkout has
 		// (the project layer alone), and it is resolved the same way there as
-		// it is over a checkout: raised, never lowered. Both rows are the
-		// no-checkout branch of previewKnobsOf, which reads the layer itself.
+		// it is over a checkout: the request is the narrowest rank and settles
+		// the mode whether it asks for more or for less (LD3). Both rows are
+		// the no-checkout branch of previewKnobsOf, which reads the layer
+		// itself.
 		{name: "no checkout: a mode asked over the project layer's", layer: "startup", noCheckout: true,
 			request: "critical", mode: "critical", first: 3, rounds: 5, stages: 47},
 		{name: "no checkout: a request below the project layer's", layer: "startup", noCheckout: true,
-			request: "poc", mode: "startup", first: 2, rounds: 2, stages: 17,
-			note: "--mode poc has no effect: this repository resolves to startup"},
+			request: "poc", mode: "poc", first: 1, rounds: 1, stages: 7},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newBudgetFixture(t, "")
@@ -1365,8 +1364,8 @@ func TestBudgetPreviewUsesTheProjectsRigorMode(t *testing.T) {
 			if !strings.Contains(out, want) {
 				t.Fatalf("preview never says %q:\n%s", want, out)
 			}
-			if tc.note != "" && !strings.Contains(errOut, tc.note) {
-				t.Fatalf("preview never says %q:\n%s", tc.note, errOut)
+			if strings.Contains(errOut, "has no effect") {
+				t.Fatalf("the preview prices a request and still notes it away:\n%s", errOut)
 			}
 		})
 	}
@@ -1541,34 +1540,56 @@ func TestBudgetPreviewModeEqualsTheModesOwnEffects(t *testing.T) {
 	}
 }
 
-// TestBudgetPreviewModeNeverLowers: an on-axis request may raise a mode and
-// never lower it (D6), so a --mode below the mode the repository resolves
-// changes nothing, and the preview says so rather than quoting a cheaper
-// ceiling than the run would really be held to.
+// TestBudgetPreviewModeLowers: the request is the narrowest rank of the mode's
+// order (LD3), so a --mode below the mode the layers resolve is the mode the run
+// really runs at, and the preview prices it: the stages its own row supplies the
+// knobs the checkout leaves unset, and its own fraction of the deployed ceiling
+// (config.RigorBudgetCap). What a request can never go below is a review floor,
+// which is a review level and not a mode, so nothing here refuses a lowering or
+// notes it away.
+//
+// Mutation (hold the request raise-only, the rule before LD3): every row reads
+// critical, which is the mode line this fails on.
 //
 // Hotfix is not one of these cases: the request takes it whole
-// (rigor.Rigor.PerRun), so `--mode hotfix` is the mode the preview prices and
-// there is nothing to note (TestBudgetPreviewTakesHotfix).
-func TestBudgetPreviewModeNeverLowers(t *testing.T) {
+// (rigor.Rigor.PerRun), and TestBudgetPreviewTakesHotfix pins those figures.
+func TestBudgetPreviewModeLowers(t *testing.T) {
 	const agent = "  max_budget_usd: 10\n"
-	for _, mode := range []rigor.Rigor{rigor.POC, rigor.Startup} {
-		t.Run(string(mode), func(t *testing.T) {
+	for _, tc := range []struct {
+		mode   rigor.Rigor
+		first  int
+		rounds int
+		stages int
+		cap    string
+	}{
+		{rigor.POC, 1, 1, 7, "$2.75"},      // 55% of the $5.00 ceiling
+		{rigor.Startup, 2, 2, 17, "$3.50"}, // 70%
+	} {
+		t.Run(string(tc.mode), func(t *testing.T) {
 			f := newBudgetFixture(t, "")
+			// The same fixture the raise rows use: the repository resolves
+			// critical, and the request asks for less.
 			f.SetCaps(100, 50, 100, 50)
 			f.SetSpentToday(0)
 			f.Checkout(t, agent)
 			previewCheckoutRigor(t, agent, string(rigor.Critical))
-			out, errOut, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "3", "--mode", string(mode))
+			out, errOut, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "3", "--mode", string(tc.mode))
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, want := range []string{"at most 47 stages (mode critical", "3 runs × $5.00 (per-run cap: budget.per_run_usd)"} {
+			for _, want := range []string{
+				fmt.Sprintf("at most %d stages (mode %s, agent.first_line_rounds %d, agent.review_rounds %d)", tc.stages, tc.mode, tc.first, tc.rounds),
+				fmt.Sprintf("3 runs × %s (per-run cap: budget.per_run_usd)", tc.cap),
+			} {
 				if !strings.Contains(out, want) {
-					t.Errorf("--mode %s lowered the mode the repository resolves:\n%s", mode, out)
+					t.Errorf("--mode %s never says %q:\n%s", tc.mode, want, out)
 				}
 			}
-			if want := "--mode " + string(mode) + " has no effect: this repository resolves to critical"; !strings.Contains(errOut, want) {
-				t.Errorf("the ignored request is not said:\n%s", errOut)
+			if strings.Contains(out, "mode critical") {
+				t.Errorf("--mode %s is priced at the mode the layers resolve:\n%s", tc.mode, out)
+			}
+			if strings.Contains(errOut, "has no effect") {
+				t.Errorf("the preview prices the request and still notes it away:\n%s", errOut)
 			}
 		})
 	}

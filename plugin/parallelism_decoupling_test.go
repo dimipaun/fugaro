@@ -104,7 +104,9 @@ func TestParallelismSkillHasDecouplingSection(t *testing.T) {
 // TestParallelismSkillContractTaskRigor: a contract is the one task both sides
 // build against and the dearest thing to get wrong late, so it is reviewed at
 // least as strictly as its strictest consumer (D1819). `fugaro run --mode` is
-// that "at least": it may raise the mode a run resolves and never lower it. The
+// that "at least": it is the run's own request, the narrowest rank of the
+// mode's order, so the mode it names is the mode the contract's run runs at
+// (LD3). The
 // mode a task resolves is read from the settings and matched to the task's
 // footprint by the agent itself (F18), so the text has to name the read — and
 // name it against the repository: an unaimed read covers the installation's own

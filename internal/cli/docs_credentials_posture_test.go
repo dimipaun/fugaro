@@ -54,8 +54,13 @@ var postureScanRoots = []string{
 // has and is already exempt for. A sentence in one of them ("the service ships
 // dormant", a decision table's "stays opt-in as today", the opt-in a design's
 // precondition waits on) states what was decided then; rewriting it would edit
-// another artifact's plan, which is exactly what the dated rule forbids. The
-// live documents in the same folders — `docs/gcp-live-checklist.md`,
+// another artifact's plan, which is exactly what the dated rule forbids.
+// `docs/batch-run-identity/reconciliation.md` is the entry that shows why the
+// class is read by folder and not by sentence: the bullets of its amendments
+// list carry no blank line between them, so R1's naming of the credentials
+// service is read in the same paragraph as R2's "opted-in installation", and
+// R2's opt-in is the Batch compute root's (D3110), not this service's.
+// The live documents in the same folders — `docs/gcp-live-checklist.md`,
 // `docs/release.md`, the terms — are NOT exempt, and the scan covers them.
 var postureRecordRoots = []string{
 	// The batch-run-identity plan's record, in the four-file shape this class
@@ -78,6 +83,7 @@ var postureRecordRoots = []string{
 	"docs/forge-authorship-images/",
 	"docs/licensing/implementation-plan.md",
 	"docs/licensing/reconciliation.md",
+	"docs/m9-budget-and-dashboard/",
 	"docs/mcp-server/",
 	"docs/project-image-catalog/",
 	"docs/project-workflow-secrets/",

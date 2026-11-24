@@ -18,7 +18,7 @@ import (
 // beside the bucket's fugaro_project label and the project_name output;
 // launchers can't read a label, so every cloud command reads this object
 // to check its project config (design §2.5). No job account can write it,
-// and since 0.7.0 no launcher (docs/design/bucket-iam.md); an operator or a
+// and since 0.7.0 no launcher (docs/bucket-iam/spec.md); an operator or a
 // project-level storage writer can.
 const ProjectMarkerObject = "fugaro/project.json"
 
@@ -81,4 +81,27 @@ func ReadProjectMarker(ctx context.Context, c *Clients, bucket string, projectNu
 		return nil, nil
 	}
 	return &m, nil
+}
+
+// BucketInProject reports whether the bucket named name is there and belongs
+// to projectNumber. A bucket name is global, so the name alone proves nothing:
+// the bucket's own project number is the whole of the answer, and a bucket of
+// another project is not this project's.
+//
+// A bucket that is not there is false, and one the caller may not read is an
+// error: "not there" and "cannot tell" are different answers, and a caller
+// that refuses on the first (init's adoption read: a project is adopted only
+// when it is seen to hold nothing of Fugaro's) must not read the second as it.
+func BucketInProject(ctx context.Context, c *Clients, name string, projectNumber uint64) (bool, error) {
+	if name == "" || projectNumber == 0 || c == nil || c.Storage == nil {
+		return false, nil
+	}
+	b, err := c.Storage.Buckets.Get(name).Context(ctx).Do()
+	switch {
+	case notFound(err):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("reading bucket gs://%s: %w", name, err)
+	}
+	return b.ProjectNumber == projectNumber, nil
 }

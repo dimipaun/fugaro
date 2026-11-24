@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.10@sha256:865e5dd094beca432e8c0a1d5e1c465db5f998dca4e439981029b3b81fb39ed5
-# The Fugaro base image (docs/design/base-image.md): one language-agnostic
+# The Fugaro base image (docs/base-image/spec.md): one language-agnostic
 # image for every workflow. Debian 13 slim, a maximalist tool kit, gcloud and
 # the Docker CLI (client only), mise (projects install their runtimes with it),
 # the one agent harness the runner drives (Claude Code) and fugaro.

@@ -18,7 +18,7 @@ this plan's §7 names and the move itself edited (100 → 101, now `:752`); the 
 quoted by the reconciliation's §7 — and no other cited file moved, so every other line still resolves. What the move did change — the two number blocks and the
 docs-pin census — is re-read in the reconciliation's §7 and F28.
 
-**Written to:** [spec.md](spec.md) — the design, `docs/design/failure-classes.md`, byte for byte — and
+**Written to:** [spec.md](spec.md) — the design, `docs/failure-classes/design.md`, byte for byte — and
 [reconciliation.md](reconciliation.md). **Where a task below and the reconciliation disagree, the
 reconciliation's findings (F1–F36) and decisions (D1450–D1469) win, and the task is wrong.**
 
@@ -110,7 +110,7 @@ which is harmless and true), and FC3–FC9 simply start later.
 | `internal/runner/recordend.go` | FC2 (L1) | new, if **D1452** answers the recommendation: the one writer |
 | `internal/runner/runner.go` | FC2 (L1), FC3 (L2), FC4 (L3) | three tasks, three levels, three sets of functions: FC2's `finalize` switch and deferred/bootstrap terminals, FC3's `verify`/`runCommits`/config refusals, FC4's `stageFailureClass` and phrase tables beside `oauthLimitPhrases` (`:3802`) |
 | `internal/runner/refused.go` | FC2 (L1), FC3 (L2) | FC2's `endRefused` (`:320`), FC3's `branch_moved` |
-| `internal/runner/gate.go`, `internal/runner/followup.go`, `internal/runner/reviewmode.go`, `internal/runner/artifact.go`, `internal/runner/reviewartifact.go`, `internal/runner/shadow.go`, `internal/runner/failure_class_internal_test.go`, `docs/design/failure-classes.md` | FC2 (L1) | the other 25 statements, the guard's own file, and the design's §1 census, which FC2 falsifies and rewrites |
+| `internal/runner/gate.go`, `internal/runner/followup.go`, `internal/runner/reviewmode.go`, `internal/runner/artifact.go`, `internal/runner/reviewartifact.go`, `internal/runner/shadow.go`, `internal/runner/failure_class_internal_test.go`, `docs/failure-classes/design.md` | FC2 (L1) | the other 25 statements, the guard's own file, and the design's §1 census, which FC2 falsifies and rewrites |
 | `internal/runner/outcome.go`, `internal/runner/halt.go`, `internal/runner/prflow.go` | FC3 (L2) | the four `Decide` refusals, `haltClass` beside `haltReasonText` (`:159`), `git_provider_error` |
 | `internal/runner/stageerror_internal_test.go`, `internal/runner/redaction_test.go` | FC4 (L3) | the classifier's tests and the no-text property |
 | `internal/runview/runview.go`, `internal/runview/failureclass_test.go` | FC5 (L3) | `Row.FailureClass` and `ClassOf`; `internal/runview/launched_by_test.go`'s neighbour is the guard's new home |
@@ -183,7 +183,7 @@ written anywhere else, and is the last-writer rule the only rule?* **Owner-run:*
   `internal/runner/reviewmode.go`, `internal/runner/artifact.go`, `internal/runner/reviewartifact.go`,
   `internal/runner/shadow.go`, `internal/runner/failure_class_internal_test.go` (new — an internal test
   package, because the writer is unexported and *not* one of the `docs_*_test.go` files the census
-  counts, F28), and the two files the change itself falsifies: `docs/design/failure-classes.md` (§1's
+  counts, F28), and the two files the change itself falsifies: `docs/failure-classes/design.md` (§1's
   census sentence) and `internal/cli/docs_pr_state_test.go` (its census pin).
 - **Interfaces:** `func (r *run) recordEnd(status runstore.Status, outcome runstore.Outcome, class failure.Class, reason string)`.
   The **36 statements** of F2/§3.1 of the reconciliation become one call each; the sites that write a
@@ -244,7 +244,7 @@ written anywhere else, and is the last-writer rule the only rule?* **Owner-run:*
   halt reason, including `HaltBudgetUnavailable` (`internal/runstore/runstore.go:54`), which sits one
   line above the design's `halted_credential` range `:55–71` (F17): what starts late is the citation,
   not the family — the design's row names the reason ("no credential became usable, or the budget
-  database refused", `docs/design/failure-classes.md:170`), so the reason is `halted_credential` in
+  database refused", `docs/failure-classes/design.md:170`), so the reason is `halted_credential` in
   the writer's table (`internal/runner/halt.go:238`), as its two neighbours
   (`HaltBudgetTokenExpired`, `HaltNoCredential`) are. The one slice is
   `runstore.GovernanceHaltReasons()` (`:104`) plus the budget and credential families, and the

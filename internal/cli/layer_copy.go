@@ -92,7 +92,7 @@ func writeLayerCopy(ctx context.Context, b *blobx.Bucket, slug string, data []by
 		// Unreadable: there is no content or generation to condition on,
 		// so this stays the unconditional overwrite the doc comment above
 		// already promises (Put, not WriteAll: only blobx's own writers
-		// classify a 403 as blobx.ErrForbidden, docs/design/bucket-iam.md
+		// classify a 403 as blobx.ErrForbidden, docs/bucket-iam/spec.md
 		// §2.3).
 		werr = b.Put(ctx, key, data, "application/yaml")
 	default: // errors.Is(err, blobx.ErrNotExist)

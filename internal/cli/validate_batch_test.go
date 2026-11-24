@@ -123,7 +123,7 @@ func TestValidateRefusesAMintingInstallationOnCloudBatch(t *testing.T) {
 		if ps[0].Path != "backend" {
 			t.Errorf("the refusal is at %q, want backend: the fix is the backend the installation selects", ps[0].Path)
 		}
-		for _, want := range []string{"docs/design/budget-token-channel.md", "§1.6", "cloud-run", "seal"} {
+		for _, want := range []string{"docs/budget-token-channel/spec.md", "§1.6", "cloud-run", "seal"} {
 			if !strings.Contains(ps[0].Message, want) {
 				t.Errorf("the refusal does not name %q: %s", want, ps[0].Message)
 			}
@@ -144,7 +144,7 @@ func TestValidateRefusesAMintingInstallationOnCloudBatch(t *testing.T) {
 // the per-repository Cloud Run backend until a per-run prefix condition or a
 // per-run account exists, because a Batch run's account is not per-repository
 // and "the same run's inputs, artifacts and record would be readable and
-// overwritable by every run on the profile" (docs/design/artifact-runs.md
+// overwritable by every run on the profile" (docs/artifact-runs/spec.md
 // §8.5, D11). The refusal is what Task 10 must leave standing; nothing else
 // in this plan enforces that boundary.
 //
@@ -159,7 +159,7 @@ func TestValidateRefusesAnArtifactRunOnCloudBatch(t *testing.T) {
 	if len(ps) != 1 {
 		t.Fatalf("batchValidateProblems = %v, want the one artifact refusal", ps)
 	}
-	for _, want := range []string{"docs/design/artifact-runs.md", "§8.5", "D11", "cloud-run"} {
+	for _, want := range []string{"docs/artifact-runs/spec.md", "§8.5", "D11", "cloud-run"} {
 		if !strings.Contains(ps[0].Message, want) {
 			t.Errorf("the refusal does not name %q: %s", want, ps[0].Message)
 		}
@@ -205,7 +205,7 @@ func TestValidateRefusesAnUnreadableRecipeOnCloudBatch(t *testing.T) {
 	if ps[0].Path != "backend" {
 		t.Errorf("the refusal is at %q, want backend, where the boundary's other refusal is", ps[0].Path)
 	}
-	for _, want := range []string{"docs/design/artifact-runs.md", "§8.5", "D11"} {
+	for _, want := range []string{"docs/artifact-runs/spec.md", "§8.5", "D11"} {
 		if !strings.Contains(ps[0].Message, want) {
 			t.Errorf("the refusal does not name %q: %s", want, ps[0].Message)
 		}

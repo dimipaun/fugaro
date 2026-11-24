@@ -19,8 +19,9 @@ import (
 
 // The secrets asked for are the ones the jobs mount: agent.auth decides the
 // Claude credential (vertex needs none, and a rerun with the git credential
-// stored is done), provider keys come only with api-key, and the workflows'
-// own secrets are always asked for.
+// stored is done), the workflows' own secrets are always asked for, and a
+// configured provider's own key is not asked for at all -- it is entered in
+// the credentials service's bundle since KS2, and the stage says where.
 func TestNeededSecretsFollowAuth(t *testing.T) {
 	left := func(t *testing.T, r *secretsRig) string {
 		res, err := r.run(t)
@@ -60,16 +61,18 @@ func TestNeededSecretsFollowAuth(t *testing.T) {
 			"openrouter": {Secret: "openrouter-api-key", AllowDataTo: []string{"acme/app"}},
 			"elsewhere":  {Secret: "elsewhere-key", AllowDataTo: []string{"acme/other"}},
 		}
-		text := left(t, r)
+		res, err := r.run(t)
+		if err != nil || len(res.Left) != 1 {
+			t.Fatalf("%v, %+v", err, res)
+		}
+		text := strings.Join(res.Left[0].PrintedCommands(), "\n")
 		// D2: the names that have a project-wide meaning get the
 		// project-scope command (no --repo); bitbucket-token, whose
 		// credential serves one repository only, and the checkout's own
 		// workflow secret keep the repository one
 		// (config.PerRepositorySecret, the owner's ruling of 2026-10-15).
-		for _, want := range []string{"anthropic-api-key", "openrouter-api-key"} {
-			if !strings.Contains(text, "secrets set "+want+"\n") {
-				t.Errorf("left lacks the project-scope form of %s: %q", want, text)
-			}
+		if !strings.Contains(text, "secrets set anthropic-api-key\n") {
+			t.Errorf("left lacks the project-scope form of anthropic-api-key: %q", text)
 		}
 		for _, want := range []string{"bitbucket-token", "npm-token"} {
 			// npm-token's is the last command, so it has no line after it.
@@ -77,8 +80,24 @@ func TestNeededSecretsFollowAuth(t *testing.T) {
 				t.Errorf("left lacks the repository-scope form of %s: %q", want, text)
 			}
 		}
-		if strings.Contains(text, "elsewhere") || strings.Contains(text, "claude") {
+		if strings.Contains(text, "elsewhere") || strings.Contains(text, "claude") || strings.Contains(text, "openrouter") {
 			t.Errorf("left = %q", text)
+		}
+		// A configured provider's own key is no longer a line to leave: since
+		// KS2 it is entered in the credentials service's bundle, one entry per
+		// repository, and what the stage says instead is the command that
+		// writes this repository's entry. A Left line could not clear the want
+		// (find() counts containers and that command writes none), which is
+		// exactly what made `fugaro setup`/`fugaro update` fail at a terminal
+		// (TestInitSecretsDoesNotTakeAProviderKey).
+		var detail string
+		for _, st := range res.Stages {
+			if st.Name == initflow.Secrets {
+				detail = st.Detail
+			}
+		}
+		if !strings.Contains(detail, "fugaro secrets set openrouter-api-key --repo acme/app") {
+			t.Errorf("the stage does not name where openrouter's key is entered: %q", detail)
 		}
 	})
 }

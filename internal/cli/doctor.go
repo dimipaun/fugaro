@@ -311,9 +311,12 @@ not evaluated at all, because a runner has no Claude Code.
 
 --offline checks the update class and nothing else, and it makes no cloud call,
 no network call and no secret read: the plugin's wiring and the install on this
-machine, the login unit that runs the orchestrator daemon, and the base image
+machine, the login unit that runs the orchestrator daemon, the base image
 this checkout resolves to where a local installation is configured to answer
-it. Every check whose answer lives in the project's Realtime Database or the
+it, and whether this binary is below the release the project requires,
+answered from this machine's own stamp cache (with no cache entry there, the
+check is skipped like the others rather than read from the database). Every
+other check whose answer lives in the project's Realtime Database or the
 runs bucket — the published policy, the deployed rules, and whether a
 workflow's job was built from the image settings it resolves to now — and the
 one that asks whether a newer release is available, is skipped rather than
@@ -454,12 +457,28 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		return failed(err)
 	}
 	o.Checks = append(o.Checks, sharedConfigChecks(ctx, sel, lc, time.Now())...)
+	// The required-CLI stamp (T5, spec "Doctor"): doctor is exempt from the fence
+	// (T3) and reports the stamp instead, so the person learns before a project
+	// command refuses them. It is cli-version's pair in the update class, but it
+	// reads the selected project's own database, so it stands here with the
+	// checks that need the selection and not with cli-version's network lookup
+	// above (a member on the shared config has a selection and no local config,
+	// and is fenced like anyone else).
+	o.Checks = append(o.Checks, cliBelowRequiredCheck(ctx, lc, false, Version, budgetNow()))
 	// The workspace's own installation whose Firebase is another project's: the
 	// one state W3's root cannot converge, which `fugaro update` skips with the
 	// same reason and goes on (doctorWorkspaceSplitCheck). Read from the local
 	// config alone, so it is here with the config's own checks and not with the
 	// cloud's.
 	if c := doctorWorkspaceSplitCheck(lc); c != nil {
+		o.Checks = append(o.Checks, *c)
+	}
+	// Where the installation's data is: the region, its place and where each
+	// thing this machine's locations record knows about is (LP12 of
+	// docs/location-preference/, D3087, D3091). Read from the local config
+	// alone, like the workspace line above, and never a failure: a database
+	// outside the installation's place is the cloud's own answer.
+	if c := doctorLocationsCheck(lc); c != nil {
 		o.Checks = append(o.Checks, *c)
 	}
 	// Both sides' checks, in the order main has them: the catalog's age (P7),
@@ -569,12 +588,27 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// this backend, and Task 10 is what turns these into the enable's gate.
 	o.Checks = append(o.Checks, doctorBatchChecks(ctx, lc, crmSvc)...)
 	o.Checks = append(o.Checks, doctorPolicyChecks(ctx, lc, doctorRoutingLayerOf(ctx, rf))...)
+	// What this release stops, beside the policy checks: the same lines the
+	// update prints before it changes anything (R8, doctorBudgetStopsChecks).
+	o.Checks = append(o.Checks, doctorBudgetStopsChecks(ctx, sel, lc)...)
+	o.Checks = append(o.Checks, doctorRepoAccountChecks(lc)...)
 	// The pools the published policy serves (DS3.1, MC1): a legacy-open one is
 	// served to whoever asks and D1942 asks doctor to name it. It reads the
 	// published node for itself — the policy checks above read it through
 	// projectpolicy.Read and answer their own questions from it — and it is not
 	// gated on the credentials service — pools predate it.
 	o.Checks = append(o.Checks, doctorLegacyOpenPoolChecks(ctx, lc)...)
+	// The workspace this project is in, or the one it is (WS14, F20): the
+	// workspace's own three lines on the machine that deploys and publishes it,
+	// a member's pin and the credential route each of this project's
+	// repositories publishes on the machine that takes from it (R3, R4). It
+	// reads the cloud and writes nothing, and it computes no alarm (D2991).
+	o.Checks = append(o.Checks, doctorWorkspaceChecks(ctx, lc)...)
+	// The run index's own completeness (RI6, F9): the summary document in the
+	// installation's Firebase project, which is what tells a reader of a short
+	// list that the index is why. It answers nothing for a project with no
+	// Firebase backend, like the checks above it.
+	o.Checks = append(o.Checks, doctorRunIndexChecks(ctx, lc)...)
 
 	if lc.Budget != nil && lc.Budget.FirebaseProject != "" {
 		iamSvc, err := iam.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.IAM)...)
@@ -704,6 +738,21 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	return emitDoctor(cmd, o, asJSON, view)
 }
 
+// doctorRepoAccountChecks warns, before `fugaro update` is run, of every
+// repository entry that names a Claude account whose own allow_data_to does not
+// name the repository: the publish refuses that config (projectpolicy), and
+// every `fugaro update` after it would fail until it is closed.
+func doctorRepoAccountChecks(lc *localcfg.Config) []doctorCheck {
+	var out []doctorCheck
+	for _, g := range repoAccountGaps(lc) {
+		out = append(out, doctorCheck{ID: "repo-account-covered", Severity: "warning",
+			Problem: fmt.Sprintf("repos.%s.claude_accounts names the account %s, and claude_accounts.%s.allow_data_to does not name the repository, so the next `fugaro update` refuses to publish the policy",
+				pluginwire.Printable(g.repo), pluginwire.Printable(g.account), pluginwire.Printable(g.account)),
+			Fix: g.fix()})
+	}
+	return out
+}
+
 // doctorBaseImage warns when the installation has no Fugaro base recorded
 // (design base-image.md section 10): every image build starts from it.
 func doctorBaseImage(lc *localcfg.Config) doctorCheck {
@@ -724,12 +773,17 @@ func doctorBaseImage(lc *localcfg.Config) doctorCheck {
 // computes, because it is the list of what `fugaro update` puts right: the
 // plugin's wiring and the plugin on this machine (both already in o.Checks
 // before this runs, which is why they are not here), the login unit, the base
-// image, each workflow's job image, and the three policy checks. Three kinds
-// are dropped and said to be dropped, because their answer is not a file here:
+// image, each workflow's job image, the three policy checks, and the required
+// CLI the project's stamp names. Three kinds are dropped and said to be
+// dropped, because their answer is not a file here:
 //
 //   - cli-version asks whether a newer release is available, which is a network
 //     call, and --offline makes none (D952: the network stays opt-in, and the
 //     skills never ask the user's permission to reach it on their behalf).
+//     cli-below-required is its pair and not its twin: the stamp is also a node
+//     in the project's database, but this machine's cache holds the last one
+//     read, and R9 answers from it — no call — and skips with its reason
+//     when the cache is empty (cliBelowRequiredCheck).
 //   - the three policy checks read the project's Realtime Database (the
 //     published node, the deployed rules generation) and, for policy-vs-jobs,
 //     what its jobs last ran: none of it is local, and reading it needs
@@ -745,7 +799,7 @@ func doctorBaseImage(lc *localcfg.Config) doctorCheck {
 // is made of: it never fails doctor, with or without --strict, and it is never
 // read as "checked and found fine".
 func doctorOfflineChecks(ctx context.Context, o cloudOptions, loc pluginwire.Location, inCheckout bool) []doctorCheck {
-	ask := "run `fugaro doctor` without `--offline` to ask it"
+	ask := doctorOfflineAsk
 	skip := func(id, problem string) doctorCheck {
 		return doctorCheck{ID: id, Skipped: true, Severity: "info", Problem: problem, Fix: ask}
 	}
@@ -768,6 +822,13 @@ func doctorOfflineChecks(ctx context.Context, o cloudOptions, loc pluginwire.Loc
 	} else {
 		out = append(out, doctorBaseImage(lc))
 	}
+	// cli-below-required answers from the stamp cache under --offline when there
+	// is one (R9): the cache is this machine's own file, so no cloud call is
+	// made — the reader is built with no client — and without one the check is
+	// skipped with its reason like the rest. That is what keeps the fence
+	// visible in the session-start check the skills run: the cache is the one
+	// place this machine already knows the project's required CLI from.
+	out = append(out, cliBelowRequiredCheck(ctx, lc, true, Version, budgetNow()))
 	for _, name := range doctorOfflineWorkflows(ctx, loc, inCheckout, lc) {
 		out = append(out, skip("image-config-"+name, "whether workflow "+name+"'s job image is the one this checkout resolves to now is recorded in the runs bucket, which --offline does not read"))
 	}
@@ -1759,7 +1820,7 @@ func doctorAccountsAdd(lc *localcfg.Config, account, profile string) string {
 }
 
 // claudeAccountsStoredCheck is doctor's "claude-accounts-stored" check
-// (design docs/design/named-oauth-tokens.md §6f, plan Task 8): every named
+// (design docs/named-oauth-tokens/spec.md §6f, plan Task 8): every named
 // Claude account repo may choose (config.AllowedClaudeAccounts, "default"
 // excluded, since that is the repository's existing, unconditionally
 // required secret and already covered by doctor's other checks) should have
@@ -2087,7 +2148,7 @@ func projectAccountStoredCheck(lc *localcfg.Config, project []gcp.SecretInfo, pr
 }
 
 // oauthTokenAllowedCheck is doctor's "oauth-token-allowed" check (design
-// docs/design/named-oauth-tokens.md §6f, plan Task 8): the checkout's
+// docs/named-oauth-tokens/spec.md §6f, plan Task 8): the checkout's
 // agent.oauth_token, if set, must name an account config.AllowedClaudeAccounts
 // says repo may actually use, for a workflow whose agent.auth is oauth — a
 // name the local config does not know, one whose allow_data_to omits repo,
@@ -2486,6 +2547,12 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 			unreadRouting(doctorRoutingChecks(lc, nil, fmt.Sprintf("the budget database is not project %s's own (%v), so the published switch cannot be read", lc.Name, err), layer))...)
 	}
 	checks := doctorRulesSkew(ctx, db, lc)
+	// R4's line: a published node that still says the word this release has no
+	// mode for. It stands here, before the node is decoded, because it has to be
+	// read out of the node's own bytes (F22) and because every branch below
+	// appends to these checks — a node that says the word is named whichever
+	// state its version or its marker is in.
+	checks = append(checks, doctorPolicyModeOffCheck(ctx, db)...)
 	// The drift alarm (spend-accuracy SA5.3, R6) reads the day counters of the
 	// same database and nothing else the policy node holds, so it stands here
 	// with the credential marks rather than after the node is read: a node this
@@ -2597,6 +2664,18 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	if c := doctorAllowListUncovered(lc, p); c != nil {
 		checks = append(checks, *c)
 	}
+	// The mobile block's own line (P6 of docs/mobile-identity-pairing, D2796):
+	// what a project that turns sync on stores in the identity project, said on
+	// the node the pairing route reads. A measurement, not a finding, and
+	// silent where the block is absent or the surface is off.
+	checks = append(checks, doctorMobileChecks(lc, p)...)
+	// The project layer's own rigor names (LD4), judged against the same node:
+	// an area's member or a per-repo entry that names a repository the published
+	// allow_repos does not admit describes a level no run of it will ever take,
+	// because the run is refused before it starts.
+	if c := layerRigorRepoAdmissionCheck(lc, layer.RigorRepos, p); c != nil {
+		checks = append(checks, *c)
+	}
 	checks = append(checks, doctorCredsRules(ctx, db, p, lc)...)
 	if c := doctorPolicyVsJobs(lc); c != nil {
 		checks = append(checks, *c)
@@ -2614,6 +2693,79 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	// the way a run resolves it (config.RoutingClaudeFor over the routes a run
 	// of each repository carries — doctorRoutingChecks).
 	return append(checks, doctorRoutingChecks(lc, p, "", layer)...)
+}
+
+// doctorPolicyModeOffCheck names a published policy node that still says the
+// budget mode is off (R4 of docs/always-a-budget/reconciliation.md). The node
+// keeps its version (D3025), so one an older CLI published — or one an
+// administrator edited by hand — carries a word this release has no mode for,
+// and every run that meets it is refused before it starts until `fugaro update`
+// rewrites it in place (AB8a's migration step, migrateRemovedMode).
+//
+// The word is read from the node's own bytes and never from the decoded policy
+// (F22): once validation stops accepting the word (AB2) the node's decoder
+// refuses it, so a check that asked the decoded node would go quiet in exactly
+// the state it exists to report — and the state would read as "the policy could
+// not be read", which names neither the word nor the fix. The reader is
+// localcfg.RemovedBudgetMode, the same one `fugaro update`'s listing uses on a
+// config's bytes, so the two doors read the word the same way.
+//
+// A node that is not there, or one a read did not answer, is left to the checks
+// around this one, which say which state that is: this check speaks only about
+// a node it read and found saying the word.
+func doctorPolicyModeOffCheck(ctx context.Context, db *rtdb.Client) []doctorCheck {
+	shared := projectpolicy.PathShared()
+	var raw json.RawMessage
+	found, err := db.Get(ctx, shared, &raw)
+	if err != nil || !found {
+		return nil
+	}
+	word, off := localcfg.RemovedBudgetMode(raw)
+	if !off {
+		return nil
+	}
+	return []doctorCheck{{ID: "policy-mode-off", Severity: "warning",
+		Problem: fmt.Sprintf("the policy published at %s says budget.mode: %s, which is not a budget mode any more: no run of this project starts while the node says it", shared, word),
+		Fix:     "run `fugaro update`: its policy stage rewrites the node in place to observe, keeping every other member, so nothing has to be deleted and published again"}}
+}
+
+// budgetStopsCheckID is doctor's line about what this release stops (R8 of
+// docs/always-a-budget/reconciliation.md): one ID, and the same lines `fugaro
+// update` prints before it changes anything.
+const budgetStopsCheckID = "budget-stops"
+
+// doctorBudgetStopsChecks reports what this release stops on this machine and
+// in this checkout, from the one helper the update's own listing is built from
+// (budgetStops, AB8b): R8 has the two readers say the same thing, and a second
+// table of reasons beside that helper is what it exists to prevent. The lines
+// are the update's own words, so a person who reads them here and then runs the
+// update meets the same sentence twice.
+//
+// The engine is a throwaway, as doctorWorkspaceRouteChecks' is: doctor has no
+// run of its own to read through, and the reads behind the lines warn the way a
+// publishing run's do, so the lines doctor prints are the only account of them
+// a reader needs. The local config goes in as its bytes rather than as lc: the
+// word this listing is about is one a decoded config is not guaranteed to carry
+// (F22, localcfg.RemovedBudgetMode), and a file that cannot be read leaves the
+// fact out rather than failing the check — which is how budgetStopFacts reads
+// every fact it cannot answer.
+func doctorBudgetStopsChecks(ctx context.Context, sel localcfg.Selection, lc *localcfg.Config) []doctorCheck {
+	old, err := os.ReadFile(sel.Path)
+	if err != nil {
+		old = nil
+	}
+	e := &initEngine{r: &initRun{w: io.Discard}, lc: lc, old: old}
+	stops := budgetStops(e.budgetStopFacts(ctx))
+	if len(stops) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, len(stops))
+	for _, s := range stops {
+		lines = append(lines, s.line)
+	}
+	return []doctorCheck{{ID: budgetStopsCheckID, Severity: "warning",
+		Problem: "this release is always a budget, and it stops something here: " + strings.Join(lines, "; "),
+		Fix:     "run `fugaro update` in your own terminal: it prints this list before it changes anything, rewrites what it can, and each line names the file, the node or the model that answers it"}}
 }
 
 // routingCacheMarkersUnmeasured is what doctor says when the policy routes a
@@ -2758,22 +2910,22 @@ func doctorRoutingChecks(lc *localcfg.Config, p *projectpolicy.Policy, why strin
 	//
 	// It is asked once, outside the loop, because it is the same for every
 	// repository and every model: only the routes do not depend on it. It is
-	// asked of an api-key credential and the job's own budget mode — doctor
-	// reads the policy and this machine's config, not the repository's
-	// fugaro.yaml, so neither the credential nor the stored key is its to read.
-	// api-key is the credential auto's key question is about, and Vertex
-	// answers the same for every other via — the sentence the auto state prints
-	// names that difference itself. The mode is the job's (doctorNodeMode: the
-	// node's own, or the environment's where the node says nothing).
-	mode := doctorNodeMode(lc, p)
-	reach, reason := routingReachOf(c, "api-key", mode)
+	// asked of an api-key credential — doctor reads the policy and this
+	// machine's config, not the repository's fugaro.yaml, so neither the
+	// credential nor the stored key is its to read. api-key is the credential
+	// auto's key question is about, and Vertex answers the same for every other
+	// via — the sentence the auto state prints names that difference itself.
+	// The budget mode is not one of the facts it is asked of (AB1b, D3009): an
+	// api-key run has a gateway whatever the mode says, so the mode no longer
+	// words any arm below.
+	reach, reason := routingReachOf(c, "api-key")
 	// inert is appended to a line whose resolution no run of this repository
 	// carries out, and its reader is the same one validate's note has: the line
 	// says what the switch licenses and the clause says that nothing here takes
 	// it, so the resolution is not read as a cost the project is paying.
 	inert := ""
 	if reach == routingInert {
-		inert = " (nothing takes it here: " + routingInertWhy(reason, "api-key", mode) + ", so the pins keep Claude's own IDs)"
+		inert = " (nothing takes it here: " + routingInertWhy(reason, "api-key") + ", so the pins keep Claude's own IDs)"
 	}
 	for _, repo := range repos {
 		// The routes a run of this repository carries: this machine's
@@ -2793,16 +2945,13 @@ func doctorRoutingChecks(lc *localcfg.Config, p *projectpolicy.Policy, why strin
 				case routingKeyless:
 					lines = append(lines, base+"; via: auto is key-presence driven, so a run of this repository whose gateway is on halts at it unless the job has an Anthropic API key stored, and a Vertex run never reaches it at all"+tail+layer.unknownFor(repo))
 				default:
-					// The mode is the node's when it sets one and the job's own
-					// ceiling when it does not (doctorNodeMode), and the line
-					// says which: "the published policy's budget" is false of a
-					// node that says nothing about the budget, and that reading
-					// is what this sentence used to make for it.
-					who := "the job's own ceiling"
-					if p.Budget.Mode != "" {
-						who = "the published policy's budget"
-					}
-					lines = append(lines, base+", and under "+who+" no run of this repository reaches the switch (budget.mode is "+mode+"), so the switch is inert and nothing halts under it"+tail+layer.unknownFor(repo))
+					// The switch is inert for a reason that is not the mode any
+					// more (AB1b, D3009): a via: cascade switch and a run that
+					// did not ask for the cascade, a via: auto switch and a
+					// Vertex run. The reason is the runner's own (routingInertWhy
+					// over routingReachOf's answer), which is what this line says
+					// instead of naming a mode that no longer decides it.
+					lines = append(lines, base+", and no run of this repository reaches the switch ("+routingInertWhy(reason, "api-key")+"), so the switch is inert and nothing halts under it"+tail+layer.unknownFor(repo))
 				}
 			case route == config.RouteDirect:
 				lines = append(lines, fmt.Sprintf("%s: %s -> direct (via: %s)%s", repo, m, c.ViaValue(), inert))
@@ -2852,6 +3001,13 @@ func doctorRoutingChecks(lc *localcfg.Config, p *projectpolicy.Policy, why strin
 type doctorRoutingLayer struct {
 	Claims map[string][]string
 	Repo   string
+	// RigorRepos are the repository names the layer's defaults.rigor states,
+	// as members of its areas and as keys of its per-repo map
+	// (config.RigorRepoNamesOf). They travel beside the claims because the
+	// policy node is read once, further down this file, and the admission
+	// check over them (layerRigorRepoAdmissionCheck) is one of the questions
+	// asked of it.
+	RigorRepos []string
 }
 
 // claimsFor are the layer's claims for repo, nil when this machine did not read
@@ -2882,17 +3038,18 @@ func doctorRoutingLayerOf(ctx context.Context, rf *resolvedFile) doctorRoutingLa
 	if rf == nil {
 		return doctorRoutingLayer{}
 	}
+	rigorRepos := config.RigorRepoNamesOf(rf.Layer.Layer)
 	claims := config.ClaudeClaimsOf(rf.Layer.Layer)
 	if claims == nil {
-		return doctorRoutingLayer{}
+		return doctorRoutingLayer{RigorRepos: rigorRepos}
 	}
 	// The repository the claims were resolved for is the checkout's own: it is
 	// that repository's fugaro.yaml the layer was applied to.
 	repo, err := originRepo(ctx)
 	if err != nil {
-		return doctorRoutingLayer{Claims: claims}
+		return doctorRoutingLayer{Claims: claims, RigorRepos: rigorRepos}
 	}
-	return doctorRoutingLayer{Claims: claims, Repo: repo}
+	return doctorRoutingLayer{Claims: claims, Repo: repo, RigorRepos: rigorRepos}
 }
 
 // doctorRoutes are the routes a run of repo carries: this machine's providers
@@ -2917,34 +3074,6 @@ func doctorRoutes(lc *localcfg.Config, repo string, claims map[string][]string) 
 		return providers
 	}
 	return merged
-}
-
-// doctorNodeMode is the budget mode a run of the project has under the
-// published node: the node's own mode when it sets one, and the job
-// environment's own — this machine's config, whose ceiling update --repo deploys
-// into the job (localcfg.BudgetMode) — when it does not.
-//
-// The fallback is the whole point of the function. runner.policyCeiling
-// replaces the environment's ceiling per key, and replaces the mode only when
-// the node writes one (pp.Budget.Mode != ""), while projectpolicy's decoder
-// refuses a *present* budget block that names no mode — leaving the block out
-// is how a policy sets no budget at all. So "" here is "the node says nothing
-// about the mode", never "the node says off": reading it as off made this
-// check print "no run of this repository reaches the switch (budget.mode is
-// off) … nothing halts under it" for a node under an installation that
-// enforces, whose every run does halt on the switch.
-//
-// What the environment's mode is is this machine's own budget block read the
-// way the deploy reads it (localcfg.BudgetMode: an absent block, or one with no
-// mode, is off), which is the same reading the drift note compares the deployed
-// job with. It is not the repository's fugaro.yaml — doctor reads the policy
-// and this machine's config — and the credential is api-key for the same
-// reason, which the caller's own sentence names.
-func doctorNodeMode(lc *localcfg.Config, p *projectpolicy.Policy) string {
-	if p == nil || p.Budget.Mode == "" {
-		return lc.BudgetMode()
-	}
-	return p.Budget.Mode
 }
 
 // doctorCanonicalRepos are the repositories this machine's project config
@@ -3172,11 +3301,20 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) 
 		// registration-generation marker already has those fields and only the
 		// four day-counter leaves a stage report writes per model are new to it,
 		// a spend-leaves-generation marker already has those leaves and only the
-		// paired device's read of a run's outcome is new to it, and an
+		// paired device's read of a run's outcome is new to it, an
 		// outcome-generation marker already has that read and only the credential
-		// route a run reads is new to it (workspace-service task WS22).
+		// route a run reads is new to it (workspace-service task WS22), and a
+		// route-generation marker already has that route and only the phone's
+		// stop request and the launch envelope are new to it (mobile plan task
+		// P5.1g), and a launch-generation marker already has those two and only
+		// the tag a signing device carries and the typed launch it sends are new
+		// to it (mobile identity-pairing task J5r).
 		adds := "the mailbox, the device binding and the coordinator's read grant"
 		switch {
+		case gen >= rulesLaunchGeneration:
+			adds = "the device's signature and the typed launch"
+		case gen >= rulesRouteGeneration:
+			adds = "the phone's stop request and the launch envelope"
 		case gen >= rulesOutcomeGeneration:
 			adds = "the credential route a run reads"
 		case gen >= rulesSpendLeavesGeneration:

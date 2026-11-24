@@ -317,14 +317,50 @@ const (
 // three `mobile_allow.*` leaf rows and no row for the block, so the block is
 // admitted by its own name and the row an entry write is about is built from its
 // leaves rather than counted here.
-// LP0 of docs/location-preference/ is the last mover, by four rows and by none:
+//
+// LP0 of docs/location-preference/ moved it by four rows and by none:
 // the local project config gains the `locations` block, the record of where this
 // machine read the installation's Firestore database, its Realtime Database, the
 // replication of its secret containers and its run-log bucket to be (D3087), and
 // it is one machine's own — never published, never an input — so no name and no
 // prefix in the allowlist reaches any of its four rows.
+//
+// C1 of docs/batch-run-identity/ moved it after that, by three rows and by none:
+// the `batch:` block gains its two identity facts — the opt-in fact
+// (`batch.opt_in`) and the key fact, which is one fact in two fields
+// (`batch.seal_key.version`, `batch.seal_key.public_key`, R13) — each owned by
+// `fugaro update` and by no settings command, because they are the
+// installation's facts and not a machine's preference. No name in the allowlist
+// and no prefix of it reaches the three, so the rows without a generic writer
+// move by the three.
+//
+// KS19 of docs/keys-through-service/ is the last mover after it, by two rows and by
+// none: the record `fugaro update` writes on a repository's entry gains R12's
+// two facts beside the switch it already carries
+// (`repos.*.provider_keys_served`, `repos.*.stage_account_served`), and they
+// are the same family as that switch — the `project` one, whose writer is
+// `fugaro update` and never the generic path — so the allowlist reaches
+// neither of them and the rows without a generic writer move by the two.
+//
+// LV3.1 of docs/rigor-modes/ is the last mover after them, and the first mover this
+// paragraph records whose rows are mostly the generic path's: the project
+// layer's per-repository levels (LD4, LF4) are `rigor.repos` in the block's own
+// spelling — a row config.Scopes derives, whose handful of other rows all carry
+// InRepo and this one does not, so its owner is the layer file's token rather
+// than the generic writer's — beside the layer's `defaults.rigor.repos` row and
+// the two rows an area rule's members are (LF4). The three layer rows are
+// reached by the `layer.defaults.` prefix and the block's own is not carried, so
+// four rows and three of them move the allowlist's figure.
+//
+// RT2 of docs/model-credentials-routing/ is the last mover after it, by six rows
+// and by none: the project's routing table is the local config's own block, one
+// row per entry (`model_routing.*.match`, `model_routing.*.chain.*.kind`, and
+// the three members a kind may or may not use beside the `admit` list), and its
+// writer is the converge — `fugaro update`'s migration writes a project's first
+// table (MG2) and `fugaro routing set` edits one after that (RT5) — so neither a
+// name in the allowlist nor a prefix of it reaches a row of it.
 const (
-	cfmRegistryRows   = 517
+	cfmRegistryRows   = 536
 	cfmAllowlistNamed = 121
 )
 
@@ -592,6 +628,11 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 // the local config's own `bitbucket_tokens.*` block is the machine's file, one
 // row per member of a typed Bitbucket token's record, and no name or prefix in
 // the allowlist reaches it.
+//
+// WS19 of docs/workspace-service/ is the last mover, by one row and by none:
+// the owner's shared list gains `workspace_shared.*.all_members`, written by
+// `fugaro workspace share --all-members` and by no name or prefix in the
+// allowlist (the whole block is the `workspace` family's, D853).
 //
 // It counts through the same predicate the write path uses, so the test and the
 // command cannot disagree about what "the allowlist carries" means: the three

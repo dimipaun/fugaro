@@ -77,7 +77,7 @@ func (c *Config) SHA256() string {
 }
 
 // Resolve is a repository's fugaro.yaml resolved over the project layer l
-// and Fugaro's defaults (docs/design/layered-config.md §4): for every key,
+// and Fugaro's defaults (docs/layered-config/spec.md §4): for every key,
 // the repository's value, else its workflow's profile's, else the project
 // layer's defaults', else Fugaro's default. Maps merge key by key; a
 // scalar or a list is replaced whole; null is "not set here". A nil l is
@@ -118,6 +118,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		repo.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
 		repo.RepoPlanningSet = setsPlanning(tree)
 		repo.RepoStopFractionSet = setsStopFraction(tree)
+		repo.RepoWorkspaceBeatSet = setsWorkspaceBeat(tree)
 		repo.RepoTriageSet = setsTriage(tree)
 		repo.RepoReviewAgainstTaskSet = setsReviewAgainstTask(tree)
 		repo.RepoModelGradesSet = setsModelGrades(tree)
@@ -140,6 +141,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	top := maps1(tree)
 	delete(top, "workflows")
 	overlay(merged, top, "", SourceRepo, res.Sources)
+	dropLayerRigorRepos(merged, res.Sources)
 	wfs, profileOf, ps := resolveWorkflows(tree, repo, l, res.Sources)
 	if len(ps) > 0 {
 		return nil, nil, ps
@@ -176,6 +178,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	c.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
 	c.RepoPlanningSet = setsPlanning(tree)
 	c.RepoStopFractionSet = setsStopFraction(tree)
+	c.RepoWorkspaceBeatSet = setsWorkspaceBeat(tree)
 	c.RepoTriageSet = setsTriage(tree)
 	c.RepoReviewAgainstTaskSet = setsReviewAgainstTask(tree)
 	c.RepoModelGradesSet = setsModelGrades(tree)
@@ -428,6 +431,27 @@ func dropSources(sources map[string]string, path string) {
 	}
 }
 
+// dropLayerRigorRepos removes defaults.rigor.repos from the document the merged
+// config is decoded from. The map is the project layer's alone (LD4): it names
+// the level each repository of the project runs at, and a repository's own file
+// cannot write it — Rigor.UnmarshalYAML refuses a key that is not default or
+// areas — so the key has no repository half to merge with and, left in the
+// merged block, the strict decode below refuses it ("field repos not found in
+// type config.Rigor") and every repository of the project stops resolving. The
+// layer keeps the map, and ProjectRigor reads it there.
+func dropLayerRigorRepos(merged map[string]any, sources map[string]string) {
+	r, ok := merged["rigor"].(map[string]any)
+	if !ok {
+		return
+	}
+	if _, ok := r["repos"]; !ok {
+		return
+	}
+	delete(r, "repos")
+	delete(sources, "rigor.repos")
+	dropSources(sources, "rigor.repos")
+}
+
 // markLeaves records source for every leaf of v under path.
 func markLeaves(v any, path, source string, sources map[string]string) {
 	if m, ok := v.(map[string]any); ok {
@@ -481,10 +505,37 @@ func setsRigorScalar(tree map[string]any) bool {
 // rigorAreaLevelWritten is whether a decoded rigor: value writes the `level:`
 // key of one of its area rules: the shared walk behind setsRigorLevel and
 // ProjectLayer.SetsRigorLevel, which read it out of a repository's tree and a
-// layer's respectively. The rules are a mapping's value in this tree only when
-// the whole rigor: block is one, so the list arrives as the node Resolve keeps
-// it as (nodeTree's answer for a sequence) and is walked as nodes.
+// layer's respectively.
 func rigorAreaLevelWritten(node any) bool {
+	return rigorAreaKeyWritten(node, "level")
+}
+
+// rigorMembersWritten is whether a decoded rigor: value writes what LD4 adds
+// to the project layer's rigor block: a `members:` key of one of its area
+// rules, or the per-repository `repos:` map beside them. It is what
+// ProjectLayer.SetsRigorMembers answers, and both keys are the project
+// layer's alone — a repository's own file knows no repos: and refuses members:
+// on a rule of its own (rigor.Area.Validate) — so a runner older than
+// rigorMembersSince (internal/cli) refuses either as something its KnownFields
+// decoder does not know, in the layer it decodes at bootstrap, for every
+// repository of the project at once.
+func rigorMembersWritten(node any) bool {
+	m, ok := node.(map[string]any)
+	if !ok {
+		return false
+	}
+	if _, ok := m["repos"]; ok {
+		return true
+	}
+	return rigorAreaKeyWritten(node, "members")
+}
+
+// rigorAreaKeyWritten is whether a decoded rigor: value writes key as a key of
+// one of its area rules, at any value. The rules are a mapping's value in this
+// tree only when the whole rigor: block is one, so the list arrives as the node
+// Resolve keeps it as (nodeTree's answer for a sequence) and is walked as
+// nodes.
+func rigorAreaKeyWritten(node any, key string) bool {
 	m, ok := node.(map[string]any)
 	if !ok {
 		return false
@@ -498,7 +549,7 @@ func rigorAreaLevelWritten(node any) bool {
 			continue
 		}
 		for i := 0; i+1 < len(rule.Content); i += 2 {
-			if rule.Content[i].Value == "level" {
+			if rule.Content[i].Value == key {
 				return true
 			}
 		}
@@ -545,6 +596,23 @@ func setsStopFraction(tree map[string]any) bool {
 		return false
 	}
 	_, ok = agent["review_stop_fraction"]
+	return ok
+}
+
+// setsWorkspaceBeat is setsStopFraction for the agent.workspace_beat key:
+// whether the repository's text writes it, at any value. It reads the tree and
+// not the resolved Agent.WorkspaceBeat for the same reason — the key written
+// true, the default, resolves to the same answer as the key's absence — and
+// the gate needs the key, because a runner older than workspaceBeatSince
+// (internal/cli) decodes the file with KnownFields and refuses
+// agent.workspace_beat whatever it says. Its answer becomes
+// Config.RepoWorkspaceBeatSet.
+func setsWorkspaceBeat(tree map[string]any) bool {
+	agent, ok := tree["agent"].(map[string]any)
+	if !ok {
+		return false
+	}
+	_, ok = agent["workspace_beat"]
 	return ok
 }
 

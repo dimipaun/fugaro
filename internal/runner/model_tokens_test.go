@@ -280,37 +280,10 @@ func TestRunFillsModelTokensMixedRunIsTheGatewayOnly(t *testing.T) {
 	}
 }
 
-// TestRunFillsModelTokensNoGatewayAPIKey (G1.2, F8): an api-key run whose
-// budget mode is off has no gateway either, and its counts come from the same
-// place: the agent's own per-model usage, stage by stage, so a two-stage run's
-// second model is added beside the first rather than replacing it.
-func TestRunFillsModelTokensNoGatewayAPIKey(t *testing.T) {
-	g := newGW(t, gwRolesConfig(t), "off", "")
-	rec, err := g.run(t,
-		withUsage(implement("feature"), agent.Usage{},
-			map[string]agent.Usage{sonnet: {Input: 1000, CacheCreation: 700, CacheRead: 250, Output: 300}}),
-		withUsage(review("ship", 0), agent.Usage{},
-			map[string]agent.Usage{opus: {Input: 2000, Output: 800}}))
-	if err != nil || rec.Status != runstore.StatusSucceeded {
-		t.Fatalf("rec = %+v, err = %v", rec, err)
-	}
-	if rec.Cost == nil {
-		t.Fatal("the run recorded no cost")
-	}
-	if rec.Cost.ModelBasis != runstore.BasisAPIList {
-		t.Fatalf("model_basis = %q, want the list-price basis", rec.Cost.ModelBasis)
-	}
-	want := map[string]runstore.ModelTokenCounts{
-		sonnet: {Input: 1000, Output: 300, CacheRead: 250, CacheWrite5m: 700},
-		opus:   {Input: 2000, Output: 800},
-	}
-	got := rec.Cost.ModelTokens
-	if len(got) != len(want) {
-		t.Fatalf("model_tokens = %+v, want both stages' models (%+v)", got, want)
-	}
-	for model, w := range want {
-		if got[model] != w {
-			t.Errorf("model_tokens[%q] = %+v, want %+v", model, got[model], w)
-		}
-	}
-}
+// TestRunFillsModelTokensNoGatewayAPIKey is gone with the state it named
+// (AB1b, D3009, F15): an api-key run has a gateway in every mode, so "an
+// api-key run with the budget off" is not a run that exists, and the arm it
+// tested — the agent's own per-model usage, stage by stage — is
+// TestRunFillsModelTokensSubscription's now, on the one credential that still
+// reaches Anthropic with no gateway (oauth, D3026, R12). The gateway's ledger
+// arm above is unchanged.

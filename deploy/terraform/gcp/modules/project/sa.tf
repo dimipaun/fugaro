@@ -23,7 +23,7 @@ resource "google_service_account_iam_member" "operator" {
 # This is a widening of the 0.7.0 property that a job account's objects are
 # its own repository's: one project job serves every repository admitted to
 # its profile, so the object it writes is no longer inside one repository's
-# prefix. SECURITY.md and docs/design/bucket-iam.md state the regression in
+# prefix. SECURITY.md and docs/bucket-iam/spec.md state the regression in
 # full (D4), including another queued run's budget token (D13, accepted
 # 2026-10-15) and another run's launch.json/result.json (task 3.4). Every
 # project job gets this same condition whatever its profile, so a profile
@@ -79,6 +79,82 @@ resource "google_storage_bucket_iam_member" "job_tokens" {
   }
 }
 
+locals {
+  # The classes of secret the credentials service SERVES to a shared project
+  # job (B5.7, the S5 flip; D505, D2078): a class named here is served, so a
+  # switched profile's job mounts none of that class's credentials — the
+  # accessor below and the mount in job.tf go together, because a mount the
+  # job's account keeps no accessor on is a job Cloud Run refuses to create
+  # (C2.3) — and the run's own calls are the service's for this profile's
+  # repositories (B5.1, B5.2).
+  #
+  # The one member is config.SharedJobClassModel, and this literal is held to
+  # config.SharedJobServedClasses by deploy/terraform's
+  # TestSharedJobServedClassesMatchTheModule, the way the module's other flip
+  # lists are held to theirs: Terraform cannot ask Go.
+  #
+  # The empty list is the inert state and the first of the flip's two commits:
+  # with it empty local.is_shared_job_served_model is false for every mount, so
+  # this file and job.tf plan exactly what they planned before they knew about
+  # a served class (D147). Filled, what it moves is the model mounts of a
+  # profile the switch serves and nothing else — an unswitched profile keeps
+  # every accessor and every mount, before and after (G9, G17).
+  #
+  # The GitHub App's key is deliberately not a class here: its drop is
+  # config.ServiceHeldSecretNames' own flip (#907, C2.3), and a shared job that
+  # gave the key up before the runner stopped reading it would fail every
+  # GitHub run it starts (G22). A provider's key is not dropped either, though
+  # the class is filled whole: its drop waits for the service to serve one, and
+  # that is the keys-through-service plan's KS16 (see model_secret_env_names
+  # below).
+  shared_job_served_secret_classes = ["model"]
+
+  # The model credentials the class's drop reaches, identified the way
+  # internal/config identifies them (config.ModelSecretEnvs): the two reserved
+  # variables, so a mount is one of them exactly when its VARIABLE is — and a
+  # provider's key is NOT here, because nothing serves one yet, so its drop is
+  # the keys-through-service plan's KS16 (config.IsSharedJobServedModelEnv, R6,
+  # D1634). A provider's key would need the namespace rather than a name
+  # (config.ProviderKeyEnvPrefix), which is why this list is variables where
+  # the class list above is class names.
+  model_secret_env_names = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
+
+  # One entry per mount: this mount is a model credential the credentials
+  # service serves, exactly when the class list carries "model" AND the
+  # profile's own switch is on. Both halves are needed — the list alone would
+  # take the credential from a profile the service does not serve, the switch
+  # alone from a profile whose class is not filled yet — and both clauses below
+  # read this one local, so the accessor and the mount cannot drift apart.
+  is_shared_job_served_model = {
+    for env, logical in var.job.secret_env :
+    env => var.job.credentials_service != null && contains(local.shared_job_served_secret_classes, "model") && contains(local.model_secret_env_names, env)
+  }
+
+  # The secrets the job's account may still read, by logical name: every mount
+  # while the credentials service is off — D147's "with it off nothing
+  # changes", and the same set this module granted before it knew about the
+  # service — and, once it is on, every mount except those two.
+  # toset, not the list of mounts: two variables may mount the same logical
+  # name, and a repeated name in a for_each is an error rather than a second
+  # binding.
+  job_secret_names = toset([
+    for env, logical in var.job.secret_env :
+    logical if !local.is_shared_job_served_model[env]
+  ])
+
+  # The secrets the job's CONTAINER still declares, by the variable each is
+  # mounted as: the same set, read where the mount is declared (job.tf). Go's
+  # internal/infra drops the same entries from the spec this module's tfvars
+  # are generated from (projectJobMounts), which is the drop that fires in
+  # practice; this local is the rule written down where the accessor is
+  # decided, so a tfvars that still names a served model credential cannot be
+  # applied into a job with no way to read it.
+  job_mounts = {
+    for env, logical in var.job.secret_env :
+    env => logical if !local.is_shared_job_served_model[env]
+  }
+}
+
 # Each project-wide secret the profile mounts, at the secret level, never the
 # project's. The value is the logical name, so the grant waits for the
 # container the installation module creates or adopts.
@@ -90,8 +166,12 @@ resource "google_storage_bucket_iam_member" "job_tokens" {
 # — RUN 2026-10-16, the condition *is* honoured for
 # secretmanager.versions.access — so the prefix form is expressible and
 # nothing here depends on it either way.
+#
+# The set is local.job_secret_names and not the job's own mounts, so a model
+# credential a profile the service serves gives up leaves this account's
+# accessor with its mount (B5.7, C2.3).
 resource "google_secret_manager_secret_iam_member" "job" {
-  for_each = toset(values(var.job.secret_env))
+  for_each = local.job_secret_names
 
   project   = var.project
   secret_id = var.secrets[each.value]

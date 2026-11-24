@@ -37,9 +37,10 @@
 #   * the published policy (`fugaro project policy show --json`): it carries NO
 #     profiles block (the project is the profile-less one the plan names, and it is
 #     what makes the run below an answer about the implicit review job), it admits
-#     the repository to the project, its budget mode is not `off` (the gateway is
-#     the only route to the credentials service, and it exists only in observe and
-#     enforce), and its `accounts` block does or does not admit the default account
+#     the repository to the project, its budget mode is one the gateway exists in
+#     (`observe` or `enforce` — off is not a mode any more, D3009: the gateway is
+#     the only route to the credentials service), and its `accounts` block does or
+#     does not admit the default account
 #     to this repository — which is U2, the row below;
 #   * the installation's jobs, read back with `gcloud run jobs list` BEFORE
 #     anything is launched: the implicit review-only job is deployed
@@ -1081,13 +1082,8 @@ step_policy() {
   local mode
   mode=$(field "$SCRATCH/policy.txt" mode)
   case "$mode" in
-  off)
-    fact policy FAIL "the published policy of ${INSTALL} admits ${REPO} with no profiles block and the budget mode is 'off': the gateway is what reaches the credentials service and it exists only in observe and enforce (D2071, GatewayOn), while a review-only job mounts NO secret — its read-only installation token and its reviewer's model calls both come from the service — so a review launched now would stop with no path to a credential. Raise the mode ('fugaro project policy publish', observe or enforce) and run this check again"
-    POLICY_STOP=yes
-    return 0
-    ;;
   - | '')
-    unmeasured policy "${REPO} is admitted with no profiles block and the policy document carries no budget mode (it reads '${mode:-<none>}'), so a mode that is not off is NOT measured: a mode the document does not carry is not a mode that is not off, and the review job's only route to a credential turns on it. Publish the project policy so it carries one ('fugaro project policy publish', observe or enforce) and run this check again"
+    unmeasured policy "${REPO} is admitted with no profiles block and the policy document carries no budget mode (it reads '${mode:-<none>}'), so whether the gateway exists for a review of this repository is NOT measured: the gateway exists in observe and enforce (D2071, GatewayOn), and a mode the document does not carry is neither, while the review job's only route to a credential turns on it. Publish the project policy so it carries one ('fugaro project policy publish', observe or enforce) and run this check again"
     POLICY_STOP=yes
     return 0
     ;;

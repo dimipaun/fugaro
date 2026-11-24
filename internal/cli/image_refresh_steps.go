@@ -291,7 +291,7 @@ func (r *initRun) refreshCloneJobs(ctx context.Context, p *refreshPlan, t *refre
 	owner := infra.CheckJobOwner{Repo: t.spec.Name, Label: t.spec.Label}
 	// Every job of a clone workflow is moved, not only the default
 	// account's: with named Claude accounts (gcp.WorkflowVariant, design
-	// docs/design/named-oauth-tokens.md §4) one fugaro.yaml workflow has a
+	// docs/named-oauth-tokens/spec.md §4) one fugaro.yaml workflow has a
 	// job per account, each labelled with its own variant key and each
 	// pinned to base_images.base itself (unlike a baked workflow's jobs,
 	// which share the derived image's :latest tag and so move together on

@@ -14,7 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
-// resolveRecipe finds the run's recipe (docs/design/recipes.md §5): the name
+// resolveRecipe finds the run's recipe (docs/recipes/spec.md §5): the name
 // from the task, else (first runs only) agent.recipe, else default; the text
 // from the repository layer at the run's base, else the task's embedded
 // copy, else the catalog. Anything wrong is an error: there is no fallback

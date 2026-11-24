@@ -3,8 +3,10 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"maps"
+	"net/http"
 	"os"
 	"reflect"
 	"slices"
@@ -16,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -55,16 +58,28 @@ func credentialSecretID(name string) string {
 // which is the state --type leaves behind — and refused in the states where
 // nothing would read what it stored. The name is reserved everywhere, so the
 // store is the one door it has, and it is the door this command re-runs.
+//
+// The declared case is a RUNNER-path credential, whose store is C1's entry in
+// the bundle since KS2 (D1670 reversed): the declaration bounds the key through
+// claude_accounts.<name>.allow_data_to, and what that field bounds is the set of
+// entries one version carries. The container this command wrote under the
+// credential's own derived name before this task is asserted absent — a key
+// entered as a container is what F33 removed.
 func TestAKeyCredentialsSecretStoresWhereItsDeclarationBoundsIt(t *testing.T) {
-	// The declared state: a key type, and an allow_data_to that names a
-	// repository.
+	// The declared state: a key type, the provider it serves — a provider key's
+	// entry carries the provider's own address and auth (F45, D1418), so the name
+	// has to name one — and an allow_data_to that names a repository.
 	sm := secretsFixture(t)
-	appendConfig(t, "credentials:\n  - { name: team-a, type: openrouter }\nclaude_accounts:\n  team-a: { allow_data_to: [acme/app] }\n")
+	appendConfig(t, providerKeyCloudProvider+"credentials:\n  - { name: team-a, type: openrouter }\nclaude_accounts:\n  team-a: { allow_data_to: [acme/app] }\n")
+	bundleID := bundleFixtureFor(t, sm, "aurora", nil)
 	if _, _, err := executeStdin(t, addToken(), "secrets", "set", config.CredentialSecret("team-a"), "--project-wide"); err != nil {
 		t.Fatalf("storing a declared key credential's own secret was refused: %v", err)
 	}
-	if got := string(sm.Latest(credentialSecretID("team-a"))); got != addToken() {
-		t.Errorf("%s holds %q, want the value the command read", credentialSecretID("team-a"), got)
+	if got := bundleEntry(t, sm, bundleID, appSlug, "team-a").Value(); got != addToken() {
+		t.Errorf("the bundle's entry for acme/app holds %q, want the value the command read: a runner-path key credential's store is the entry its declaration bounds", got)
+	}
+	if got := sm.Latest(credentialSecretID("team-a")); got != nil {
+		t.Errorf("%s holds %q: a provider key is not entered as a container any more, and nothing reads one on this path", credentialSecretID("team-a"), got)
 	}
 
 	// No credential of that name: the container would be an orphan nothing
@@ -99,79 +114,6 @@ func TestAKeyCredentialsSecretStoresWhereItsDeclarationBoundsIt(t *testing.T) {
 	_, _, err = executeStdin(t, addToken(), "secrets", "set", config.CredentialSecret("team-a"), "--repo", "acme/app")
 	if err == nil || !strings.Contains(err.Error(), "--project-wide") {
 		t.Fatalf("a repository copy of a credential's secret: err = %v", err)
-	}
-}
-
-// TestAccountsAddOpenRouterKey is MC22's red step: the type is declared, the
-// value read from stdin is stored under the credential's own derived secret
-// name, and the account's Claude token container is left without a version —
-// the credential is a key credential and not another name for the account.
-func TestAccountsAddOpenRouterKey(t *testing.T) {
-	r := newAddRig(t)
-	writes := r.secretWrites(t)
-
-	out, errOut := r.add(t, "team-a", "--repos", "owner/repo-a", "--type", "openrouter")
-
-	id := credentialSecretID("team-a")
-	if got := string(r.sm.Latest(id)); got != addToken() {
-		t.Errorf("%s holds %q, want the value the command read: a key credential's value lands under the credential's own derived secret name", id, got)
-	}
-	if got := string(r.sm.Latest(accountSecretID("team-a"))); got != "" {
-		t.Errorf("the account's Claude token container holds %q: a key credential is not the account's token, and the job mounts that name as CLAUDE_CODE_OAUTH_TOKEN", got)
-	}
-	if want := []string{id}; !slices.Equal(writes.created, want) || !slices.Equal(writes.added, want) {
-		t.Errorf("the command wrote %v (created) and %v (versions), want only %v: the credential's value is stored project-wide and nowhere else", writes.created, writes.added, want)
-	}
-	lc := r.addLocal(t)
-	if want := []config.Credential{{Name: "team-a", Type: config.CredentialTypeOpenRouter}}; !slices.Equal(lc.Credentials, want) {
-		t.Errorf("the credentials block is %v, want %v: the name is declared a credential a pool may list", lc.Credentials, want)
-	}
-	if got := lc.ClaudeAccounts["team-a"].AllowDataTo; !slices.Equal(got, []string{"owner/repo-a"}) {
-		t.Errorf("claude_accounts.team-a.allow_data_to = %v, want the repository the value may reach: the account entry is what bounds the credential's reach", got)
-	}
-	// No profile lists the name, and no job of the account's own exists for it:
-	// profiles.<p>.claude_accounts is the list that serves a Claude account
-	// TOKEN, which is what deploys the job mounting it as CLAUDE_CODE_OAUTH_TOKEN
-	// — a container this credential's value is never stored in. Listing the name
-	// there deployed a job reading an empty token, published the name into the
-	// node's accounts block as a run's account, and handed doctor a fix line no
-	// run of it could clear.
-	if slices.Contains(lc.Profiles["standard"].ClaudeAccounts, "team-a") {
-		t.Errorf("profiles.standard.claude_accounts = %v, want no team-a: a key credential is not a run's Claude account token", lc.Profiles["standard"].ClaudeAccounts)
-	}
-	jobs := r.projectJobs(t)
-	if _, ok := jobs[gcp.ProjectJobName("standard", "github", "team-a")]; ok {
-		t.Errorf("the job set carries a job for the key credential: jobs = %v", slices.Sorted(maps.Keys(jobs)))
-	}
-	for jobName, j := range jobs {
-		for _, mounted := range j.SecretEnv {
-			if mounted == config.ClaudeAccountSecret("team-a") {
-				t.Errorf("job %s mounts %s, which nothing writes for a key credential: its value is %s", jobName, mounted, config.CredentialSecret("team-a"))
-			}
-		}
-	}
-	if !strings.Contains(out+errOut, "no job: a key credential rides no job of its own") {
-		t.Errorf("the command does not say that no job was deployed for it:\n%s\n%s", out, errOut)
-	}
-	// The confirmation and the block speak the key credential's words and not
-	// the account's (accountsAddWhat): the name is served by no profile, so
-	// "no profile serves it yet" would describe a state the command just left
-	// behind on purpose, and what a run beyond this checkout may reach is the
-	// key — a run cannot print a token nothing holds.
-	shown := out + errOut
-	for _, wrong := range []string{"no profile serves it yet", "print team-a's token", "fugaro run --token"} {
-		if strings.Contains(shown, wrong) {
-			t.Errorf("the command's answer uses the account's word %q for a key credential:\n%s", wrong, shown)
-		}
-	}
-	if !strings.Contains(shown, "can have that run use team-a's key") {
-		t.Errorf("the command does not say what the reach beyond this checkout means for a key:\n%s", shown)
-	}
-	if read := readFileString(t, r.cfg); strings.Contains(read, addToken()) {
-		t.Errorf("the local config carries the value:\n%s", read)
-	}
-	if strings.Contains(shown, addToken()) {
-		t.Errorf("the command printed the value:\n%s", shown)
 	}
 }
 
@@ -484,7 +426,8 @@ func TestKeyValueNeverFromArgvOrEnv(t *testing.T) {
 // `fugaro secrets set` reads with, named for the secret it is stored under —
 // and the terminal does not show what was typed.
 func TestKeyValueAtTheHiddenPromptIsNotEchoed(t *testing.T) {
-	r := newAddRig(t)
+	r := providerKeyRig(t, providerKeyLocal)
+	bundleID := bundleFixtureFor(t, r.sm, "aurora", nil)
 	tty := newTTY(t)
 
 	done := runOnTerminal(t, tty, "accounts", "add", "team-a", "--repos", "owner/repo-a", "--type", "openrouter")
@@ -504,8 +447,8 @@ func TestKeyValueAtTheHiddenPromptIsNotEchoed(t *testing.T) {
 	if strings.Contains(tty.displayed(), addToken()) {
 		t.Errorf("the terminal shows the pasted value, so the hidden prompt echoed it:\n%s", tty.displayed())
 	}
-	if got := string(r.sm.Latest(credentialSecretID("team-a"))); got != addToken() {
-		t.Errorf("the credential's container holds %q, want the value pasted at the hidden prompt", got)
+	if got := bundleEntry(t, r.sm, bundleID, mustSlug("github", "owner/repo-a"), "team-a").Value(); got != addToken() {
+		t.Errorf("the bundle's entry holds %q, want the value pasted at the hidden prompt: the value reaches the entry and no terminal", got)
 	}
 }
 
@@ -565,23 +508,29 @@ repos:
 // store the key under the ACCOUNT's own claude-oauth-token-<name>, the
 // container a shared project job mounts as CLAUDE_CODE_OAUTH_TOKEN
 // (infra/projectjobs.go): the account would be handed a key where its token
-// belongs. So the container is the credential's, whatever this run's flag said,
-// and the file it does not retype is the owner's.
+// belongs. So the store is the key credential's own, whatever this run's flag
+// said, and the file it does not retype is the owner's.
+//
+// The key credential's own store is C1's entry in the bundle since KS2
+// (D1670 reversed): the entry is the credential's, named after the credential's
+// own allow_data_to, and the container the credential's derived name is the
+// container OF is written by nobody (F33).
 func TestARerunWithoutTypeWritesOnlyTheCredentialsOwnSecret(t *testing.T) {
-	r := newAddRigWith(t, accountsAddKeyCredentialLocal)
+	r := providerKeyRig(t, providerKeyLocal)
+	bundleID := bundleFixtureFor(t, r.sm, "aurora", nil)
 	writes := r.secretWrites(t)
 
 	out, errOut := r.add(t, "team-a", "--repos", "owner/repo-a")
 
-	id := credentialSecretID("team-a")
-	if got := string(r.sm.Latest(id)); got != addToken() {
-		t.Errorf("%s holds %q, want the value the command read: the re-run stores the key where the credential's type says its key lives", id, got)
+	entry := bundleEntry(t, r.sm, bundleID, mustSlug("github", "owner/repo-a"), "team-a")
+	if entry.Value() != addToken() {
+		t.Errorf("the bundle's entry holds %q, want the value the command read: the re-run stores the key where the credential's type says its key lives", entry.Value())
 	}
-	if got := string(r.sm.Latest(accountSecretID("team-a"))); got != "" {
+	if got := r.sm.Latest(accountSecretID("team-a")); got != nil {
 		t.Errorf("the account's Claude token container holds %q: a re-run without --type stored a KEY under the name the job mounts as CLAUDE_CODE_OAUTH_TOKEN", got)
 	}
-	if want := []string{id}; !slices.Equal(writes.created, want) || !slices.Equal(writes.added, want) {
-		t.Errorf("the re-run wrote %v (created) and %v (versions), want only %v", writes.created, writes.added, want)
+	if want := []string{credsvc.BundleSecretID("aurora")}; len(writes.created) != 0 || !slices.Equal(writes.added, want) {
+		t.Errorf("the re-run wrote %v (created) and %v (versions), want no container created and one version of %v", writes.created, writes.added, want)
 	}
 	if shown := out + errOut; strings.Contains(shown, config.ClaudeAccountSecret("team-a")) {
 		t.Errorf("the report names %s, the container the value did not land in:\n%s", config.ClaudeAccountSecret("team-a"), shown)
@@ -602,10 +551,21 @@ func TestARerunWithoutTypeWritesOnlyTheCredentialsOwnSecret(t *testing.T) {
 // credentials.<name> beside it, and printed the account gone from an
 // installation it was still in — the one state this command's own contract may
 // not leave behind.
+//
+// The container the fixture seeds is the state an installation that stored the
+// key before this task is in: since KS2 the writers enter the key in the
+// bundle's entries and write no container of the credential's own, and the
+// delete still has to take the container away wherever one is, which is what
+// this test is about. What this task does NOT do is remove the bundle's
+// entries: `accounts rm` is a deleter and its file is not one of KS2's, so a
+// credential removed here can leave C1's entries behind, and the release that
+// retires the containers (KS13-KS16's half) is where that has to land.
 func TestAccountsRmTakesAKeyCredentialsOwnContainer(t *testing.T) {
-	r := newAddRigWith(t, accountsAddKeyCredentialLocal)
+	r := providerKeyRig(t, providerKeyLocal)
+	bundleFixtureFor(t, r.sm, "aurora", nil)
 	r.add(t, "team-a", "--repos", "owner/repo-a")
 	id := credentialSecretID("team-a")
+	r.sm.Seed(id, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: "aurora", gcp.LabelSecret: config.CredentialSecret("team-a")}, []byte(addToken()))
 	if r.sm.Latest(id) == nil {
 		t.Fatalf("the fixture's %s holds no value, so the delete has nothing to take away", id)
 	}
@@ -731,17 +691,40 @@ func keyCredentialMounts(t *testing.T, lc *localcfg.Config, repo string) []infra
 	return mounts
 }
 
-// TestKeyCredentialReachesItsServingHalf is MC23's red step (D1670): the value
-// of a key credential reaches the HALF of a run that serves its type, and never
-// the other one. config.CredentialServingPath answers which half a type is on,
-// and the two halves are two documents the value has to be in: the bundle the
-// credentials service reads (one model entry per credential, at the tier the
-// service offers it by) and the job's own mounts, which internal/infra builds
-// from the installation's config.
+// keyCredentialProviderLocal is the runner-path half of the test below: the
+// provider a runner-path key credential is paired with — named after the
+// credential it serves, which is the pairing internal/infra's runnerKeyCredential
+// reads (config.CredentialSecret(provider) is the credential's derived name) —
+// its own secret under the conventional spelling, and the account bound to the
+// cloud fixture's one repository.
+const keyCredentialProviderLocal = `providers:
+  team-or:
+    kind: anthropic-compat
+    base_url: ` + providerKeyBaseURL + `
+    auth: bearer
+    secret: team-or-key
+    models: ["deepseek/*"]
+    allow_data_to: [acme/app]
+credentials:
+  - { name: team-or, type: openrouter }
+claude_accounts:
+  team-or: { allow_data_to: [acme/app] }
+`
+
+// TestKeyCredentialReachesItsServingHalf is MC23's red step (D1670) as KS2
+// leaves it. The value of a key credential reaches the half of a run that
+// serves its type, and the two halves are two documents: the bundle the
+// credentials service reads — one MODEL entry per credential for a
+// service-served type, at the tier the service offers it by, and one C1 entry
+// per repository for a runner-path type (D1670 reversed) — and the job's own
+// mounts, which internal/infra builds from the installation's config.
 //
-// After MC22 alone both halves are empty: the declaration exists and the value
-// is stored under the credential's own derived secret name, and nothing reads
-// that container on either path.
+// The mounts are the release-A leftover KS2 did not touch: a repository whose
+// config still pairs a provider with a key credential gets the credential's own
+// container mounted, and since KS2 no writer gives that container a version —
+// dropping the mount is the release that retires the containers (KS13-KS16,
+// D3012). The assertion below is internal/infra's rule read as it is, so the
+// task that drops the mounts is the one that changes it.
 func TestKeyCredentialReachesItsServingHalf(t *testing.T) {
 	t.Run("a service-served credential is a model entry of the bundle", func(t *testing.T) {
 		// The skew fake with nothing deployed and no pin: this installation has
@@ -783,30 +766,35 @@ func TestKeyCredentialReachesItsServingHalf(t *testing.T) {
 		}
 	})
 
-	t.Run("a runner-path credential is in the job's mounts and not in the bundle", func(t *testing.T) {
-		f := credsFixtureFor(t)
-		appendConfig(t, "credentials:\n  - { name: team-or, type: openrouter }\nclaude_accounts:\n  team-or: { allow_data_to: [acme/app] }\n")
+	t.Run("a runner-path credential is entered in the bundle", func(t *testing.T) {
+		// The skew fake with nothing deployed and no pin: this installation has
+		// no credentials service yet, which is the state the entry is written in
+		// (the guard's own test is what an OLDER deployed service answers).
+		skew := newRunServiceSkew(t)
+		f, _ := credsSkewFixture(t, "none", skew)
+		appendConfig(t, keyCredentialProviderLocal)
 		f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "existing")+"\n"))
-		before := f.value(t)
 		value := credsValue(t, "keycred")
 
-		// The bundle is refused: this type's half is the job's own mounts, and
-		// an entry here would be a copy no call of it ever reads.
+		// The bundle takes it: this type's key is the key of the provider the
+		// credential is named after, and C1's entry is where a routed call is
+		// served from since KS2 (D1670 reversed).
 		out, errOut, err := executeStdin(t, value+"\n", "creds", "set", config.CredentialSecret("team-or"))
-		if err == nil || ExitCode(err) != ExitUserError {
-			t.Fatalf("the bundle took a runner-path credential's key: err = %v", err)
+		if err != nil {
+			t.Fatalf("the bundle refused a runner-path credential's key: %v\n%s", err, errOut)
 		}
-		if !strings.Contains(err.Error(), "the runner path serves that type") {
-			t.Errorf("the refusal does not name the half that serves it: %v", err)
+		entry := bundleEntry(t, f.Secrets, f.id, appSlug, "team-or")
+		if entry.Value() != value {
+			t.Errorf("the entry for acme/app holds %q, want the value this write read", entry.Value())
 		}
-		if n := f.writes(); n != 0 {
-			t.Errorf("%d version(s) written, want none", n)
+		if entry.BaseURL != providerKeyBaseURL || entry.Auth != "bearer" {
+			t.Errorf("the entry carries base_url %q and auth %q, want the provider's own facts (F45, D1418)", entry.BaseURL, entry.Auth)
 		}
-		if got := f.value(t); got != before {
-			t.Errorf("the refused write changed the document: %q", got)
+		if doc := f.value(t); !strings.Contains(doc, credsValue(t, "existing")) {
+			t.Errorf("the write dropped the entry the document already held:\n%s", doc)
 		}
-		if leak := out + errOut + err.Error(); strings.Contains(leak, value) {
-			t.Errorf("the refusal echoed the value: %q", leak)
+		if leak := out + errOut; strings.Contains(leak, value) {
+			t.Errorf("the write's own output echoed the value: %q", leak)
 		}
 
 		lc := &localcfg.Config{
@@ -822,7 +810,7 @@ func TestKeyCredentialReachesItsServingHalf(t *testing.T) {
 		}
 		want := infra.SecretMount{Logical: config.CredentialSecret("team-or"), Env: lc.Providers["team-or"].SecretEnv()}
 		if got := keyCredentialMounts(t, lc, "acme/app"); !slices.Contains(got, want) {
-			t.Errorf("the job's mounts are %v, want %v among them: the credential's own container is what the job that spends it mounts", got, want)
+			t.Errorf("the job's mounts are %v, want %v among them: this is internal/infra's own rule and the release-A mount KS2 left in place, not the half a key is entered by", got, want)
 		}
 		// The credential's own bound decides as well: a repository
 		// claude_accounts.team-or.allow_data_to does not name gets the
@@ -1292,6 +1280,581 @@ func TestAccountsLsNamesTheServingPathBesideTheStates(t *testing.T) {
 		}
 		if name == "acme-key" {
 			t.Fatalf("the credential is listed as an account with a state:\n%s", out)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// KS2: every writer of a provider key writes the bundle.
+//
+// A provider key has THREE writers (F27) — `fugaro creds set
+// credential-<name>-key`, `fugaro accounts add --type openrouter` and `fugaro
+// secrets set` of a provider's own secret (at repository scope and
+// project-wide) — and since KS2 (D1670 reversed by D2975, R2) all three write
+// the same thing: C1's entries repo-credential--<slug>--<credential> in the
+// credentials service's bundle, one per repository the key is bound to, all of
+// them in ONE version (O8, D3008), and no container of the credential's own
+// (F33). The provider whose address and auth the entry carries must be declared
+// (F45, D1418), and the write is a project owner's (D3006, F36).
+//
+// What the tests below are about is the three writers agreeing: the same entry
+// name, the same value, the same list, the same guard and the same owner. A
+// second implementation of "where does a provider key go" is what this section
+// exists to fail.
+
+// providerKeyBaseURL is the address the fixture's provider is declared with:
+// deliberately not a provider the tree knows, so an assertion that reads it out
+// of an entry is reading what the CONFIG said.
+const providerKeyBaseURL = "https://openrouter.example/api/v1"
+
+// providerKeyProviderLocal is the provider a runner-path key credential needs,
+// its own secret, the credential itself, and the one account — all bound to the
+// rig's single repository. The provider's secret is the conventional name
+// (<name>-api-key), which is the spelling `fugaro secrets set` stores a
+// provider's key under.
+const providerKeyProviderLocal = `providers:
+  team-a:
+    kind: anthropic-compat
+    base_url: ` + providerKeyBaseURL + `
+    auth: bearer
+    secret: team-a-api-key
+    models: ["deepseek/*"]
+    allow_data_to: [owner/repo-a]
+credentials:
+  - { name: team-a, type: openrouter }
+claude_accounts:
+  team-a:
+    allow_data_to:
+      - owner/repo-a
+`
+
+// providerKeyLocal is that block over the rig's own repository.
+const providerKeyLocal = addRigLocal + providerKeyProviderLocal
+
+// providerKeyTwoReposLocal is the same world with the credential, the provider
+// and the account bound to TWO repositories: one command names several, and the
+// several entries have to travel in one version (O8, D3008) — a version holding
+// a shared key for some of its repositories is a key that serves a run on some
+// of them and not on others.
+const providerKeyTwoReposLocal = addRigLocal + `  owner/repo-b: { provider: github, github_app_id: "12345", workflows: [web] }
+providers:
+  team-a:
+    kind: anthropic-compat
+    base_url: ` + providerKeyBaseURL + `
+    auth: bearer
+    secret: team-a-api-key
+    models: ["deepseek/*"]
+    allow_data_to: [owner/repo-a, owner/repo-b]
+credentials:
+  - { name: team-a, type: openrouter }
+claude_accounts:
+  team-a:
+    allow_data_to:
+      - owner/repo-a
+      - owner/repo-b
+`
+
+// providerKeyRig is newAddRigWith over local, with the Cloud Run endpoint
+// answering the credentials service's own read the guard makes
+// (providerKeyEndpoint) and no service deployed: what the guard then judges is
+// the installation's own pin, and this fixture has none.
+func providerKeyRig(t *testing.T, local string) *addRig {
+	t.Helper()
+	return providerKeyRigAt(t, local, "")
+}
+
+// providerKeyRigAt is providerKeyRig with the credentials service DEPLOYED and
+// serving the release rel, which is what a guard test needs: the release a
+// deployed service runs is the one read, whatever this tree's version is.
+func providerKeyRigAt(t *testing.T, local, rel string) *addRig {
+	t.Helper()
+	r := newAddRigWith(t, local)
+	skew := newRunServiceSkew(t)
+	if rel != "" {
+		skew.deployedService(credentialsImage(rel), credentialsImage(rel))
+	}
+	providerKeyEndpoint(t, r.run, skew)
+	return r
+}
+
+// providerKeyCloudProvider is the same provider over the CLOUD fixture's own
+// repository (acme/app, which is the one repository newCloudFixture's config
+// lists): the `fugaro secrets set` half of this section, where the name stored
+// under is the provider's own secret and the entry is acme/app's.
+const providerKeyCloudProvider = `providers:
+  team-a:
+    kind: anthropic-compat
+    base_url: ` + providerKeyBaseURL + `
+    auth: bearer
+    secret: team-a-api-key
+    models: ["deepseek/*"]
+    allow_data_to: [acme/app]
+`
+
+// TestCredsSetAcceptsAnOpenRouterKey is KS2's red step read the other way
+// round: `creds set credential-<name>-key` refused a RUNNER-path key
+// credential's name before this task (credsKeyCredentialHalfRefusal), and what
+// the command does now is enter the key where the credentials service serves a
+// routed call from — C1's family, one entry per repository the credential's own
+// allow_data_to names, ALL of them in one version (O8, R2, D3008) — and write
+// no container of the credential's own (F33).
+//
+// The entry carries the provider's own two routing facts and not the caller's
+// (F45, D1418), which is what the BaseURL and Auth assertions are about: the
+// person typed a key and nothing else.
+func TestCredsSetAcceptsAnOpenRouterKey(t *testing.T) {
+	r := providerKeyRig(t, providerKeyTwoReposLocal)
+	bundleID := bundleFixtureFor(t, r.sm, "aurora", nil)
+	value := addToken()
+
+	if _, errOut, err := executeStdin(t, value+"\n", "creds", "set", config.CredentialSecret("team-a")); err != nil {
+		t.Fatalf("creds set %s with a runner-path credential declared was refused: %v\n%s", config.CredentialSecret("team-a"), err, errOut)
+	}
+	for _, repo := range []string{"owner/repo-a", "owner/repo-b"} {
+		entry := bundleEntry(t, r.sm, bundleID, mustSlug("github", repo), "team-a")
+		if entry.Value() != value {
+			t.Errorf("the entry for %s holds %q, want the value the command read: a provider key IS the bundle now, and this is the second spelling of its write", repo, entry.Value())
+		}
+		if entry.BaseURL != providerKeyBaseURL || entry.Auth != "bearer" {
+			t.Errorf("the entry for %s carries base_url %q and auth %q, want the provider's own %q and bearer: the destination of a routed call is the entry's and never a caller's (F45, D1418)", repo, entry.BaseURL, entry.Auth, providerKeyBaseURL)
+		}
+		if !entry.Source.IsZero() {
+			t.Errorf("the entry for %s carries a copy's source (%+v): a value typed at a terminal was copied from no container", repo, entry.Source)
+		}
+	}
+	// One version for the two entries, and no container of the credential's own.
+	if got := r.sm.Latest(credentialSecretID("team-a")); got != nil {
+		t.Errorf("%s holds %q: a provider key is entered in the bundle since KS2 and no container of the credential's own is written (F33)", credentialSecretID("team-a"), got)
+	}
+}
+
+// TestAccountsAddOpenRouterWritesTheBundle is MC22's declaration and KS2's
+// write in one run: `accounts add --type openrouter` declares the credential
+// and enters its key in the bundle, one entry per repository the credential is
+// bound to — the list this very run wrote into claude_accounts.<name>.allow_data_to
+// — and no container of the credential's own. The account's own Claude token
+// container is left without a version either: a key credential is not another
+// name for the account (MC22's own fence, which this test inherits).
+func TestAccountsAddOpenRouterWritesTheBundle(t *testing.T) {
+	r := providerKeyRig(t, providerKeyTwoReposLocal)
+	writes := r.secretWrites(t)
+	bundleID := bundleFixtureFor(t, r.sm, "aurora", nil)
+
+	out, errOut := r.add(t, "team-a", "--repos", "owner/repo-a,owner/repo-b", "--type", "openrouter")
+	value := addToken()
+
+	for _, repo := range []string{"owner/repo-a", "owner/repo-b"} {
+		entry := bundleEntry(t, r.sm, bundleID, mustSlug("github", repo), "team-a")
+		if entry.Value() != value {
+			t.Errorf("the entry for %s holds %q, want the value the command read", repo, entry.Value())
+		}
+		if entry.BaseURL != providerKeyBaseURL || entry.Auth != "bearer" {
+			t.Errorf("the entry for %s carries base_url %q and auth %q, want the provider's own facts: providers.team-a is where the entry's destination comes from (F45, D1418)", repo, entry.BaseURL, entry.Auth)
+		}
+	}
+	// The credential's declaration and the account's reach, both written by this
+	// run and both what the entries were built from.
+	lc := r.addLocal(t)
+	if want := []config.Credential{{Name: "team-a", Type: config.CredentialTypeOpenRouter}}; !slices.Equal(lc.Credentials, want) {
+		t.Errorf("the credentials block is %v, want %v", lc.Credentials, want)
+	}
+	if got := lc.ClaudeAccounts["team-a"].AllowDataTo; !slices.Equal(got, []string{"owner/repo-a", "owner/repo-b"}) {
+		t.Errorf("claude_accounts.team-a.allow_data_to = %v, want the two repositories the entries were written for", got)
+	}
+	// Nothing was CREATED: the bundle container exists before this command
+	// (C1.18's Terraform), and a container of the credential's own is what this
+	// task removed.
+	if len(writes.created) != 0 {
+		t.Errorf("the command created %v: a provider key's write creates no container — the bundle exists before it and the credential has none of its own", writes.created)
+	}
+	if got := r.sm.Latest(credentialSecretID("team-a")); got != nil {
+		t.Errorf("%s holds %q: no container of the credential's own is written (F33)", credentialSecretID("team-a"), got)
+	}
+	if got := r.sm.Latest(accountSecretID("team-a")); got != nil {
+		t.Errorf("the account's Claude token container holds %q: a key credential is not the account's token", got)
+	}
+	if !strings.Contains(out+errOut, "no job: a key credential rides no job of its own") {
+		t.Errorf("the command does not say that no job was deployed for it:\n%s\n%s", out, errOut)
+	}
+	// No profile lists the name, so no job of the account's own exists for it:
+	// profiles.<p>.claude_accounts is the list that serves a Claude account
+	// TOKEN, which is what deploys the job mounting it as CLAUDE_CODE_OAUTH_TOKEN.
+	// The bundle entry is what carries this key now, and a job mounting an empty
+	// token container is the leftover this task's writers do not create.
+	if slices.Contains(lc.Profiles["standard"].ClaudeAccounts, "team-a") {
+		t.Errorf("profiles.standard.claude_accounts = %v, want no team-a: a key credential is not a run's Claude account token", lc.Profiles["standard"].ClaudeAccounts)
+	}
+	jobs := r.projectJobs(t)
+	if _, ok := jobs[gcp.ProjectJobName("standard", "github", "team-a")]; ok {
+		t.Errorf("the job set carries a job for the key credential: jobs = %v", slices.Sorted(maps.Keys(jobs)))
+	}
+	for jobName, j := range jobs {
+		for _, mounted := range j.SecretEnv {
+			if mounted == config.ClaudeAccountSecret("team-a") {
+				t.Errorf("job %s mounts %s, which nothing writes for a key credential: its key is the bundle's entry now", jobName, mounted)
+			}
+		}
+	}
+	// The confirmation and the block speak the key credential's words and not
+	// the account's (accountsAddWhat): the name is served by no profile, so
+	// "no profile serves it yet" would describe a state the command just left
+	// behind on purpose, and what a run beyond this checkout may reach is the
+	// key — a run cannot print a token nothing holds.
+	shown := out + errOut
+	for _, wrong := range []string{"no profile serves it yet", "print team-a's token", "fugaro run --token"} {
+		if strings.Contains(shown, wrong) {
+			t.Errorf("the command's answer uses the account's word %q for a key credential:\n%s", wrong, shown)
+		}
+	}
+	if !strings.Contains(shown, "can have that run use team-a's key") {
+		t.Errorf("the command does not say what the reach beyond this checkout means for a key:\n%s", shown)
+	}
+	// The value reaches no stream, no log and no document a run is built from:
+	// the entry is the one place it IS.
+	for what, doc := range map[string]string{
+		"the command's own answer": out + errOut,
+		"the local config":         readFileString(t, r.cfg),
+	} {
+		if strings.Contains(doc, value) {
+			t.Errorf("%s carries the value:\n%s", what, doc)
+		}
+	}
+}
+
+// TestSecretsSetOfAProviderSecretWritesTheBundle: the third writer (F27). A
+// model provider's own secret is stored under two spellings, and both write the
+// bundle and no container: `--repo <r>` writes the one entry of the repository
+// the value was scoped to, and `--project-wide` writes one entry for every
+// repository providers.<p>.allow_data_to names.
+//
+// The container this command used to write — gcp.ProjectSecretID for the
+// project copy, gcp.SecretID for the repository's — is asserted absent, which is
+// what "and no container" means at a store that has written both for years.
+func TestSecretsSetOfAProviderSecretWritesTheBundle(t *testing.T) {
+	sm := secretsFixture(t)
+	appendConfig(t, providerKeyCloudProvider)
+	bundleID := bundleFixtureFor(t, sm, "aurora", nil)
+	value := "or-not-a-real-key-1234"
+
+	// The repository-scope spelling: one repository named, one entry.
+	if _, errOut, err := executeStdin(t, value, "secrets", "set", "team-a-api-key", "--repo", "acme/app"); err != nil {
+		t.Fatalf("a provider's own secret at repo scope was refused: %v\n%s", err, errOut)
+	}
+	entry := bundleEntry(t, sm, bundleID, appSlug, "team-a")
+	if entry.Value() != value {
+		t.Errorf("the entry for acme/app holds %q, want the value the command read", entry.Value())
+	}
+	if entry.BaseURL != providerKeyBaseURL || entry.Auth != "bearer" {
+		t.Errorf("the entry carries base_url %q and auth %q, want the provider's own facts", entry.BaseURL, entry.Auth)
+	}
+	if got := sm.Latest(gcp.SecretID(appSlug, "team-a-api-key")); got != nil {
+		t.Errorf("the repository's own container holds %q: a provider's key writes no container any more", got)
+	}
+
+	// The project-wide spelling: the provider's own allow_data_to, which is
+	// acme/app here, and the same entry in a new version.
+	second := "or-not-a-real-key-5678"
+	if _, errOut, err := executeStdin(t, second, "secrets", "set", "team-a-api-key", "--project-wide"); err != nil {
+		t.Fatalf("a provider's own secret project-wide was refused: %v\n%s", err, errOut)
+	}
+	if got := bundleEntry(t, sm, bundleID, appSlug, "team-a").Value(); got != second {
+		t.Errorf("the entry holds %q, want the second value: the project-wide store writes the same entry", got)
+	}
+	if got := sm.Latest(gcp.ProjectSecretID("aurora", "team-a-api-key")); got != nil {
+		t.Errorf("the project's own container holds %q: a provider's key writes no container any more", got)
+	}
+}
+
+// TestNoWriterCreatesAContainer is the "and no container" half of the task, over
+// all three writers at once: the bundle container is created by the
+// installation's Terraform (C1.18) and by nothing else, and no writer of a
+// provider key makes a container of the credential's own, of the provider's
+// secret, or of the account's token. A container nothing reads is what F33 is
+// about, and a write that created one would be the second home for a key this
+// task removed.
+//
+// It is one test and not three assertions inside the three above because the
+// claim is about the SET of writers: a fourth writer added beside them is the
+// change that must meet this test.
+func TestNoWriterCreatesAContainer(t *testing.T) {
+	t.Run("creds set", func(t *testing.T) {
+		r := providerKeyRig(t, providerKeyLocal)
+		bundleFixtureFor(t, r.sm, "aurora", nil)
+		writes := r.secretWrites(t)
+		if _, errOut, err := executeStdin(t, addToken()+"\n", "creds", "set", config.CredentialSecret("team-a")); err != nil {
+			t.Fatalf("creds set: %v\n%s", err, errOut)
+		}
+		if got := slices.Sorted(slices.Values(writes.created)); !slices.Equal(got, []string{}) {
+			t.Errorf("creds set created %v, want no container at all", got)
+		}
+		if got := slices.Sorted(slices.Values(writes.added)); !slices.Equal(got, []string{credsvc.BundleSecretID("aurora")}) {
+			t.Errorf("creds set added a version to %v, want the bundle alone", got)
+		}
+	})
+	t.Run("accounts add", func(t *testing.T) {
+		r := providerKeyRig(t, providerKeyLocal)
+		bundleFixtureFor(t, r.sm, "aurora", nil)
+		writes := r.secretWrites(t)
+		r.add(t, "team-a", "--repos", "owner/repo-a", "--type", "openrouter")
+		if got := slices.Sorted(slices.Values(writes.created)); !slices.Equal(got, []string{}) {
+			t.Errorf("accounts add created %v, want no container at all", got)
+		}
+		if got := slices.Sorted(slices.Values(writes.added)); !slices.Equal(got, []string{credsvc.BundleSecretID("aurora")}) {
+			t.Errorf("accounts add added a version to %v, want the bundle alone", got)
+		}
+	})
+	t.Run("secrets set", func(t *testing.T) {
+		sm := secretsFixture(t)
+		appendConfig(t, providerKeyCloudProvider)
+		bundleID := bundleFixtureFor(t, sm, "aurora", nil)
+		if _, errOut, err := executeStdin(t, "or-not-a-real-key-1234", "secrets", "set", "team-a-api-key", "--project-wide"); err != nil {
+			t.Fatalf("secrets set: %v\n%s", err, errOut)
+		}
+		var created []string
+		for _, r := range sm.Requests() {
+			if r.Method == http.MethodPost && strings.HasSuffix(r.Path, "/secrets") {
+				created = append(created, r.Path)
+			}
+		}
+		if len(created) != 0 {
+			t.Errorf("secrets set created %v, want no container at all: the bundle is created by the installation's Terraform", created)
+		}
+		if sm.Latest(bundleID) == nil {
+			t.Errorf("the bundle holds no version: this test asserts no container was created by a write that wrote nothing")
+		}
+	})
+}
+
+// TestAnOlderServiceIsNotWrittenANamedEntry: C1's family is a reader the
+// credentials service has only from repoCredentialSince on, and the loader
+// refuses the WHOLE document for a key it does not know — so a service older
+// than that release must refuse every provider-key write, and `fugaro update` is
+// the whole remedy (the shape providerEntrySince's and keyCredentialSince's own
+// tests have).
+//
+// All three writers are here because the guard is in the ONE write they share
+// (providerKeyBundleWrite, F27), and the release judged is the one the
+// deployed service SERVES — the 0.26.0 service beside it reads the
+// key-credential family and still cannot read this one, which is the case a
+// constant of its own exists for.
+func TestAnOlderServiceIsNotWrittenANamedEntry(t *testing.T) {
+	older := keyCredentialSince // a service that reads the tier-B family and not C1's
+
+	t.Run("creds set", func(t *testing.T) {
+		r := providerKeyRigAt(t, providerKeyLocal, older)
+		bundleID := bundleFixtureFor(t, r.sm, "aurora", nil)
+		value := addToken()
+		out, errOut, err := executeStdin(t, value+"\n", "creds", "set", config.CredentialSecret("team-a"))
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("creds set against a service that cannot read the family: err = %v\n%s", err, errOut)
+		}
+		assertOlderServiceRefusal(t, err, out+errOut, value, r.sm, bundleID)
+	})
+	t.Run("accounts add", func(t *testing.T) {
+		r := providerKeyRigAt(t, providerKeyLocal, older)
+		bundleID := bundleFixtureFor(t, r.sm, "aurora", nil)
+		value := addToken()
+		out, errOut, err := executeStdin(t, value+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--type", "openrouter")
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("accounts add against a service that cannot read the family: err = %v\n%s", err, errOut)
+		}
+		assertOlderServiceRefusal(t, err, out+errOut, value, r.sm, bundleID)
+		// The declaration is written before the store, and the refusal comes
+		// with nothing typed: the value is the last question this command asks.
+	})
+	t.Run("secrets set", func(t *testing.T) {
+		skew := newRunServiceSkew(t)
+		sm := gcpfake.NewSecrets(t)
+		f := newCloudFixture(t, "secret_manager: "+sm.URL+"/")
+		skew.deployedService(credentialsImage(older), credentialsImage(older))
+		providerKeyEndpoint(t, f.run, skew)
+		appendConfig(t, providerKeyCloudProvider)
+		bundleID := bundleFixtureFor(t, sm, "aurora", nil)
+		value := "or-not-a-real-key-1234"
+		out, errOut, err := executeStdin(t, value, "secrets", "set", "team-a-api-key", "--project-wide")
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("secrets set against a service that cannot read the family: err = %v\n%s", err, errOut)
+		}
+		assertOlderServiceRefusal(t, err, out+errOut, value, sm, bundleID)
+	})
+}
+
+// assertOlderServiceRefusal is the one refusal the three writers share: the
+// family's name, the release that reads it and the ONE command that moves the
+// service, with the value nowhere on any stream and no version written.
+func assertOlderServiceRefusal(t *testing.T, err error, shown, value string, sm *gcpfake.Secrets, bundleID string) {
+	t.Helper()
+	for _, want := range []string{credsvc.RepoCredentialPrefix, repoCredentialSince, "fugaro update", "Nothing was read from you and nothing was written"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if strings.Contains(shown+err.Error(), value) {
+		t.Errorf("the refusal echoed the value: %q", shown+err.Error())
+	}
+	if sm.Latest(bundleID) != nil {
+		t.Errorf("the refused write left a version in %s: a refusal that judged the reader writes nothing", bundleID)
+	}
+}
+
+// TestOnlyAProjectOwnerWritesAProviderKey is D3006 over the three writers: a
+// provider key is the whole project's — one value, spent by every repository the
+// owner bound it to — so the write is a PROJECT OWNER's, and the question is
+// asked with ONE probe (testIamPermissions on the bundle's own container, F36),
+// after the container is known to exist and before anything is read.
+//
+// The three ways credsOwnerOnly refuses stand in front of every writer too
+// (providerKeyOwnerOnly, in the same order and with the same markers): a coding
+// agent's session, a run's own process and the GODEBUG http2debug leak. The
+// sentences are the file's own and say why the document is the one they guard.
+func TestOnlyAProjectOwnerWritesAProviderKey(t *testing.T) {
+	for _, tc := range []struct {
+		what  string
+		older func(*testing.T) (*gcpfake.Secrets, string)
+		args  []string
+	}{
+		{
+			what: "creds set",
+			older: func(t *testing.T) (*gcpfake.Secrets, string) {
+				r := providerKeyRig(t, providerKeyLocal)
+				return r.sm, bundleFixtureFor(t, r.sm, "aurora", nil)
+			},
+			args: []string{"creds", "set", config.CredentialSecret("team-a")},
+		},
+		{
+			what: "accounts add",
+			older: func(t *testing.T) (*gcpfake.Secrets, string) {
+				r := providerKeyRig(t, providerKeyLocal)
+				return r.sm, bundleFixtureFor(t, r.sm, "aurora", nil)
+			},
+			args: []string{"accounts", "add", "team-a", "--repos", "owner/repo-a", "--type", "openrouter"},
+		},
+		{
+			what: "secrets set",
+			older: func(t *testing.T) (*gcpfake.Secrets, string) {
+				sm := secretsFixture(t)
+				appendConfig(t, providerKeyCloudProvider)
+				return sm, bundleFixtureFor(t, sm, "aurora", nil)
+			},
+			args: []string{"secrets", "set", "team-a-api-key", "--project-wide"},
+		},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			t.Run("a caller who is not a project owner", func(t *testing.T) {
+				sm, bundleID := tc.older(t)
+				// Held: nothing. The caller may write versions of the container —
+				// that is what every operator role grants — and not set its
+				// policy, which is what tells an owner from an operator here.
+				sm.SetHeldPermissions(bundleID)
+
+				spy := &readerSpy{Reader: strings.NewReader(addToken() + "\n")}
+				cmd := NewRootCmd()
+				var out, errOut bytes.Buffer
+				cmd.SetIn(spy)
+				cmd.SetOut(&out)
+				cmd.SetErr(&errOut)
+				cmd.SetArgs(tc.args)
+				err := cmd.Execute()
+				if err == nil || ExitCode(err) != ExitUserError {
+					t.Fatalf("a caller who is not a project owner = %v, want a refusal:\n%s\n%s", err, out.String(), errOut.String())
+				}
+				for _, want := range []string{bundleOwnerPermission, "PROJECT OWNER", "project proj-1234", "Ask a project owner"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not say %q: %v", want, err)
+					}
+				}
+				if spy.read {
+					t.Error("the value was read from a caller who may not write the entry")
+				}
+				if sm.Latest(bundleID) != nil {
+					t.Errorf("the refused write left a version in %s", bundleID)
+				}
+				if strings.Contains(out.String()+errOut.String()+err.Error(), addToken()) {
+					t.Error("the refusal echoed the value")
+				}
+			})
+
+			t.Run("a coding agent's session", func(t *testing.T) {
+				sm, bundleID := tc.older(t)
+				agentSession(t)
+
+				spy := &readerSpy{Reader: strings.NewReader(addToken() + "\n")}
+				cmd := NewRootCmd()
+				var out, errOut bytes.Buffer
+				cmd.SetIn(spy)
+				cmd.SetOut(&out)
+				cmd.SetErr(&errOut)
+				cmd.SetArgs(tc.args)
+				err := cmd.Execute()
+				if err == nil || ExitCode(err) != ExitUserError {
+					t.Fatalf("a coding agent's session = %v, want a refusal:\n%s\n%s", err, out.String(), errOut.String())
+				}
+				for _, want := range []string{"(CLAUDECODE is set)", "own terminal"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not say %q: %v", want, err)
+					}
+				}
+				if spy.read {
+					t.Error("the value was read in a coding agent's session")
+				}
+				if sm.Latest(bundleID) != nil {
+					t.Errorf("a coding agent's session wrote a version of %s", bundleID)
+				}
+			})
+
+			t.Run("a run's own process", func(t *testing.T) {
+				sm, bundleID := tc.older(t)
+				t.Setenv("FUGARO_RUN", "aurora/run-1")
+
+				spy := &readerSpy{Reader: strings.NewReader(addToken() + "\n")}
+				cmd := NewRootCmd()
+				var out, errOut bytes.Buffer
+				cmd.SetIn(spy)
+				cmd.SetOut(&out)
+				cmd.SetErr(&errOut)
+				cmd.SetArgs(tc.args)
+				err := cmd.Execute()
+				if err == nil || ExitCode(err) != ExitUserError {
+					t.Fatalf("a run's own process = %v, want a refusal:\n%s\n%s", err, out.String(), errOut.String())
+				}
+				for _, want := range []string{"FUGARO_RUN is set", "Fugaro run's"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not say %q: %v", want, err)
+					}
+				}
+				if spy.read {
+					t.Error("the value was read in a run's own process")
+				}
+				if sm.Latest(bundleID) != nil {
+					t.Errorf("a run's own process wrote a version of %s", bundleID)
+				}
+			})
+		})
+	}
+}
+
+// TestRepoCredentialSinceHasAReleaseBullet is TestKeyCredentialSinceHasAReleaseBullet's
+// sibling for the family this task adds: the constant names the release whose
+// credentials service first reads C1's entries, and docs/release.md's
+// Before-you-tag list is where a release verifies it against the tag actually
+// cut — and where the direction that matters (never a raise) is pinned.
+func TestRepoCredentialSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `repoCredentialSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no repoCredentialSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+repoCredentialSince+"\"`") {
+		t.Errorf("docs/release.md's repoCredentialSince bullet does not carry the constant's release (%q)", repoCredentialSince)
+	}
+	for _, want := range []string{"the release that ships the family", "fugaro creds set", "fugaro accounts add", "fugaro secrets set", "must not raise it", "not tagged yet"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's repoCredentialSince bullet does not say %q", want)
 		}
 	}
 }

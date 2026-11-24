@@ -255,7 +255,7 @@ func checkedWorkflows(cfg *config.Config) []string {
 }
 
 // readHeadConfig reads head's fugaro.yaml and resolves it over the project
-// layer o finds (docs/design/layered-config.md §8): fugaro image check run
+// layer o finds (docs/layered-config/spec.md §8): fugaro image check run
 // locally, with the operator's own access (lc). The check job does not call
 // this: it goes through jobHeadConfig -> resolveHeadData instead, so it can
 // decide whether to read its copy at all before resolving (decision L9).

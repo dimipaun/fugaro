@@ -3,13 +3,19 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // update_in_flight.go is what the update door says, and does not do, about the
@@ -46,15 +52,17 @@ import (
 // service (bitbucketProxySwitchTurns); the window between that write and the
 // credentials service's own replacement, which is the release before this one's
 // service meeting a node it cannot read for the length of one apply; the
-// creation fact, which a run of the release behind re-reads per command and
-// refuses once it is rewritten, so that run keeps the typed confirmation it
-// would have applied without; the workspace credentials node that stage's
-// neighbour publishes, which the workspace's own service re-reads as it serves
-// (R13), so a member this run takes out of the table, or an entry it unshares,
-// stops being served at that service's next read; and a retirement, which
-// deletes an orphaned Cloud Run job and takes the executions running on it with
-// it (`deleteOrphanedJob`, init_retire.go). None of the eight is the update
-// stopping a run, and none of them is asked to wait.
+// workspace's own credentials service, replaced by this update where the
+// workspace's recorded image is behind, whose old revision drains as the new one
+// takes over (R11); the creation fact, which a run of the release behind
+// re-reads per command and refuses once it is rewritten, so that run keeps the
+// typed confirmation it would have applied without; the workspace credentials
+// node that stage's neighbour publishes, which the workspace's own service
+// re-reads as it serves (R13), so a member this run takes out of the table, or
+// an entry it unshares, stops being served at that service's next read; and a
+// retirement, which deletes an orphaned Cloud Run job and takes the executions
+// running on it with it (`deleteOrphanedJob`, init_retire.go). None of the nine
+// is the update stopping a run, and none of them is asked to wait.
 //
 // The note is the count's own line and then ONE SHORT LINE PER STEP, because the
 // owner met it with fourteen runs in flight and could not find what they were
@@ -63,6 +71,15 @@ import (
 // audit (docs/design/update-in-flight.md) and the gate function the line reads.
 // The count's own read is a step of the run, so the wait it can be is named
 // while it happens.
+//
+// Two of the lines under the count are not steps, and they are the two facts the
+// count's line cannot carry: R5's, that a run which started with the budget off
+// holds its key already and finishes; and MG3's, that this release keeps writing
+// the old access record, and that so many of the runs in flight are the runs it
+// is written for. Neither is a reach and neither is gated on a step's own
+// question, which is why they are printed beside the steps rather than among
+// them: a note saying no step reaches a run in flight is about the steps alone,
+// and these two facts stand outside that list.
 
 // announceRunsInFlight prints the update door's note about the runs in flight —
 // the count's line and the steps under it. It prints nothing at all when no run
@@ -107,7 +124,8 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) error {
 	if r.rep != nil {
 		step = r.rep.Step("Checking for runs in flight")
 	}
-	n, err := runsInFlight(ctx, db, lc)
+	agents, err := inFlightRegistry(ctx, db, lc)
+	n := runsCount(agents)
 	if step != nil {
 		if err != nil {
 			// A count that could not be read is silence: a step abandoned
@@ -135,7 +153,98 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) error {
 	} else {
 		fmt.Fprintf(w, "%s, and no step reaches them\n", note)
 	}
+	// R5's own line, which is not a step and is the one fact the count's line
+	// cannot carry: a run that started with the budget off has no session and
+	// holds its key already, so nothing this update does reaches it and it
+	// finishes. It is printed while this machine's own config still says the
+	// word — the state in which such a run can exist, and the state this very
+	// update is about to end — and it is this release that owes it, because
+	// this is the release that removes the word.
+	if e.budgetOffRunFinishes() {
+		fmt.Fprintf(w, "  a run that started with the budget off holds its key and finishes\n")
+	}
+	// MG3's own line, and like R5's it is not a step: this release keeps writing
+	// the repository's old access record beside the routing table, and that
+	// record is what a run whose image predates the table resolves from (D3196,
+	// R25). The count is those runs, read out of the runs' own records, and the
+	// line is printed only when there is one: a note over a machine whose runs
+	// all carry the table has nothing to say about the record, and a read this
+	// door could not complete says nothing at all rather than naming a number
+	// nobody read (the count above it, and this note's own rule about a read
+	// that failed).
+	if old, err := e.runsOnTheOldRecord(ctx, agents); err == nil && old > 0 {
+		fmt.Fprintf(w, "  old access record: still written, so %d of these runs resolve from it\n", old)
+	}
 	return nil
+}
+
+// chainIntroduced is when the chain contract reached the integration branch
+// (C1, #3460, 2026-11-22 13:05:08 UTC), which is when a job image could first be
+// built from a checkout that carries it. A run's gateway is what asks the service
+// for the chain — the stage header, and the answer's source and fallback beside
+// the body (chain_wire.go) — so a job image built before this holds a gateway that
+// sends none of it, and the service has to answer that run out of the old access
+// record (MG3). The date is the same kind of fact sealRunnerIntroduced is
+// (recipes_skew.go), and this note is its only reader.
+var chainIntroduced = time.Date(2026, 11, 22, 13, 5, 8, 0, time.UTC)
+
+// runsOnTheOldRecord counts the runs in flight whose image predates the routing
+// table: the runs this release's old access record is written for, and the
+// number MG3's line under the note carries.
+//
+// The image a run is running is the run's own record, which the runner writes at
+// bootstrap out of the statement its container carries (runner.ImageInfo, the
+// image's own /etc/fugaro/image.json), and never the workflow's current build
+// record: an image rebuilt while a run flies leaves that run on the one it
+// started with, so the build record would answer about the next launch rather
+// than about this one. A record that cannot be read
+// and one that names no build time count as predating, which is the direction the
+// image gate takes for a job with no build record at all (checkImageSinceDev,
+// recipes_skew.go) and the one this note is for: its claim is that the runs in
+// flight are not the ones the table strands, and a run this door cannot place on
+// this release's image is one it cannot promise that about. A read that failed for
+// any other reason is returned, and the note then says nothing about the record.
+func (e *initEngine) runsOnTheOldRecord(ctx context.Context, agents map[string]map[string]budget.AgentEntry) (int, error) {
+	if e.lc == nil || len(agents) == 0 {
+		return 0, nil
+	}
+	// The same opener, over the same bucket, every other reader of a run's record
+	// uses (cloud.go's recordReadURL and openRecordBucket), which is also the pair
+	// a test replaces.
+	url := recordReadURL(e.lc)
+	if url == "" {
+		return 0, nil
+	}
+	b, err := openRecordBucket(ctx, url)
+	if err != nil {
+		return 0, err
+	}
+	defer b.Close()
+	old := 0
+	for slug, runs := range agents {
+		for runID := range runs {
+			rec, err := runstore.Open(b.Bucket, slug, runID).ReadRecord(ctx)
+			if err != nil && !errors.Is(err, runstore.ErrNotFound) {
+				return 0, err
+			}
+			if rec == nil || rec.Image == nil || rec.Image.BuiltAt == nil || rec.Image.BuiltAt.Before(chainIntroduced) {
+				old++
+			}
+		}
+	}
+	return old, nil
+}
+
+// budgetOffRunFinishes is whether this machine's local config says the word that
+// is not a budget mode any more, read out of the bytes the run found: a run
+// launched under it was launched with no session and with its key in the job
+// (R5, D3009), and the word is exactly what tells such a run apart from one the
+// note's steps can reach. The loader holds the word as the file writes it
+// (localcfg's acceptedBudgetMode), and this asks the same bytes the update's
+// rewrite reads, so the two cannot disagree about a config that says it.
+func (e *initEngine) budgetOffRunFinishes() bool {
+	_, off := localcfg.RemovedBudgetMode(e.old)
+	return off
 }
 
 func runsPhrase(n int) string {
@@ -179,9 +288,17 @@ func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []inFli
 		steps = append(steps, inFlightStep{
 			line: "credentials service: a call between the node's raise and its move is refused"})
 	}
+	if e.orchestratorToWrite() {
+		steps = append(steps, inFlightStep{
+			line: "resident orchestrator: the credentials service's new revision names its account; a call is served by either revision"})
+	}
 	if e.tokensPublishReachesRuns(ctx, db) {
 		steps = append(steps, inFlightStep{
 			line: "bitbucket tokens: a proxied call after the publish may use a different token"})
+	}
+	if e.workspaceServiceRevisionStale() {
+		steps = append(steps, inFlightStep{
+			line: "workspace service: a new revision drains the one a run started on"})
 	}
 	if e.bitbucketProxySwitchTurns() {
 		steps = append(steps, inFlightStep{
@@ -406,6 +523,64 @@ func (e *initEngine) tokensPublishReachesRuns(ctx context.Context, db *rtdb.Clie
 func (e *initEngine) bitbucketProxySwitchTurns() bool {
 	_, turn := e.bitbucketProxyFlip()
 	return turn
+}
+
+// workspaceServiceRevisionStale is whether this update replaces the workspace's
+// own credentials service with a revision of this release's image — R11's second
+// half, "a new revision of the service, which drains the old one" — read over
+// the workspace's OWN root, which is another root of this installation and the
+// one whose tfvars carry the block (workspace_create.go's serviceBlock).
+//
+// The step is the drain and nothing else. A run in flight keeps the environment
+// and the route it started with (R11's first sentence): the service serves a
+// member's calls over the same routes on either revision, and what a replacement
+// does to a call in flight is drain the connection it holds when the old
+// revision is taken out of service. That is Cloud Run's own drain and not a
+// rewrite of anything a run holds — no record, ledger or counter is touched —
+// which is why the line says "drains" and names the revision, rather than
+// claiming the run is stopped or unaffected.
+//
+// Three states answer false, and each is a different fact:
+//
+//   - an installation that is not a workspace's own, and a split one, deploy no
+//     service at all (workspaceSplitFirebase: the skip's own reason says so) —
+//     the two predicates the stage itself runs on, read here from the same two
+//     functions rather than re-derived;
+//   - a session or a development build deploys nothing (serviceBlock's own two
+//     constants): the plan a session reads names a move it may not make;
+//   - a workspace whose root holds no block yet. This update DEPLOYS the service
+//     for the first time, and a revision nobody was calling drains nothing: the
+//     line would be a drain the operator could not find in anything the update
+//     does.
+//
+// What is left is the recorded image, compared as the deploy compares it
+// (credentialsImageStale): a block whose image is this release's — or a NEWER
+// release's, on a second machine of one installation upgraded later — is no
+// revision to move, and one that names no release at all, or one behind, is the
+// revision this run replaces. A file the door cannot read answers false: this
+// note is information, and a fact it cannot read is not permission to name a
+// step.
+func (e *initEngine) workspaceServiceRevisionStale() bool {
+	lc := e.lc
+	if lc == nil || !workspaceDeclared(lc) || workspaceSplitFirebase(lc) != "" {
+		return false
+	}
+	if agentMarker(os.Getenv, e.r.stdinTerminal()) != "" || releaseVersion() == "" {
+		return false
+	}
+	dir, err := infra.WorkspaceWorkdir(os.Getenv, lc.GCPProject)
+	if err != nil {
+		return false
+	}
+	vars, err := infra.ReadWorkdirVars(dir, "workspace")
+	if err != nil {
+		return false
+	}
+	svc := recordedWorkspaceService(vars)
+	if svc == nil {
+		return false
+	}
+	return credentialsImageStale(releaseVersion(), svc.Image)
 }
 
 // workspaceDropsReach is whether this run's workspace write can take a member, or

@@ -44,13 +44,13 @@ decision (what a key is a key to) and not a defect P3.5 could repair.
 
 | Spec concept | What exists on `main` |
 | --- | --- |
-| Signed offline key, Ed25519 (§1, §3.1) | `ee/licence/key.go`: `<key id>.<payload>.<signature>`, signature over the raw payload bytes, keyring by key id, refused before decode when the id is unknown. **`productionKeyring` is empty** (`ee/licence/key.go`): no production key has been signed or shipped, so no key exists in the field |
+| Signed offline key, Ed25519 (§1, §3.1) | `ee/licence/key.go`: `<key id>.<payload>.<signature>`, signature over the raw payload bytes, keyring by key id, refused before decode when the id is unknown. **`productionKeyring` holds the one published production key** (`ee/licence/key.go`, built from `ee/licence/keys/production.pub`, S2.9); no key is known to have been issued in the field |
 | Claim set, policy (§3.2) | `licence.Claims`: `tier`, `features`, `seats`, `organisation`, `issued`, `expires`. No `v`, no `kind`, no grace, renewal, check or warning fields; decoded **strictly** (unknown field → `ErrClaims`) |
 | Key store (§11.2) | `ee/licence/store.go`: one file `licence.key` in the CLI's config directory, at most two keys, plus the one `FUGARO_LICENCE_KEY` variable the console hands a child (read once and `Unsetenv`'d). **No project-level store; no `fugaro licence` command** |
 | Verifiers elsewhere | console: `console/src/main/licence.ts`, `licence-store.ts`, `licence-state.ts`, `spawn.ts` (`LICENCE_KEY_VAR`). App: none |
 | Signing in KMS (§5) | `ee/licence/mint/kms.go` (the owner's hand-minting tool, signs only through a KMS signer); `ee/keyservice/terraform/keyring` |
 | Licence server (§12) | `ee/keyservice` (`service.go` intake, `minter.go`, `merchant.go`): routes `/free-seat`, `/open-source`, `/request`, `/verify`, `/webhook`; Paddle webhook, idempotent, test-mode pair; email verification, one per domain, free-mail list, manual queue. **Not deployed; no accounts, no sign-in, no renewal or status endpoint, no revocation list, no admin handler** |
-| Grace and expiry (§6, §9) | `Grace` = 30 days (B17); `docs/design/lapse-read-only.md`; `ee/register/lapse.go` (`access.SetSubscriptionLimit`): after grace the console and app go **read-only** (read and cancel kept) |
+| Grace and expiry (§6, §9) | `Grace` = 30 days (B17); `docs/lapse-read-only/spec.md`; `ee/register/lapse.go` (`access.SetSubscriptionLimit`): after grace the console and app go **read-only** (read and cancel kept) |
 | Seats (§10) | `claims.seats` compared and shown, **never enforced** (D439); `internal/cli/seats.go` is the advisory estimate; roles `viewer`/`operator`/`admin` in `internal/access/access.go` |
 | Scheduler jobs in the customer's project (§7) | Terraform `google_cloud_scheduler_job`: `preload_rebuild`, `reaper_sweep` (`modules/compute`), `catalog_check`, `coordinator_sweep`, `history_sweep`, `history_rollover` (`modules/installation`); the deployer's IAM names `cloudscheduler.jobs.*` |
 | Paddle (§2, §12) | `ee/keyservice/merchant.go` (Team checkout, D442); Enterprise is invoiced directly |
@@ -75,8 +75,8 @@ separate command), and the Terms' refund text (counsel, K0.1).
 `check_interval`, `warnings`, `kind`, `note`; built `<id>.<payload>.<sig>` with `features` and
 `organisation` that the spec lacks. The spec drops `features` (tier decides) and its v2 note says
 entitlements come later; the built tests pin `features`. Resolved by D2130 (one format, v1 of the
-spec) and the claims table in the plan's K1.1. Because the production keyring is empty (F1) nothing
-issued is orphaned.
+spec) and the claims table in the plan's K1.1. Because the production keyring was empty while this format
+was built (F1) nothing issued is orphaned.
 
 **F4 (Rule): the spec's "unknown optional fields are ignored" contradicts the strict-decode rule**
 (CLAUDE.md "Config and wire formats decode strictly"; built `decodeClaims`). Resolved by D2146 as a
@@ -147,7 +147,7 @@ sign-in where an action needs one — and the account, authorize and device page
 (P3.5); TN3's `fugaro-prod` is also where the API, the minter and the ring live (D2194).
 
 **F15 (Gap): the admin page and the manual queue.** §13 (reseller, comped, revoke, reissue, override
-policy) and the design's §6 exist as a design (`docs/design/key-signing-service.md` §6) but `ee/keyservice`
+policy) and the design's §6 exist as a design (`docs/key-signing-service/spec.md` §6) but `ee/keyservice`
 has no admin route. A comped key is `kind: comped`, expiring, never in revenue reporting; the owner-only
 access rule of the design (`TestAdminRefusesAnyoneButTheOwner`) carries over. **Amended 2026-11-13 by
 the portal (P9.1):** the admin page and the manual queue are the portal's operations API and screens
@@ -267,8 +267,9 @@ a viewer **can** copy the key; with the required `workspace_id` (D2134 as amende
 
 ## UNVERIFIED
 
-- Whether any key was ever hand-minted with the S2.10 tool against a real KMS key (the keyring is empty in
-  code; the owner's private records are not read here). D2130 assumes none.
+- Whether any key was ever hand-minted with the S2.10 tool against a real KMS key (the code holds the
+  published public half and no record of an issuance either way; the owner's private records are not read
+  here). D2130 assumes none.
 - That the key-gated coordinator image can run an `ee` command other than the coordinator's (K4.2 checks).
 - Whether the website's CSP `form-action` allowance (the owner's 2026-11-07 ruling) covers the new
   authorize and device pages (K5.1 checks).

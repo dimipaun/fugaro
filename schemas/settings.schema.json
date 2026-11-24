@@ -435,6 +435,9 @@
         "agent.triage": {
           "default": "unset = on (startup and pro only, config.TriageMode)"
         },
+        "agent.workspace_beat": {
+          "default": "true"
+        },
         "backend": {
           "default": "unset = cloud-run"
         },
@@ -458,6 +461,15 @@
         },
         "batch.network": {
           "default": "unset = the project's default network"
+        },
+        "batch.opt_in": {
+          "default": "unset = the installation has not opted in, so no compute root is applied"
+        },
+        "batch.seal_key.public_key": {
+          "default": "unset = none: without the key fact a sealed launch is refused"
+        },
+        "batch.seal_key.version": {
+          "default": "unset = none: without the key fact a sealed launch is refused"
         },
         "batch.secrets": {
           "default": "unset = none"
@@ -1093,6 +1105,9 @@
         "layer.defaults.agent.review_stop_fraction": {
           "default": "unset = 0.8 (config.DefaultReviewStopFraction)"
         },
+        "layer.defaults.agent.workspace_beat": {
+          "default": "unset = true"
+        },
         "layer.defaults.git.pr.checkpoints": {
           "default": "unset = inherit"
         },
@@ -1129,8 +1144,17 @@
         "layer.defaults.rigor.areas.*.name": {
           "default": "unset = none"
         },
+        "layer.defaults.rigor.areas.*.members.*.paths": {
+          "default": "unset = none"
+        },
+        "layer.defaults.rigor.areas.*.members.*.repo": {
+          "default": "unset = none"
+        },
         "layer.defaults.rigor.default": {
           "default": "unset = the built-in level (pro)"
+        },
+        "layer.defaults.rigor.repos": {
+          "default": "unset = none"
         },
         "layer.gcp_project": {
           "default": "unset = the installation's GCP project"
@@ -1441,6 +1465,24 @@
         "model_prices.*.web_search_per_1k": {
           "default": "unset = the built-in price"
         },
+        "model_routing.*.chain.*.admit": {
+          "default": "unset = nobody: an absent list and an empty one both admit no repository, and a pool's admission is its members' own allow_data_to"
+        },
+        "model_routing.*.chain.*.kind": {
+          "default": "unset = required: a source names which credential serves the model, one of launcher-pool, pool, anthropic, provider, vertex"
+        },
+        "model_routing.*.chain.*.model": {
+          "default": "unset = the model the call asked for: a source names a model only for a written downgrade"
+        },
+        "model_routing.*.chain.*.pool": {
+          "default": "unset = none: only a source of kind pool names a pool"
+        },
+        "model_routing.*.chain.*.provider": {
+          "default": "unset = none: only a source of kind provider names a provider key"
+        },
+        "model_routing.*.match": {
+          "default": "unset = required: an entry that matches nothing answers no model"
+        },
         "name": {
           "default": "unset = the file is refused (name: is required)"
         },
@@ -1483,6 +1525,9 @@
         },
         "pools.*.allowed_users": {
           "default": "unset = only the owner"
+        },
+        "pools.*.cascade": {
+          "default": "unset = false: only `fugaro update` writes this, for the pool it migrates out of a cascade that serves"
         },
         "pools.*.legacy_open": {
           "default": "unset = false: only the policy migration writes this, for a pool that predates owners"
@@ -1568,6 +1613,12 @@
         "repos.*.provider": {
           "default": "unset = none"
         },
+        "repos.*.provider_keys_served": {
+          "default": "unset = false: no update has found this repository's bundle holding an entry for every provider credential its config names, or the deployed service is not at the release that serves one, or the project publishes no allow-list"
+        },
+        "repos.*.stage_account_served": {
+          "default": "unset = false: no update has found a stage account this repository mixes with a provider key, or the deployed service is not at the release that serves one"
+        },
         "repos.*.vertex": {
           "default": "unset = false"
         },
@@ -1585,6 +1636,9 @@
         },
         "rigor.default": {
           "default": "unset = pro (rigor.Default)"
+        },
+        "rigor.repos": {
+          "default": "unset = none"
         },
         "rigor_pending": {
           "default": "unset = none: the wizard's rigor answer has been written into the project layer"
@@ -1854,6 +1908,9 @@
         },
         "workspace_pin.service_address": {
           "default": "unset = this project takes no workspace credential"
+        },
+        "workspace_shared.*.all_members": {
+          "default": "unset = false: the credential is offered to the members `projects` names, and only the written true offers it to every member of the workspace"
         },
         "workspace_shared.*.covers": {
           "default": "unset = the credential covers no repository"

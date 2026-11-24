@@ -18,7 +18,7 @@ import (
 
 // The account-choice keys of the accounts design (docs/accounts-add/spec.md
 // §11.1-§11.2) are read here, and the B0 ruling
-// (docs/design/mixed-credentials.md §11) is what bounds the second one: an
+// (docs/mixed-credentials/spec.md §11) is what bounds the second one: an
 // api-key run may name an account for the senior review and the adversarial
 // review and no other stage, and it may name one account and not two. These
 // tests are that refusal matrix, plus the two rungs the chain gains.
@@ -252,7 +252,7 @@ func mixCaseWith(t *testing.T, accounts, keys, reviewer, coder, budget string) (
 }
 
 // TestClaudeAccountForTheMixMatrix is the whole rule of the owner's ruling of
-// 2026-11-05 (docs/design/mixed-credentials.md §11, amending the 2026-11-04
+// 2026-11-05 (docs/mixed-credentials/spec.md §11, amending the 2026-11-04
 // conservative reading) as a matrix: which account a *stage* resolves for an
 // api-key run, over the rung the account is named by, the stage asked for and
 // the model that stage runs.
@@ -524,7 +524,7 @@ func TestRunPRLandsAFollowUpOfAMixedRunOnTheMixsAccount(t *testing.T) {
 			f := newCloudFixture(t)
 			f.appendConfig(t, defaultClaudeAccountConfig+mixRouteConfig+mixEnforce)
 			recipeCheckout(t, f, "  models: { coder: "+mixCoderModel+", reviewer: "+claudeReviewer+", background: "+mixCoderModel+" }\n", nil)
-			writeBuildRecord(t, f, otherSlug, "svc", release065)
+			writeBuildRecord(t, f, otherSlug, "svc", release085)
 			variant := gcp.WorkflowVariant("svc", "acme-overflow")
 			f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
 			root := wallRunIDAt(2, "090000", "d5e1")

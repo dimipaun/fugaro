@@ -5,10 +5,10 @@ the five names. This document is the prose half, and it is the half the sides ar
 rely on, what none of them may, and what changing the contract costs.
 
 C2 is a contract and not an implementation ([implementation-plan.md](implementation-plan.md) §3). Nothing here
-computes: it holds a record's shape, the two functions that read and write it, a schema, and a stub reader
-(`internal/creds/route_stub.go`, `StubRoute`) that answers "every repository and kind is the project's" and decides
-nothing. I1 deletes exactly that file when it wires the sides. It exists because five tasks are written against the
-same decision at once and cannot wait for each other: **WS11** (the run routes each kind) is the reader; **WS5**
+computes: it holds a record's shape, the two functions that read and write it and a schema, and it held a stub reader
+(`internal/creds/route_stub.go`, `StubRoute`) that answered "every repository and kind is the project's" and decided
+nothing — which I1 deleted, exactly that file and no other, once the sides were wired. It existed because five tasks
+were written against the same decision at once and could not wait for each other: **WS11** (the run routes each kind) is the reader; **WS5**
 (workspace mode in `fugaro credentials serve`), **WS14** (`fugaro doctor`), **WS20** (the live checks) and **WS22**
 (the route's rule) spell its names and its path; and **WS3** (the pin's address field), **WS6** (the workspace root
 deploys the service) and **WS9** (the member publishes the route) build its other side.
@@ -44,7 +44,7 @@ workspace the moment one of them is uncovered (F34).
 | `Route.Holder(kind)` | the service the given kind is served from: `HolderWorkspace` only when the record says so, `HolderProject` otherwise — including for a kind this code does not know | this package |
 | `Holder` | `project` or `workspace`, and nothing else | the member's `fugaro update` (WS9) |
 | `Kind` | `model`, `bitbucket`, `github` — the closed vocabulary, `gitprov.KindBitbucket` and `KindGitHub` for the two forges | this package |
-| `RouteReader` | `Route(ctx, slug) (Route, error)`: one repository's route | the reader's own side — the Cloud read in the run (WS11), the stub before it |
+| `RouteReader` | `Route(ctx, slug) (Route, error)`: one repository's route | the reader's own side — the stub on this tree; WS11's run reads the node itself, through `DecodeRoute`, and implements no reader |
 | `ErrRouteRecord` | "this record is not one a run may be served from": every refusal `DecodeRoute` and `RouteRecord` make wraps it | this package |
 
 **A kind the record does not name is the project's.** `Holder` answers `HolderProject` for a kind the record leaves
@@ -61,6 +61,20 @@ the project's, whose address is then never called.
 a failure. An error means the record could not be read or is one this code refuses; a caller that treated an error as
 "the project's" would serve a credential from a service an unreadable record may have moved. Nothing in this contract
 says what a caller does with a record it refuses — WS11 halts and names the fix.
+
+**One state is on neither side of that line yet, and WS11 writes the arm down here rather than leaving its reader to
+find it in the code.** Until WS22 deploys the rule that grants a run token the read of `config/policy/route/<slug>`,
+**a node the rules refuse answers as a node that is not there**: Realtime Database answers a read no rule grants with a
+denial and a read of an absent path with a not-found, and a member that has not taken the rule is in the first state
+for every repository it has. So the run reads a denial as the zero `Route` — today's run, the project for every kind —
+rather than as the refusal above, because the other reading stops every run of every project for a feature none of
+them uses, and nothing is lost by it: the project's own service is where every kind was served before the record
+existed. **The arm is bounded by WS22** (whose own red step is "a run's token is refused the read"): from the release
+that carries it, that member's `fugaro update` deploys the rule and publishes the record in one step, so a denial
+means the update has not run there yet and the record is not there either — the answer a run already gives for an
+absent node — while before it, halting on a denial would halt every run on this tree. It is a denial of the **read**
+alone: a record that IS readable and cannot be decoded is refused where the contract refuses it, and the run halts and
+names the fix.
 
 ## The record
 
@@ -177,7 +191,8 @@ the mode and says which workspace's table is the answer.
 configured by. It serves the routes R14 names and refuses the rest; what a routed call still passes (the workspace
 entry's allow-list, the member's policy, the repository's admission) is R5's and is not this contract's.
 
-**The run (WS11, and the beat in WS13).** It reads `RouteReader.Route` once at bootstrap for its own repository and
+**The run (WS11, and the beat in WS13).** It reads the record once at bootstrap for its own repository — the node
+itself, off `RoutePath`, with `DecodeRoute`, and not through `RouteReader`, whose only implementer is the stub — and
 keeps the answer: a model call goes to the service the model route names and never to the other, exhausted or not
 (D2982, D2989). The address it calls is the one `Route.Address` carries, never one from the run's environment (R3,
 F32) — an address a launcher supplies is an address a launcher can move, and the run mints an identity token for
@@ -196,8 +211,9 @@ over that path and moves `RulesVersion` with it.
 
 ## What no side may rely on
 
-- **A stub's answer.** `StubRoute` admits nothing, moves nothing and reads no record. Nothing it returns is a
-  decision any side may act on, and I1 deletes the file rather than promoting it.
+- **A stub's answer.** `StubRoute` admitted nothing, moved nothing and read no record. Nothing it returned was a
+  decision any side may act on, and I1 deleted the file rather than promoting it. The reader a run reads its route
+  through is WS11's, over the member's own record.
 - **A kind this code does not know moving anywhere.** `Kinds` is the closed vocabulary of this contract and `Holder`
   has no third value. A side that added a kind moves it in a new version of the record, in this package, and not by
   spelling it into a record and hoping.
@@ -218,7 +234,8 @@ over that path and moves `RulesVersion` with it.
   never will be: the record is a document a member's admins write and a member's runs read, and a field carrying a
   value would put a credential in it.
 - **A refusal as retryable or as "the project's".** A refused record is a run that halts and names the fix (WS11),
-  not one that carries on with today's answer.
+  not one that carries on with today's answer — and a read the rules *deny* is not a refused record: it is the state
+  the paragraph above the record reads as "no record", and it expires with WS22's rule.
 
 ## Changing the contract
 

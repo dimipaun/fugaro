@@ -420,7 +420,6 @@ func curVersion(ref, host, kind, owner string) string {
 // items are the images this run mirrors, and the notes of kinds it leaves
 // alone. Nothing is read from the network.
 func (s *imagesStage) items(ctx context.Context) (items []imageItem, notes []string, err error) {
-	r := s.e.r
 	lc := s.e.lc
 	host, err := infra.RegistryHost(lc)
 	if err != nil {
@@ -443,7 +442,15 @@ func (s *imagesStage) items(ctx context.Context) (items []imageItem, notes []str
 		items = append(items, imageItem{label: label, kind: kind, src: src, dst: dst})
 		return nil
 	}
-	if r.o.firebase != "" && s.e.spec.History != nil {
+	// F29: the history image is mirrored where this run deploys the history job,
+	// and that is having the Firebase root's outputs and not the flag that used
+	// to be the only way to get them — a no-flag update that has just adopted or
+	// created the database (AB7) reaches the second installation stage with
+	// them. An installation whose config already records the database mirrors
+	// nothing here, as it always did: its history job is composed by the first
+	// apply from the recorded backend, whose image the run that made the
+	// database pushed.
+	if s.e.historyJobOfThisRun() {
 		if err := mk("history", "", "fugaro-history", ver, infra.HistoryImagePackage, "latest"); err != nil {
 			return nil, nil, err
 		}
@@ -543,7 +550,7 @@ func (s *imagesStage) Check(ctx context.Context) (initflow.Status, error) {
 		// image-refresh.md's step 2); the notes say which kind and why.
 		return initflow.Status{State: initflow.Skipped, Detail: "No changes: " + strings.Join(notes, "; ")}, nil
 	case len(items) == 0 && !set.any():
-		return initflow.Status{State: initflow.Skipped, Detail: "no image to pin or copy: the history image goes with --firebase-project, and a base image with --base KIND, with a checkout whose fugaro.yaml names it, or with a project image catalog whose entries this installation builds"}, nil
+		return initflow.Status{State: initflow.Skipped, Detail: "no image to pin or copy: the history image goes with the history job (which this run deploys where it has just created or adopted the budget database, or where --firebase-project names it), and a base image with --base KIND, with a checkout whose fugaro.yaml names it, or with a project image catalog whose entries this installation builds"}, nil
 	case releaseVersion() == "":
 		return initflow.Status{State: initflow.Skipped, Detail: "development build, no published images to pin or copy: build one from a checkout (sh images/build-base.sh <kind> <tag> and docker push <tag>), then fugaro update --base-image KIND=<tag>"}, nil
 	}
@@ -582,6 +589,12 @@ func (p planned) digestOf() string {
 		return p.plan.Digest
 	}
 	return p.digest
+}
+
+// replacesForeign is a copy that would move a tag off an image this source
+// never published: the one replacement that needs a person's word.
+func (p planned) replacesForeign() bool {
+	return p.plan != nil && !p.plan.Present && p.plan.DestDigest != "" && p.plan.OwnEarlier == ""
 }
 
 // pins are the base kinds this run records a pin for.
@@ -644,6 +657,18 @@ func (s *imagesStage) read(ctx context.Context, m *mirror.Mirror, items []imageI
 		// live installs have a hand-pushed one, and we cannot tell a copy this
 		// tool made from one an older CLI or a person made).
 		replace := slices.Contains(s.e.r.o.replaceImages, it.key())
+		// An image this source published for an earlier release is Fugaro's
+		// own, and moving the tag off it to this release's replaces nothing
+		// that is not ours: no flag and no confirmation, which is the whole of
+		// `fugaro update` for an installation one release behind. Only an image
+		// the source never published (a customised or foreign digest) is
+		// refused below.
+		p.OwnEarlier = m.OwnEarlier(ctx, p)
+		if p.OwnEarlier != "" {
+			p.AllowReplace = true
+			out = append(out, planned{item: it, plan: p})
+			continue
+		}
 		if p.DestDigest != "" && !p.Present && !replace {
 			return nil, userErr("%s: %s is %s in your registry and the release's image is %s: it is never replaced silently; pass --replace-image %s to replace it, and confirm it at a real terminal (a base kind can instead be pointed at your own image with --base-image KIND=IMAGE)", it.label, it.dst, p.DestDigest, p.Digest, it.key())
 		}
@@ -709,6 +734,9 @@ func (s *imagesStage) show(pl []planned) {
 		switch {
 		case p.plan.Present:
 			fmt.Fprintf(w, "  %s: %s is already the release image %s, nothing to copy\n", p.item.label, to, p.plan.Digest)
+		case p.plan.OwnEarlier != "":
+			fmt.Fprintf(w, "  %s: copy %s to %s: moves it from %s's image %s to this release's %s (%.1f MB to send of %.1f MB, %d blobs)\n", p.item.label, p.item.src, to, p.plan.OwnEarlier, p.plan.DestDigest, p.plan.Digest,
+				float64(p.plan.TransferBytes)/1e6, float64(p.plan.TotalBytes)/1e6, len(p.plan.Blobs))
 		case p.plan.DestDigest != "":
 			fmt.Fprintf(w, "  %s: copy %s to %s: REPLACES %s with %s (%.1f MB to send of %.1f MB, %d blobs)\n", p.item.label, p.item.src, to, p.plan.DestDigest, p.plan.Digest,
 				float64(p.plan.TransferBytes)/1e6, float64(p.plan.TotalBytes)/1e6, len(p.plan.Blobs))
@@ -840,7 +868,7 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		o.yes = env.Yes
 		notCovered := ""
 		for _, p := range pl {
-			if p.plan != nil && !p.plan.Present && p.plan.DestDigest != "" {
+			if p.replacesForeign() {
 				notCovered = "it replaces a tag in your registry"
 			}
 		}
@@ -919,7 +947,7 @@ func (s *imagesStage) confirmText(pl []planned, n int, bytes int64, unpinned []s
 func (s *imagesStage) confirmReplace(pl []planned) error {
 	var kinds, lines []string
 	for _, p := range pl {
-		if p.plan != nil && !p.plan.Present && p.plan.DestDigest != "" {
+		if p.replacesForeign() {
 			kinds = append(kinds, p.item.key())
 			lines = append(lines, fmt.Sprintf("%s (%s) from %s to %s", p.item.dst, p.item.label, p.plan.DestDigest, p.plan.Digest))
 		}

@@ -702,7 +702,7 @@ func TestPropagationRetrySitesAreWhatTheDesignNames(t *testing.T) {
 			wrapped[m[1]] = f
 		}
 	}
-	design := readDoc(t, "docs/design/compute-backend.md")
+	design := readDoc(t, "docs/compute-backend/spec.md")
 	for step, root := range map[string]string{
 		"the installation step": "`installRoot`",
 		"the repository step":   "`planRepo`",
@@ -713,7 +713,7 @@ func TestPropagationRetrySitesAreWhatTheDesignNames(t *testing.T) {
 			t.Errorf("propagationRetry does not run %s (a call site looks like propagationRetry(ctx, r.w, %q, ...)): the design says every cloud root of the converge runs its own cycle through the retry", step, step)
 		}
 		if !strings.Contains(design, root) {
-			t.Errorf("docs/design/compute-backend.md no longer names %s among the roots that retry", root)
+			t.Errorf("docs/compute-backend/spec.md no longer names %s among the roots that retry", root)
 		}
 	}
 	if len(wrapped) != 4 {
@@ -731,12 +731,12 @@ func TestPropagationRetrySitesAreWhatTheDesignNames(t *testing.T) {
 	// retirement's own section is not this claim.
 	i := strings.Index(design, "are not wrapped")
 	if i < 0 {
-		t.Fatalf("docs/design/compute-backend.md no longer names the applies that are NOT wrapped: the design claims that every cloud root of the converge retries")
+		t.Fatalf("docs/compute-backend/spec.md no longer names the applies that are NOT wrapped: the design claims that every cloud root of the converge retries")
 	}
 	claim := design[i:min(len(design), i+2000)]
 	for _, outside := range []string{"`retirePlan`", "`fillCredentialsAudience`"} {
 		if !strings.Contains(claim, outside) {
-			t.Errorf("docs/design/compute-backend.md no longer names %s among the applies that do not retry, so the design claims more than the code does", outside)
+			t.Errorf("docs/compute-backend/spec.md no longer names %s among the applies that do not retry, so the design claims more than the code does", outside)
 		}
 	}
 }

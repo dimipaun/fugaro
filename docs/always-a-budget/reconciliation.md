@@ -87,7 +87,7 @@ database's.
 
 **F9 — Rule: Cloud Batch.** `internal/backend/batch/run.go` refuses any launch that carries a
 sealed token, because Batch has no per-execution place for the key
-(`docs/design/budget-token-channel.md`). The backend is wired (`doctor_batch.go`,
+(`docs/budget-token-channel/spec.md`). The backend is wired (`doctor_batch.go`,
 `validate_batch.go`, `docs/backends.md`) and its live Check 124 has never been run. Once every
 launch mints, Batch can launch nothing. Consequence: D3021, AB9.
 
@@ -134,7 +134,7 @@ config is rewritten in place (`migrateCraftKeys`). `raiseBudgetMode`
 AB8b follow them.
 
 **F17 — Rule: documents that present off as a feature.** `README.md` ("off by default"),
-`docs/how-to/budgets.md`, `docs/design/m9-budget-and-dashboard.md` (its rollback is
+`docs/how-to/budgets.md`, `docs/m9-budget-and-dashboard/spec.md` (its rollback is
 `--budget-mode off`), `docs/design/v1.md`, `docs/multi-model.md`, Check 47's row in
 `docs/gcp-live-checklist.md`, `plugin/skills/setup/reference/decisions.md` and
 `website/content/security.md`. *(Corrected by review round 2.)*
@@ -249,6 +249,15 @@ Firebase stage is skipped without its flag. Run on every update, it would re-app
 root and read the project's owners, which an operator's update does not need today and may not be
 able to do. Consequence: AB7's stage acts only to adopt or to create, and is skipped as today
 where the database is known.
+
+Amended by console-fixes RI2 (2026-11-22): the skip holds only while the Firebase root's state
+already carries a run index composite index — the one thing such an installation can still owe,
+and which nothing but an apply of that root creates (console-fixes F10) — and the state's own read
+decides it, so where that read answers nothing (no state, or one that cannot be read) the skip
+stands as written here and the installation is left exactly as it was. The run this finding is
+about is the one it stands for in full: an operator's update, whose credential may not make the
+project's IAM changes an apply of that root makes, keeps the skip and converges, and a project
+owner's update creates the indexes.
 
 ## 4. Decisions
 

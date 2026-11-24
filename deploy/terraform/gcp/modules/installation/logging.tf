@@ -4,6 +4,13 @@
 # can't take roles/logging.viewer away from anyone, so the same lines are
 # also kept out of _Default. Owners and editors still read everything.
 #
+# The bucket's location is var.log_bucket_location: the installation's region
+# where Cloud Logging offers a bucket there, else the place's multi-region,
+# else global (place.For's answer for a new installation, D3082). A bucket an
+# installation already has keeps its own -- fugaro update's discovery reads it
+# and the resource ignores the field -- so the sink's destination, the view
+# and its grants are all built from this one variable (F10, R5).
+#
 # A job's platform decides its resource.type -- cloud_run_job on Cloud Run,
 # batch.googleapis.com/Job on Cloud Batch (the VM backend) -- so the filter
 # below has one arm per platform, and both are pinned by the same label.
@@ -12,7 +19,7 @@
 # output, never a secret value.
 
 locals {
-  log_bucket_path = "projects/${var.project}/locations/global/buckets/${var.names.log.bucket}"
+  log_bucket_path = "projects/${var.project}/locations/${var.log_bucket_location}/buckets/${var.names.log.bucket}"
 
   # The Cloud Run arm: every Fugaro-managed Cloud Run job's lines (the
   # workflow jobs and the check jobs). It is byte-for-byte what it was before
@@ -21,7 +28,7 @@ locals {
   # installation never meant to route. A test pins it.
   fugaro_cloud_run_logs = "resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\""
 
-  # The Batch arm (design docs/design/compute-backend.md §1.5, §8.1 task 4):
+  # The Batch arm (design docs/compute-backend/spec.md §1.5, §8.1 task 4):
   # a Batch job's lines carry resource.type="batch.googleapis.com/Job", and
   # its Job.labels reach the entry it generates, so the installation's
   # fugaro=managed marker selects them the same way. ADDITIVE and inert for a
@@ -53,11 +60,23 @@ resource "google_logging_project_bucket_config" "fugaro" {
   count = var.log_isolation ? 1 : 0
 
   project        = var.project
-  location       = "global"
+  location       = var.log_bucket_location
   bucket_id      = var.names.log.bucket
   retention_days = 30
   # The ownership mark discovery checks before adopting the bucket.
   description = var.log_bucket_description
+
+  # A bucket's location is permanent: Cloud Logging refuses to move one and a
+  # replacement would delete the run output it holds. So the field is IGNORED
+  # on a bucket that exists, exactly as a secret container's replication is
+  # (LP5a): discovery reads where an installation's bucket already is, the
+  # spec is given that location, and this is what keeps the plan of an
+  # installation whose bucket is `global` a no-op even under a mapping that
+  # now points elsewhere (R5, F11). An installation with no bucket gets the
+  # one this variable names.
+  lifecycle {
+    ignore_changes = [location]
+  }
 
   depends_on = [google_project_service.this]
 }
@@ -110,7 +129,7 @@ resource "google_logging_log_view_iam_member" "runs" {
   for_each = var.log_isolation ? toset(concat(var.launchers, var.operators, var.viewers)) : toset([])
 
   parent   = "projects/${var.project}"
-  location = "global"
+  location = var.log_bucket_location
   bucket   = var.names.log.bucket
   name     = google_logging_log_view.runs[0].name
   role     = "roles/logging.viewAccessor"

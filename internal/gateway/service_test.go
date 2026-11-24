@@ -141,7 +141,8 @@ func TestServiceUpstreamSendsIDTokenAndRunIdentity(t *testing.T) {
 		"x-fugaro-credential", "a-credential-the-agent-invented",
 		"x-fugaro-switch", `{"from":"x","to":"y","reason":"exhausted"}`,
 		"x-fugaro-slip", "a-slip-the-agent-invented",
-		"x-fugaro-slip-claim", "a-claim-the-agent-invented")
+		"x-fugaro-slip-claim", "a-claim-the-agent-invented",
+		"x-fugaro-provider", "a-provider-the-agent-invented")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("the call: %d %s", resp.StatusCode, body)
 	}
@@ -165,7 +166,12 @@ func TestServiceUpstreamSendsIDTokenAndRunIdentity(t *testing.T) {
 	if got := up.Header.Get("x-api-key"); got != "" {
 		t.Errorf("the gateway token travelled to the service in x-api-key")
 	}
-	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderSlip, HeaderSlipClaim} {
+	// The provider's name is one of them (KS5, R2): on a Messages call the
+	// route the gateway routed to is the only writer of it, and this call has
+	// none -- so the only name that could travel is the agent's, and on the
+	// service's side that name is what decides which of the repository's
+	// provider keys a call is served with.
+	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderSlip, HeaderSlipClaim, HeaderProvider} {
 		if got := up.Header.Values(k); len(got) > 0 {
 			t.Errorf("the agent's %s reached the service as %q", k, got)
 		}
@@ -225,19 +231,20 @@ func TestServiceDeclarationIsNeverTheAgents(t *testing.T) {
 	noHalt(t, h)
 }
 
-// TestServiceUpstreamReadsTierAndCredential: the tier, the credential's name
-// and the switch are read off the service's answer and handed to the runner's
-// hook -- and dropped before the answer is copied on, so the agent never
-// learns its project's credentials.
+// TestServiceUpstreamReadsTierAndCredential: the tier, the credential's name,
+// the owner of the token that served the call and the switch are read off the
+// service's answer and handed to the runner's hook -- and dropped before the
+// answer is copied on, so the agent never learns its project's credentials.
 func TestServiceUpstreamReadsTierAndCredential(t *testing.T) {
 	var answers []ServiceAnswer
 	h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
 		return anthropicfake.Reply{
 			Status: http.StatusOK,
 			Header: http.Header{
-				HeaderTier:       []string{TierB},
-				HeaderCredential: []string{"repo-shared-b"},
-				HeaderSwitch:     []string{`{"from":"repo-a","to":"repo-shared-b","reason":"exhausted"}`},
+				HeaderTier:            []string{TierB},
+				HeaderCredential:      []string{"repo-shared-b"},
+				HeaderCredentialOwner: []string{"104329501182774832335"},
+				HeaderSwitch:          []string{`{"from":"repo-a","to":"repo-shared-b","reason":"exhausted"}`},
 			},
 			Body: anthropicfake.MessageOK(sonnet, smallUsage).Body,
 		}
@@ -259,6 +266,9 @@ func TestServiceUpstreamReadsTierAndCredential(t *testing.T) {
 	if got.Tier != TierB || got.Credential != "repo-shared-b" {
 		t.Errorf("the answer read back as tier %q credential %q, want B and repo-shared-b", got.Tier, got.Credential)
 	}
+	if got.CredentialOwner != "104329501182774832335" {
+		t.Errorf("the answer read back as owner %q, want the launcher's sub the service named", got.CredentialOwner)
+	}
 	if got.Switch != `{"from":"repo-a","to":"repo-shared-b","reason":"exhausted"}` {
 		t.Errorf("the switch read back as %q", got.Switch)
 	}
@@ -267,7 +277,7 @@ func TestServiceUpstreamReadsTierAndCredential(t *testing.T) {
 	}
 	// The agent is told nothing about the credential set (D143): not in the
 	// headers, not in the body, not in a log line.
-	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch} {
+	for _, k := range []string{HeaderTier, HeaderCredential, HeaderCredentialOwner, HeaderSwitch} {
 		if vs := resp.Header.Values(k); len(vs) > 0 {
 			t.Errorf("the agent's answer carries %s: %q", k, vs)
 		}
@@ -280,13 +290,16 @@ func TestServiceUpstreamReadsTierAndCredential(t *testing.T) {
 }
 
 // TestServiceNeverSentToProviderRoute is D143's other half, on
-// TestOAuthNeverSentToProviderRoute's shape: a route is a provider's own
-// endpoint and is reached with the job's own key for that provider, which a
-// cascade run does not have. A cascade's service upstream therefore takes no
-// routes at all -- not at start-up, and not from a Route built in code past
-// validation either. (A switched api-key run's does: it is the one service
-// upstream with a key of its own, and
-// TestSwitchedAPIKeyServiceUpstreamKeepsItsProviderRoutes is that case.)
+// TestOAuthNeverSentToProviderRoute's shape: a route the job holds the key for
+// is a provider's own endpoint, reached with that key, which a cascade run does
+// not have. A cascade's service upstream therefore takes no such route -- not
+// at start-up, and not from a Route built in code past validation either. (Two
+// service upstreams do take routes: a switched api-key run's, which is the one
+// with a key of its own, and the case
+// TestSwitchedAPIKeyServiceUpstreamKeepsItsProviderRoutes pins; and any
+// upstream beside a SERVED route, whose key is the credentials service's and
+// whose calls the service's provider route answers -- KS5,
+// route_service_test.go.)
 func TestServiceNeverSentToProviderRoute(t *testing.T) {
 	_, psrv := anthropicfake.New(t, anthropicfake.MessageOK(dsModel, smallUsage))
 	cred := func() (string, error) { return "provider-key-" + t.Name(), nil }
@@ -298,7 +311,8 @@ func TestServiceNeverSentToProviderRoute(t *testing.T) {
 		}
 	}
 
-	// 1. A service upstream takes no routes at all, whatever they point at.
+	// 1. A service upstream takes no route the job holds a key for, whatever
+	//    it points at.
 	for _, base := range []string{psrv.URL + "/api", psrv.URL, "https://api.anthropic.com"} {
 		gw, err := Start(context.Background(), Options{
 			Upstream: Upstream{Kind: KindService, BaseURL: "https://creds.example", Service: svc()},
@@ -331,7 +345,7 @@ func TestServiceNeverSentToProviderRoute(t *testing.T) {
 		t.Errorf("validateRoutes refused a service upstream with no routes: %v", err)
 	}
 
-	// 3. The upstream's own path refuses a provider route even if one were
+	// 3. The upstream's own path refuses such a route even if one were
 	//    handed to it: the check is where the job's identity is attached,
 	//    not only at start-up.
 	pr := &Route{Name: "openrouter", BaseURL: psrv.URL + "/api", Auth: "bearer", Credential: cred}
@@ -466,10 +480,24 @@ func TestSwitchedRunRetriesARoutedProviderCallOnce(t *testing.T) {
 	noHalt(t, h)
 }
 
+// noServiceWait spends the bound an unreachable service is waited for before
+// the call is made, so the call in the case that follows is a call that meets
+// the spent bound: the halt. What a run does *inside* the bound -- wait, and
+// resume the stage -- is service_unreachable_test.go's, which is where WS12's
+// wait is pinned.
+func noServiceWait(t *testing.T) {
+	t.Helper()
+	old := serviceUnreachableBound
+	serviceUnreachableBound = 0
+	t.Cleanup(func() { serviceUnreachableBound = old })
+}
+
 // TestServiceUnreachableHalts: a job that cannot reach the credentials
-// service halts the run the way an unreachable budget backend does (D143),
-// and every later call gets the same refusal.
+// service for the whole of the bound halts the run the way an unreachable
+// budget backend does (D143, D2983), and every later call gets the same
+// refusal.
 func TestServiceUnreachableHalts(t *testing.T) {
+	noServiceWait(t)
 	// A server that was up and is now gone: the address refuses connections.
 	gone := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	base := gone.URL
@@ -645,6 +673,7 @@ func TestNoInJobFallback(t *testing.T) {
 	})
 
 	t.Run("an unreachable service is not replaced", func(t *testing.T) {
+		bound(t, 20*time.Millisecond)
 		gone := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 		base := gone.URL
 		gone.Close()
@@ -656,8 +685,16 @@ func TestNoInJobFallback(t *testing.T) {
 		}
 		defer srv.Close()
 		h := newServiceGateway(t, base, nil)
+		// Inside the bound the run waits (the wait's own cases are
+		// service_unreachable_test.go's), and once the bound is spent the same
+		// call is the halt: neither is a destination of its own.
+		if resp, body := h.post(msg(sonnet, 1000)); resp.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("an unreachable service inside the bound: %d %s, want the wait's 503", resp.StatusCode, body)
+		}
+		noHalt(t, h)
+		time.Sleep(25 * time.Millisecond)
 		if resp, _ := h.post(msg(sonnet, 1000)); resp.StatusCode != http.StatusForbidden {
-			t.Fatalf("an unreachable service: %d, want the halt's 403", resp.StatusCode)
+			t.Fatalf("an unreachable service past the bound: %d, want the halt's 403", resp.StatusCode)
 		}
 		haltOf(t, h)
 		if fallback.Count() != 0 {
@@ -1175,6 +1212,7 @@ func TestServiceUnreadableAnswerSettlesAtItsReservation(t *testing.T) {
 		{"no tier at all", nil},
 		{"a tier the contract would not write", http.Header{HeaderTier: []string{"D"}, HeaderCredential: []string{"repo-a"}}},
 		{"a credential name that is not one", http.Header{HeaderTier: []string{TierB}, HeaderCredential: []string{"repo\nb"}}},
+		{"a credential owner that is not one", http.Header{HeaderTier: []string{TierB}, HeaderCredential: []string{"repo-a"}, HeaderCredentialOwner: []string{"launcher@example.invalid"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
@@ -1230,6 +1268,7 @@ func TestServiceRefusalLongerThanTheContractHalts(t *testing.T) {
 // charged the whole reservation -- zero is for a call nothing reached, which
 // is the branch above it (mutation M16).
 func TestServiceUnreachableAfterTheRequestIsSentIsCharged(t *testing.T) {
+	noServiceWait(t)
 	h, f := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
 		return anthropicfake.Reply{DropBeforeHeaders: true}
 	}, nil)
@@ -1250,10 +1289,10 @@ func TestServiceUnreachableAfterTheRequestIsSentIsCharged(t *testing.T) {
 }
 
 // TestServiceClientBoundsTheWaitForHeaders: a connection that never answers
-// and never fails either would hang the call until the stage's deadline
-// instead of halting (D143). The bound covers the wait for the service's
-// response headers and nothing else: the body is a stream the run may be
-// waiting on for minutes.
+// and never fails either would hang the call until the stage's deadline instead
+// of the call meeting the bound (D2983). The bound covers the wait for the
+// service's response headers and nothing else: the body is a stream the run may
+// be waiting on for minutes.
 func TestServiceClientBoundsTheWaitForHeaders(t *testing.T) {
 	// Start's own wiring, not only the helper: the bound is a fact about the
 	// client a service call is made with.
@@ -1269,6 +1308,7 @@ func TestServiceClientBoundsTheWaitForHeaders(t *testing.T) {
 	old := serviceResponseHeaderTimeout
 	serviceResponseHeaderTimeout = 100 * time.Millisecond
 	defer func() { serviceResponseHeaderTimeout = old }()
+	noServiceWait(t)
 	h, f := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
 		return anthropicfake.Reply{Hold: true} // reads the request and answers nothing
 	}, nil)

@@ -162,7 +162,7 @@ claim of two
 //
 // Claude's rule is the one the section's sentence changed under: it read
 // "Claude models never go through a provider", and Phase 2's opt-in
-// (design docs/design/mixed-credentials.md §4) made one exact anthropic/<id>
+// (design docs/mixed-credentials/spec.md §4) made one exact anthropic/<id>
 // claimable per route entry. The two assertions below are the two halves of
 // what the section must say now -- direct by default, one exact ID claimed
 // by an operator -- so an edit that drops either one fails here.

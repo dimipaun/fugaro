@@ -26,8 +26,8 @@ func TestDocsSpendAccuracy(t *testing.T) {
 	flatMulti := flattenDoc(multi)
 	section2 := flattenDoc(docSection(t, multiPath, multi, "## 2. The project config (owner only)"))
 	section6 := flattenDoc(docSection(t, multiPath, multi, "## 6. Reading the cost"))
-	catalog := flattenDoc(readDoc(t, "docs/design/provider-price-catalog.md"))
-	m10 := flattenDoc(readDoc(t, "docs/design/m10-multi-model.md"))
+	catalog := flattenDoc(readDoc(t, "docs/provider-price-catalog/spec.md"))
+	m10 := flattenDoc(readDoc(t, "docs/m10-multi-model/spec.md"))
 	v1 := flattenDoc(readDoc(t, "docs/design/v1.md"))
 
 	for _, c := range []struct {
@@ -57,17 +57,17 @@ func TestDocsSpendAccuracy(t *testing.T) {
 			"**The drift alarm reads the same band over the project's days, for a model rather than a run.**"},
 		{multiPath, section6, "the drift alarm's 10% either side, over a model with at least $1 of spend",
 			"more than **10% above** the table's dearest end or more than **10% below** its cheapest one, for a model with at least $1 of spend in that window (D2649, D2650)"},
-		{"docs/design/provider-price-catalog.md", catalog, "that the route switch defaults to `highest` (D2644)",
+		{"docs/provider-price-catalog/spec.md", catalog, "that the route switch defaults to `highest` (D2644)",
 			"default **`highest`** since the spend-accuracy reconciliation's D2644"},
-		{"docs/design/provider-price-catalog.md", catalog, "that D2644 supersedes ruling 3",
+		{"docs/provider-price-catalog/spec.md", catalog, "that D2644 supersedes ruling 3",
 			"**D2644 supersedes owner ruling 3:**"},
-		{"docs/design/provider-price-catalog.md", catalog, "that D2640 changed what bound (3) is",
+		{"docs/provider-price-catalog/spec.md", catalog, "that D2640 changed what bound (3) is",
 			"**D2640 changes bound (3):**"},
-		{"docs/design/m10-multi-model.md", m10, "that the switch defaults to `highest` there too (D2644)",
+		{"docs/m10-multi-model/spec.md", m10, "that the switch defaults to `highest` there too (D2644)",
 			"default `highest` since the spend-accuracy reconciliation's D2644"},
-		{"docs/design/m10-multi-model.md", m10, "that the phase 3 question of trusting `reported` is answered",
+		{"docs/m10-multi-model/spec.md", m10, "that the phase 3 question of trusting `reported` is answered",
 			"the question this paragraph leaves open is answered, and it was answered on 2026-11-15 without waiting for the observed week — D2640 of"},
-		{"docs/design/m10-multi-model.md", m10, "the phase 3 line pointing at D2640",
+		{"docs/m10-multi-model/spec.md", m10, "the phase 3 line pointing at D2640",
 			"**answered 2026-11-15: D2640 of [../spend-accuracy/reconciliation.md](../spend-accuracy/reconciliation.md) adopts it, and it is built**"},
 		{"docs/design/v1.md", v1, "that the gateway settles a complete provider call on the report",
 			"**settles a complete call on a provider route**"},
@@ -86,9 +86,9 @@ func TestDocsSpendAccuracy(t *testing.T) {
 	}
 
 	for _, c := range []struct{ path, doc, banned, why string }{
-		{"docs/design/provider-price-catalog.md", catalog, "`cheapest` stays the default (owner ruling 3)",
+		{"docs/provider-price-catalog/spec.md", catalog, "`cheapest` stays the default (owner ruling 3)",
 			"D2644 supersedes owner ruling 3, and this is the sentence it reversed"},
-		{"docs/design/provider-price-catalog.md", catalog, "**never settles** a call the table priced",
+		{"docs/provider-price-catalog/spec.md", catalog, "**never settles** a call the table priced",
 			"D2640 settles a complete call on the provider's report"},
 		{multiPath, flatMulti, "cheapest (the default)",
 			"`highest` is the default `price_policy` since D2644"},

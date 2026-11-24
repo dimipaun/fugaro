@@ -328,7 +328,7 @@ func (f *Compute) render(i *computeInstance) map[string]any {
 
 // computeFilterRE is the one aggregatedList filter shape the fake answers:
 // label equalities joined by AND, as the Compute Engine filter syntax writes
-// them (`labels.fugaro = "managed"`, docs/design/compute-backend.md §7.2 uses
+// them (`labels.fugaro = "managed"`, docs/compute-backend/spec.md §7.2 uses
 // the same form for gcloud). Any other filter fails the test rather than being
 // silently ignored. The reaper checks the labels client-side as well, so its
 // answer is the same whether or not the server honours the filter.

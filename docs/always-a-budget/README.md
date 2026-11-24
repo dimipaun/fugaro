@@ -10,6 +10,16 @@ budget database, and `fugaro update` carries an installation there alone. It car
 D3011 of [every model key through the credentials service](../keys-through-service/README.md),
 whose tasks KS14 and KS15 wait on this plan's I1.
 
+**Amended 2026-11-22 by [model credentials routing](../model-credentials-routing/README.md)**
+(D3174): the Vertex refusal under `enforce` — `VertexBudgetRefusal`, which AB1b rewords and keeps —
+is **lifted for a chain the credentials service serves**. There the service, not the job, calls
+Vertex on its own identity, as it serves a key, so Vertex is capped as far as a key is and no
+further (that plan's F56, R23) and a job's own Vertex permission is not what serves the call; the
+job's account loses that permission in release 1 in an `enforce` project, in release 2 elsewhere.
+Unchanged: an unmigrated `auth: vertex` repository — one whose runs are still `agent.auth: vertex`
+rather than a chain — is refused as before, and a model with no price is refused in every mode
+(D3020).
+
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The brief, as received. The coordinator wrote it from the owner's rulings, quoting his words; no typo was fixed |

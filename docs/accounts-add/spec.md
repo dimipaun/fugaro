@@ -566,7 +566,7 @@ this design PR**.
 | File | What changes |
 | --- | --- |
 | `docs/project-claude-accounts.md` | The page becomes short: the seven steps of §1 above collapse to one command, and §2, §3, §4 and §5 shrink to what the command does not do (the version-3 rollout's history, the subset rule as a rule, and the job-per-(profile, account) shape). §6 and §7 mostly stand |
-| `docs/design/named-oauth-tokens.md` | §7's U2 row: its second half is what §3.4 answers |
+| `docs/named-oauth-tokens/spec.md` | §7's U2 row: its second half is what §3.4 answers |
 | `plugin/skills/setup/SKILL.md` | The named-accounts paragraph (`:141`) becomes "the owner runs `fugaro accounts add <name>` in their own terminal", and the `claude setup-token`-then-`fugaro secrets set` sequence for a *named* account stops being the skill's advice |
 | `internal/cli/docs_project_named_oauth_tokens_test.go` | The pins on that page: `TestDocsProjectClaudeAccountsOperatorGuide`, `…CommandsExist` (every `fugaro …` line on the page must resolve), `…NoSecretShapes`, `…GcpSetupRollout`, `…SharedJobLimitsAreTrue`, `…ExamplesValidate`, `…StayOutOfSiteNav`, plus `TestDocsProjectNamedOAuthTokens*` where the page's sentences move |
 | `internal/cli/docs_project_policy_reseed_test.go` | Cites the page's §5 ("the publish that follows rebuilds the list"); the sentence it pins moves with the page |
@@ -659,7 +659,7 @@ gains two rungs under the flag and keeps every rung it has:
 | 5 | the unsuffixed `default` | `config.DefaultClaudeAccount` — and with `auto` on, the walk of §11.3 in its place (unchanged when `auto` is off) |
 
 **This amends named-oauth-tokens T2.** That decision makes the committed `fugaro.yaml` the only place
-that may name an account ([named-oauth-tokens](../design/named-oauth-tokens.md) §3 T2, whose whole
+that may name an account ([named-oauth-tokens](../named-oauth-tokens/spec.md) §3 T2, whose whole
 argument is that a name chosen in a bucket-writable layer is not the owner's own act): rung 2 puts a
 **local** per-stage key above the committed `agent.oauth_token`, and rung 4 puts a **local** project
 default below it, so a local key may now outrank the repository's own file while the project layer and
@@ -712,7 +712,7 @@ nothing to choose: `accountWalkApplies` (`internal/runner/accountchoice.go`) is 
 `oauth` run's in any case (a mixed `api-key` run names it no account the walk could pick: the one
 Claude account such a run holds is the run's own `spec.OAuthToken`, which is the condition above, and
 an `api-key` run is outside the walk whatever it names:
-[mixed-credentials](../design/mixed-credentials.md) §11). So setting `default_claude_account` is also how
+[mixed-credentials](../mixed-credentials/spec.md) §11). So setting `default_claude_account` is also how
 a project turns the walk off for its runs: with that key set, no run of the project reaches rung 5.
 
 **Where "allowed for the stage" comes from (D874).** The repository's own admission is one rule:

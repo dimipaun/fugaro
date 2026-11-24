@@ -14,12 +14,12 @@ import (
 // ClaimTTL, runview (and so fugaro runs ls) gives the launch up (a claim alone is
 // unlaunched, a launch.json with no record is lost), and watch keeps showing
 // exactly those runs, flagged Stale, as stuck queued rows within its
-// lookback (design docs/design/watch-queued.md §3).
+// lookback (design docs/watch-queued/spec.md §3).
 const QueuedStuckAfter = 10 * time.Minute
 
 // QueuedRun is a run known only from the runs bucket: a launch claim or a
 // launch.json exists, but no registry entry has appeared under /agents yet,
-// so nothing about its progress is known (design docs/design/watch-queued.md).
+// so nothing about its progress is known (design docs/watch-queued/spec.md).
 type QueuedRun struct {
 	// Run and Slug are the run id and the repository slug, in the runs
 	// bucket's own (unescaped) form; MergeQueued converts them to the wire
@@ -60,8 +60,12 @@ func queuedRow(q QueuedRun, now time.Time) RunRow {
 		Run: clean(q.Run), Slug: budget.Key(q.Slug),
 		Title: dash(title), Stage: "queued", Round: "-", Verify: "-", Models: "-", Auth: "-",
 		// A queued run has no registry entry yet, so it has no mode either:
-		// the same "-" every other absent value on this row shows.
-		Mode: "-", From: "-",
+		// the same "-" every other absent value on this row shows. Source goes
+		// with them: the routing table's answer is written by the run into that
+		// entry, so a row without one has nothing to report either -- and the
+		// detail prints it, where an empty string would be a blank line rather
+		// than the "-" the rest of the row shows.
+		Mode: "-", From: "-", Source: "-",
 		Recipe: clean(q.Recipe), Workflow: clean(q.Workflow), RequestedBy: clean(q.RequestedBy),
 		LaunchedBy: safetext.Field(q.LaunchedBy),
 		Age:        age, HasAge: true,

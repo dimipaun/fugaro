@@ -128,7 +128,7 @@ type appKeySource struct {
 // github-app-key (small item 5, second half). Both fixes name the
 // repository-scoped command, and a repository copy wins over the project
 // copy from then on with nothing to undo it (design
-// docs/design/project-secrets.md §5): the person following the fix would
+// docs/project-secrets/spec.md §5): the person following the fix would
 // silently move this repository off the project-wide key forever. "" when
 // no project-wide copy covers this repository, where the suggested command
 // is the only one that makes sense.
@@ -194,7 +194,7 @@ func checkGitHubApp(ctx context.Context, lc *localcfg.Config, repo, appID string
 	// Both "store it again" fixes below suggest the repository-scoped
 	// command, which is the right one only when this repository is not
 	// covered by a project-wide copy: a --repo copy wins over the project
-	// copy forever (design docs/design/project-secrets.md §5, "repo
+	// copy forever (design docs/project-secrets/spec.md §5, "repo
 	// overrides project" has no override-the-override), the identical
 	// footgun N2 closes for the secrets stage's own prompt. note says so,
 	// and names --project-wide, when it applies.

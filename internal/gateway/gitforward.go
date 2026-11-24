@@ -26,6 +26,14 @@ package gateway
 //     alternative, U1): the run's identity token is exchanged and refreshed
 //     while the run is alive, a git command outlives one, and nothing here is
 //     ever handed to git to keep.
+//   - It reaches ONE credentials service, and which one is the run's own
+//     route's answer (WS18, D2979): the project's own service, which is every
+//     run with no record and every run whose record serves the Bitbucket kind
+//     from its project, or the workspace's, whose address the record carries
+//     (Workspace). The two are one call with two targets and not two paths:
+//     the identity written on a forward is the identity of the service it goes
+//     to, so a forward to the workspace's carries no slip and no declaration
+//     (R18) because a gateway.Workspace has no field for either.
 //   - It decides nothing. The method, the escaped path and the query travel as
 //     the caller spelled them, and the path is the ESCAPED one on purpose: the
 //     service's classification is the only reading of a path in this design,
@@ -43,11 +51,17 @@ package gateway
 //     it. A proxied repository pushes its pack through here (Check 190's 33
 //     MiB push is what the h2c listener, the service's streaming and this
 //     listening exist for).
+//   - It waits for a service it could not reach, by its own retry (send, WS18,
+//     D2983): the git paths have no stage in flight to end and resume as the
+//     model path's wait does, so a forward whose connection to the service
+//     could not be made at all is made again, for the same bound
+//     (serviceUnreachableBound) from the first such forward. Nothing that
+//     reached the service is ever sent twice.
 //   - It writes no audit line and no line per request: one audit line per
 //     proxied request is the service's (G7), and this listener knows nothing
 //     the line would want. What it logs is a forward it could not make, as a
 //     class and the transport's own cause (forwardCause) — never the path, the
-//     headers or a token.
+//     headers or a token — and one line when it starts waiting for the service.
 
 import (
 	"context"
@@ -61,6 +75,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -92,12 +107,26 @@ type GitForwardOptions struct {
 	// service upstream is held to). It has no default — it is the
 	// installation's own service.
 	Service string
-	// Identity is how every forward identifies itself to the service. It is
+	// Identity is how every forward identifies itself to Service. It is
 	// the same type the model path's service upstream presents, and the same
 	// rules hold it (validate): the service verifies both identities on every
 	// call, and one reading of what an identity is keeps the two paths from
 	// drifting apart.
 	Identity Service
+	// Workspace, when the run's credential route serves the Bitbucket kind
+	// from a workspace's credentials service, is that service: the forwards
+	// this listener makes go to the address the run's record carries instead
+	// of to Service, which is the one the job's environment names (WS18,
+	// D2979, R3).
+	//
+	// It is WS11's second upstream, and what a call to it carries is what that
+	// upstream carries: the job's Google identity minted for its address, the
+	// run's own token and the job's name, and no slip and no declaration —
+	// there is no field on it for either (R18). A forwarder built with one
+	// holds the two services as the run was handed them, and the route's
+	// answer is the one it uses: a run whose forge credential is served from
+	// the workspace never sends that traffic to the project's service.
+	Workspace *Workspace
 	// Log is where a forward that could not be made is reported. nil discards.
 	Log *slog.Logger
 }
@@ -105,7 +134,15 @@ type GitForwardOptions struct {
 // validate refuses a forwarder that could not present an identity or could not
 // reach a service: there is nothing to fall back to (G5, D143), so this is
 // refused at the start rather than once per git command.
+//
+// A forwarder handed a workspace upstream is held to that upstream's own
+// rules, which are this function's for it (Workspace.validate): the service it
+// reaches is that one, so the address the record carries is the one that has
+// to be a service's, and the identity it presents is the workspace's own.
 func (o GitForwardOptions) validate() error {
+	if o.Workspace != nil {
+		return o.Workspace.validate()
+	}
 	if o.Service == "" {
 		return errors.New("gateway: the git forwarder has no service URL")
 	}
@@ -126,17 +163,21 @@ func (o GitForwardOptions) validate() error {
 
 // GitForward is a running forwarder.
 type GitForward struct {
-	o       GitForwardOptions
-	log     *slog.Logger
-	service string // the service's URL, with no trailing slash
-	url     string // this listener's address with the proxy route's prefix on it
-	client  *http.Client
-	srv     *http.Server
-	ln      net.Listener
+	o        GitForwardOptions
+	log      *slog.Logger
+	service  string  // the service's URL, with no trailing slash
+	identity Service // how every forward identifies itself to that service
+	url      string  // this listener's address with the proxy route's prefix on it
+	client   *http.Client
+	srv      *http.Server
+	ln       net.Listener
 
 	handlers  sync.WaitGroup // every forward being handled
 	closeOnce sync.Once
 	closeErr  error
+
+	mu               sync.Mutex
+	unreachableSince time.Time // when the outage this listener is waiting out began
 }
 
 // StartGitForward listens on 127.0.0.1 on a free port and serves until Close.
@@ -151,12 +192,21 @@ func StartGitForward(ctx context.Context, o GitForwardOptions) (*GitForward, err
 		return nil, fmt.Errorf("gateway: git forward: listen: %w", err)
 	}
 	f := &GitForward{
-		o:       o,
-		log:     o.Log,
-		service: strings.TrimSuffix(o.Service, "/"),
-		url:     "http://" + ln.Addr().String() + GitProxyPrefix,
-		client:  upstreamClient(nil),
-		ln:      ln,
+		o:        o,
+		log:      o.Log,
+		service:  strings.TrimSuffix(o.Service, "/"),
+		identity: o.Identity,
+		url:      "http://" + ln.Addr().String() + GitProxyPrefix,
+		client:   upstreamClient(nil),
+		ln:       ln,
+	}
+	if o.Workspace != nil {
+		// The route's answer, read the one way this package reads a call to a
+		// workspace's service (Workspace.upstream): the record's address, the
+		// job's identity minted for it and the run's own token, and no slip
+		// and no declaration to carry (R18).
+		up := o.Workspace.upstream()
+		f.service, f.identity = strings.TrimSuffix(up.BaseURL, "/"), *up.Service
 	}
 	if f.log == nil {
 		f.log = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -212,11 +262,11 @@ func (f *GitForward) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "fugaro: this listener serves "+GitProxyPrefix+" only", http.StatusNotFound)
 		return
 	}
-	up, ok := f.upstream(w, r)
+	up, body, ok := f.upstream(w, r)
 	if !ok {
 		return
 	}
-	resp, err := f.client.Do(up)
+	resp, err := f.send(up, body, r.Context())
 	if err != nil {
 		f.fail(w, reasonUnreachable, err)
 		return
@@ -303,49 +353,168 @@ func stepEscape(hi, lo byte) (byte, bool) {
 //
 // The request's own context is the upstream's: a git command that went away
 // takes its forward with it, and nothing here outlives the caller that asked.
-func (f *GitForward) upstream(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
-	run := f.o.Identity.RunIDToken()
+func (f *GitForward) upstream(w http.ResponseWriter, r *http.Request) (*http.Request, *forwardBody, bool) {
+	run := f.identity.RunIDToken()
 	if run == "" {
 		// An unauthenticated call to the service under the job's own Google
 		// identity is not a call this forwarder makes: the run's identity is
 		// what the service verifies the run with, and there is no second way
 		// to be admitted (D143).
 		f.fail(w, reasonNoRunIdentity, nil)
-		return nil, false
+		return nil, nil, false
 	}
-	id, err := f.o.Identity.IDToken(r.Context())
+	id, err := f.identity.IDToken(r.Context())
 	if err != nil {
 		f.fail(w, reasonNoJobIdentity, err)
-		return nil, false
+		return nil, nil, false
 	}
 	if id == "" {
 		f.fail(w, reasonNoJobIdentity, nil)
-		return nil, false
+		return nil, nil, false
+	}
+	// A body is sent through a reader of this listener's own, which is what
+	// says whether any of it reached the wire (send) and what keeps a failure
+	// from closing the caller's body under a forward that is made again. A
+	// request with no body is sent with none: that is what makes a fetch a
+	// bodyless request and not an empty chunked one.
+	var src io.Reader
+	var body *forwardBody
+	if r.Body != nil && r.Body != http.NoBody {
+		body = &forwardBody{r: r.Body}
+		src = body
 	}
 	// The escaped path and the raw query: the service's classification is the
 	// one reading of a path (G13), and what it must read is what the caller
 	// wrote — an encoded separator reaches it as one and is refused there.
-	up, err := http.NewRequestWithContext(r.Context(), r.Method, f.service+r.URL.RequestURI(), r.Body)
+	up, err := http.NewRequestWithContext(r.Context(), r.Method, f.service+r.URL.RequestURI(), src)
 	if err != nil {
 		f.fail(w, reasonTarget, err)
-		return nil, false
+		return nil, nil, false
 	}
 	up.Header = forwardRequestHeaders(r.Header)
 	up.Header.Set("Authorization", "Bearer "+id)
 	up.Header.Set(HeaderRunIdentity, run)
-	up.Header.Set(HeaderRunJob, f.o.Identity.Job)
-	// Never replayed: a retried request would be a second push, and the
-	// service's answer to the first is not this listener's to undo.
+	up.Header.Set(HeaderRunJob, f.identity.Job)
+	// Never replayed by net/http: a request rebuilt from its own body would be
+	// a second push. send's wait is the one retry this listener makes, and it
+	// makes it only where nothing of the request went out.
 	up.GetBody = nil
-	if r.Body != nil && r.Body != http.NoBody {
+	if body != nil {
 		// The caller's own length, which may be unknown: a push streamed in
 		// chunked framing stays streamed, and no pack is held here to measure
-		// it. A request with no body keeps the zero NewRequest gave it, which
-		// is what makes a fetch a bodyless request and not an empty chunked
-		// one.
+		// it.
 		up.ContentLength = r.ContentLength
 	}
-	return up, true
+	return up, body, true
+}
+
+// forwardBody is the caller's body as the service is sent it.
+//
+// It counts what the transport has read, which is what send waits on: a byte
+// read is a byte scheduled for the wire, and a body nothing of which was read
+// is a request that never reached the service. And it never closes the
+// caller's body: that body is the listener's own server's — http.Server closes
+// it when the handler returns — and a transport that closed it on a failure
+// would leave a forward that is made again with a body nobody can read.
+type forwardBody struct {
+	r io.Reader
+	n atomic.Int64
+}
+
+func (b *forwardBody) Read(p []byte) (int, error) {
+	n, err := b.r.Read(p)
+	b.n.Add(int64(n))
+	return n, err
+}
+
+func (b *forwardBody) Close() error { return nil }
+
+// send makes one forward, waiting out a service it could not reach (WS18,
+// D2983).
+//
+// The wait is this listener's own because a git path has no stage in flight:
+// the model path's wait ends the stage and resumes it when the service is back
+// (C1.17), and a clone or a push is not a stage — there is nothing to end and
+// nothing that could resume it. The bound is the same one, read from
+// service.go so the two cannot come apart, and the clock is this listener's:
+// an outage met on the git path does not spend the wait the run's model calls
+// have, and every forward the service answers clears it (noteReached), so an
+// outage that ends starts a fresh bound the next time it is met.
+//
+// Nothing that reached the service is sent twice. A forward is made again only
+// when the transport could not make the connection at all (dialFailed) AND no
+// byte of the request's body was read to put on the wire — which is the state
+// a service that is down leaves every forward in, a push's included. A failure
+// after that — a reset mid-pack, an answer that could not be read — is the
+// caller's at once, and whatever retry the git command then makes is the only
+// thing that could send those bytes again.
+func (f *GitForward) send(up *http.Request, body *forwardBody, ctx context.Context) (*http.Response, error) {
+	for {
+		resp, err := f.client.Do(up)
+		if err == nil {
+			f.noteReached()
+			return resp, nil
+		}
+		if !dialFailed(err) || (body != nil && body.n.Load() > 0) {
+			return nil, err
+		}
+		until, started := f.noteUnreachable()
+		if !time.Now().Before(until) {
+			return nil, err
+		}
+		if started {
+			f.log.Warn("gateway: the credentials service could not be reached; the git forward is made again",
+				"retry_at", until.UTC().Format(time.RFC3339))
+		}
+		select {
+		case <-time.After(gitForwardRetryDelay):
+		case <-ctx.Done():
+			return nil, err
+		}
+	}
+}
+
+// noteUnreachable records a forward that could not reach the service and
+// answers when this listener stops waiting for it: the first such forward,
+// plus serviceUnreachableBound (D2983). started reports whether this is the
+// forward that began the wait, which is where the one log line is written.
+func (f *GitForward) noteUnreachable() (until time.Time, started bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.unreachableSince.IsZero() {
+		f.unreachableSince, started = time.Now(), true
+	}
+	return f.unreachableSince.Add(serviceUnreachableBound), started
+}
+
+// noteReached clears the outage clock: a forward the service answered — with
+// any status, a refusal included — is the service being reachable.
+func (f *GitForward) noteReached() {
+	f.mu.Lock()
+	f.unreachableSince = time.Time{}
+	f.mu.Unlock()
+}
+
+// gitForwardRetryDelay is how long this listener waits between two attempts at
+// a service it could not reach. It is a var, like the bound it is spent
+// against, so the tests do not spend it.
+var gitForwardRetryDelay = time.Second
+
+// dialFailed reports whether a forward never reached the service: the
+// transport could not make the connection, so no byte of the request is on the
+// wire and the service has read nothing. Every other failure — a reset after
+// the request went out, an answer cut short — is a forward the service may
+// have read and acted on, and none of those is made again here.
+//
+// net/http reports a connection it could not make as a *net.OpError whose Op
+// is "dial", under the *url.Error client.Do wraps everything in, and that is
+// what this reads: a service that accepts the connection and then never
+// answers is not a service this waits for — the client's own timeout ends that
+// forward, upstreamClient's bound, and a second send would be a second request
+// to a service that is up.
+func dialFailed(err error) bool {
+	var oe *net.OpError
+	return errors.As(err, &oe) && oe.Op == "dial"
 }
 
 // dropForwardRequestHeaders are the headers of the caller's request that never

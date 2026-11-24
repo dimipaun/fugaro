@@ -23,8 +23,16 @@ import (
 const (
 	testProject = "fake-project"
 	testRegion  = "fake-region"
-	testSA      = "fugaro-job-acme-app@fake-project.iam.gserviceaccount.com"
-	testImage   = "fake-region-docker.pkg.dev/fake-project/fugaro-acme-app/acme-app:1"
+	// testSA is the one account an installation's block carries
+	// (Options.ServiceAccount). Since BR10 nothing a launch creates runs as it:
+	// a job's VMs run as the account of the deployed job the run stands in for.
+	testSA = "fugaro-job-acme-app@fake-project.iam.gserviceaccount.com"
+	// testJobSA is the account of the per-repository deployed job these tests'
+	// launches stand in for: gcp.ServiceAccountID(slug, workflow) in this
+	// installation's project, which is the account the repository root creates
+	// for that job and the one its Cloud Run job runs as (BR10, D3103).
+	testJobSA = "fugaro-acme-app-web-2dc53d2b@fake-project.iam.gserviceaccount.com"
+	testImage = "fake-region-docker.pkg.dev/fake-project/fugaro-acme-app/acme-app:1"
 	// testSecret is a Secret Manager secret *name*, never a value: the job
 	// definition carries names only.
 	testSecret = "projects/fake-project/secrets/fugaro-acme-app-anthropic-api-key"
@@ -411,10 +419,19 @@ func TestJobDefinitionIsTheDesignsJob(t *testing.T) {
 			t.Errorf("job env %s = %v, want %v", k, vars[k], want)
 		}
 	}
-	// Secrets by name, never by value (design §1.6, C10): the value here is a
-	// Secret Manager secret's resource name.
-	if got := object(t, call.Job, "taskGroups", "0", "taskSpec", "environment", "secretVariables"); !equalJSON(got, map[string]any{"ANTHROPIC_API_KEY": testSecret}) {
-		t.Errorf("secretVariables = %v", got)
+	// No secret at all (BR11, D3104): the block this installation still
+	// carries names one, and nothing of it -- not the name, not a value --
+	// reaches the job, which is the one resource anyone with batch.jobs.get
+	// can read (design §1.6, C10).
+	rawJob, err := json.Marshal(call.Job)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if _, ok := object(t, call.Job, "taskGroups", "0", "taskSpec", "environment")["secretVariables"]; ok {
+		t.Errorf("the job mounts a secret, want nothing mounted")
+	}
+	if strings.Contains(string(rawJob), testSecret) {
+		t.Errorf("the job carries the secret's name: %s", rawJob)
 	}
 
 	taskSpec := object(t, call.Job, "taskGroups", "0", "taskSpec")
@@ -446,16 +463,21 @@ func TestJobDefinitionIsTheDesignsJob(t *testing.T) {
 	if got := object(t, call.Job, "allocationPolicy", "instances", "0")["blockProjectSshKeys"]; got != true {
 		t.Errorf("blockProjectSshKeys = %v, want true", got)
 	}
-	// Never the default Compute Engine account (design §3.2, C6/C21).
-	if got := object(t, call.Job, "allocationPolicy", "serviceAccount")["email"]; got != testSA {
-		t.Errorf("serviceAccount.email = %v, want %s", got, testSA)
+	// Never the default Compute Engine account (design §3.2, C6/C21), and
+	// never the block's single account either (BR10, D3103): it is the account
+	// of the deployed job this launch stands in for.
+	if got := object(t, call.Job, "allocationPolicy", "serviceAccount")["email"]; got != testJobSA {
+		t.Errorf("serviceAccount.email = %v, want %s", got, testJobSA)
+	}
+	if testJobSA == testSA {
+		t.Error("the job's account and the block's are the same string, so this assertion cannot tell them apart")
 	}
 }
 
 // TestTheSplitBuildsTheSameJob is BRS's pin: the job definition of one run,
 // built through the four helpers four later tasks each own one of -- the
 // task's environment (env.go, BR8), the sealed launch (seal.go, BR1), the
-// account a run's VMs are (account.go, BR10) and the mounted secrets
+// account a run's VMs are (account.go, BR10) and the secrets a job mounts
 // (secrets.go, BR11) -- is byte for byte the job it was before the split, as
 // Batch receives it.
 //
@@ -463,17 +485,20 @@ func TestJobDefinitionIsTheDesignsJob(t *testing.T) {
 // them from the request. That is what makes the split a move rather than a
 // rewrite: a helper that stops contributing shows up as a difference here
 // rather than in a reviewer's head. Hand mutation, one per helper: empty
-// jobVariables' map (or drop its reservation of the launch's own entries),
-// return nil from secretVariables, or return "" from jobAccount -- each
-// changes a golden and fails here. sealedVars contributes no variable to
-// either golden, because a launch carrying a secret entry is what it refuses
-// today: emptying it shows up instead as a launch that is no longer refused,
-// which is TestLaunchRefusesASecretEnv's pin and not this one's.
+// jobVariables' map (or drop its reservation of the launch's own entries) or
+// return "" from jobAccount -- each changes a golden and fails here.
+// sealedVars contributes no variable to either golden, because a launch
+// carrying a secret entry is what it refuses today: emptying it shows up
+// instead as a launch that is no longer refused, which is
+// TestLaunchRefusesASecretEnv's pin and not this one's. secrets.go contributes
+// nothing either, and that is BR11's own change: it mounts no field, so the
+// diff that removed the mounts from these two goldens is the change to the job
+// (TestABatchJobMountsNothing is where that is pinned).
 //
 // A later task that changes what a run's job carries -- BR8's variables, BR10's
-// account, BR11's removal of the mounted secrets -- changes a golden in the
-// same change, on purpose: the golden's diff is then the change to the job, and
-// a change nobody meant to make is the one that has no diff to explain.
+// account -- changes a golden in the same change, on purpose: the golden's diff
+// is then the change to the job, and a change nobody meant to make is the one
+// that has no diff to explain.
 func TestTheSplitBuildsTheSameJob(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -482,7 +507,7 @@ func TestTheSplitBuildsTheSameJob(t *testing.T) {
 		golden string
 	}{
 		{
-			name:   "the job of a run that asked for no daemon, on an installation that mounts a secret",
+			name:   "the job of a run that asked for no daemon, on an installation whose block still carries a secret",
 			spec:   spec(),
 			tweak:  func(o *Options) { o.Secrets = map[string]string{"ANTHROPIC_API_KEY": testSecret} },
 			golden: goldenNoDaemonJob,
@@ -558,7 +583,7 @@ const (
       ]
     },
     "serviceAccount": {
-      "email": "fugaro-job-acme-app@fake-project.iam.gserviceaccount.com"
+      "email": "fugaro-acme-app-web-2dc53d2b@fake-project.iam.gserviceaccount.com"
     }
   },
   "labels": {
@@ -580,12 +605,10 @@ const (
           "memoryMib": "4096"
         },
         "environment": {
-          "secretVariables": {
-            "ANTHROPIC_API_KEY": "projects/fake-project/secrets/fugaro-acme-app-anthropic-api-key"
-          },
           "variables": {
             "FUGARO_BACKEND": "cloud-batch",
             "FUGARO_BATCH_JOB": "projects/fake-project/locations/fake-region/jobs/fugaro-acme-app-web-f31eb908886f",
+            "FUGARO_DEPLOYED_JOB": "fugaro-acme-app-web-2dc53d2bf3a6",
             "FUGARO_GCP_PROJECT": "fake-project",
             "FUGARO_PROJECT": "acme",
             "FUGARO_REGION": "fake-region",
@@ -635,7 +658,7 @@ const (
       ]
     },
     "serviceAccount": {
-      "email": "fugaro-job-acme-app@fake-project.iam.gserviceaccount.com"
+      "email": "fugaro-acme-app-web-2dc53d2b@fake-project.iam.gserviceaccount.com"
     }
   },
   "labels": {
@@ -657,13 +680,11 @@ const (
           "memoryMib": "4096"
         },
         "environment": {
-          "secretVariables": {
-            "ANTHROPIC_API_KEY": "projects/fake-project/secrets/fugaro-acme-app-anthropic-api-key"
-          },
           "variables": {
             "DOCKER_HOST": "unix:///var/run/docker.sock",
             "FUGARO_BACKEND": "cloud-batch",
             "FUGARO_BATCH_JOB": "projects/fake-project/locations/fake-region/jobs/fugaro-acme-app-web-f31eb908886f",
+            "FUGARO_DEPLOYED_JOB": "fugaro-acme-app-web-2dc53d2bf3a6",
             "FUGARO_GCP_PROJECT": "fake-project",
             "FUGARO_PROJECT": "acme",
             "FUGARO_REGION": "fake-region",
@@ -691,18 +712,19 @@ const (
 
 // TestLaunchSendsNoSecretValue is C10 stated as a search of the bytes Batch
 // receives, over the one surface where a caller could actually put a value
-// there: Options.Secrets. The job carries names only, and this is the test
-// that fails if someone later resolves one.
+// there: Options.Secrets. The job carries neither a secret's value nor its
+// name (BR11, D3104), and this is the test that fails if someone later
+// resolves one.
 //
 // Hand mutation: in secrets.go, write the secrets into the task's plain
-// Variables as well (`env.Variables[k] = v` beside `env.SecretVariables =
-// b.o.Secrets`, or `b.o.Secrets` in the variables' place). It is the mutation the review
+// Variables as well (`env.Variables[k] = v`, or `b.o.Secrets` in the
+// variables' place), or mount them again. It is the mutation the review
 // called M4, and it stayed green against the earlier version of this test:
 // that one searched for a value the backend was never given, so nothing could
 // make it fail. This one passes a recognisable value through the API surface
 // -- both halves of the map, the value slot and the variable-name slot -- and
-// then requires the job's serialized form to contain the secret's *name*
-// exactly once.
+// then requires the job's serialized form to contain neither the secret's
+// name nor any part of the value.
 //
 // It also covers the two refusals, with a value spelled the way real
 // credentials are: a name-shaped value passes envNameRE, so the entry whose
@@ -763,8 +785,8 @@ func TestLaunchSendsNoSecretValue(t *testing.T) {
 	}
 
 	// The documented use: an environment variable name mapped to the secret's
-	// resource name. The job may carry that name -- it is what the VM resolves
-	// -- and nothing else about the secret.
+	// resource name, in a block `fugaro update` has not rewritten yet. The job
+	// carries nothing of it -- neither the name nor a value (BR11, D3104).
 	b, bf, _, _ := newTestBackend(t, func(o *Options) {
 		o.Secrets = map[string]string{"ANTHROPIC_API_KEY": testSecret}
 	})
@@ -779,19 +801,19 @@ func TestLaunchSendsNoSecretValue(t *testing.T) {
 	if strings.Contains(string(raw), value) || strings.Contains(string(raw), "sk-ant-") {
 		t.Fatalf("the job definition carries a secret value: %s", raw)
 	}
-	// Exactly once, and therefore only under secretVariables: the platform
-	// resolves the entry there, so a copy of the name in the task's plain
-	// variables is the same leak under another label (and a copy in both would
-	// also be the collision jobDefinition refuses).
-	if n := strings.Count(string(raw), testSecret); n != 1 {
-		t.Fatalf("the secret's name appears %d times in the job definition, want once (under secretVariables): %s", n, raw)
+	// Never, and therefore under no label at all: a copy in the task's plain
+	// variables is the standing credential §1.6 exists to keep off the job
+	// resource, whether it is spelled as a value or as the name the platform
+	// once resolved for it.
+	if n := strings.Count(string(raw), testSecret); n != 0 {
+		t.Fatalf("the secret's name appears %d times in the job definition, want never: %s", n, raw)
 	}
-	if got := object(t, job, "taskGroups", "0", "taskSpec", "environment", "variables"); len(got) != 6 {
-		t.Errorf("the task's plain variables = %v, want the job's own six and no secret", got)
+	if got := object(t, job, "taskGroups", "0", "taskSpec", "environment", "variables"); len(got) != 7 {
+		t.Errorf("the task's plain variables = %v, want the job's own seven and no secret", got)
 	}
 	for k, v := range object(t, job, "taskGroups", "0", "taskSpec", "environment", "variables") {
 		if s, ok := v.(string); ok && strings.Contains(s, "secrets/") {
-			t.Errorf("variables[%s] = %q names a secret: secrets belong in secretVariables", k, s)
+			t.Errorf("variables[%s] = %q names a secret: no secret reaches a Batch job (D3104)", k, s)
 		}
 	}
 }
@@ -2023,42 +2045,14 @@ func TestTheJobHasNoTaskEnvironments(t *testing.T) {
 	}
 }
 
-// TestLaunchRefusesASecretThatIsAlsoAJobVariable: the job's own variables are
-// how the run is told which run, backend and project it is (§2.1, §2.5), and
-// secretVariables resolve into the same environment on the VM. A name in both
-// would leave which entry wins to the platform, so the launch is refused
-// before anything is created rather than launched with a run whose identity
-// may have come from a secret.
-//
-// Hand mutation: drop the collision loop in jobDefinition (leave
-// `env.SecretVariables = b.o.Secrets` alone), which launches the job with
-// FUGARO_RUN in both fields.
-func TestLaunchRefusesASecretThatIsAlsoAJobVariable(t *testing.T) {
-	ctx := context.Background()
-	b, bf, _, _ := newTestBackend(t, func(o *Options) {
-		o.Secrets = map[string]string{"FUGARO_RUN": testSecret}
-	})
-	_, err := b.Launch(ctx, spec())
-	if !errors.Is(err, backend.ErrRejected) {
-		t.Fatalf("Launch(secret named FUGARO_RUN) = %v, want ErrRejected", err)
-	}
-	if !strings.Contains(err.Error(), "FUGARO_RUN") {
-		t.Errorf("the refusal does not name the colliding variable: %v", err)
-	}
-	if len(bf.Creates()) != 0 {
-		t.Fatalf("a refused launch still created %d job(s)", len(bf.Creates()))
-	}
-	// A secret that is not one of the job's own variables is unaffected.
-	b2, bf2, _, _ := newTestBackend(t, func(o *Options) {
-		o.Secrets = map[string]string{"ANTHROPIC_API_KEY": testSecret}
-	})
-	if _, err := b2.Launch(ctx, spec()); err != nil {
-		t.Fatalf("Launch(a secret that collides with nothing): %v", err)
-	}
-	if got := object(t, bf2.Creates()[0].Job, "taskGroups", "0", "taskSpec", "environment", "secretVariables")["ANTHROPIC_API_KEY"]; got != testSecret {
-		t.Errorf("secretVariables = %v", got)
-	}
-}
+// TestLaunchRefusesASecretThatIsAlsoAJobVariable is gone with its premise
+// (BR11, D3104): the job's own variables are how the run is told which run,
+// backend and project it is (§2.1, §2.5), and a secret named after one of them
+// used to be refused because the mount resolved into the same environment on
+// the VM. Nothing is mounted now, so a block that names FUGARO_RUN is a block
+// whose entry reaches no job at all -- and the job built for it is the job
+// built for a block that names nothing, which is what
+// TestABatchJobMountsNothing holds (secrets_test.go).
 
 // TestLaunchCarriesTheSpecEnv: the launcher's per-execution variables (the
 // budget marker) go into the task's own variables, which is the whole of a
@@ -2099,12 +2093,12 @@ func TestLaunchCarriesTheSpecEnv(t *testing.T) {
 	// launcher drops its claim and the token it minted.
 	//
 	// The platform's own five are reserved here too, Cloud Run's list
-	// (backend.ReservedEnvNames), and FUGARO_BUCKET is the one of them no
-	// Batch job writes: an entry naming it would be the only writer of the
-	// bucket a run puts its results in, which is what the same entry is
-	// refused for on Cloud Run — where the job's environment already holds it
-	// — rather than a name this backend happens not to set (the review
-	// finding on this change).
+	// (backend.ReservedEnvNames), and FUGARO_BUCKET is the one of them this
+	// job's own map does not hold -- the launcher passes the deployed job's
+	// values in (Options.JobEnv), which this installation leaves empty: an
+	// entry naming it would be the only writer of the bucket a run puts its
+	// results in, which is what the same entry is refused for on Cloud Run,
+	// where the job's environment already holds it.
 	before := len(bf.Creates())
 	for _, bad := range []string{
 		"FUGARO_BUDGET_TOKEN", "=1", "FUGARO_RUN=acme-app/someone-elses-run",
@@ -2117,13 +2111,13 @@ func TestLaunchCarriesTheSpecEnv(t *testing.T) {
 		}
 	}
 	// And every name the two backends reserve for the deployment's own — the
-	// platform's five, and the catalog stamp, which this backend refuses
-	// although no Batch job writes it: the entry would land in the task's
+	// platform's five, and the catalog stamp: the entry would land in the task's
 	// variables, which are the run's environment, and the runner reads that
 	// name to decide whether the image's own variables reach the agent, so an
 	// entry naming it would turn the passthrough on for a job whose catalog
-	// chose no image (docs/image-env, D1371). Nothing is sent for any of them,
-	// which is the check Cloud Run's own test makes over its reserved names.
+	// chose no image (docs/image-env, D1371) — or overwrite the stamp the
+	// deployed job carried. Nothing is sent for any of them, which is the check
+	// Cloud Run's own test makes over its reserved names.
 	for _, name := range append([]string{backend.ImageEntryEnv}, backend.PlatformEnvNames...) {
 		sent := len(bf.Creates())
 		s.Env = []string{name + "=someone-elses-" + strings.ToLower(name)}
@@ -2525,7 +2519,7 @@ func equalJSON(a, b any) bool {
 }
 
 // TestLaunchRefusesASecretEnv is the Batch half of the seal's carrier
-// (docs/design/budget-token-channel.md, "The Batch backend refuses a sealed
+// (docs/budget-token-channel/spec.md, "The Batch backend refuses a sealed
 // launch"): a Batch job has no per-execution override, so the only place a
 // launch's variable can go is the job definition's plain variables, which
 // every launcher (batch.jobsEditor) and the reaper (batch.jobs.get) read back
@@ -2620,7 +2614,7 @@ func TestLaunchRefusesASecretEnv(t *testing.T) {
 	// holds this file and those documents to the same sentence.
 	for _, want := range []string{
 		"the job's definition",
-		"docs/design/budget-token-channel.md",
+		"docs/budget-token-channel/spec.md",
 		"cannot launch any run on Batch",
 		"a budget database with budget mode on, or a published policy",
 	} {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -24,6 +25,15 @@ import (
 const (
 	newProj    = "fugaro-new-1234"
 	billingAcc = "0123AB-4567CD-89EF01"
+)
+
+// resumedBudget is the amount the rerun below answers the budget question with
+// (R8: a resumed creation is a creating run, and the question is asked on it
+// like on any other), and resumedBudgetAmount is that answer as the run reads
+// it — the one number the run's own line about an account-less budget prints.
+const (
+	resumedBudget       = "250"
+	resumedBudgetAmount = 250
 )
 
 // The two patterns TestTheBillingListIsNarrow reads the tree with: the one
@@ -86,13 +96,22 @@ func (r *projectRig) existing(billing bool) {
 }
 
 // foreign makes the project exist, readable, with Firebase and billing as
-// given, and without the creation label: a project no run of fugaro setup
-// created, which a run refuses.
+// given, and without an origin label: a project no run of fugaro setup has
+// made Fugaro's yet. It holds nothing else of Fugaro's either, so a run adopts
+// it (the owner's ruling of 2026-11-22); a caller that wants it refused gives
+// it something of Fugaro's first (installed).
 func (r *projectRig) foreign(billing bool) {
 	r.crm.AddProject(newProj, 424242)
 	r.gcs.AddProject(newProj, 424242)
 	r.fb.AddFirebase(newProj)
 	r.bill.SetBilling(newProj, billing)
+}
+
+// installed gives the project a runs bucket of its own: the installation every
+// run of fugaro setup creates, so the project holds something of Fugaro's and
+// is refused rather than adopted.
+func (r *projectRig) installed() {
+	r.gcs.AddBucket("fugaro-runs-"+newProj, 424242, map[string]string{"fugaro": "managed"})
 }
 
 // run is the converge with the flags and the stdin; terminal says whether
@@ -329,13 +348,14 @@ func TestCreateResumesItsOwnProject(t *testing.T) {
 	r.nothingDone(t, "a resumed project")
 }
 
-// TestCreateRefusesAnExistingProjectItDidNotCreate: Fugaro only starts fresh
-// (the owner's ruling of 2026-10-23). A project that already exists, that the
-// caller can read, and that no run of fugaro setup created (it carries no
-// creation label) is refused with the one line that says so, before anything is
-// created, added, linked or applied — whatever billing it has, and in the plan
-// as in the apply.
-func TestCreateRefusesAnExistingProjectItDidNotCreate(t *testing.T) {
+// TestCreateRefusesAProjectThatHoldsSomethingOfFugaros: a project that
+// already exists, that the caller can read, and that holds something of
+// Fugaro's — here the runs bucket of an installation — is refused with the one
+// line that says so, before anything is created, added, linked or applied,
+// whatever billing it has, and in the plan as in the apply. Fugaro adopts only
+// a project that holds nothing of Fugaro's (the owner's ruling of 2026-11-22),
+// and a project holding nothing is TestSetupAdoptsAnExistingEmptyProject's.
+func TestCreateRefusesAProjectThatHoldsSomethingOfFugaros(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		billing bool
@@ -348,17 +368,21 @@ func TestCreateRefusesAnExistingProjectItDidNotCreate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newProjectRig(t)
 			r.foreign(tc.billing)
+			r.installed()
 			r.bill.AddAccount(billingAcc, true)
 			out, _, err := r.run(t, true, newProj+"\n"+billingAcc+"\n", append([]string{"--create-project"}, tc.args...)...)
 			if ExitCode(err) != ExitUserError {
 				t.Fatalf("exit %d (%v), want a user error\n%s", ExitCode(err), err, out)
 			}
-			if want := "Fugaro only starts fresh: " + newProj + " already exists; pick another id"; !strings.Contains(out+errString(err), want) {
+			if want := newProj + " already exists and holds something of Fugaro's"; !strings.Contains(out+errString(err), want) {
 				t.Errorf("the refusal does not say %q:\n%s\n%v", want, out, err)
 			}
-			r.nothingDone(t, "an existing project setup did not create")
+			r.nothingDone(t, "an existing project holding something of Fugaro's")
+			if got := r.crm.Labels(newProj)[infra.CreatedLabelKey]; got != "" {
+				t.Errorf("the refused project was labelled %s=%s", infra.CreatedLabelKey, got)
+			}
 			if n := len(r.ran(t, "apply")); n != 0 {
-				t.Errorf("an installation was applied into a project setup did not create: %q", r.calls(t))
+				t.Errorf("an installation was applied into a project holding something of Fugaro's: %q", r.calls(t))
 			}
 		})
 	}
@@ -596,7 +620,7 @@ func stageLine(s string) string {
 // the fix (a role, or someone else creating the project) is the same one.
 func TestRefusedProjectCreationIsOneHelpfulLine(t *testing.T) {
 	const want = "Fugaro could not create the project " + newProj + ": your Google account is not allowed to create projects in your organization. " +
-		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder: Fugaro only starts fresh, so it creates the project itself. " +
+		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder. If they create the project for you instead, rerun this command with the same --gcp-project: fugaro setup adopts a project that already exists and holds nothing of Fugaro's. " +
 		"See docs/gcp-setup.md#not-an-owner."
 	// The three shapes the same refusal takes: a 403, a 400 whose own text says
 	// what it is (the only thing that can tell a refusal from the other 400s
@@ -650,7 +674,7 @@ func TestRefusedProjectCreationIsOneHelpfulLine(t *testing.T) {
 // and keeps its own message and exit code.
 func TestRefusedCreationArrivingOnTheOperation(t *testing.T) {
 	const want = "Fugaro could not create the project " + newProj + ": your Google account is not allowed to create projects in your organization. " +
-		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder: Fugaro only starts fresh, so it creates the project itself. " +
+		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder. If they create the project for you instead, rerun this command with the same --gcp-project: fugaro setup adopts a project that already exists and holds nothing of Fugaro's. " +
 		"See docs/gcp-setup.md#not-an-owner."
 
 	// PERMISSION_DENIED and FAILED_PRECONDITION are the two codes a refusal
@@ -1103,10 +1127,10 @@ func TestFirebaseProjectPairingRuleIsUnchanged(t *testing.T) {
 
 // TestFirebaseProjectIsAlwaysTheInstallations pins the pairing refusal from
 // both sides: it fires for a run that creates the project and for one that
-// creates nothing. Fugaro only starts fresh (the owner's ruling of
-// 2026-10-23), so a Firebase project other than the installation's own is no
-// layout at all any more: check() refuses it wherever both ids are on the
-// command line, and runInit does where the GCP project comes from the config.
+// creates nothing. The budget backend lives in the installation's own project,
+// so a Firebase project other than it is no layout at all: check() refuses it
+// wherever both ids are on the command line, and runInit does where the GCP
+// project comes from the config.
 func TestFirebaseProjectIsAlwaysTheInstallations(t *testing.T) {
 	// A creation whose Firebase project is another one: refused, naming the
 	// flag and the project.
@@ -1300,11 +1324,13 @@ func TestBillingLeftForTheAdminAndTheRerunResumes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// The rigor answer comes first: the wizard's phase is the run's first, and
-	// the paused run is the one that asked this question and could not write it
-	// anywhere (wizardResumesCreation) — so this run asks it again, before the
-	// typed confirmations of the creation it resumes.
-	out, errOut, err = r.run(t, true, string(rigor.Critical)+"\n"+initProjectName+"\n"+initProjectName+"\n"+newProj+"\n", "--operator", "user:dev@example.com", "--admin", "user:dev@example.com")
+	// The questions the paused run asked and could not carry come first — the
+	// wizard's phase is the run's first: the rigor answer, which the paused run
+	// gave and only the layer stage writes (wizardResumesCreation), and the
+	// budget answer, which no config member holds either (askBudget is asked on
+	// a resumed creation too, R8) — before the typed confirmations of the
+	// creation it resumes.
+	out, errOut, err = r.run(t, true, string(rigor.Critical)+"\n"+resumedBudget+"\n"+initProjectName+"\n"+initProjectName+"\n"+newProj+"\n", "--operator", "user:dev@example.com", "--admin", "user:dev@example.com")
 	all = refusalText(out, errOut, err)
 	if err != nil || strings.Contains(all, "already exists") {
 		t.Fatalf("the rerun after billing was linked did not complete: %v\n%s", err, all)
@@ -1323,6 +1349,18 @@ func TestBillingLeftForTheAdminAndTheRerunResumes(t *testing.T) {
 		t.Errorf("the resumed run wrote defaults.rigor.default = %q into %s, want critical: the answer the pause could not carry is lost\n%s",
 			l.Defaults.Rigor.Default, localLayerPath(t), layer)
 	}
+	// The budget question is one of them, and its answer is the one a resumed
+	// creation takes: the project the pause left is linked already, and this run
+	// links nothing, so no alert is created on an account it cannot name — the
+	// amount is dropped with the one line that says what adds it, rather than
+	// reaching the installation's Terraform, whose own rule refuses a budget
+	// with no billing account.
+	if !strings.Contains(all, questionFor("--budget").what) {
+		t.Errorf("the resumed creation never asked the budget question:\n%s", all)
+	}
+	if !strings.Contains(all, fmt.Sprintf(budgetNoAccount, resumedBudgetAmount)) {
+		t.Errorf("the resumed creation's budget answer is not settled against the account it has none of:\n%s", all)
+	}
 	if n := len(r.crm.Creates()); n != 1 {
 		t.Errorf("%d project(s) created over the two runs, want the one", n)
 	}
@@ -1334,6 +1372,50 @@ func TestBillingLeftForTheAdminAndTheRerunResumes(t *testing.T) {
 	}
 	if cfg, _ := os.ReadFile(r.cfg); strings.Contains(string(cfg), "setup_pending") {
 		t.Errorf("the completed setup left setup_pending in the config:\n%s", cfg)
+	}
+}
+
+// TestAResumedCreationWithNoTerminalTakesTheDefaultBudget is the other half of
+// the budget answer a resumed creation owes: where somebody can be asked, it is
+// asked (the test above), and where nobody can — --json, a pipe, a run that
+// never prompts — the default is taken rather than the run stopping or going on
+// with no amount at all (D2212). The question's own row demands no flag for the
+// reason it has none (setupQuestions), so a run that stopped on it would be the
+// wait the no-prompt policy refuses.
+//
+// The amount is read off the options after the phase's own check, which is
+// where a run that took the default keeps it: settleBudget drops an amount no
+// billing account can carry, so this run is given the account with
+// --link-billing — the same place a first run's account comes from — and the
+// default it took is what the installation's variables are written with.
+func TestAResumedCreationWithNoTerminalTakesTheDefaultBudget(t *testing.T) {
+	r := newProjectRig(t)
+	cfg, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfg, append(cfg, []byte("setup_pending: billing\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	o := &initOptions{
+		door: setupDoor.name, asJSON: true, linkBilling: billingAcc,
+		cloud: cloudOptions{gcpProject: newProj}, rigor: string(rigor.Critical),
+	}
+	out := &strings.Builder{}
+	run := &initRun{o: o, w: out, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
+	if !run.wizardResumesCreation(t.Context()) {
+		t.Fatalf("the config the pause left is not read as a creation to resume:\n%s", out)
+	}
+	st, err := newWizardStage(t.Context(), run).Check(t.Context())
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if st.State != initflow.Done {
+		t.Errorf("the resumed run with no terminal stopped at %q (%s): the budget question is one a run answers for itself", st.State, st.Detail)
+	}
+	if o.budget != managed.DefaultBudgetAmount || o.budgetCurrency != managed.DefaultBudgetCurrency {
+		t.Errorf("the resumed creation with no terminal has %d %s, want the default %d %s",
+			o.budget, o.budgetCurrency, managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency)
 	}
 }
 

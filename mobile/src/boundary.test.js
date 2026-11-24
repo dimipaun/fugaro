@@ -396,8 +396,9 @@ test('the app imports nothing outside mobile/ but the shared package (D119, D125
 // package that authenticates is a package with something to keep.
 //
 // **Why the three `@react-native-firebase` packages are not refused.** The
-// manifest declares `app`, `analytics` and `crashlytics` today (P7.1a's
-// telemetry), none of them carries a sign-in surface, and the rule is about
+// manifest declares `app`, `crashlytics` and `messaging` today (P7.1a's
+// telemetry, P5.2.8's push), none of them carries a sign-in surface, and the
+// rule is about
 // auth rather than about the word Firebase. What it refuses is the shape of an
 // auth SDK -- an `auth`, `authentication`, `oauth`, `msal`, `identity`,
 // `sign-in` or `log-in` name, in whatever spelling separates the words -- plus

@@ -40,12 +40,12 @@ that decides where a repository's code may go or what a run may cost:
   `ab.*` entries are hand-edited and then published by a **second** command, `fugaro config publish`,
   which the HARD RULE in `CLAUDE.md` forbids;
 - the **local project config** — `fugaro rigor set` and `fugaro rigor floor`, which the registry names
-  as the owners of seven keys (`internal/settings/registry.go:266`, `:273`, `:682`),
+  as the owners of seven keys (`internal/settings/registry.go:278`, `:285`, `:701`),
   **do not exist**; `secrets` has no `rm` and no policy flags; `accounts` has no `rm`.
 
 `fugaro settings set` already writes scalars and string lists
-(`internal/cli/settings_set.go:117`): the allowlist carries **231 of the registry's 517 rows** (121 by name
-and 110 through its prefixes), and the remaining **286 rows have no generic writer**
+(`internal/cli/settings_set.go:117`): the allowlist carries **236 of the registry's 536 rows** (121 by name
+and 115 through its prefixes), and the remaining **300 rows have no generic writer**
 ([reconciliation.md](reconciliation.md) §1, F1). The root cause is one sentence: **the
 generic writer handles scalars and string lists only**, and every gap above is a map, an object list, or
 a key the allowlist does not carry.

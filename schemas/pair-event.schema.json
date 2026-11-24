@@ -11,7 +11,8 @@
     { "$ref": "#/$defs/done" },
     { "$ref": "#/$defs/refused" },
     { "$ref": "#/$defs/listed" },
-    { "$ref": "#/$defs/revoked" }
+    { "$ref": "#/$defs/revoked" },
+    { "$ref": "#/$defs/invited" }
   ],
   "$defs": {
     "envelope": {
@@ -34,7 +35,7 @@
         "at": true,
         "project": true,
         "event": { "const": "qr" },
-        "payload": { "type": "string", "minLength": 1, "description": "The JSON the QR encodes (pairQRVersion is its own version, deliberately not the stream's)." },
+        "payload": { "type": "string", "minLength": 1, "description": "The JSON the QR encodes (its version is the payload's own, deliberately not the stream's; this pairing's code is version 1, the bootstrap configuration and a one-shot pairing token, frozen at that version so the invitation's version 2 re-versions no code a pairing prints)." },
         "uid": { "type": "string", "pattern": "^p~", "description": "The pairing uid the token's claims name; it is also the key of the pairing node." },
         "expires_at": { "type": "string", "format": "date-time" }
       }
@@ -124,6 +125,41 @@
         "project": true,
         "event": { "const": "revoked" },
         "revoke": { "$ref": "#/$defs/revokeDocument" }
+      }
+    },
+    "invited": {
+      "description": "`fugaro pair --email <somebody else>`: an admin invited a named person rather than pairing a device now (P2, D2799). The payload is the invitation's own code (pairQRVersion 2: the endpoint, the address, the nonce and the consumer key's fingerprint) and carries no credential — the phone gets the database URL and the API key from the service on success. It carries no uid, because an invitation mints no pairing: the invite node is keyed by the address, not by a pairing session.",
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [{ "$ref": "#/$defs/envelope" }],
+      "required": ["event", "payload", "expires_at", "invite"],
+      "properties": {
+        "v": true,
+        "at": true,
+        "project": true,
+        "event": { "const": "invited" },
+        "payload": { "type": "string", "minLength": 1, "description": "The JSON the QR encodes (pairQRVersion is its own version, deliberately not the stream's)." },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "invite": { "$ref": "#/$defs/inviteDocument" }
+      }
+    },
+    "inviteDocument": {
+      "description": "What an invitation wrote and what it carries. The endpoint and the address are printed on the operator's own screen (the QR holds them too), and consumer_key_fingerprint is a hash of the consumer's public key and never the key. There is no nonce field: the nonce is the code's own content and travels in payload, exactly as the pairing token does.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project", "at", "email", "role", "endpoint", "expires_at", "accepted_providers", "consumer_key_fingerprint", "wrote", "refused", "warnings"],
+      "properties": {
+        "project": { "type": "string" },
+        "at": { "type": "string", "format": "date-time" },
+        "email": { "type": "string", "minLength": 1, "description": "The invited address, canonicalised by the same rule the allowlist reads entries with." },
+        "role": { "type": "string", "minLength": 1, "description": "The role D224 resolved at the write and the invite node carries: at or below the role the roster grants the address (O14)." },
+        "endpoint": { "type": "string", "format": "uri", "description": "The mobile service's URL, derived from the credentials service's own address; the assertion's aud is this same string (C1)." },
+        "expires_at": { "type": "string", "format": "date-time", "description": "When the invitation stops being good (O4: ten minutes after it was written)." },
+        "accepted_providers": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "The provider list the invite node carries (D2785)." },
+        "consumer_key_fingerprint": { "type": "string", "minLength": 1, "description": "The fingerprint of the mailbox consumer's public key the phone pins (O16): a hash, never the key." },
+        "wrote": { "type": "array", "items": { "type": "string" }, "description": "The database paths this invitation wrote, relative to the root." },
+        "refused": { "type": "array", "items": { "type": "string" } },
+        "warnings": { "type": "array", "items": { "type": "string" } }
       }
     },
     "pairDocument": {

@@ -19,7 +19,7 @@ import (
 )
 
 // configShowDoc is fugaro config show --json: the hook a script uses to
-// check a repository resolves as intended (docs/design/layered-config.md
+// check a repository resolves as intended (docs/layered-config/spec.md
 // §12). project_layer alone cannot tell "no layer applies" from "a layer
 // may apply but could not be checked" (--offline with nothing cached:
 // project_layer is null either way, and every value's source reads

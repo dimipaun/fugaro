@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/runmsg"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -1506,7 +1507,7 @@ type StageTiming struct {
 	// the run's own: CredentialOAuth for a stage a stage-scoped Claude OAuth
 	// account served, which is the one stage of a mixed run whose calls went
 	// straight to Anthropic instead of through the gateway
-	// (docs/design/mixed-credentials.md §5, §11). It is what makes this
+	// (docs/mixed-credentials/spec.md §5, §11). It is what makes this
 	// stage's ModelUSD readable: the figure is Claude Code's own, not the
 	// gateway's ledger, which is why the stage has no Calls either, and why
 	// ModelNotionalUSD equals ModelUSD for it. Empty for every stage the
@@ -1563,11 +1564,37 @@ type StageTiming struct {
 	// run's -- and in records written before the field existed, so an absent
 	// value is not the statement that a stage had no credential.
 	ServedBy string `json:"served_by,omitempty"`
+	// Source is the credential source that served this stage, as the
+	// credentials service's own answer named it (C1, CS8): the kind of source
+	// and the name of the one that kind names -- a pool's or a provider's
+	// name, empty for the two kinds that are a single credential of the
+	// project. It is a name and never a value: no key, no token and no
+	// account is in it, and a reader must not read it as one.
+	//
+	// It is the source of the last call of the stage the service answered,
+	// and nil for every stage no such call was made from -- every stage of
+	// every run whose calls do not go through the service, which is what an
+	// absent member means here and not "a source nobody named". Fallback
+	// beside it is the stage's other half: this member says which source
+	// served, and that one says whether the stage ever fell off the chain's
+	// first source.
+	Source *routing.SourceName `json:"source,omitempty"`
+	// Fallback is true when any call of this stage was served by a source
+	// that is not the chain's first (C1, CS8): the stage fell back at least
+	// once, whatever source served last. It is the flag folded over the
+	// stage's calls, so a stage that fell back and then came back to the
+	// chain's first source is still a fallback stage, and Cost.FallbackUSD
+	// is the money those calls spent.
+	//
+	// Absent means false: the stage made no fallback call, and so does a
+	// stage the service never answered a call of, and every record written
+	// before the member existed.
+	Fallback bool `json:"fallback,omitempty"`
 }
 
 // CredentialOAuth is the word for a Claude OAuth credential in this record:
 // StageTiming.Credential for a stage the run's stage-scoped Claude OAuth
-// account served (docs/design/mixed-credentials.md §5), and
+// account served (docs/mixed-credentials/spec.md §5), and
 // StageTiming.ServedBy for any stage one served -- the account's token or the
 // run's own.
 const CredentialOAuth = "oauth"
@@ -1628,7 +1655,7 @@ type Record struct {
 	Workflow string `json:"workflow,omitempty"`
 	// OAuthAccount is the named Claude OAuth account this run's agent.auth:
 	// oauth workflow used ("" meaning the repository's default account,
-	// docs/design/named-oauth-tokens.md); informational only, never read by
+	// docs/named-oauth-tokens/spec.md); informational only, never read by
 	// anything that makes a security decision. Absent in records from
 	// before this field existed.
 	OAuthAccount string `json:"oauth_account,omitempty"`
@@ -1650,13 +1677,32 @@ type Record struct {
 	// version does not move (schemas/result.schema.json declares the
 	// property).
 	StageAccounts map[string]string `json:"stage_accounts,omitempty"`
-	Execution     string            `json:"execution,omitempty"` // canonical full name, never the short CLOUD_RUN_EXECUTION; compare only via backend.SameExecution
-	Status        Status            `json:"status"`
-	Stage         string            `json:"stage"`
-	Outcome       Outcome           `json:"outcome"`
-	Reason        string            `json:"reason,omitempty"`
+	// CredentialOwner names the owner of the token this run's model calls
+	// were served with (F16 of docs/secrets-brokering/dynamic-delivery): the
+	// account id of the person whose credential answered, which the service
+	// states only where that credential is the launcher's own per-user one — a
+	// bundle entry is nobody's and a pool's credential may be another person's
+	// — so an empty value is the ordinary answer and never a missing one. It
+	// is a THIRD fact beside the two above and not a reading of either —
+	// OAuthAccount names the credential that answered and StageAccounts the
+	// Claude account each stage used, while this one answers whose token paid
+	// — so it carries a new name and neither of them moves (CLAUDE.md: a
+	// field never changes meaning). The runner writes it as each answer from
+	// the service reports it, in the same call and under the same lock as the
+	// credential's name above (recordCredential, internal/runner/runner.go):
+	// the two are one answer's pair, so no record holds one answer's credential
+	// beside another answer's owner; a record written before the field decodes
+	// unchanged and the format's version does not move
+	// (schemas/result.schema.json declares the property). The value is an
+	// account id and never a credential: no value ever leaves the service.
+	CredentialOwner string  `json:"credential_owner,omitempty"`
+	Execution       string  `json:"execution,omitempty"` // canonical full name, never the short CLOUD_RUN_EXECUTION; compare only via backend.SameExecution
+	Status          Status  `json:"status"`
+	Stage           string  `json:"stage"`
+	Outcome         Outcome `json:"outcome"`
+	Reason          string  `json:"reason,omitempty"`
 	// FailureClass is why the run did not end succeeded, in the closed
-	// vocabulary of internal/failure (docs/design/failure-classes.md §3). It
+	// vocabulary of internal/failure (docs/failure-classes/design.md §3). It
 	// is additive beside Reason, which keeps its text and its meaning: the
 	// class is what a report groups and counts, and the reason is what a
 	// person reads. Absent on a run that succeeded, on a mode: review run that
@@ -1744,11 +1790,11 @@ type Record struct {
 	// root run's stored task. Absent — never an empty list — for a chain
 	// nobody raised, which is every record written before this field existed.
 	ChainRaises []ChainRaise `json:"chain_raises,omitempty"`
-	// Recipe is the recipe the run's loop came from (docs/design/recipes.md
+	// Recipe is the recipe the run's loop came from (docs/recipes/spec.md
 	// §8); absent in records from before 0.5.0.
 	Recipe *RecipeRecord `json:"recipe,omitempty"`
 	// ProjectLayer is the project layer the run's task carried
-	// (docs/design/layered-config.md §8); absent when it carried none, and
+	// (docs/layered-config/spec.md §8); absent when it carried none, and
 	// in records from before 0.6.0.
 	ProjectLayer *ProjectLayerRecord `json:"project_layer,omitempty"`
 	// ConfigSHA256 is the sha256 of the resolved fugaro.yaml, before the
@@ -2253,11 +2299,13 @@ var ErrExists = errors.New("already exists")
 // ErrTooLarge means an object is larger than its read cap.
 var ErrTooLarge = errors.New("object is larger than its read cap")
 
-// ErrCorrupt means one of the run's own JSON objects is there and does not
-// decode. The object is the run's own and the run's own agent writes it, so a
-// reader that meets one is reading a run's problem rather than its own, which
-// is the distinction a caller draws between an unusable object and a read that
-// failed. It wraps the decoder's own error, which is the one that says why.
+// ErrCorrupt means one of the run's own JSON objects is there and is not one a
+// reader can use: it does not decode, or -- task.json -- it does not validate.
+// The object is the run's own and the run's own agent writes it, so a reader
+// that meets one is reading a run's problem rather than its own, which is the
+// distinction a caller draws between an unusable object and a read that failed.
+// It wraps the decoder's or the parser's own error, which is the one that says
+// why.
 var ErrCorrupt = errors.New("the run's own object does not decode")
 
 // Read caps. The job's service account, and so a run's agent, can
@@ -2317,7 +2365,7 @@ func (s *Store) Prefix() string { return s.prefix }
 
 // PutFile writes a file under the run's prefix. Routed through blobx.Put so
 // a GCS 403 is blobx.ErrForbidden, not gocloud's unclassified NotFound
-// (docs/design/bucket-iam.md §2.3).
+// (docs/bucket-iam/spec.md §2.3).
 func (s *Store) PutFile(ctx context.Context, name string, data []byte, contentType string) error {
 	key := s.prefix + strings.TrimPrefix(name, "/")
 	if err := blobx.Wrap(s.bucket).Put(ctx, key, data, contentType); err != nil {
@@ -2499,7 +2547,16 @@ func (s *Store) ReadTask(ctx context.Context) (*task.Spec, error) {
 	if err != nil {
 		return nil, err
 	}
-	return task.Parse(data)
+	spec, err := task.Parse(data)
+	if err != nil {
+		// A task.json the parser will not take is the run's own object, the
+		// same classification launch.json and result.json carry: a reader
+		// that could not use it draws that reader's own conclusion from
+		// it rather than failing. task.Parse's error is kept in the chain,
+		// so a caller matching the decoder's own types goes on working.
+		return nil, fmt.Errorf("reading task.json: %w: %w", ErrCorrupt, err)
+	}
+	return spec, nil
 }
 
 // WriteRecord stores result.json.

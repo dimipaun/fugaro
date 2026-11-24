@@ -41,7 +41,7 @@ import (
 // whole read-only guarantee.
 const (
 	coordinatorContractPath = "../../../console/docs/json-contract.md"
-	coordinatorDesignPath   = "../../../docs/design/desktop-console.md"
+	coordinatorDesignPath   = "../../../docs/desktop-console/spec.md"
 )
 
 // coordinatorFlagRE finds a --flag the documents write, the same pattern the

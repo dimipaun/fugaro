@@ -244,10 +244,13 @@ resource "google_storage_bucket_iam_member" "build_identity_records" {
 # project-wide one), which is why the grant names a secret ID rather than a
 # resource.
 resource "google_secret_manager_secret_iam_member" "build_identity_git_secret" {
-  for_each = local.credentials_service_on && var.catalog_check != null ? { for r in var.catalog_check.repositories : r.slug => r if try(r.git_secret_id, "") != "" } : {}
+  for_each = local.credentials_service_on && var.catalog_check != null ? merge(
+    { for r in var.catalog_check.repositories : r.slug => r.git_secret_id if try(r.git_secret_id, "") != "" },
+    { for r in var.catalog_check.repositories : "${r.slug}/own" => r.own_git_secret_id if r.own_git_secret_id != null && r.own_git_secret_id != "" },
+  ) : {}
 
   project   = var.project
-  secret_id = each.value.git_secret_id
+  secret_id = each.value
   role      = "roles/secretmanager.secretAccessor"
   member    = google_service_account.build_identity[0].member
 }

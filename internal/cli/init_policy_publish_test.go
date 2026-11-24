@@ -34,9 +34,11 @@ import (
 // about — the node is at this version and is not what the file says.
 func staleBudgetNode() map[string]any {
 	return map[string]any{
-		"version":     projectpolicy.Version,
-		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 9},
-		"allow_repos": []string{"bitbucket/acme/other", "github/acme/app"},
+		"mobile":                            defaultMobileNode(),
+		projectpolicy.MobileCrashReportsKey: projectpolicy.DefaultMobileCrashReports,
+		"version":                           projectpolicy.Version,
+		"budget":                            map[string]any{"mode": "enforce", "per_run_usd": 9},
+		"allow_repos":                       []string{"bitbucket/acme/other", "github/acme/app"},
 	}
 }
 
@@ -93,6 +95,22 @@ func recordedGeneration(t *testing.T, f *projectFixture) string {
 
 // staleBudgetNodeAt is that node with another ceiling: what another writer's
 // publish left behind while this run was in flight.
+// defaultMobileNode is the mobile block a published node carries: the policy
+// stage reports a node without one as a difference (it publishes O9's defaults
+// into it), so a fixture node meant to be current in every other member has to
+// state it.
+func defaultMobileNode() map[string]any {
+	raw, err := json.Marshal(projectpolicy.DefaultMobile())
+	if err != nil {
+		panic(err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		panic(err)
+	}
+	return out
+}
+
 func staleBudgetNodeAt(usd float64) map[string]any {
 	n := staleBudgetNode()
 	n["budget"] = map[string]any{"mode": "enforce", "per_run_usd": usd}
@@ -1300,7 +1318,7 @@ func typedRig(t *testing.T, f *projectFixture) *migrationRig {
 
 // accountChoiceConfigYAML is the account-choice keys as this machine's own file
 // writes them: one account, named for the project and for the review stage
-// (docs/design/mixed-credentials.md §11, rungs 2 and 4). The account is defined
+// (docs/mixed-credentials/spec.md §11, rungs 2 and 4). The account is defined
 // here because a key that names an account this file does not define is refused
 // at load, and no profile names it because the keys are what the runner reads
 // it off and not a profile's list.
@@ -1872,10 +1890,12 @@ func TestPolicyConfigDriftSeesTheDerivedAccounts(t *testing.T) {
 	}
 	node := func(accounts map[string]projectpolicy.Account, profiles map[string]projectpolicy.Profile) *projectpolicy.Policy {
 		return &projectpolicy.Policy{
-			Version:  projectpolicy.Version,
-			Budget:   projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5},
-			Accounts: accounts,
-			Profiles: profiles,
+			Version:            projectpolicy.Version,
+			Budget:             projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5},
+			Accounts:           accounts,
+			Profiles:           profiles,
+			Mobile:             projectpolicy.DefaultMobile(),
+			MobileCrashReports: projectpolicy.MobileCrashReportsForPublish(nil),
 		}
 	}
 	cases := []struct {
@@ -1942,6 +1962,8 @@ func TestPolicyConfigDriftSeesTheAccountChoiceKeys(t *testing.T) {
 			Budget:               projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5},
 			DefaultClaudeAccount: defaultAccount,
 			ClaudeAccountStages:  stages,
+			Mobile:               projectpolicy.DefaultMobile(),
+			MobileCrashReports:   projectpolicy.MobileCrashReportsForPublish(nil),
 		}
 	}
 	for _, tc := range []struct {
@@ -2422,7 +2444,7 @@ func TestPolicyConfigDriftSeesTheImageMapAndTheSwitches(t *testing.T) {
 		return lc
 	}
 	node := func(mut func(*projectpolicy.Policy)) *projectpolicy.Policy {
-		p := &projectpolicy.Policy{Version: projectpolicy.Version, Budget: projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5}}
+		p := &projectpolicy.Policy{Version: projectpolicy.Version, Budget: projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5}, Mobile: projectpolicy.DefaultMobile(), MobileCrashReports: projectpolicy.MobileCrashReportsForPublish(nil)}
 		if mut != nil {
 			mut(p)
 		}

@@ -273,7 +273,7 @@ func (e *initEngine) selfFlagUnmanaged(ctx context.Context) error {
 				r.gcpProject, managedReasonFor(answer), why, safetext.Field(fact.Reason), bucket, managed.MarkerObject))
 			return nil
 		case fact.Budget != budget:
-			r.warn(fmt.Sprintf("this run was given a budget and %s is %s, so it was not flagged: %v. The fact where the object is records the budget amount %d %s, and this run was given %d %s — a flag records an amount, it does not edit one — so neither mark was written and the installation stays as it is. Run `fugaro update --budget %d --budget-currency %s --billing-account <account>` again if that is the amount meant: that run finds the fact recording it, writes the missing %s=%s label, and flags the installation in the same command",
+			r.warn(fmt.Sprintf("this run was given a budget and %s is %s, so it was not flagged: %v. The fact where the object is records the budget amount %d %s, and this run was given %d %s — this step adds an amount to a fact that records none and never replaces a figure a fact already holds; a recorded amount is replaced by `fugaro managed flag` run with --budget naming the new figure (D2215) — so neither mark was written and the installation stays as it is. Run `fugaro update --budget %d --budget-currency %s --billing-account <account>` again if that is the amount meant: that run finds the fact recording it, writes the missing %s=%s label, and flags the installation in the same command",
 				r.gcpProject, managedReasonFor(answer), why, fact.Budget.Amount, safetext.Field(fact.Budget.Currency), o.budget, safetext.Field(o.budgetCurrency), fact.Budget.Amount, safetext.Field(fact.Budget.Currency), managed.ProjectLabelKey, managed.ProjectLabelValue))
 			return nil
 		}
@@ -316,7 +316,7 @@ func (e *initEngine) selfFlagUnmanaged(ctx context.Context) error {
 func (e *initEngine) selfFlagLabel(ctx context.Context, bucket string, budget managed.Budget, what string) error {
 	r := e.r
 	if err := managed.WriteManagedLabelForFlag(ctx, e.c.CRM, r.gcpProject); err != nil {
-		r.warn(fmt.Sprintf("this run wrote gs://%s/%s but not the %s=%s label on %s (%v): the read requires both marks, so the installation is not managed yet and nothing is skipped for it. The fact in the runs bucket records the amount %d %s, so running `fugaro update --budget %d --budget-currency %s --billing-account <account>` again finishes the flag in that same run — it finds the fact recording that amount and writes the label this run could not; the label's own line, for the owner at their own terminal, is in docs/design/managed-projects.md",
+		r.warn(fmt.Sprintf("this run wrote gs://%s/%s but not the %s=%s label on %s (%v): the read requires both marks, so the installation is not managed yet and nothing is skipped for it. The fact in the runs bucket records the amount %d %s, so running `fugaro update --budget %d --budget-currency %s --billing-account <account>` again finishes the flag in that same run — it finds the fact recording that amount and writes the label this run could not; the label's own line, for the owner at their own terminal, is in docs/managed-projects/spec.md",
 			bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, r.gcpProject, safetext.FieldErr(err), budget.Amount, safetext.Field(budget.Currency), budget.Amount, safetext.Field(budget.Currency)))
 		return nil
 	}

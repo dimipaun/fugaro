@@ -61,6 +61,13 @@ const (
 	// shared project job or a review job (C3.9) — is decided there too, from the
 	// account and never from this header.
 	HeaderRunJob = "X-Fugaro-Run-Job"
+	// HeaderPersonIdentity carries a person's own Google ID token to the GitHub
+	// read mint, beside the same token in Authorization. Cloud Run's front end
+	// consumes a valid ID token in Authorization for the invoker check and hands
+	// the service that header changed, so a person's token (gcloud's own
+	// audience, the only one a user account can mint) never arrives there as a
+	// bearer; this header is not one the front end reads, so it arrives intact.
+	HeaderPersonIdentity = "X-Fugaro-Person-Identity"
 	// HeaderSlip names the slip a run's call is bound to: the id the grant
 	// answered (DS1.3), which the launcher passes to the job and the runner
 	// presents on the claim and on every call after it (DS1.6).
@@ -338,6 +345,22 @@ const (
 	// what a reader displays — after internal/safetext, because a name is
 	// text from another writer.
 	HeaderCredential = "X-Fugaro-Credential"
+	// HeaderCredentialOwner is the owner of the credential that answered,
+	// never its value: the account id of the person whose credential it is.
+	// It is a THIRD answer field beside the tier and the name, and it is what
+	// the run records beside the name (F16, runstore.Record.CredentialOwner):
+	// the record names whose token paid, which neither the name nor a Claude
+	// account answers.
+	//
+	// It is written only where the credential served IS the launcher's own
+	// per-user credential — the one case an owner is a verified fact
+	// (credentialOwnedBy, cascade.go): a bundle entry is nobody's, a pool's
+	// credential is its owner's and the launcher may merely be allowed by it
+	// (R11, G8), and a call the service admitted under no slip at all — the
+	// path an installation that has not deployed the slip routes still takes —
+	// has no launcher to name. Every one of those answers carries none, and
+	// the run's record then holds no owner.
+	HeaderCredentialOwner = "X-Fugaro-Credential-Owner"
 	// HeaderSwitch, when present, is the JSON of a Switch: this call moved
 	// from one credential to another inside the service, and the run's
 	// record logs it (C1.16).
@@ -1010,6 +1033,46 @@ func CredentialHeaders(h http.Header) (tier, name string, ok bool, err error) {
 	return tier, name, true, nil
 }
 
+// SetCredentialOwnerHeader records the owner of the credential that answered
+// (HeaderCredentialOwner, F16). The owner is the account id of the person the
+// credential belongs to, which this service knows from the grammar of the name
+// it served (credentialOwnedBy, cascade.go) and never from anything the call
+// said, so it is held to the rule a launcher's account id is read by
+// (validSlipOwner: digits only, at most maxLauncherSubDigits of them) — an
+// answer that could not carry one must not be sent as if it did, and the error
+// names the field and never its content (the no-echo rule: the value arrives
+// as text from another process).
+//
+// It is a separate writer from SetCredentialHeaders and not a fourth argument
+// of it, because the two facts have different writers: every served answer
+// carries the tier and the name, and only a credential the launcher OWNS has
+// an owner to carry. A caller that has no owner writes none, and the answer
+// then says exactly what it said before this field existed.
+func SetCredentialOwnerHeader(h http.Header, owner string) error {
+	if !validSlipOwner(owner) {
+		return fmt.Errorf("credsvc: the credential's owner is not one launcher's account id (1 to %d digits)", maxLauncherSubDigits)
+	}
+	h.Set(HeaderCredentialOwner, owner)
+	return nil
+}
+
+// CredentialOwnerHeader reads the owner back, and holds it to the rule it was
+// written by. present is false for an answer that carries none, which is every
+// answer whose credential the launcher does not own. An owner that is not one
+// launcher's account id is an error rather than a value: the run records it
+// (F16), so a caller that guessed at one would be recording a fact the service
+// did not state. The error names the field and never the value.
+func CredentialOwnerHeader(h http.Header) (owner string, present bool, err error) {
+	owner, present, err = responseHeader(h, HeaderCredentialOwner)
+	if err != nil || !present {
+		return "", present, err
+	}
+	if !validSlipOwner(owner) {
+		return "", false, errors.New("credsvc: the answer's credential owner is not one launcher's account id")
+	}
+	return owner, true, nil
+}
+
 // responseHeader returns the single value of an answer's header. An answer
 // that carries it more than once is refused for the same reason the request
 // side refuses a header a call sent twice: there is nothing to pick between,
@@ -1271,6 +1334,24 @@ func bearerFromHTTP(r *http.Request) (string, error) {
 		return "", errors.New("credsvc: the Authorization header's token is not one token")
 	}
 	return bearer, nil
+}
+
+// personBearerFromHTTP is bearerFromHTTP for a route whose caller is a person:
+// the token comes from HeaderPersonIdentity when the call sends it and from
+// Authorization otherwise, so a caller that reaches the service without a front
+// end in between (a test, a local run) is served as before.
+func personBearerFromHTTP(r *http.Request) (string, error) {
+	if len(r.Header.Values(HeaderPersonIdentity)) == 0 {
+		return bearerFromHTTP(r)
+	}
+	tok, err := oneHeader(r, HeaderPersonIdentity)
+	if err != nil {
+		return "", err
+	}
+	if !printableHeaderValue(tok, maxTokenBytes) {
+		return "", errors.New("credsvc: the " + HeaderPersonIdentity + " header's token is not one token")
+	}
+	return tok, nil
 }
 
 // oneHeader returns the single value of a request header, refusing a header

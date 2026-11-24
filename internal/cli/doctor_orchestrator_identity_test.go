@@ -115,10 +115,12 @@ func (r *orchestratorIdentityRig) asDesigned(t *testing.T) {
 // the bucket's write fenced by another condition, the launch granted on a job
 // as something other than the runner's role, and the account absent altogether.
 //
-// The absent case is the one that must NOT be a finding: an installation that
-// never opted in has no resident orchestrator, and a check that called that a
-// warning would send every owner who has not asked for one looking for a
-// problem. The module's switch is off by default and no CLI writer sets it yet.
+// The absent case is a finding only where `fugaro update` should have made the
+// account: an installation that records the credentials service and the
+// Firebase backend. Anywhere else it is an info line naming what is missing, so
+// an owner whose installation cannot carry one is not sent looking for a
+// problem. The module's switch is off by default, and an update that could carry
+// one is what turns it on.
 func TestDoctorOrchestratorIdentityTable(t *testing.T) {
 	dropBucketRead := func(t *testing.T, r *orchestratorIdentityRig) {
 		t.Helper()
@@ -151,11 +153,30 @@ func TestDoctorOrchestratorIdentityTable(t *testing.T) {
 			need: []string{"holds exactly the design's section 4.3 table", "run.jobs.run", "token-minter role on the signer account"},
 		},
 		{
-			name:   "the account is there only for an installation that opted in",
+			name:   "an installation that cannot carry one is told what it lacks, and asked for nothing",
 			absent: true,
 			sev:    "info",
-			need:   []string{"has no resident orchestrator", "has not opted in"},
+			need:   []string{"has no resident orchestrator", "credentials service or Firebase budget backend recorded"},
 			fix:    []string{"no action"},
+		},
+		{
+			name:   "an installation that could carry one and has none is a warning that names the update",
+			absent: true,
+			drift: func(t *testing.T, r *orchestratorIdentityRig) {
+				t.Helper()
+				b, err := os.ReadFile(r.cfgPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				cfg := strings.Replace(string(b), "token_signer: ", "rtdb_url: https://"+oiFP+"-default-rtdb.firebaseio.com, token_signer: ", 1) +
+					"credentials_service: { url: https://fugaro-credentials-abc123-ue.a.run.app }\n"
+				if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			sev:  "warning",
+			need: []string{"has no resident orchestrator", "the update that gives it one has not run"},
+			fix:  []string{"fugaro update"},
 		},
 		{
 			name:  "a stray role on the installation project",

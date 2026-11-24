@@ -857,8 +857,13 @@ func TestTakeRefusesAnotherProvidersConventionalName(t *testing.T) {
 		t.Fatal("a value was stored despite the refusal")
 	}
 
-	// The provider's own key is still asked for: the reservation is about the
+	// The provider's own key is a different name: the reservation is about the
 	// name the convention gives a provider's key, never about the key itself.
+	// Since KS2 (D1670 reversed by D2975) neither name is one this stage
+	// takes -- both are the store's shell-side half now, and a provider's key
+	// is entered in the credentials service's bundle -- so the stage says
+	// where the key itself is entered and never asks for it
+	// (TestInitSecretsDoesNotTakeAProviderKey pins that whole answer).
 	r2 := newSecretsRig(t, githubOrigin, strings.NewReader(""))
 	r2.e.lc.Providers = map[string]config.ModelProvider{"openrouter": provider}
 	// A pin openrouter claims, so its key is mounted and therefore wanted.
@@ -869,11 +874,20 @@ func TestTakeRefusesAnotherProvidersConventionalName(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmds := strings.Join(res.Left[0].Commands, "\n")
-	if !strings.Contains(cmds, "secrets set other-key") {
-		t.Fatalf("the provider's own key is not asked for: %v", res.Left)
+	if strings.Contains(cmds, "other-key") {
+		t.Fatalf("the provider's own key was asked for as a value to store: %v", res.Left)
 	}
 	if strings.Contains(cmds, "openrouter-api-key") {
 		t.Fatalf("a name reserved for openrouter's key was asked for: %v", res.Left)
+	}
+	var detail string
+	for _, st := range res.Stages {
+		if st.Name == initflow.Secrets {
+			detail = st.Detail
+		}
+	}
+	if !strings.Contains(detail, "fugaro secrets set other-key --repo acme/app") {
+		t.Fatalf("the stage does not name where the provider's own key is entered: %q", detail)
 	}
 }
 
@@ -1040,6 +1054,14 @@ func TestInitSecretsFindSkipsNameWithProjectVersion(t *testing.T) {
 		}
 	})
 
+	// A configured provider's own key is no longer a name find() counts at
+	// all: since KS2 (D1670 reversed by D2975) it is entered in the
+	// credentials service's bundle, one entry per repository, and this stage
+	// writes Secret Manager values. Before that, find() counted a container, so
+	// the entry the person was told to write never cleared the want and `fugaro
+	// setup`/`fugaro update` at a terminal ended on the refusal take() makes
+	// for the name. resolve() drops it and the stage says where the key is
+	// entered instead (TestInitSecretsDoesNotTakeAProviderKey).
 	t.Run("a model provider's key", func(t *testing.T) {
 		r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
 		projectSharedForApp(r, "acme/app")
@@ -1048,15 +1070,11 @@ func TestInitSecretsFindSkipsNameWithProjectVersion(t *testing.T) {
 		slug := mustSlug("github", "acme/app")
 		r.store.seed(slug, "github-app-key", tokenValue)
 		r.store.seed(slug, "anthropic-api-key", tokenValue)
-		if got, err := r.stage.find(ctx, r.store); err != nil || !slices.Equal(got, []string{"openrouter-api-key"}) {
-			t.Fatalf("find = %v, %v; want only the provider's key missing", got, err)
+		if slices.Contains(r.stage.tg.wanted, "openrouter-api-key") {
+			t.Fatalf("the provider's own key is still a name the stage wants: %v", r.stage.tg.wanted)
 		}
-		if _, ok := infra.ProjectSecretCandidate(r.e.lc, "openrouter-api-key", "acme/app"); !ok {
-			t.Fatal("the provider's key is not a project candidate here: the test would prove nothing")
-		}
-		r.store.seedProject(r.e.lc.Name, "openrouter-api-key", tokenValue)
 		if got, err := r.stage.find(ctx, r.store); err != nil || len(got) != 0 {
-			t.Fatalf("find = %v, %v; want nothing missing", got, err)
+			t.Fatalf("find = %v, %v; want nothing missing, whatever is stored for the key", got, err)
 		}
 	})
 
@@ -1306,6 +1324,55 @@ func TestInitSecretsProviderNoListNeverPromptsAnyRepo(t *testing.T) {
 	}
 }
 
+// The review finding this closes (KS2): a repository whose provider key is
+// entered in the credentials service's bundle has no container, and find()
+// counts containers, so the stage called the name missing on every run while
+// take() refused it -- `fugaro setup` and `fugaro update` ended on a failure
+// at a terminal, and the command the refusal named, which writes the bundle's
+// entry and no container, could never clear the want. A provider's own key is
+// not this stage's to take at all, so the stage is Done with the key stored
+// nowhere, stores nothing, prompts for nothing, and says where the key is
+// entered: this repository's own entry, not the project's copy of the name.
+func TestInitSecretsDoesNotTakeAProviderKey(t *testing.T) {
+	r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
+	fakeTerminal(t) // canPrompt() is true: a name wrongly called missing would be prompted for
+	r.e.lc.Providers = map[string]config.ModelProvider{
+		"openrouter": {Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+			Secret: "or-key", Models: []string{"deepseek/*"}, AllowDataTo: []string{"acme/app"}},
+	}
+	r.writeConfig(t, checkoutYAML("github", "api-key", "aurora", ""))
+	slug := mustSlug("github", "acme/app")
+	r.store.seed(slug, "github-app-key", tokenValue)
+	r.store.seed(slug, "anthropic-api-key", tokenValue)
+	res, err := r.run(t)
+	if err != nil {
+		t.Fatalf("the run failed on a provider key the stage does not take: %v", err)
+	}
+	if got := stateOf(res, initflow.Secrets); got != initflow.Done {
+		t.Fatalf("state = %q, want done (out %q, errOut %q)", got, r.out.String(), r.errOut.String())
+	}
+	if n := r.store.setCalls(); n != 0 {
+		t.Fatalf("%d value(s) stored: a provider's key is not this stage's to store", n)
+	}
+	var detail string
+	for _, st := range res.Stages {
+		if st.Name == initflow.Secrets {
+			detail = st.Detail
+		}
+	}
+	if !strings.Contains(detail, "fugaro secrets set or-key --repo acme/app") {
+		t.Fatalf("the stage does not name where this repository's entry is written: %q", detail)
+	}
+	text := r.out.String() + r.errOut.String()
+	if strings.Contains(text, "Paste the value for or-key") {
+		t.Fatalf("the stage prompted for a provider's key: %q", text)
+	}
+	if !strings.Contains(text, "fugaro secrets set or-key --repo acme/app") {
+		t.Fatalf("the run says nothing about where the provider's key is entered: %q", text)
+	}
+	noLeak(t, tokenValue, text)
+}
+
 // The legitimate bootstrap case: neither the repository nor the project has a
 // version. find()'s answer and canPrompt()/set()'s behavior are byte-for-byte
 // what they were -- the name is still missing, and at a terminal the stage
@@ -1420,7 +1487,7 @@ func TestInitSecretsStageThroughTheCommand(t *testing.T) {
 }
 
 // TestInitSecretsAnthropicKeyOnlyWhenAPinGoesDirect (design
-// docs/design/project-centric.md §6.1): with the gateway enforcing and every
+// docs/project-centric/spec.md §6.1): with the gateway enforcing and every
 // pin served by a provider the repository may send code to, the run never
 // calls Anthropic, so init asks for no Anthropic key; a pin that goes direct
 // keeps the prompt.

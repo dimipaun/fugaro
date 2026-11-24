@@ -243,7 +243,7 @@ func (s *selector) run() (Selection, *Config, error) {
 		msg := "no project config; see `fugaro setup --config-only`"
 		if p := legacyPath(in.Getenv); p != "" {
 			if _, err := os.Stat(p); err == nil {
-				msg += fmt.Sprintf(" (the old %s isn't read any more: see docs/design/m9-budget-and-dashboard.md §13.1)", p)
+				msg += fmt.Sprintf(" (the old %s isn't read any more: see docs/m9-budget-and-dashboard/spec.md §13.1)", p)
 			}
 		}
 		return Selection{}, nil, s.refuse("%s", msg)

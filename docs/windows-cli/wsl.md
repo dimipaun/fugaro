@@ -29,7 +29,7 @@ What WSL is *not* is a substitute for the port, for two reasons the plan states
 as **D1**'s own cost: the **desktop console** cannot reach a WSL-only
 installation, for the same reason it cannot reach a Linux-only one — the
 console's data source is a CLI it has to be able to run itself (**F40**, and
-[desktop-console.md](../design/desktop-console.md) **D10** owns that decision) —
+[desktop-console.md](../desktop-console/spec.md) **D10** owns that decision) —
 and the credential boundary below is a real source of confusion.
 
 **Amended 2026-11-10: the console reaches it, and this page's first reason is

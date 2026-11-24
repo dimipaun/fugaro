@@ -691,7 +691,7 @@ func ProxiedTokenAccessorAllowDelete(p *tf.Plan, spec RepoSpec) []string {
 // dropVaultMounts): what is left is exactly the model drop's. The arm's own
 // exclusions fall out of the same difference rather than being stated again —
 // a mixed stage account's token and a provider's key are still mounted, so
-// they are not in it (B0, docs/design/mixed-credentials.md §11; R6, D1634) —
+// they are not in it (B0, docs/mixed-credentials/spec.md §11; R6, D1634) —
 // and RepoSpec.ModelSecretsServed is the gate, so the repository the switch
 // holds off admits nothing here and neither does the cascade, whose job mounts
 // no model credential at all (D2072, G17). Nothing else a plan does to any

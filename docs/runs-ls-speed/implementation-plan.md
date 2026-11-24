@@ -103,8 +103,8 @@ This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconcilia
 - Reviewer tier: opus with an independent review: the row would carry job-written values.
 
 ### RL5: documents, plugin skills and the release line
-- Acceptance: `docs/design/bucket-iam.md` §10 names the residual of D2964 (an erased entry on a shared job hides a run older than 24 hours from `--pr N`, never invents one); the `working` and `landing` skills say that `runs ls --state running` and `--pr N` are the fast queries and name the stderr fallback line; `docs/design/update-in-flight.md` is current after RL2B; the release notes of the release that carries RL3 add a line to Highlights and `### For operators` stays "run `fugaro update`, it backfills the pull-request index"; the CLI reference is regenerated with `go run ./ee/clidoc` if any help text moved.
-- Files: `docs/design/bucket-iam.md`, `plugin/skills/working/SKILL.md`, `plugin/skills/landing/SKILL.md`, the release notes file of that release under `docs/releases/`, `website/content/cli-reference.md` (only if generated output changes).
+- Acceptance: `docs/bucket-iam/spec.md` §10 names the residual of D2964 (an erased entry on a shared job hides a run older than 24 hours from `--pr N`, never invents one); the `working` and `landing` skills say that `runs ls --state running` and `--pr N` are the fast queries and name the stderr fallback line; `docs/design/update-in-flight.md` is current after RL2B; the release notes of the release that carries RL3 add a line to Highlights and `### For operators` stays "run `fugaro update`, it backfills the pull-request index"; the CLI reference is regenerated with `go run ./ee/clidoc` if any help text moved.
+- Files: `docs/bucket-iam/spec.md`, `plugin/skills/working/SKILL.md`, `plugin/skills/landing/SKILL.md`, the release notes file of that release under `docs/releases/`, `website/content/cli-reference.md` (only if generated output changes).
 - Tests: `go test ./internal/cli/ -run Docs -count=1 -timeout 30m`, `go test ./plugin/... -count=1`, `go test ./ee/clidoc/ -run TestCliReferenceIsCurrent -count=1`; `npm run check` in `website/` only if website content changed.
 - Command: as above.
 - Red step: the Docs and plugin tests are the pins; a sentence changed in one place and not its pinned twin fails.
@@ -154,7 +154,7 @@ This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconcilia
 | `internal/cli/update.go` | RL2B (1) |
 | `schemas/schemas_test.go` | RL2 (0) |
 | `docs/design/update-in-flight.md` | RL2B (1), RL5 reads it only |
-| `docs/design/bucket-iam.md`, `plugin/skills/*/SKILL.md`, release notes | RL5 (2) |
+| `docs/bucket-iam/spec.md`, `plugin/skills/*/SKILL.md`, release notes | RL5 (2) |
 | `docs/gcp-live-checklist.md`, `scripts/live_checks_test.go` | RL6 (2) |
 
 **Contract changes anticipated.** None.

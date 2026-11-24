@@ -24,13 +24,14 @@ package credsvc
 //   - and an admitted call is relayed as the installation's is: streamed in both
 //     directions, with nothing held (B1.3, G2).
 //
-// The deployment is a TEST DOUBLE and not WS2's resolver, which is not merged:
-// the scope here is C1's shape with the readers this route asks answered by the
-// test, and a resolver that answers the scope registered for the run token a
-// call presents. It verifies nothing, and it does not pretend to — what the seam
+// The deployment is a TEST DOUBLE and not WS2's resolver: the scope here is
+// C1's shape with the readers this route asks answered by the test, and a
+// resolver that answers the scope registered for the run token a call
+// presents. It verifies nothing, and it does not pretend to — what the seam
 // means for this route is WHICH store, WHICH coverage and WHICH table a call is
-// served out of, and that is what a double can pin. WS2's resolver replaces it
-// in this package, and its tests ask the same questions of the real one.
+// served out of, and that is what a double can pin. WS2's resolver is what a
+// deployment holds and its tests ask the real readers; what this double answers
+// is the route's own half.
 
 import (
 	"bytes"
@@ -741,9 +742,15 @@ func TestWorkspaceProxyStreamsAndHoldsNothing(t *testing.T) {
 	if !bytes.Equal(got, head[:len(got)]) {
 		t.Errorf("the answer's first half = %d bytes, want the upstream's own %d unchanged", len(got), len(got))
 	}
+	// The upstream's flush is waited for rather than read non-blockingly: the
+	// caller's half cannot have arrived before the upstream put it on the wire, so
+	// the channel is already closed by now and this never waits — but a `default:`
+	// arm here reads the scheduler's luck instead, and the whole tree's run (three
+	// concurrent `go test` invocations on four cores) failed it with data the
+	// upstream had demonstrably sent.
 	select {
 	case <-up.flushed:
-	default:
+	case <-time.After(wsStreamWait):
 		t.Error("the first half reached the caller before the upstream had put it on the wire")
 	}
 
