@@ -85,6 +85,9 @@ func TestVerifyRunsThePackagesTheChangeReaches(t *testing.T) {
 		// whole says the command must list the whole tree, which is the
 		// fallback for a change the selector cannot place.
 		whole bool
+		// selectorFails makes the selector itself exit non-zero, which is what
+		// a tree that does not carry scripts/ci-affected does.
+		selectorFails bool
 	}{
 		{
 			name:      "two packages and nothing else",
@@ -128,10 +131,24 @@ func TestVerifyRunsThePackagesTheChangeReaches(t *testing.T) {
 			cli:       true,
 			whole:     true,
 		},
+		{
+			// The other half of the doubt: a branch cut before
+			// scripts/ci-affected carries no program for `go run` to run, and a
+			// follow-up or review run reads this command from the base branch
+			// and checks out the pull request's own tree (internal/runner's
+			// followup.go), so it lands exactly here. The step still runs its
+			// tests, and it runs all of them.
+			name:          "a tree with no selector at all",
+			selectorFails: true,
+			tree:          []string{"internal/config"},
+			notTree:       []string{"./internal/cli"},
+			cli:           true,
+			whole:         true,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			run := verifyDrive(t, c.selection, true)
+			run := verifyDrive(t, c.selection, true, c.selectorFails)
 			haveTree := run.ran("-junitfile reports/tree.xml")
 			switch {
 			case c.noTree && haveTree:
@@ -170,7 +187,7 @@ func TestVerifyRunsThePackagesTheChangeReaches(t *testing.T) {
 // command hands the selector: the checkout it runs in, and the base branch the
 // change is measured from.
 func TestVerifyAsksTheSelectorForThisBranchAndTheBase(t *testing.T) {
-	run := verifyDrive(t, "./internal/config", true)
+	run := verifyDrive(t, "./internal/config", true, false)
 	if !run.ran("run ./scripts/ci-affected --base origin/main") {
 		t.Errorf("calls = %v, want the selector asked for the diff against origin/main", run.calls)
 	}
@@ -180,7 +197,7 @@ func TestVerifyAsksTheSelectorForThisBranchAndTheBase(t *testing.T) {
 // what `fugaro verify test` reads a run's test counts out of, and a tree too
 // old to carry it still has to run its tests and exit with their own code.
 func TestVerifyOnATreeWithoutTheWrapperStillRunsTheTests(t *testing.T) {
-	run := verifyDrive(t, "./internal/config", false)
+	run := verifyDrive(t, "./internal/config", false, false)
 	if run.ran("run ./internal/verify/gotestjunit") {
 		t.Errorf("calls = %v, want no wrapper on a tree that does not carry it", run.calls)
 	}
@@ -192,15 +209,21 @@ func TestVerifyOnATreeWithoutTheWrapperStillRunsTheTests(t *testing.T) {
 // verifyDrive runs the configured command once with a fake `go` on PATH in a
 // checkout under t.TempDir(), and returns what the fake was asked to run.
 // wrapper writes the tree's copy of internal/verify/gotestjunit, which is what
-// selects the report-writing half of the command.
-func verifyDrive(t *testing.T, selection string, wrapper bool) verifyRun {
+// selects the report-writing half of the command, and selectorFails makes the
+// selector exit non-zero the way `go run` does on a tree without it.
+func verifyDrive(t *testing.T, selection string, wrapper, selectorFails bool) verifyRun {
 	t.Helper()
 	bin := t.TempDir()
 	log := filepath.Join(t.TempDir(), "go.log")
 	fake := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$*\" >> \"$FAKE_GO_LOG\"\n" +
 		"case \"$1 $2\" in\n" +
-		"  'run ./scripts/ci-affected') printf '%s\\n' \"$FAKE_GO_SELECTION\" ;;\n" +
+		"  'run ./scripts/ci-affected')\n" +
+		"    if [ -n \"$FAKE_GO_SELECTOR_FAILS\" ]; then\n" +
+		"      printf '%s\\n' 'ci-affected: no Go files in this directory' >&2\n" +
+		"      exit 1\n" +
+		"    fi\n" +
+		"    printf '%s\\n' \"$FAKE_GO_SELECTION\" ;;\n" +
 		"  'list ./...') printf '%s\\n' \"$FAKE_GO_PACKAGES\" ;;\n" +
 		"esac\n" +
 		"exit 0\n"
@@ -217,12 +240,17 @@ func verifyDrive(t *testing.T, selection string, wrapper bool) verifyRun {
 			t.Fatalf("write the wrapper: %v", err)
 		}
 	}
+	fails := ""
+	if selectorFails {
+		fails = "1"
+	}
 	cmd := exec.Command("sh", "-c", verifyCommand(t))
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(),
 		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"FAKE_GO_LOG="+log,
 		"FAKE_GO_SELECTION="+selection,
+		"FAKE_GO_SELECTOR_FAILS="+fails,
 		// What the whole tree `go list ./...` answers: the cli package is the
 		// one the command has to split out of it, and internal/runner the one
 		// it has to leave out.
