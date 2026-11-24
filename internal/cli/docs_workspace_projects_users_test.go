@@ -27,8 +27,9 @@ package cli
 //
 // TestDocsWorkspaceProjectsUsersSkillNamesTheFamily is the working skill's half
 // of it, and its red step is the sentence on `fugaro workspace project link`:
-// the skill told an agent the installation-level `fugaro user …` doors were the
-// only ones, which on a linked member is the refusal this work is about.
+// the skill named no workspace command at all, so an agent reading it could not
+// tell that a member joins the workspace's table without the workspace gaining
+// authority over it.
 // TestDocsWorkspacesReadmeLinksTheAddendum is the other half: the workspaces
 // design folder's index has to send a reader to the addendum's own folder, and
 // its command list has to be the one the CLI answers to.
@@ -87,8 +88,6 @@ func TestDocsWorkspaceProjectsUsersSkillNamesTheFamily(t *testing.T) {
 		// The audit trail's limit (D2811).
 		"neither audit trail is tamper-proof",
 		"written with the permission the roster write itself needs (D2811)",
-		// And the installation-level doors defer on a linked member (WU10).
-		"these installation-level doors refuse and name the `fugaro workspace user …` command instead",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("%s never says %q: the skill is what a user's agent repeats about a workspace, and a sentence this work made true that the skill does not carry is one the agent gets wrong out loud", wu16Skill, want)
