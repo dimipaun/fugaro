@@ -258,13 +258,16 @@ func workflowSecretMountID(ready infra.RepoSpec, logical string) string {
 // leaves its mount, its grants and its project copy alone, and the next update
 // copies it (CLAUDE.md's HARD RULE, G4).
 //
-// The one state that STOPS the step is an operator with no read on the project
-// copy: the roles Fugaro grants do not carry secretmanager.versions.access —
-// the project's Owner does (docs/secret-readers.md E12) — and every remaining
-// name would be refused the same way. It is one line naming the fix and the
-// step returns; the converge's own stages are what the owner came for, and an
+// The one state that STOPS the step is an operator with no read on a project
+// copy that is there: the roles Fugaro grants do not carry
+// secretmanager.versions.access — the project's Owner does
+// (docs/secret-readers.md E12) — and every remaining name would be refused the
+// same way. It is one line naming the fix, after the names copied before it are
+// recorded; the converge's own stages are what the owner came for, and an
 // upgrade that stopped over a permission the owner can grant in one line would
-// be the operator step the HARD RULE forbids.
+// be the operator step the HARD RULE forbids. A name whose project copy is gone
+// — the state after IS6 retires one — is not this state: there is nothing to
+// copy for it and no read missing.
 //
 // A coding agent's session is refused like every other cloud write
 // (agentMarker): the step writes Secret Manager containers, so it changes
@@ -317,13 +320,18 @@ func (e *initEngine) copyWorkflowSecretsToGrammar(ctx context.Context) {
 	}
 
 	var copied []string
-	already, skipped := 0, 0
+	already, skipped, refused := 0, 0, false
 	for _, name := range names {
 		copiedName, state, cause := copyOneWorkflowSecret(ctx, svc, lc.Name, name, who)
+		if state == copyRefusedNoRead {
+			// An operator with no read on the project copy at all: every
+			// remaining name would be refused the same way. The loop stops, and
+			// what it copied first is still recorded below — a copied value
+			// with no record is a container nothing retires (D3325).
+			refused = true
+			break
+		}
 		switch state {
-		case copyRefusedNoRead:
-			r.warn(workflowCopyNoReadLine(selfCommand()))
-			return
 		case copyDone:
 			copied = append(copied, copiedName)
 		case copyAlready:
@@ -341,12 +349,16 @@ func (e *initEngine) copyWorkflowSecretsToGrammar(ctx context.Context) {
 			return
 		}
 	}
+	if refused {
+		r.warn(workflowCopyNoReadLine(selfCommand()))
+		return
+	}
 	fmt.Fprintf(r.w, "workflow secrets: %d copied into the %s grammar (%d already there, %d skipped)\n",
 		len(copied)-already, secretname.ProjectPrefix, already, skipped)
 }
 
 // The states one name's copy ends in. copyRefusedNoRead is the one that stops
-// the step, and the other two warn and go on.
+// the step, and the rest warn and go on.
 type copyState int
 
 const (
@@ -354,9 +366,9 @@ const (
 	copyDone
 	copyAlready
 	copyRefusedNoRead
-	// copyNothing is a project copy with no enabled version: there is nothing
-	// to move and no line to print, and the name is not recorded — the same
-	// fail-closed state a skip leaves, so IS6 keeps its mount.
+	// copyNothing is a name with nothing to move — no project copy at all, or
+	// one with no enabled version: there is no line to print, the name is not
+	// recorded, and IS6 keeps what the name still has.
 	copyNothing
 	// copyForeign is a name whose container is another writer's: a shape the
 	// intake does not write, or no marker on it. It is the one skip that gets
@@ -372,7 +384,22 @@ const (
 func copyOneWorkflowSecret(ctx context.Context, svc *gcp.Secrets, fugaroProject, name, who string) (string, copyState, error) {
 	src := gcp.ProjectSecretID(fugaroProject, name)
 	ok, err := svc.CanReadValues(ctx, src)
-	if err != nil || !ok {
+	if err != nil {
+		return name, copyFailed, err
+	}
+	if !ok {
+		// CanReadValues answers false, nil for a container that is not there as
+		// well as for one the operator may not read: only the second is a
+		// refusal that stops the step. No container at all is the routine state
+		// after IS6 retires a project copy, and a name in it has nothing to
+		// copy and is not one to stop the rest for.
+		_, found, err := svc.Container(ctx, src)
+		if err != nil {
+			return name, copyFailed, err
+		}
+		if !found {
+			return name, copyNothing, nil
+		}
 		return name, copyRefusedNoRead, nil
 	}
 	version, err := svc.LatestEnabled(ctx, src)

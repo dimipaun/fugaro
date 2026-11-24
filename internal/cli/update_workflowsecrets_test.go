@@ -12,6 +12,7 @@ package cli
 
 import (
 	"context"
+	"encoding/base64"
 	"maps"
 	"slices"
 	"strings"
@@ -606,6 +607,179 @@ func TestUpdateStopsANonOwnerWithTheFix(t *testing.T) {
 	}
 	if _, found := projectSecretsOf(t, r.db); found {
 		t.Errorf("%s was written although nothing was copied", creds.PathProjectSecrets())
+	}
+}
+
+// TestUpdateSkipsANameWithNoProjectCopy: a name whose project copy is already
+// gone is nothing to copy — the operator's read is not what is missing — so it
+// stops nothing and holds back no name after it.
+//
+// The state is the routine one once IS6 has retired a project copy, and the
+// name is still one the operator allow-lists. CanReadValues answers false, nil
+// for a container that is not there exactly as it does for one the caller may
+// not read, so what tells the two apart is whether the container is there at
+// all.
+func TestUpdateSkipsANameWithNoProjectCopy(t *testing.T) {
+	for _, k := range agentMarkers {
+		t.Setenv(k, "")
+	}
+	operatorIdentity(t)
+
+	// api-token's project copy is gone and deploy-token's is there; the names
+	// are answered in order, so api-token is the one that comes first.
+	sm := gcpfake.NewSecrets(t)
+	sm.AllowAccess()
+	sm.Seed(gcp.ProjectSecretID(initProjectName, "deploy-token"), nil, []byte("project-deploy-token"))
+	db := gcpfake.NewRTDB(t)
+	db.Set(budget.PathProject, initProjectName)
+	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "version": 1, "project": initProjectName, "gcp_project": initProject})
+	lc := &localcfg.Config{
+		Version: 1, Name: initProjectName, GCPProject: initProject, Region: "us-east5",
+		Budget:    &localcfg.Budget{Mode: "enforce", PerRunUSD: 5, RTDBURL: db.URL, FirebaseProject: initProject},
+		Endpoints: localcfg.Endpoints{SecretManager: sm.URL + "/", NoAuth: true},
+		WorkflowSecrets: map[string]config.ProjectSecret{
+			"api-token":    {AllowDataTo: []string{"acme/*"}},
+			"deploy-token": {AllowDataTo: []string{"acme/*"}},
+		},
+	}
+	var w strings.Builder
+	e := &initEngine{lc: lc, r: &initRun{o: &initOptions{door: updateDoor.name}, w: &w}}
+	e.copyWorkflowSecretsToGrammar(t.Context())
+
+	out := w.String()
+	if strings.Contains(out, "as the project's Owner") {
+		t.Errorf("a name with no project copy stopped the step as if the operator had no read:\n%s", out)
+	}
+	dst := grammarID(t, "deploy-token")
+	if _, found := fakeContainer(t, sm, dst); !found {
+		t.Errorf("%s was not copied after a name with no project copy came before it:\n%s", dst, out)
+	}
+	if _, found := fakeContainer(t, sm, grammarID(t, "api-token")); found {
+		t.Errorf("%s was made although the name has no project copy to copy", grammarID(t, "api-token"))
+	}
+	ps, found := projectSecretsOf(t, db)
+	if !found {
+		t.Fatalf("%s is not there: the names copied are the ones IS6 reads (D3325)", creds.PathProjectSecrets())
+	}
+	if _, ok := ps.Rule("deploy-token"); !ok {
+		t.Errorf("the record holds no entry for deploy-token although its value was copied: %v", ps.Secrets)
+	}
+	if _, ok := ps.Rule("api-token"); ok {
+		t.Errorf("the record holds an entry for api-token although nothing was copied for it: %v", ps.Secrets)
+	}
+}
+
+// TestUpdateRecordsWhatItCopiedBeforeANoReadStopsIt: an operator with no read
+// on one project copy stops the step — every remaining name would be refused
+// the same way — but the names copied before it are recorded, because the
+// record is what IS6 reads to retire the copies this migration replaces. A
+// value in the grammar with no record of it is a container nothing retires.
+func TestUpdateRecordsWhatItCopiedBeforeANoReadStopsIt(t *testing.T) {
+	for _, k := range agentMarkers {
+		t.Setenv(k, "")
+	}
+	operatorIdentity(t)
+
+	// alpha-token is read and copied; zeta-token is there and the operator may
+	// not read it, and it comes second.
+	sm := gcpfake.NewSecrets(t)
+	sm.AllowAccess()
+	sm.Seed(gcp.ProjectSecretID(initProjectName, "alpha-token"), nil, []byte("project-alpha-token"))
+	zeta := gcp.ProjectSecretID(initProjectName, "zeta-token")
+	sm.Seed(zeta, nil, []byte("project-zeta-token"))
+	// The fake holds nothing for any ID a test has named, so both are named:
+	// alpha-token is readable and zeta-token is not.
+	sm.SetHeldPermissions(gcp.ProjectSecretID(initProjectName, "alpha-token"), "secretmanager.versions.access")
+	sm.SetHeldPermissions(zeta)
+	db := gcpfake.NewRTDB(t)
+	db.Set(budget.PathProject, initProjectName)
+	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "version": 1, "project": initProjectName, "gcp_project": initProject})
+	lc := &localcfg.Config{
+		Version: 1, Name: initProjectName, GCPProject: initProject, Region: "us-east5",
+		Budget:    &localcfg.Budget{Mode: "enforce", PerRunUSD: 5, RTDBURL: db.URL, FirebaseProject: initProject},
+		Endpoints: localcfg.Endpoints{SecretManager: sm.URL + "/", NoAuth: true},
+		WorkflowSecrets: map[string]config.ProjectSecret{
+			"alpha-token": {AllowDataTo: []string{"acme/*"}},
+			"zeta-token":  {AllowDataTo: []string{"acme/*"}},
+		},
+	}
+	var w strings.Builder
+	e := &initEngine{lc: lc, r: &initRun{o: &initOptions{door: updateDoor.name}, w: &w}}
+	e.copyWorkflowSecretsToGrammar(t.Context())
+
+	out := w.String()
+	if !strings.Contains(out, "secretmanager.versions.access") || !strings.Contains(out, "as the project's Owner") {
+		t.Errorf("the run does not stop with the permission and the one thing that grants it:\n%s", out)
+	}
+	alpha := grammarID(t, "alpha-token")
+	if _, found := fakeContainer(t, sm, alpha); !found {
+		t.Errorf("%s is not there: the name copied before the refusal was thrown away with it:\n%s", alpha, out)
+	}
+	if _, found := fakeContainer(t, sm, grammarID(t, "zeta-token")); found {
+		t.Errorf("%s was made although the operator may not read its project copy", grammarID(t, "zeta-token"))
+	}
+	ps, found := projectSecretsOf(t, db)
+	if !found {
+		t.Fatalf("%s is not there after the copy: a value in the grammar with no record of it is a container nothing retires (D3325)", creds.PathProjectSecrets())
+	}
+	if _, ok := ps.Rule("alpha-token"); !ok {
+		t.Errorf("the record holds no entry for alpha-token although its value was copied: %v", ps.Secrets)
+	}
+	if _, ok := ps.Rule("zeta-token"); ok {
+		t.Errorf("the record holds an entry for zeta-token although nothing was copied for it: %v", ps.Secrets)
+	}
+	if slices.Contains(sm.Accessed(), zeta) {
+		t.Errorf("%s was read although the caller was known to hold no read on it", zeta)
+	}
+}
+
+// TestUpdateRedactsAValueFromAWriteFailure: a write that fails with the bytes
+// echoed back — which is what the Secret Manager API does with the payload it
+// refuses — still puts no value in front of a person. The name is warned as not
+// copied and is not recorded, so the next update copies it again.
+//
+// Both spellings of the value are asserted absent, the decoded form and the
+// base64 one: a failure's message can carry either. Removing the redaction in
+// copyOneWorkflowSecret prints the value here and nowhere else, so this test is
+// what holds the credentials-service rule for the copy's own failures.
+func TestUpdateRedactsAValueFromAWriteFailure(t *testing.T) {
+	for _, k := range agentMarkers {
+		t.Setenv(k, "")
+	}
+	operatorIdentity(t)
+
+	const value = "project-deploy-token"
+	sm := gcpfake.NewSecrets(t)
+	sm.AllowAccess()
+	sm.Seed(gcp.ProjectSecretID(initProjectName, "deploy-token"), nil, []byte(value))
+	sm.EchoAddVersionPayload = true
+	db := gcpfake.NewRTDB(t)
+	db.Set(budget.PathProject, initProjectName)
+	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "version": 1, "project": initProjectName, "gcp_project": initProject})
+	lc := &localcfg.Config{
+		Version: 1, Name: initProjectName, GCPProject: initProject, Region: "us-east5",
+		Budget:          &localcfg.Budget{Mode: "enforce", PerRunUSD: 5, RTDBURL: db.URL, FirebaseProject: initProject},
+		Endpoints:       localcfg.Endpoints{SecretManager: sm.URL + "/", NoAuth: true},
+		WorkflowSecrets: map[string]config.ProjectSecret{"deploy-token": {AllowDataTo: []string{"acme/*"}}},
+	}
+	var w strings.Builder
+	e := &initEngine{lc: lc, r: &initRun{o: &initOptions{door: updateDoor.name}, w: &w}}
+	e.copyWorkflowSecretsToGrammar(t.Context())
+
+	out := w.String()
+	if !strings.Contains(out, "deploy-token was not copied") {
+		t.Errorf("the run does not say the name was not copied after a write the API refused:\n%s", out)
+	}
+	for _, leaked := range []string{value, base64.StdEncoding.EncodeToString([]byte(value))} {
+		if strings.Contains(out, leaked) {
+			t.Errorf("the update printed the workflow secret's value (%q) in a line a person reads:\n%s", leaked, out)
+		}
+	}
+	if n := len(sm.EnabledVersions(grammarID(t, "deploy-token"))); n != 0 {
+		t.Errorf("%s holds %d enabled versions after a write that failed, want none", grammarID(t, "deploy-token"), n)
+	}
+	if _, found := projectSecretsOf(t, db); found {
+		t.Errorf("%s was written although no value reached the grammar: IS6 would retire the mount of a name nothing copied", creds.PathProjectSecrets())
 	}
 }
 
