@@ -483,13 +483,17 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro project repos status": {args: []string{"github/acme/app"}},
 	"fugaro project routing set":  {args: []string{"claude", "--via", "direct"}},
 	// The table's two writes, over a world whose config carries no
-	// model_routing block: `set` appends the entry and prints the spliced
-	// block, and `rm` finds no such pattern and refuses from inside its own
-	// body. Both are the local config's write path — the fence is
+	// model_routing block: `set` appends the entry, and `rm` takes away the one
+	// its seed declares. Both are the local config's write path — the fence is
 	// applySettingsEdit's, and this world has no agent marker — so what the
-	// closed stdin has to show is that neither waits for a person to answer.
-	"fugaro routing set":      {args: []string{"claude-*", "anthropic"}, reaches: "model_routing"},
-	"fugaro routing rm":       {args: []string{"claude-*"}, reaches: "there is nothing to remove"},
+	// closed stdin has to show is that neither waits for a person to answer,
+	// and the sentence each is read by is the write's own.
+	"fugaro routing set": {args: []string{"claude-*", "anthropic"}, reaches: "set the routing entry `claude-*`"},
+	"fugaro routing rm": {
+		args:    []string{"zzz-*"},
+		reaches: "remove the routing entry `zzz-*`",
+		seed:    closedStdinRoutingSeed,
+	},
 	"fugaro recipes publish":  {args: []string{"slug"}},
 	"fugaro recipes show":     {args: []string{"slug"}},
 	"fugaro recipes validate": {args: []string{"slug"}},
@@ -994,6 +998,17 @@ func closedStdinBinariesSeed(t *testing.T, f *budgetFixture) {
 func closedStdinPoolSeed(t *testing.T, f *budgetFixture) {
 	t.Helper()
 	f.appendConfig(t, "credentials:\n  - name: team-a\n    type: claude-oauth\n  - name: team-b\n    type: claude-oauth\npools:\n  - name: claude-pool\n    members:\n      - team-a\n")
+}
+
+// closedStdinRoutingSeed gives the world the entry the routing rm takes away: a
+// removal of a pattern the table does not carry is refused before the write,
+// which would leave the fixture's sentence unproven. The pattern answers no
+// model any document of the world names, so the chain is judged as the table's
+// own entry and nothing else, and the table the removal leaves is the empty one
+// the set's fixture writes over.
+func closedStdinRoutingSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "model_routing:\n  - match: \"zzz-*\"\n    chain:\n      - {kind: anthropic}\n")
 }
 
 // closedStdinAccountAllowListSeed gives the world the account the deny's
