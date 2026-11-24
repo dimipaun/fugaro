@@ -3,6 +3,7 @@ package credsvc
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -209,6 +210,13 @@ type restoreFixture struct {
 	devices    *fakeDeviceStore
 	projects   *fakePolicy
 
+	// challenge is the challenge this fixture's service issued: the value a
+	// test posts to the restore, built once so that a test which posts it twice
+	// posts the same one. It is fresh (built when the fixture was) and the MAC
+	// is the deployment key's, which is what the route checks before anything
+	// else.
+	challenge string
+
 	audit *bytes.Buffer
 	log   *bytes.Buffer
 }
@@ -220,6 +228,7 @@ type restoreFixture struct {
 func newRestoreFixture(t *testing.T) *restoreFixture {
 	t.Helper()
 	f := &restoreFixture{
+		challenge: mobileChallengeValue(restoreChallengeKey(), make([]byte, mobileChallengeNonceBytes), time.Now()),
 		verifier: &fakeVerifier{claims: mobilesession.Claims{
 			Issuer:        "https://identity.example.invalid",
 			Audience:      mustAudience(t, restoreEndpoint),
@@ -249,15 +258,16 @@ func newRestoreFixture(t *testing.T) *restoreFixture {
 			APIKey:            "the-api-key",
 			ConsumerPublicKey: "the-consumer-key",
 		},
-		Policy:     f.projects,
-		Verifier:   f.verifier,
-		Membership: f.membership,
-		Claims:     f.claims,
-		Refresh:    f.refresh,
-		Minter:     f.minter,
-		Devices:    f.devices,
-		Audit:      auditor,
-		Log:        slog.New(slog.NewJSONHandler(&logs, nil)),
+		ChallengeKey: restoreChallengeKey(),
+		Policy:       f.projects,
+		Verifier:     f.verifier,
+		Membership:   f.membership,
+		Claims:       f.claims,
+		Refresh:      f.refresh,
+		Minter:       f.minter,
+		Devices:      f.devices,
+		Audit:        auditor,
+		Log:          slog.New(slog.NewJSONHandler(&logs, nil)),
 	})
 	if err != nil {
 		t.Fatalf("NewMobileRestore: %v", err)
@@ -283,16 +293,13 @@ func deviceKey() string {
 	return base64.RawURLEncoding.EncodeToString(make([]byte, mobilesession.DevicePublicKeySize))
 }
 
-// issuedChallenge is a challenge in the one shape the challenge route issues:
-// mobileChallengeBytes of unpadded base64url. Every restore a test posts has to
-// carry one, because the route holds the value to that shape before the store
-// is asked — the value is a key of the shared compare-and-set store, and text
-// this service did not draw is text it will not write there.
-//
-// The bytes are zeros: nothing on this path reads the randomness, and a test
-// that wants a different challenge passes the string it means to try.
-func issuedChallenge() string {
-	return base64.RawURLEncoding.EncodeToString(make([]byte, mobileChallengeBytes))
+// restoreChallengeKey is the key the fixture's handler stamps its challenges
+// with and checks them against: the SHA-256 of a plain sentence, which is a key
+// of the size the constructor requires and no credential — a literal that read
+// like one would be copied into a fixture and then into a report.
+func restoreChallengeKey() []byte {
+	sum := sha256.Sum256([]byte("not-a-credential-test-challenge-key"))
+	return sum[:]
 }
 
 // body is a restore call's body: the challenge the fixture issued and the
@@ -363,7 +370,7 @@ func TestMobileRestoreStrictProjectRefusesWithQR(t *testing.T) {
 	f := newRestoreFixture(t)
 	f.projects.shared = strictSharedPolicy()
 
-	rec := f.restore(t, restoreBody(issuedChallenge()))
+	rec := f.restore(t, restoreBody(f.challenge))
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("a restore against a strict project is answered %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body.String())
@@ -492,8 +499,11 @@ func TestMobileRestoreChallengeIsFreshAndBoundToTheContract(t *testing.T) {
 			t.Fatalf("the challenge answer is not one the contract reads: %v (%s)", err, rec.Body.String())
 		}
 		raw, err := base64.RawURLEncoding.Strict().DecodeString(resp.Challenge)
-		if err != nil || len(raw) != mobileChallengeBytes {
-			t.Fatalf("the challenge %q is not %d bytes of unpadded base64url: %v", resp.Challenge, mobileChallengeBytes, err)
+		if err != nil || len(raw) != mobileChallengeLen {
+			t.Fatalf("the challenge %q is not %d bytes of unpadded base64url: %v", resp.Challenge, mobileChallengeLen, err)
+		}
+		if _, ok := mobileChallengeIssuedAt(restoreChallengeKey(), resp.Challenge); !ok {
+			t.Fatalf("the challenge %q does not carry the MAC of the key this deployment holds, so the restore route would refuse the challenge this route just issued", resp.Challenge)
 		}
 		if seen[resp.Challenge] {
 			t.Fatalf("the challenge route answered %q twice in eight calls, and a challenge that repeats is one an attacker can guess", resp.Challenge)
@@ -503,6 +513,33 @@ func TestMobileRestoreChallengeIsFreshAndBoundToTheContract(t *testing.T) {
 			t.Errorf("the challenge's life is %d seconds, want the contract's %d (ChallengeLifetime)", resp.ExpiresIn, want)
 		}
 		noAuditLine(t, f.audit)
+	}
+}
+
+// TestMobileRestoreSpendsTheChallengeItIssued is the two routes' agreement on
+// one value: the challenge the route hands out is one the restore route admits,
+// on a restored device, with nothing shared between them but the deployment's
+// key. It is the test the MAC is for — the challenge the phone paid a round trip
+// for is the challenge the service recognises, and it is the value the restore
+// then spends once.
+func TestMobileRestoreSpendsTheChallengeItIssued(t *testing.T) {
+	f := newRestoreFixture(t)
+
+	rec := f.challengeCall(t, "{}")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the challenge route answers %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var resp mobilesession.RestoreChallengeResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("the challenge answer is not one the contract reads: %v (%s)", err, rec.Body.String())
+	}
+
+	restored := f.restore(t, restoreBody(resp.Challenge))
+	if restored.Code != http.StatusOK {
+		t.Fatalf("the restore of the challenge this service just issued is answered %d, want %d: %s", restored.Code, http.StatusOK, restored.Body.String())
+	}
+	if len(f.claims.keys) != 1 || f.claims.keys[0] != resp.Challenge {
+		t.Errorf("the claimed challenges are %v, want exactly the one this service issued (%q)", f.claims.keys, resp.Challenge)
 	}
 }
 
@@ -585,7 +622,7 @@ func restoreRandom(t *testing.T, r io.Reader) {
 func TestMobileRestoreAdmitsADevice(t *testing.T) {
 	f := newRestoreFixture(t)
 
-	rec := f.restore(t, restoreBody(issuedChallenge()))
+	rec := f.restore(t, restoreBody(f.challenge))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the restore is answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
@@ -686,7 +723,7 @@ func TestMobileRestoreAdmitsADevice(t *testing.T) {
 	if want := mustAudience(t, restoreEndpoint); f.verifier.bindings[0].Audience != want {
 		t.Errorf("the assertion was bound to audience %q, want the deployment's own %q", f.verifier.bindings[0].Audience, want)
 	}
-	if f.verifier.bindings[0].Challenge != issuedChallenge() {
+	if f.verifier.bindings[0].Challenge != f.challenge {
 		t.Errorf("the assertion was bound to challenge %q, want the call's own", f.verifier.bindings[0].Challenge)
 	}
 
@@ -698,7 +735,7 @@ func TestMobileRestoreAdmitsADevice(t *testing.T) {
 	if f.claims.namespaces[0] != mobilesession.NamespaceChallenge {
 		t.Errorf("the challenge was claimed under namespace %q, want %q", f.claims.namespaces[0], mobilesession.NamespaceChallenge)
 	}
-	if f.claims.keys[0] != issuedChallenge() {
+	if f.claims.keys[0] != f.challenge {
 		t.Errorf("the route claimed %q, want the call's own challenge", f.claims.keys[0])
 	}
 	if f.claims.ttls[0] != mobilesession.ChallengeLifetime {
@@ -730,7 +767,7 @@ func TestMobileRestoreWritesTheCanonicalAddress(t *testing.T) {
 	f := newRestoreFixture(t)
 	f.verifier.claims.Email = "Member@Example.INVALID"
 
-	rec := f.restore(t, restoreBody(issuedChallenge()))
+	rec := f.restore(t, restoreBody(f.challenge))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the restore is answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
@@ -765,7 +802,7 @@ func TestMobileRestoreRefusesAnAssertionItCannotVerify(t *testing.T) {
 	f := newRestoreFixture(t)
 	f.verifier.err = errors.New("the assertion did not verify")
 
-	rec := f.restore(t, restoreBody(issuedChallenge()))
+	rec := f.restore(t, restoreBody(f.challenge))
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("an unverifiable assertion is answered %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body.String())
 	}
@@ -786,7 +823,7 @@ func TestMobileRestoreRefusesAnAddressItCannotName(t *testing.T) {
 	f := newRestoreFixture(t)
 	f.verifier.claims.Email = "not an address"
 
-	rec := f.restore(t, restoreBody(issuedChallenge()))
+	rec := f.restore(t, restoreBody(f.challenge))
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("an address this tree cannot write down is answered %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body.String())
 	}
@@ -807,10 +844,10 @@ func TestMobileRestoreRefusesAnAddressItCannotName(t *testing.T) {
 func TestMobileRestoreRefusesASpentChallenge(t *testing.T) {
 	f := newRestoreFixture(t)
 
-	if rec := f.restore(t, restoreBody(issuedChallenge())); rec.Code != http.StatusOK {
+	if rec := f.restore(t, restoreBody(f.challenge)); rec.Code != http.StatusOK {
 		t.Fatalf("the first restore is answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	rec := f.restore(t, restoreBody(issuedChallenge()))
+	rec := f.restore(t, restoreBody(f.challenge))
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("a spent challenge is answered %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body.String())
 	}
@@ -830,6 +867,44 @@ func TestMobileRestoreRefusesASpentChallenge(t *testing.T) {
 	}
 	if len(f.devices.created) != 1 {
 		t.Errorf("the two calls wrote %d device nodes, want only the first call's one", len(f.devices.created))
+	}
+}
+
+// TestMobileRestoreRefusesAChallengePastItsLife pins the ten minutes the
+// challenge route reports (C1's ChallengeLifetime) as a life this route
+// enforces and not a figure it only advertises: a challenge of ours whose issue
+// time is older than that is refused nonce_expired, BEFORE the store is asked —
+// an expired challenge is not a spent one — and the refusal is recorded like the
+// spent challenge's, because the identity verified and the address was
+// nameable.
+func TestMobileRestoreRefusesAChallengePastItsLife(t *testing.T) {
+	f := newRestoreFixture(t)
+	stale := mobileChallengeValue(
+		restoreChallengeKey(),
+		make([]byte, mobileChallengeNonceBytes),
+		time.Now().Add(-mobilesession.ChallengeLifetime-time.Minute),
+	)
+
+	rec := f.restore(t, restoreBody(stale))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("a challenge past its life is answered %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if code := refusalCode(t, rec); code != mobilesession.CodeNonceExpired {
+		t.Errorf("the refusal is %q, want %q", code, mobilesession.CodeNonceExpired)
+	}
+	if len(f.claims.keys) != 0 {
+		t.Errorf("a challenge past its life reached the claim store (%v), want nothing written: it was refused before the store was asked", f.claims.keys)
+	}
+	lines := auditLines(t, f.audit)
+	if len(lines) != 1 {
+		t.Fatalf("the refusal wrote %d audit lines, want exactly one: %v", len(lines), lines)
+	}
+	checkAuditShape(t, lines[0])
+	if got := auditField(lines[0], "caller"); got != restoreEmail {
+		t.Errorf("the refusal's caller is %q, want the verified address %q", got, restoreEmail)
+	}
+	if len(f.devices.created) != 0 {
+		t.Errorf("the refusal wrote %d device nodes, want none", len(f.devices.created))
 	}
 }
 
@@ -863,7 +938,7 @@ func TestMobileRestoreRefusesAPolicyVerdict(t *testing.T) {
 			f := newRestoreFixture(t)
 			f.membership.verdict = tc.verdict
 
-			rec := f.restore(t, restoreBody(issuedChallenge()))
+			rec := f.restore(t, restoreBody(f.challenge))
 			if tc.wantCode == "" {
 				if rec.Code != http.StatusServiceUnavailable {
 					t.Fatalf("a policy answer this route does not render is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
@@ -919,7 +994,7 @@ func TestMobileRestoreRefusesAnAllowedVerdictWithNoRole(t *testing.T) {
 	f := newRestoreFixture(t)
 	f.membership.verdict = mobilesession.Verdict{Allowed: true, Role: access.RoleNone}
 
-	rec := f.restore(t, restoreBody(issuedChallenge()))
+	rec := f.restore(t, restoreBody(f.challenge))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("an allowed verdict with no role is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
@@ -951,7 +1026,7 @@ func TestMobileRestoreRefusesAProjectPolicyItCannotRead(t *testing.T) {
 			f := newRestoreFixture(t)
 			tc.mutate(f)
 
-			rec := f.restore(t, restoreBody(issuedChallenge()))
+			rec := f.restore(t, restoreBody(f.challenge))
 			if rec.Code != http.StatusServiceUnavailable {
 				t.Fatalf("an unreadable policy is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 			}
@@ -978,11 +1053,12 @@ func TestMobileRestoreRefusesAProjectPolicyItCannotRead(t *testing.T) {
 // service refuses one, and it writes no line at all, because there is no
 // identity to name and nothing was done.
 func TestMobileRestoreRefusesABadRequest(t *testing.T) {
+	f := newRestoreFixture(t)
 	padded := base64.URLEncoding.EncodeToString(make([]byte, mobilesession.DevicePublicKeySize))
 	short := base64.RawURLEncoding.EncodeToString(make([]byte, 16))
-	paddedChallenge := base64.URLEncoding.EncodeToString(make([]byte, mobileChallengeBytes))
+	paddedChallenge := base64.URLEncoding.EncodeToString(make([]byte, mobileChallengeLen))
 	shortChallenge := base64.RawURLEncoding.EncodeToString(make([]byte, 16))
-	challenge := issuedChallenge()
+	challenge := f.challenge
 	for _, tc := range []struct {
 		name string
 		body string
@@ -1022,24 +1098,46 @@ func TestMobileRestoreRefusesABadRequest(t *testing.T) {
 // read for: the challenge is caller-supplied text that the route would use
 // VERBATIM as a key of the shared compare-and-set store, before any policy has
 // been asked. An attacker who can obtain a signed assertion for this project
-// (the signer needs no membership) could therefore write a path-shaped string,
-// a database-key-illegal character or a value worth storing into a store every
+// (the signer needs no membership, and it signs an assertion for any challenge
+// a verified phone names) could therefore write a path-shaped string, a
+// database-key-illegal character or a value worth storing into a store every
 // instance of the service reads.
 //
-// The value is held to the shape the challenge route issues, so the hostile
-// string is refused as the shape refusal and the store is never reached — which
+// Two things have to hold for a value to be this service's, and every row below
+// fails one of them. The spelling: this service's challenge is mobileChallengeLen
+// bytes of unpadded base64url and nothing else is. The MAC: a well-formed value
+// that this service did not stamp — an invented nonce, a tampered MAC, another
+// key's — is not one it issued, and the identity project's signature over an
+// assertion bound to it proves nothing about the challenge.
+//
+// Both are refused as the shape refusal, and the store is never reached — which
 // is what the assertion on the claim store is: not merely that the call failed,
 // but that nothing was written.
 func TestMobileRestoreRefusesAChallengeItDidNotIssue(t *testing.T) {
+	nonce := make([]byte, mobileChallengeNonceBytes)
+	if _, err := io.ReadFull(mobileRandom, nonce); err != nil {
+		t.Fatalf("the test's nonce: %v", err)
+	}
+	otherKey := sha256.Sum256([]byte("not-a-credential-test-other-challenge-key"))
+	ours := mobileChallengeValue(restoreChallengeKey(), nonce, time.Now())
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(ours)
+	if err != nil {
+		t.Fatalf("the test's own challenge %q is not base64url: %v", ours, err)
+	}
+	raw[len(raw)-1] ^= 0x01
+	tampered := base64.RawURLEncoding.EncodeToString(raw)
 	for _, tc := range []struct {
 		name      string
 		challenge string
 	}{
 		{"a path traversal", "../../config/admin/access"},
 		{"a database-key character", "a.b#c$d[e]f/g"},
-		{"a challenge of the right length but not base64url", strings.Repeat("!", mobileChallengeBytes)},
+		{"a challenge of the right length but not base64url", strings.Repeat("!", mobileChallengeLen)},
 		{"a value long enough to be worth writing", strings.Repeat("x", 4096)},
 		{"a challenge the store would take for another namespace's", "jti:"},
+		{"a well-formed value this service never issued", base64.RawURLEncoding.EncodeToString(make([]byte, mobileChallengeLen))},
+		{"a well-formed value with the MAC of another key", mobileChallengeValue(otherKey[:], nonce, time.Now())},
+		{"a challenge of ours with its MAC altered", tampered},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newRestoreFixture(t)
@@ -1101,7 +1199,7 @@ func TestMobileRestoreLeavesNothingBehindWhenItCannotAnswer(t *testing.T) {
 			f := newRestoreFixture(t)
 			tc.mutate(f)
 
-			rec := f.restore(t, restoreBody(issuedChallenge()))
+			rec := f.restore(t, restoreBody(f.challenge))
 			if rec.Code != http.StatusServiceUnavailable {
 				t.Fatalf("a restore the service cannot finish is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 			}
@@ -1140,7 +1238,7 @@ func TestMobileRestoreLeavesNothingWhenTheDeviceCannotBeWritten(t *testing.T) {
 	f := newRestoreFixture(t)
 	f.devices.createErr = errors.New("the device store is down")
 
-	rec := f.restore(t, restoreBody(issuedChallenge()))
+	rec := f.restore(t, restoreBody(f.challenge))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("a device that could not be written is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
@@ -1168,7 +1266,7 @@ func TestMobileRestoreTakesBackADeviceItCannotRecord(t *testing.T) {
 	}
 	f.h.Audit = auditor
 
-	rec := f.restore(t, restoreBody(issuedChallenge()))
+	rec := f.restore(t, restoreBody(f.challenge))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("a restore that could not be recorded is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
@@ -1195,7 +1293,7 @@ func TestMobileRestoreRefusesADeviceUIDItCannotDraw(t *testing.T) {
 	f := newRestoreFixture(t)
 	restoreRandom(t, failingReader{})
 
-	rec := f.restore(t, restoreBody(issuedChallenge()))
+	rec := f.restore(t, restoreBody(f.challenge))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("a restore whose uid could not be drawn is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
@@ -1290,7 +1388,8 @@ func TestNewMobileRestoreRefusesAnIncompleteConfiguration(t *testing.T) {
 	f := newRestoreFixture(t)
 	valid := func() MobileRestore {
 		return MobileRestore{
-			Project: f.h.Project, Policy: f.h.Policy, Verifier: f.h.Verifier,
+			Project: f.h.Project, ChallengeKey: f.h.ChallengeKey,
+			Policy: f.h.Policy, Verifier: f.h.Verifier,
 			Membership: f.h.Membership, Claims: f.h.Claims, Refresh: f.h.Refresh,
 			Minter: f.h.Minter, Devices: f.h.Devices, Audit: f.h.Audit,
 		}
@@ -1307,6 +1406,8 @@ func TestNewMobileRestoreRefusesAnIncompleteConfiguration(t *testing.T) {
 		{"no database URL", func(c *MobileRestore) { c.Project.DatabaseURL = "" }},
 		{"no API key", func(c *MobileRestore) { c.Project.APIKey = "" }},
 		{"no consumer key", func(c *MobileRestore) { c.Project.ConsumerPublicKey = "" }},
+		{"no challenge key", func(c *MobileRestore) { c.ChallengeKey = nil }},
+		{"a challenge key shorter than the one this route stamps with", func(c *MobileRestore) { c.ChallengeKey = restoreChallengeKey()[:mobileChallengeKeyBytes-1] }},
 		{"no policy reader", func(c *MobileRestore) { c.Policy = nil }},
 		{"no verifier", func(c *MobileRestore) { c.Verifier = nil }},
 		{"no membership policy", func(c *MobileRestore) { c.Membership = nil }},

@@ -36,13 +36,18 @@ package credsvc
 // then the strict switch, then the allow path — the device node, the refresh
 // family, the custom token, the audit line, the answer.
 //
-//   - The shape first, because a body this route will not hold is refused
-//     without reading anything at all.
-//   - The assertion second, and the challenge's claim immediately after it: the
+//   - The shape first, and the challenge's MAC with it, because both are
+//     decided from the text alone: a body this route will not hold, and a
+//     challenge this service did not issue, are refused without reading
+//     anything at all — no assertion, no store, no policy.
+//   - The assertion second, then the challenge's life and its claim: the
 //     challenge is bound into the assertion, so a claim taken first would let a
-//     caller burn challenges with assertions that never verified. A challenge
-//     that is already spent is a refusal of an identity this service HAS
-//     established, which is why it is recorded and a failed assertion is not.
+//     caller burn challenges with assertions that never verified. Both of these
+//     are refusals of an identity this service HAS established, which is why
+//     they are recorded and a failed assertion is not — and both come after the
+//     assertion for the same reason: a phone whose own challenge went stale, or
+//     whose challenge was already spent, is told so in the contract's own code
+//     and not as a body this service would not read.
 //   - The policy before the strict switch, so that a caller who is not a member
 //     — or whose provider is not accepted, or whose sign-in is too old — is
 //     told that, and not "pair again with a QR" (which would send them to a
@@ -56,19 +61,32 @@ package credsvc
 //     which is F32's rule one step early: no device node and no live family
 //     survive a restore this service could not answer.
 //
-// # The challenge is spent once, across instances
+// # The challenge is this service's, and it is spent once
 //
 // The challenge is the restore's one-time value, as the invite's nonce is the
-// pairing's (F39). The challenge route draws it from crypto/rand; the restore
-// claims it through C1's ClaimStore, so two instances of the public service
-// cannot both honour one challenge — the store is what makes single use hold
-// across them, and a map in this process would not. The claim is taken at
-// SPEND and never at issue, which is the only reading the store's one method
-// allows: `Claim` marks a value used, so a challenge claimed when it was issued
-// would be dead before the restore that spends it. What "the project remembers
-// it" means here is therefore that the value is in the store from the moment it
-// is spent, and a second attempt with it is refused (C1's RestoreChallengeRequest
-// says the challenge is remembered; this is where it is).
+// pairing's (F39), and two things have to hold of it: that this service issued
+// it, and that it is used once.
+//
+// Issued by this service, because the challenge route is the only thing on this
+// path that makes a value the project's own. The identity project's signer
+// signs an assertion for ANY challenge a verified phone names (A1 refuses only
+// a missing one), and C1's ClaimStore cannot answer "was this ever issued" —
+// it has one method, and a challenge claimed at issue would be dead before the
+// restore that spends it. So the value carries its own proof: the nonce, the
+// second it was issued at and the HMAC-SHA-256 over both, under the key this
+// deployment holds (ChallengeKey). A restore computes the MAC before anything
+// else, refuses a value that is not ours as the shape refusal, and refuses one
+// of ours that is past ChallengeLifetime as the contract's nonce_expired —
+// which is the ten minutes the challenge route reports, enforced rather than
+// advertised.
+//
+// Spent once, through C1's ClaimStore, so two instances of the public service
+// cannot both honour one challenge: the store is what makes single use hold
+// across them, and a map in this process would not. The claim is taken at SPEND
+// and never at issue, and the MAC is what lets that stay true: a value claimed
+// when it was issued would be dead before the restore that spends it, and
+// without the MAC the claim would only record that SOMEONE had used the value
+// — including a caller who invented it.
 //
 // # The audit lines
 //
@@ -118,8 +136,11 @@ package credsvc
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -138,12 +159,32 @@ import (
 // The restore routes' own vocabulary: the sizes of the two values they draw,
 // and the bound on a request body.
 const (
-	// mobileChallengeBytes is the random part of a challenge: 256 bits, 43
-	// unpadded base64url characters. It is the pairing's nonce length and not a
-	// second standard — a challenge is the same kind of value for the same
-	// reason (F39), and a guessable one is a challenge an attacker can bind
-	// their own assertion to and spend before the phone does.
-	mobileChallengeBytes = 32
+	// mobileChallengeNonceBytes is the random part of a challenge: 256 bits.
+	// It is the pairing's nonce length and not a second standard — a challenge
+	// is the same kind of value for the same reason (F39), and a guessable one
+	// is a challenge an attacker can bind their own assertion to and spend
+	// before the phone does.
+	mobileChallengeNonceBytes = 32
+	// mobileChallengeTimeBytes is the challenge's issue time: the unix second
+	// this service stamped it with, big-endian. It is in the value because the
+	// ten minutes ExpiresIn advertises have to be a life this route enforces
+	// and not a figure it only reports, and the service that spends a
+	// challenge is not always the instance that issued it.
+	mobileChallengeTimeBytes = 8
+	// mobileChallengeMACBytes is the HMAC-SHA-256 the service stamps the two
+	// above with, and mobileChallengeKeyBytes is the least key it will stamp
+	// them under. The MAC is what makes a challenge provably this service's:
+	// the compare-and-set store can say whether a value has been used and
+	// cannot say whether one was ever issued (C1's ClaimStore has one method,
+	// and claiming at issue would spend the challenge before its restore), so
+	// a value a caller invented would otherwise restore a device on the
+	// strength of an assertion the identity project signs for ANY challenge —
+	// which is the signer's own rule (A1 refuses only a missing one).
+	mobileChallengeMACBytes = sha256.Size
+	mobileChallengeKeyBytes = 32
+	// mobileChallengeLen is the whole value: the nonce, the issue time and the
+	// MAC, in that order, which is also the signing input's order.
+	mobileChallengeLen = mobileChallengeNonceBytes + mobileChallengeTimeBytes + mobileChallengeMACBytes
 	// mobileDevicePrefix and mobileDeviceUIDBytes are a device uid's shape: m~
 	// and 128 bits of unpadded base64url, which is what
 	// internal/budget/token's deviceNewUID draws (its own constants are
@@ -169,11 +210,23 @@ const (
 	// one the verifier would not accept, and one whose address this tree cannot
 	// write down (the file doc's two halves of the same answer).
 	mobileAssertionRefused = "the assertion is not one this project can act on: sign in again and retry"
-	// mobileChallengeSpent answers a challenge that is unknown, already spent or
-	// past its life. The three are one answer because the store keeps one fact
-	// about a value — whether it has been used — and a caller that could tell
-	// "never issued" from "already used" could probe for challenges that exist.
-	mobileChallengeSpent = "the challenge is unknown, already used or expired: ask for a new challenge and a new assertion"
+	// mobileChallengeUnissued answers a challenge this service did not issue:
+	// a value whose MAC does not hold, which no amount of well-formedness
+	// makes ours. It is the shape refusal, because it is decided from the
+	// value alone and before any identity is read — such a call is not a call
+	// of this contract's at all.
+	mobileChallengeUnissued = "the challenge is not one this service issued, so the assertion is bound to a value this project never handed out"
+	// mobileChallengeStale answers a challenge of ours that is past the life
+	// the challenge route reported (C1's ChallengeLifetime): the contract's own
+	// nonce_expired, whose doc gives it as "unknown, already spent, or past its
+	// life". The app's screen for it is "ask for a new challenge", which is
+	// what a phone holding a stale one must do.
+	mobileChallengeStale = "the challenge is past its life: ask for a new challenge and a new assertion"
+	// mobileChallengeSpent answers a challenge of ours that was already spent.
+	// The MAC says the value is one this service issued; the store says it has
+	// been used, and a second restore with it is the replay the single use
+	// exists for.
+	mobileChallengeSpent = "the challenge was already used: ask for a new challenge and a new assertion"
 	// mobileStrictRefused answers a project whose strict switch is on: the
 	// device has to pair again with a QR (D2784).
 	mobileStrictRefused = "this project requires a QR code for a device it has not seen: pair this device again with fugaro pair"
@@ -284,6 +337,17 @@ type MobileDevices interface {
 type MobileRestore struct {
 	// Project is this deployment's own mobile configuration.
 	Project MobileProjectConfig
+	// ChallengeKey is the key this deployment holds for its challenges: the
+	// HMAC key ServeChallenge stamps a challenge with and ServeRestore checks
+	// it against. It is read from the installation and never from a caller,
+	// and no caller can compute it — which is the whole of what tells a
+	// challenge this service issued from one a phone invented.
+	//
+	// It is required and it is one key for the deployment, not a per-call or
+	// per-visitor value: a challenge issued by one instance has to be
+	// recognised by the next (F39), and a key drawn per process would refuse
+	// every challenge that crossed an instance.
+	ChallengeKey []byte
 	// Policy reads the published policy: the project's mobile block is where
 	// the strict switch and the session's display values live (P6).
 	Policy PolicyReader
@@ -330,6 +394,8 @@ func NewMobileRestore(cfg MobileRestore) (*MobileRestore, error) {
 		return nil, errors.New("credsvc: the mobile routes have no API key, so a paired phone could not reach its mailbox")
 	case cfg.Project.ConsumerPublicKey == "":
 		return nil, errors.New("credsvc: the mobile routes have no consumer public key, so a phone would pin nothing")
+	case len(cfg.ChallengeKey) < mobileChallengeKeyBytes:
+		return nil, fmt.Errorf("credsvc: the mobile routes hold no challenge key (or one shorter than %d bytes), so this service could not tell a challenge it issued from one a caller invented", mobileChallengeKeyBytes)
 	case cfg.Policy == nil:
 		return nil, errors.New("credsvc: the mobile routes cannot read the published policy")
 	case cfg.Verifier == nil:
@@ -354,7 +420,8 @@ func NewMobileRestore(cfg MobileRestore) (*MobileRestore, error) {
 		cfg.Log = slog.Default()
 	}
 	return &MobileRestore{
-		Project: cfg.Project, Policy: cfg.Policy, Verifier: cfg.Verifier,
+		Project: cfg.Project, ChallengeKey: cfg.ChallengeKey,
+		Policy: cfg.Policy, Verifier: cfg.Verifier,
 		Membership: cfg.Membership, Claims: cfg.Claims, Refresh: cfg.Refresh,
 		Minter: cfg.Minter, Devices: cfg.Devices, Audit: cfg.Audit,
 		Log: cfg.Log,
@@ -368,7 +435,9 @@ func NewMobileRestore(cfg MobileRestore) (*MobileRestore, error) {
 // and nothing to record: the request carries no identity at all (C1's
 // RestoreChallengeRequest is an empty object), and a challenge is a value the
 // assertion is bound to and not an admission. What makes it single-use is the
-// claim the restore takes on it.
+// claim the restore takes on it — and what makes it THIS service's is the MAC
+// and the issue time it draws into the value, which is what the restore checks
+// before it claims anything.
 //
 // The body must still be the empty object the contract declares, and a body
 // naming a field is refused: a route whose request shape is stated by the
@@ -379,13 +448,13 @@ func (m *MobileRestore) ServeChallenge(w http.ResponseWriter, r *http.Request) {
 		WriteWireError(w, StatusRequestRefused, WireError{Error: ErrorRequestRefused, Message: err.Error()})
 		return
 	}
-	challenge, err := mobileDraw(mobileChallengeBytes)
-	if err != nil {
+	nonce := make([]byte, mobileChallengeNonceBytes)
+	if _, err := io.ReadFull(mobileRandom, nonce); err != nil {
 		WriteWireError(w, StatusUnavailable, WireError{Error: ErrorStateUnavailable, Message: mobileChallengeUndrawn})
 		return
 	}
 	body, err := json.Marshal(mobilesession.RestoreChallengeResponse{
-		Challenge: challenge,
+		Challenge: mobileChallengeValue(m.ChallengeKey, nonce, time.Now()),
 		ExpiresIn: int(mobilesession.ChallengeLifetime / time.Second),
 	})
 	if err != nil {
@@ -401,10 +470,15 @@ func (m *MobileRestore) ServeChallenge(w http.ResponseWriter, r *http.Request) {
 // doc's, and every branch below is a step of it.
 func (m *MobileRestore) ServeRestore(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	req, err := readMobileRestoreRequest(r)
+	req, challengeAt, err := readMobileRestoreRequest(r, m.ChallengeKey)
 	if err != nil {
 		// No line: the call is refused before any identity was read, which is
-		// the one refusal on this route with nothing to name.
+		// the one refusal on this route with nothing to name. A challenge this
+		// service did not issue is refused HERE and not after the assertion,
+		// because the value alone decides it: no identity has to be read to
+		// know that a MAC which does not hold is not one of ours, and a call
+		// whose challenge this project never handed out is not a call of this
+		// contract's at all.
 		WriteWireError(w, StatusRequestRefused, WireError{Error: ErrorRequestRefused, Message: err.Error()})
 		return
 	}
@@ -432,6 +506,16 @@ func (m *MobileRestore) ServeRestore(w http.ResponseWriter, r *http.Request) {
 	email, err := mobileauth.NormalizeEmail(claims.Email)
 	if err != nil {
 		m.refuseAssertion(w)
+		return
+	}
+	if time.Since(challengeAt) > mobilesession.ChallengeLifetime {
+		// The value is ours — the reader checked the MAC — and it is past the
+		// life the challenge route reported. It is refused BEFORE the claim,
+		// because an expired challenge is not spent: a phone that comes back
+		// with a fresh assertion for its own stale challenge has to ask for a
+		// new one, and burning the value's store entry would answer the same
+		// either way.
+		m.refuse(ctx, w, email, mobilesession.Error{Code: mobilesession.CodeNonceExpired, Message: mobileChallengeStale})
 		return
 	}
 	spent, err := m.Claims.Claim(ctx, mobilesession.NamespaceChallenge, req.Challenge, mobilesession.ChallengeLifetime)
@@ -673,32 +757,45 @@ func mobilePolicyRefusal(v mobilesession.Verdict) (mobilesession.Error, bool) {
 	return e, true
 }
 
-// readMobileRestoreRequest reads a restore call's body. It is bounded and
-// decoded strictly, and no sentence it returns repeats what it read: the body
-// is the caller's text, and a decoder's own message names the byte it choked on
+// readMobileRestoreRequest reads a restore call's body, and answers the second
+// its challenge was issued at beside it. It is bounded and decoded strictly,
+// and no sentence it returns repeats what it read: the body is the caller's
+// text, and a decoder's own message names the byte it choked on
 // (readWorkflowSecretsRequest's rule, the reader this one is shaped after).
-func readMobileRestoreRequest(r *http.Request) (mobilesession.RestoreRequest, error) {
+//
+// The challenge is held to this service's own spelling AND to the MAC under the
+// deployment's key, which is what tells a challenge this service issued from
+// one a caller invented. Both are decided from the value alone, so both are
+// refusals taken before any identity is read — and the issue time comes back
+// with the request because the life it bounds is checked where the caller's
+// identity has been established, so that a stale challenge is the contract's
+// nonce_expired and not a body this service would not read.
+func readMobileRestoreRequest(r *http.Request, challengeKey []byte) (mobilesession.RestoreRequest, time.Time, error) {
 	body, err := readMobileBody(r)
 	if err != nil {
-		return mobilesession.RestoreRequest{}, err
+		return mobilesession.RestoreRequest{}, time.Time{}, err
 	}
 	var req mobilesession.RestoreRequest
 	if err := decodeStrict(body, &req); err != nil {
-		return mobilesession.RestoreRequest{}, fmt.Errorf("%w: the body is not one JSON object of the three fields this route reads", errMobileRestoreBadRequest)
+		return mobilesession.RestoreRequest{}, time.Time{}, fmt.Errorf("%w: the body is not one JSON object of the three fields this route reads", errMobileRestoreBadRequest)
 	}
 	if req.Assertion == "" {
-		return mobilesession.RestoreRequest{}, fmt.Errorf("%w: the call carries no assertion, and an assertion is the whole of what admits a device", errMobileRestoreBadRequest)
+		return mobilesession.RestoreRequest{}, time.Time{}, fmt.Errorf("%w: the call carries no assertion, and an assertion is the whole of what admits a device", errMobileRestoreBadRequest)
 	}
 	if req.Challenge == "" {
-		return mobilesession.RestoreRequest{}, fmt.Errorf("%w: the call carries no challenge, and an assertion bound to no challenge is one this service cannot tell from a replay", errMobileRestoreBadRequest)
+		return mobilesession.RestoreRequest{}, time.Time{}, fmt.Errorf("%w: the call carries no challenge, and an assertion bound to no challenge is one this service cannot tell from a replay", errMobileRestoreBadRequest)
 	}
 	if err := validMobileChallenge(req.Challenge); err != nil {
-		return mobilesession.RestoreRequest{}, err
+		return mobilesession.RestoreRequest{}, time.Time{}, err
+	}
+	issuedAt, ok := mobileChallengeIssuedAt(challengeKey, req.Challenge)
+	if !ok {
+		return mobilesession.RestoreRequest{}, time.Time{}, fmt.Errorf("%w: %s", errMobileRestoreBadRequest, mobileChallengeUnissued)
 	}
 	if err := validMobileDeviceKey(req.DevicePublicKey); err != nil {
-		return mobilesession.RestoreRequest{}, err
+		return mobilesession.RestoreRequest{}, time.Time{}, err
 	}
-	return req, nil
+	return req, issuedAt, nil
 }
 
 // readMobileChallengeRequest reads the challenge call's body, which the
@@ -751,21 +848,69 @@ func validMobileDeviceKey(key string) error {
 }
 
 // validMobileChallenge holds the challenge a restore spends to the shape the
-// challenge route issues: mobileChallengeBytes of randomness, unpadded
-// base64url, decoded strictly. It is the same rule the device key above gets
-// and for a sharper reason: the value is used VERBATIM as a key of the shared
-// compare-and-set store, before any policy has been asked, so text this route
-// did not draw is text it would write into a store every instance reads —
-// a path-shaped string, a database-key-illegal character or a value long
-// enough to be worth writing. A challenge that is not this shape cannot be one
-// this service issued, so the call is refused as the shape refusal and the
-// store is never reached.
+// challenge route issues: mobileChallengeLen bytes — the nonce, the issue time
+// and the MAC — in unpadded base64url, decoded strictly. It is the same rule
+// the device key above gets and for a sharper reason: the value is used
+// VERBATIM as a key of the shared compare-and-set store, before any policy has
+// been asked, so text this route did not draw is text it would write into a
+// store every instance reads — a path-shaped string, a database-key-illegal
+// character or a value long enough to be worth writing.
+//
+// The spelling is only the first half of what makes a challenge ours, and it is
+// kept apart from the MAC below for one reason: a value that is not this
+// service's spelling at all is a body this route would not hold, and the two
+// refusals read differently.
 func validMobileChallenge(challenge string) error {
 	raw, err := base64.RawURLEncoding.Strict().DecodeString(challenge)
-	if err != nil || len(raw) != mobileChallengeBytes {
-		return fmt.Errorf("%w: the challenge is not the %d bytes of unpadded base64url this service issues, which is the one spelling a challenge has", errMobileRestoreBadRequest, mobileChallengeBytes)
+	if err != nil || len(raw) != mobileChallengeLen {
+		return fmt.Errorf("%w: the challenge is not the %d bytes of unpadded base64url this service issues, which is the one spelling a challenge has", errMobileRestoreBadRequest, mobileChallengeLen)
 	}
 	return nil
+}
+
+// mobileChallengeValue builds the challenge the route issues: the nonce it drew,
+// the second it was issued at and the MAC over both, in unpadded base64url.
+// There is no identifier of the challenge other than the value itself, because
+// nothing has to be looked up to recognise it: the key does that.
+func mobileChallengeValue(key, nonce []byte, issuedAt time.Time) string {
+	raw := make([]byte, 0, mobileChallengeLen)
+	raw = append(raw, nonce...)
+	raw = binary.BigEndian.AppendUint64(raw, uint64(issuedAt.Unix()))
+	raw = append(raw, mobileChallengeMAC(key, raw)...)
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+// mobileChallengeIssuedAt reports the second this service issued the challenge
+// at, and false when the value is not one it issued. The MAC decides it, so a
+// value a caller invented — however well-formed — is refused here, before the
+// store is asked, before any policy is asked and before the assertion is even
+// read: the identity project signs an assertion for any challenge a verified
+// phone names (A1 refuses only a missing one), so the challenge is the only
+// thing on this path that says the value came from this project.
+//
+// The comparison is hmac.Equal's and never ==, so where a forgery differs from
+// a real challenge is not readable from how long the check took.
+func mobileChallengeIssuedAt(key []byte, challenge string) (time.Time, bool) {
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(challenge)
+	if err != nil || len(raw) != mobileChallengeLen {
+		return time.Time{}, false
+	}
+	signed, want := raw[:mobileChallengeNonceBytes+mobileChallengeTimeBytes], raw[mobileChallengeNonceBytes+mobileChallengeTimeBytes:]
+	if !hmac.Equal(want, mobileChallengeMAC(key, signed)) {
+		return time.Time{}, false
+	}
+	seconds := binary.BigEndian.Uint64(raw[mobileChallengeNonceBytes : mobileChallengeNonceBytes+mobileChallengeTimeBytes])
+	return time.Unix(int64(seconds), 0), true
+}
+
+// mobileChallengeMAC is the HMAC-SHA-256 over the nonce and the issue time,
+// under the deployment's key. It is the whole of what makes a challenge
+// unforgeable, so the key never reaches a response, a log line or an error
+// (the rule this file keeps for every value of the contract's).
+func mobileChallengeMAC(key, signed []byte) []byte {
+	mac := hmac.New(sha256.New, key)
+	mac.Write(signed)
+	return mac.Sum(nil)
 }
 
 // mobileRandom is the source of both values these routes draw — the challenge
