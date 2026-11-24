@@ -231,11 +231,19 @@ test('the verb sets are closed, disjoint, and frozen', () => {
   assert.equal(new Set(all).size, all.length, 'a verb is in two sets');
   assert.deepEqual([...DESTRUCTIVE_VERBS], [VERB.CANCEL, VERB.CONFIRM_ACTION, VERB.MERGE]);
 
-  // The destructive verbs are exactly P6.3's action-record verbs, spelled the
-  // same: the record this machine authorises is the record the schema admits.
-  assert.deepEqual([...DESTRUCTIVE_VERBS].sort(), [...SCHEMA_ACTIONS].sort());
-  // And D162's launch is not one of them: it travels as a plain message.
-  assert.equal(SCHEMA_ACTIONS.includes(VERB.LAUNCH), false);
+  // The destructive verbs are P6.3's action-record verbs, spelled the same: the
+  // record this machine authorises is the record the schema admits. `launch` is
+  // the one verb the schema admits that is NOT here, and deliberately: O10's
+  // typed start is a mailbox action now (J5a), but it is not a destructive
+  // command — D162's answer is that a start passes through — and the read-back a
+  // costly one needs is the mailbox gate's (`ConfirmValidateLaunch`), not this
+  // router's. The two lists are therefore the same list minus `launch`, and this
+  // assertion is what keeps them from drifting apart in any other way.
+  assert.deepEqual(
+    [...DESTRUCTIVE_VERBS].sort(),
+    SCHEMA_ACTIONS.filter((verb) => verb !== VERB.LAUNCH).sort(),
+  );
+  assert.ok(SCHEMA_ACTIONS.includes(VERB.LAUNCH), 'the schema admits O10\'s typed start');
 
   // D162's answer: a launch is the only verb that passes through.
   assert.deepEqual([...PASS_THROUGH_VERBS], [VERB.LAUNCH]);
