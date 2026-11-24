@@ -873,9 +873,9 @@ steps:
         set -uo pipefail
         url="__AUDIENCE__"
         meta="http://metadata.google.internal/computeMetadata/v1/instance/service-accounts"
-        tok="$$(curl -sS -H 'Metadata-Flavor: Google' "$${meta}/default/identity?audience=__AUDIENCE__&format=full" 2>/dev/null || true)"
+        tok="$$(curl -f -sS -H 'Metadata-Flavor: Google' "$${meta}/default/identity?audience=__AUDIENCE__&format=full" 2>/dev/null || true)"
         if [ -z "$${tok}" ]; then
-          tok="$$(curl -sS -H 'Metadata-Flavor: Google' "$${meta}/__ACCOUNT__/identity?audience=__AUDIENCE__&format=full" 2>/dev/null || true)"
+          tok="$$(curl -f -sS -H 'Metadata-Flavor: Google' "$${meta}/__ACCOUNT__/identity?audience=__AUDIENCE__&format=full" 2>/dev/null || true)"
         fi
         if [ -z "$${tok}" ]; then
           echo "CHK195 status=notoken email=unread"

@@ -493,9 +493,11 @@ runs as, and a 200 only for a token minted for that account and this URL.
 
 The two ends are knobbed so the step's own EXIT-CODE MAPPING can be read where it
 is written -- the six `exit`s in the step and nowhere else. FAKE_STEP_METADATA is
-`token` (mint the token, the default) or `empty` (the metadata server answers
-nothing, which is the step's exit 14); FAKE_STEP_CLAIM is the `email` claim the
-minted token carries (the account by default, another identity for exit 15); and
+`token` (mint the token, the default), `empty` (the metadata server answers
+nothing, which is the step's exit 14) or `error` (it REFUSES with an HTTP 4xx and
+a body, which is curl's own `-f` case and the same exit 14); FAKE_STEP_CLAIM is
+the `email` claim the minted token carries (the account by default, another
+identity for exit 15); and
 FAKE_STEP_FRONT is what the service's front end answers -- `admit` (the default:
 200 for this account's token for this URL, 401 for anything else), `granted` (200
 whatever the token says), `none` (no status at all) or the status itself.
@@ -549,10 +551,32 @@ def headers():
     return out
 
 
+def has_flag(letter, long):
+    # A short flag, alone or bundled (-f, -sSf) -- the way the check's step may
+    # write it -- or its long form.
+    for a in args:
+        if a == long or a == "-" + letter:
+            return True
+        if not a.startswith("--") and a.startswith("-") and letter in a[1:]:
+            return True
+    return False
+
+
 if "metadata.google.internal" in url:
     if METADATA == "empty":
         # The metadata server that mints nothing: the step never gets a token,
         # so it never calls the service, which is its exit 14.
+        sys.exit(0)
+    if METADATA == "error":
+        # The metadata server that REFUSES the request: an HTTP 404 with a body.
+        # curl -f turns that into a non-zero exit with NOTHING on stdout, which
+        # is how the step's exit 14 is reachable; without -f curl exits 0 with
+        # the error TEXT on stdout, and that text is not a token -- it goes on
+        # to be sent as a bearer token, and the front end's 401 would be read as
+        # "the front end refused the token" when the token was never minted.
+        if has_flag("f", "--fail"):
+            sys.exit(22)
+        sys.stdout.write("Not Found: the metadata server refused this request\n")
         sys.exit(0)
     audience = ""
     for part in url.split("?", 1)[-1].split("&"):
@@ -801,7 +825,7 @@ test_the_generated_step_mints_a_token_and_reads_its_own_email_claim() {
     fail "the step: no script could be lifted out of the generated build config"
     return 0
   }
-  expect_contains "$(cat "$step")" 'tok="$(curl -sS' "the step: after Cloud Build's own reduction the token is minted with a command substitution"
+  expect_contains "$(cat "$step")" 'tok="$(curl -f -sS' "the step: after Cloud Build's own reduction the token is minted with a command substitution, and the -f is what keeps an HTTP error body out of it"
   expect_absent "$(cat "$step")" "sys.argv" "the step: nothing reads an argument the step never passed"
 
   write_fake_curl_for_the_step "$dir/stepbin"
@@ -844,7 +868,8 @@ test_the_step_ends_with_one_exit_code_per_outcome() {
     "FAKE_STEP_FRONT=500|a status that is none of the three|13|CHK195 status=500 email=fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" \
     "FAKE_STEP_FRONT=none|no status at all|13|CHK195 status=none email=fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" \
     "FAKE_STEP_FRONT=granted FAKE_STEP_CLAIM=somebody-else@fugaro-dev.iam.gserviceaccount.com|a 200 earned by another identity|15|CHK195 status=200 email=somebody-else@fugaro-dev.iam.gserviceaccount.com" \
-    "FAKE_STEP_METADATA=empty|a metadata server that mints nothing|14|CHK195 status=notoken email=unread"; do
+    "FAKE_STEP_METADATA=empty|a metadata server that mints nothing|14|CHK195 status=notoken email=unread" \
+    "FAKE_STEP_METADATA=error|a metadata server that refuses (HTTP 404 and a body, which -f turns into no token)|14|CHK195 status=notoken email=unread"; do
     knobs=${spec%%|*}
     rest=${spec#*|}
     what=${rest%%|*}
