@@ -3476,11 +3476,13 @@ describe('the child environment', () => {
   it('keeps the keyring and the CLI floor that takes the key back moving together', () => {
     // The coupling the gate exists for, held as a test rather than as an
     // assertion in the code: a console that can **keep** a key
-    // (`PRODUCTION_KEYRING` with a key in it, which is S2.9's) while no CLI can
-    // take it back (`LICENCE_KEY_CLI_FLOOR` unset) is a console that hands a
-    // credential to a CLI which passes it on to every program it starts. Nothing
-    // is in that state today, and this case is what makes filling the keyring
-    // without naming the floor a red test rather than a shipped leak.
+    // (`PRODUCTION_KEYRING` with a key in it -- the owner's published one is in
+    // `ee/licence/keys/production.pub` since S2.9, and the entry waits for this
+    // floor) while no CLI can take it back (`LICENCE_KEY_CLI_FLOOR` unset) is a
+    // console that hands a credential to a CLI which passes it on to every
+    // program it starts. Nothing is in that state today, and this case is what
+    // makes filling the keyring without naming the floor a red test rather than
+    // a shipped leak.
     const canKeepAKey = Object.keys(PRODUCTION_KEYRING).length > 0
     expect(
       canKeepAKey && LICENCE_KEY_CLI_FLOOR === null,

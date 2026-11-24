@@ -57,25 +57,49 @@ import (
 )
 
 // PersonSwitchForServe is the switch reader this process reads a member's
-// personal half with (R9): C1's PersonSwitchReader, whose real side is WC6's and
-// which `fugaro credentials serve` sets in workspace mode (WC14) beside
+// personal half with (R9): C1's PersonSwitchReader, whose real side is WC6's
+// (`projectpolicy.PersonSwitchReader` over the member's published policy) and
+// which `fugaro credentials serve` assigns in workspace mode beside
 // PersonScopeConfigForServe.
 //
-// **It is a package-level variable because C2's configuration cannot carry it.**
-// PersonScopeConfig is "the three things the workspace's own half needs and no
-// fourth", and the switch is not one of them: it is asked per call, of the
-// MEMBER whose policy the call is under, while the three are the process's own
-// readers. The alternative — a fourth field, or a second edit of scope.go — is
-// the contract change C2's own document refuses ("a reader that needed something
-// of the call the slip does not carry is a contract change ... and never a
-// second reader reached around the scope"), and this variable is not that: the
-// reader is still the scope's, and what travels here is the switch alone.
+// **No task sets it yet, and the one that owes it is I1 rather than WC14.** Its
+// default below is C1's stub, which answers OFF for every project, so a process
+// whose half IS wired — a workspace whose owner has published a roster, which is
+// what WC14 hands the scope — refuses every call whose slip names a personal
+// token with personalSwitchOff, the sentence R11 reserves for a member who
+// turned the switch off. The line that ends that is I1's, and the plan's own
+// words say so: I1's acceptance is "the two stub files are deleted and the real
+// sides are wired", the `creds` stub it deletes is exactly this variable's
+// default, and its end-to-end test cannot be served a personal token without
+// it.
+//
+// **Where the real reader is built is fixed by the CALL, and that is why this is
+// a variable of the process and not a field of its configuration.** The switch
+// is asked of the MEMBER whose policy the call is under — its project, never the
+// process's, a deployment serving many members — and the member's policy is read
+// from the member the caller's own verified project names: this process reads no
+// member's database before a caller has been verified (R8 of workspace-service),
+// so the reader I1 installs is a scope-aware one over the call's OWN policy
+// reader (`Scope.Policy`, WC6's reading of the member's published policy), and
+// the CLI's assignment only installs it.
+//
+// **C2 does not name this variable, and the departure is WC5's and is said
+// here rather than left to be found.** PersonScopeConfig is "the three things
+// the workspace's own half needs and no fourth", and the switch is not one of
+// them; C2 fixes the switch's name and its home (C1's, WC6's) and the answer
+// class, and names PersonScopeConfigForServe as the one variable the serve path
+// sets. The alternative — a fourth field, or a second edit of scope.go — is the
+// contract change C2's own document refuses ("a reader that needed something of
+// the call the slip does not carry is a contract change ... and never a second
+// reader reached around the scope"), and this variable is not that: the reader
+// is still the scope's, and what travels here is the switch alone. What C2 is
+// silent on is who builds it, which is I1's line above.
 //
 // Its default is C1's stub, which answers OFF for every project, and that is the
 // state of a process whose personal half is not wired: an installation, a
-// workspace-mode process before WC14 sets this, and every hermetic test. It is
-// the tighter answer rather than an error for C1's own reason — absent is off
-// (R9) — and it is what keeps an installation's path exactly as it was (A3): no
+// workspace-mode process before I1's line, and every hermetic test. It is the
+// tighter answer rather than an error for C1's own reason — absent is off (R9) —
+// and it is what keeps an installation's path exactly as it was (A3): no
 // candidate, no container read, no refusal.
 var PersonSwitchForServe creds.PersonSwitchReader = creds.StubPersonSwitch{}
 

@@ -62,10 +62,11 @@ read needs no slug beside it.
 | `run_id` | string | the run id, and the document's own id | every reader |
 | `slug` | string | the repository's storage key, `runs/<slug>/` | `runs ls`, `runs stats` (their scope) |
 | `repo` | string | the task's `owner/name`, with the slug as the fallback a reader shows where the task recorded none | the row's display name |
-| `updated_at` | timestamp | the record's `finished_at`, else its `started_at`, else the launch's `launched_at`, else the run id's mint time (`runstore.RunTime`) | **the sort key**; the `--since` window |
+| `updated_at` | timestamp | the record's `finished_at`, else its `started_at`, else the launch's `launched_at`, else the run id's mint time (`runstore.RunTime`) | **the sort key of a page with no window** |
 | `status` | string | `result.json`'s `status`, one of `runstore.Statuses`; absent when the record settled none | `--state`, the active set, `runs stats`, the estimate table |
 | `plan_task` | string | `launch.json`'s `plan_task` | `plan status`, `graph` (the join) |
 | `pr` | integer | the record's `pr.number`, else the task's pull request | `--pr` |
+| `branch` | string | the record's `branch`, else the task's branch (`runview.Row.Branch`) | the row's branch and, through it, its release |
 | `requested_by` | string | the task's `requested_by` | `--mine` |
 | `launched_by` | string | `launch.json`'s `launched_by` | `runs stats` (its per-user rows) |
 | `batch` | string | the task's `batch` | `--batch` |
@@ -77,6 +78,8 @@ read needs no slug beside it.
 | `follow_up_of` | map | the task's `follow_up_of` | `runs ls` |
 | `launch` | map | `launch.json`, whole (`runstore.Launch`) | every reader that prints a row |
 | `record` | map | `result.json`, whole (`runstore.Record`) | every reader that prints a row |
+| `launch_unreadable` | boolean, absent when false | the fold could not use a `launch.json` the bucket holds (a syntax error, a shape the decoder refuses, an object past the size cap) | `runs stats` (a run that started) |
+| `record_unreadable` | boolean, absent when false | the same for a `result.json` the bucket holds | `runs stats` (a run whose outcome nobody can read, beside `no_record`) |
 
 The fields above the two record blocks are the index's own: the keys it is
 queried, ordered and joined by, and the few facts of the run's task a listing
@@ -90,19 +93,35 @@ built from the bucket.
 
 A run whose `result.json` cannot be read carries no `record`: the entry is still
 written, because the run exists and its task and launch do. A reader that has to
-tell "corrupt" from "never finalized" reads the bucket, as the listing's own
-`record unreadable` row already does — it is not this reader's job to invent the
-distinction.
+tell "corrupt" from "never finalized" reads `record_unreadable`, the entry's own
+account of an object the bucket holds and the fold could not use: a reader of
+the index writes no object and reads none, so the bucket is not where it can
+look. `launch_unreadable` carries the same fact about `launch.json`, and it is
+the one that decides whether a run happened at all: an absent launch, no record
+and no status is a run that was claimed and never launched, but add
+`launch_unreadable` and it is a run that started with a launcher nobody can
+read — `runs stats` counts the first among the runs that never launched and the
+second among the runs, under `unknown`, exactly as its record read does.
+
+A `task.json` the fold cannot use — a syntax error, or a field a newer CLI wrote
+that the task parser refuses — costs that one entry its task-derived fields (no
+`title`, `requested_by`, `batch` or `workflow`) and nothing else: the entry is
+still written from the launch and the record beside it, and the sweep goes on.
+One run's unusable object is not the installation's index, and a fold that
+stopped on it would leave every other run of the window unfolded and unsaid.
 
 **Every entry carries a sort key**, and the last fallback is what a run that was
 claimed and never launched has: a `task.json` and nothing else, so neither a
 record nor a launch to take a moment from. It is the run id's own mint time
-(`runstore.RunTime`), which every run id names. Without it such an entry would
-have no `updated_at` and would fall outside **every** window, and `runs stats`'s
+(`runstore.RunTime`), which every run id names. It is not optional either way: a
+page with no window could not place an entry that has none (`decodeEntry`
+refuses one), and a page **with** a window places every run by its run id and by
+nothing else — so an entry whose only moment is the id's own is in the window
+the moment names, exactly as the record read puts it there (`runstore.ListRunIDs`
+windows by that same mint time). Without the fallback `runs stats`'s
 `unlaunched` — the window's count of runs that never started — would be zero
-under the index while the record read counts them: that read's window is the run
-id's mint time too (`runstore.ListRunIDs`, which is also why the two counts are
-the same set and not merely two counts).
+under the index while the record read counts them, because one read would have
+dropped the run the other kept.
 
 ### The cost and compute figures the readers take
 
@@ -157,30 +176,57 @@ figures by an exact amount, and a float sum drifts.
 
 ## The sort key, the cursor and the composite indexes
 
-**The order is `updated_at` descending, then the run id.** Every page of every
-reader is in it, and a cursor is a position in it. Since the document id is the
-run id, the tiebreak is Firestore's own `__name__` order, which is ascending —
-so of two runs whose `updated_at` is the same, the smaller run id comes first,
-and a page continues from the value pair `(updated_at, run_id)`.
+**The order is `updated_at` descending, then the run id** — for a page with no
+window, which is every page of every reader that reads a whole history. A cursor
+is a position in it. Since the document id is the run id, the tiebreak is
+Firestore's own `__name__` order in the direction of the last clause, which here
+is descending — so of two runs whose `updated_at` is the same, the larger run id
+comes first, and a page continues from the value pair `(updated_at, run_id)`.
 
-`runindex.Cursor` is that position: `updated_at` (absent for the reindex walk,
-whose order is the run id alone), `slug` (set by the reindex walk alone) and
-`run_id` (required). `Encode` renders it as an opaque token and `DecodeCursor`
-reads one back, refusing anything else — a walk that read a bad token as "start
-at the beginning" would page a listing from its first row for ever, and a
-reindex that did would re-walk history it had already folded.
+**A page with a window is ordered by the run id alone.** `Filter.Since` is the
+moment a run *started* at, which is the run id's own mint time: that is what
+`--since` has always meant ("only runs started within this long") and what the
+record read beneath the index windows by (`runstore.ListRunIDs`). A window is
+read as the point where the ordered walk stops, and a stop has to be a position
+in the order, so the window's key and the order's key are one: a windowed page
+is queried and merged in the run id's order, descending, and the walk stops at
+the first run id before the window's own second — **rounded up**, because a run
+id names whole seconds while a window is a moment (`runs stats` builds it as now
+minus a duration) and the record read tests the mint time itself. The index and
+the record read it replaces then hold **the same runs in the same order for the
+same window**, a cut set included: a run that started before `--since` and
+finished after it is in neither read, a run minted earlier in the window's own
+second is in neither either, and one that started after it is in both however
+old its own last write is. Without that, `runs stats`'s `index_complete` would
+claim the two reads hold one window while they held two.
+
+`runindex.Cursor` is that position: `updated_at` (absent for a windowed page,
+whose order is the run id alone, and for the reindex walk, which walks in that
+same order), `slug` (set by the reindex walk alone) and `run_id` (required).
+`Encode` renders it as an opaque token and `DecodeCursor` reads one back,
+refusing anything else — a walk that read a bad token as "start at the beginning"
+would page a listing from its first row for ever, and a reindex that did would
+re-walk history it had already folded.
 
 `runs ls --after` stays a **run id** on the wire, as the console's allow-list
-checks it (IR1): the reader resolves it to that run's sort key — from its index
-document, or from the overlay for a run the index does not carry yet — and
-starts after it. `Filter.After` is that run id, and `Page.Next` is the cursor
-the caller hands back as the next run id.
+checks it (IR1): the reader resolves it to that run's position — the value pair
+from its index document, or the run id alone for a windowed page, or either from
+the overlay for a run the index does not carry yet — and starts after it, with
+the document read still what refuses a run id nothing knows. `Filter.After` is
+that run id, and `Page.Next` is the cursor the caller hands back as the next run
+id.
 
 Firestore indexes every single field automatically, so a query ordered by
 `updated_at` alone needs nothing. A query that also filters needs a composite
 index, and these are the ones the index's readers make — the closed list RI2
 declares as `google_firestore_index` resources. Firestore appends the document
 name to each as its final sort key.
+
+Each row above is made **twice**: once as it stands, and once with the document
+name's order where its `updated_at` order is (`slug` ASC, `__name__` DESC, and
+so on). The order is half of each composite index and a window reads the name's,
+so RI2's list carries both halves of every row. A window with no equality filter
+beside it is served by the automatic single-field indexes and adds nothing.
 
 | Fields (in order) | The query it serves |
 | --- | --- |
