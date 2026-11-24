@@ -668,10 +668,13 @@ var ModelSecretsServedValues = []string{ModelSecretServedAll, ModelSecretServedA
 // The three arms are the flip's own vocabulary (D2072, G17), because the two
 // halves of the family are served at different times:
 //
-//   - all — the cascade: every model credential the job mounts. That is
+//   - all — every model credential the job mounts. That is
 //     IsModelSecretEnv's whole predicate, and what this rule was before B2.7
 //     gave the other two arms a value: a cascade job mounts none of them
-//     (SecretMounts' cascade case), so the arm is inert for it.
+//     (SecretMounts' cascade case), so the arm is inert for it. Its second
+//     producer is the routing table (infra.ModelSecretsServed): the job of a
+//     repository a chain serves mounts none of them either, which is the arm
+//     doing the work there.
 //   - anthropic — an `api-key` or `oauth` repository the switch admits: the
 //     two names in ModelSecretEnvs (the Claude OAuth token and the Anthropic
 //     key) and never a provider key, whose value the run's own route forwards
