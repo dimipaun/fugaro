@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
 // The credentials service's deploy (docs/credentials-service/default-on.md, the
@@ -2490,4 +2491,57 @@ func TestAFailedPolicyReadKeepsTheVerifierList(t *testing.T) {
 // stage's cloud step has nothing billable to submit.
 func cloneCheckoutYAML(provider, auth, project string) string {
 	return "version: 1\nproject: " + project + "\ngit: { provider: " + provider + " }\nagent: { auth: " + auth + " }\nworkflows:\n  app: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"
+}
+
+// TestUpdateRendersNoPeoplesListOnAnInstallationOfNoWorkspace is one half of
+// WC3's rule at the one command (R5): the intake's second class list is EMPTY
+// for every installation that is not a workspace's project — no key in the
+// block at all, which is the state every installation without a workspace
+// keeps, and the bytes an installation's tfvars had before the list existed.
+//
+// The roster document IS there, at the very path this run's workspace name
+// would read (workspaceRosters/<name>, workspace.PathRoster): an installation
+// that declares no workspace renders no list even so, which is the fence this
+// case is worth having for. A run that read it would admit a stranger to an
+// installation that never named them.
+//
+// The other half — a workspace's own project renders its roster's humans — is
+// TestUpdateRendersTheRostersPeopleIntoTheWorkspaceProjectsIntake
+// (update_converge_test.go), which needs the workspace owner's own converged
+// installation to arrange.
+func TestUpdateRendersNoPeoplesListOnAnInstallationOfNoWorkspace(t *testing.T) {
+	roster, err := workspace.EncodeRoster(&workspace.Roster{
+		Version:   workspace.RosterVersion,
+		Mechanism: workspace.MechanismSA,
+		People: []workspace.Person{
+			{Address: "ada@example.com", Kind: workspace.KindHuman, External: true},
+			{Address: "owner@example.com", Kind: workspace.KindHuman, External: true},
+		},
+		Admins: []string{"owner@example.com"},
+	})
+	if err != nil {
+		t.Fatalf("encoding the roster: %v", err)
+	}
+	path, err := workspace.PathRoster(initProjectName)
+	if err != nil {
+		t.Fatalf("workspace.PathRoster: %v", err)
+	}
+
+	r := credentialsRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	credentialsOutputs(t, r)
+	r.db.Set(path, json.RawMessage(roster))
+	registerInstallation(t, r.initRig)
+
+	out, errOut, err := executeStdin(t, "", "update")
+	if err != nil {
+		t.Fatalf("the update failed: %v\n%s%s", err, out, errOut)
+	}
+	block, _ := r.tfvars(t)["intake"].(map[string]any)
+	if block == nil {
+		t.Fatalf("the installation's tfvars carry no intake after an update that deploys one: %v", r.tfvars(t))
+	}
+	if raw, ok := block["people"]; ok {
+		t.Fatalf("the intake's people are %v, want no key at all: this installation declares no workspace, so the roster at %s is not its own (R5)\n%s%s", raw, path, out, errOut)
+	}
 }
