@@ -537,13 +537,13 @@ func TestAnswerNamesTheSourceAndFallback(t *testing.T) {
 // that names none is a request refusal — nothing was read and no credential was
 // chosen — and a model in a header does not save it.
 func TestACallWithNoModelInTheBodyIsRefused(t *testing.T) {
-	// The entry claims every model, `*`, and that is what makes this test the
-	// WALK's rule: a body that names no model is claimed by an entry like this
-	// one and would be served by it, so a walk that did not refuse an empty
-	// model first would serve the call with nothing, where a table of exact
-	// matches would refuse it by the resolver's own "no entry" and the walk's
-	// rule would be untested.
-	table := routing.Table{{Match: "*", Chain: []routing.Source{chainKey()}}}
+	// The entry's pattern is the empty model itself, and that is the model a
+	// body that names none resolves to — so this entry would SERVE such a call,
+	// and only the walk's own refusal keeps it from being served. A table of
+	// real model IDs would refuse the same call by the resolver's own "no
+	// entry" answer (R22), and the walk's rule would never be the thing that
+	// answered it.
+	table := routing.Table{{Match: "", Chain: []routing.Source{chainKey()}}}
 	// Both paths the walk serves, and the token count is the one that holds this
 	// rule to the walk's own door: the gateway's request check refuses a
 	// Messages body with no model before the chain is read at all
