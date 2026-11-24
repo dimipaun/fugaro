@@ -70,8 +70,8 @@ func managedPlanConfigured(rc ResourceChange, expressions map[string]json.RawMes
 const managedAccount = ManagedPrefix + "run@proj-1.iam.gserviceaccount.com"
 
 // TestManagedAllowedTypesGolden pins both halves of the decision against
-// literals: the 14 types a managed plan may contain, and the twenty entries of
-// allowedTypes it may not. A widening — or a type dropped without a reason —
+// literals: the 14 types a managed plan may contain, and the twenty-one entries
+// of allowedTypes it may not. A widening — or a type dropped without a reason —
 // is a diff in this test.
 func TestManagedAllowedTypesGolden(t *testing.T) {
 	want := []string{
@@ -212,11 +212,20 @@ func TestManagedCoverCommentsCountTheDroppedTypes(t *testing.T) {
 func droppedCountWord(n int) (string, bool) {
 	words := []string{"zero", "one", "two", "three", "four", "five", "six", "seven",
 		"eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
-		"sixteen", "seventeen", "eighteen", "nineteen", "twenty"}
-	if n < 0 || n >= len(words) {
+		"sixteen", "seventeen", "eighteen", "nineteen"}
+	tens := []string{"", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy",
+		"eighty", "ninety"}
+	if n < 0 || n >= 100 {
 		return "", false
 	}
-	return words[n], true
+	if n < len(words) {
+		return words[n], true
+	}
+	word := tens[n/10]
+	if n%10 != 0 {
+		word += "-" + words[n%10]
+	}
+	return word, true
 }
 
 // managedKeptFixture is one resource per type the list keeps: the type's own
