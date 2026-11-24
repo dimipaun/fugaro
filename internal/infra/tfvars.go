@@ -61,7 +61,10 @@ type InstallOptions struct {
 	// StateBucket defaults to the local config's, else fugaro-tfstate-<project>.
 	StateBucket string
 	// EnableVertex enables the Vertex AI API; so does any repository the
-	// local config records as using it.
+	// local config records as using it, and any chain of the project's own
+	// routing table that names Vertex (ChainsNameVertex) — the service calls
+	// Vertex on the installation's own identity, so a table that names Vertex
+	// needs the API whether or not a repository of it records one.
 	EnableVertex bool
 	// SkipAPIs leaves the project's APIs to be managed elsewhere.
 	SkipAPIs bool
@@ -2558,7 +2561,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 			Log:                       LogNames{Bucket: LogBucket, View: LogView, Sink: LogSink, Exclusion: LogExclusion},
 		},
 		BucketLifecycle: BucketLifecycle{RunsDays: runsDays, CacheCustomTimeDays: cacheCustomTimeDays, CacheAgeDays: cacheAgeDays, ReportsDays: reportsDays},
-		EnableVertex:    o.EnableVertex || lc.UsesVertex(),
+		EnableVertex:    o.EnableVertex || lc.UsesVertex() || ChainsNameVertex(lc),
 		ManageAPIs:      !o.SkipAPIs,
 		Launchers:       members(o.Launchers, lc.Terraform.Operators),
 		Operators:       members(o.Operators, lc.Terraform.Admins),
@@ -2578,7 +2581,16 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		LogBucketLocation: place.For(lc.Region).LogBucket.Where,
 		ProjectSecrets:    projectSecretContainers(lc),
 	}
-	jobs, err := projectJobs(lc, bucket, s.EnableVertex, o.CarriedJobProfiles)
+	// The shared job's Vertex GRANT is the API's own fact minus the modes that
+	// refuse a Vertex run outright (VertexGrantForJob): a job's account is
+	// planned no aiplatform permission on an enforcing project, where no run in
+	// flight can be using one, and keeps it on an `observe` one until release 2
+	// (X8). The review jobs below keep the whole fact: they are planned no
+	// Vertex grant whatever this argument says (reviewVariant's own ruling), so
+	// it reaches only their environment, where the two Vertex names are what an
+	// `agent.auth: vertex` agent refuses to start without — and a variant that
+	// cannot start is not a narrower variant.
+	jobs, err := projectJobs(lc, bucket, s.EnableVertex && VertexGrantForJob(lc.BudgetMode()), o.CarriedJobProfiles)
 	if err != nil {
 		return InstallationSpec{}, err
 	}

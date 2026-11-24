@@ -15,6 +15,7 @@
 {"type":"stage","name":"workspace-project","state":"skipped","detail":"this installation declares no workspace of its own: aurora's project config carries neither workspace_members nor workspace_cap, so there is no workspace service account to create and no database grant to make here (a member's project holds no grant on the workspace's project, spec §5)","after":"","undone":false}
 {"type":"stage","name":"workspace","state":"skipped","detail":"the project aurora declares no workspace: it has no workspace_members table and no workspace_cap, so it publishes no workspace record — a member's config names the workspace it joined (workspace: and workspace_pin:) and never publishes one","after":"","undone":false}
 {"type":"stage","name":"credentials-route","state":"skipped","detail":"the project's config names no Firebase budget backend, so there is no database to publish the credential route in","after":"","undone":false}
+{"type":"stage","name":"lift","state":"skipped","detail":"the runs bucket (gs://fugaro-runs-proj-1234) could not be read, so this run migrates nothing: fugaro: test tried to open the real gs:// bucket gs://fugaro-runs-proj-1234; use a bucket_url: file:// fixture or override openRecordBucket","after":"","undone":true}
 {"type":"stage","name":"layer","state":"skipped","detail":"the project layer's bucket (gs://fugaro-runs-proj-1234) could not be read, so this run leaves the project layer and its local layer file as they are: fugaro: test tried to open the real gs:// bucket gs://fugaro-runs-proj-1234; use a bucket_url: file:// fixture or override openRecordBucket","after":"","undone":true}
 {"type":"stage","name":"checkout","state":"skipped","detail":"a development build has no release to refresh to","after":"","undone":false}
 {"type":"stage","name":"unit","state":"skipped","detail":"the login unit is written by a run you are watching at your own terminal: this one has nobody at it, so nothing is written (fugaro orchestrator install writes one by hand)","after":"","undone":false}
@@ -40,6 +41,7 @@
 {"type":"stage","name":"workspace-project","state":"blocked","detail":"waits for installation","after":"","undone":false}
 {"type":"stage","name":"workspace","state":"blocked","detail":"waits for installation","after":"","undone":false}
 {"type":"stage","name":"credentials-route","state":"blocked","detail":"waits for installation","after":"","undone":false}
+{"type":"stage","name":"lift","state":"blocked","detail":"waits for installation","after":"","undone":false}
 {"type":"stage","name":"layer","state":"blocked","detail":"waits for installation","after":"","undone":false}
 {"type":"stage","name":"checkout","state":"blocked","detail":"waits for installation","after":"","undone":false}
 {"type":"stage","name":"unit","state":"blocked","detail":"waits for installation","after":"","undone":false}
