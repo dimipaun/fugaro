@@ -2251,6 +2251,7 @@ func newValidateCmd() *cobra.Command {
 				}
 				rp, rw := recipeDirProblems(filepath.Dir(path), cfg)
 				problems = append(problems, rp...)
+				notes = append(notes, recipesCleanupNotes(cmd.Context(), filepath.Dir(path), cfg, lc, offline)...)
 				problems = append(problems, gateCheckProblems(filepath.Dir(path), cfg)...)
 				// The model checks judge the roles as the effective recipe
 				// leaves them.

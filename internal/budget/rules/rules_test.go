@@ -244,7 +244,7 @@ func TestWritesOnlyAtNumericLeaves(t *testing.T) {
 // default is the fallback of a global one -- and the both-unset branch is
 // false, so the rules deny (fail closed).
 func TestPerRunOK(t *testing.T) {
-	ok, err := perRunOK(4) // the depth of runs/$slug/$run/reserved
+	ok, err := perRunOK(perRunDepth)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,13 +255,20 @@ func TestPerRunOK(t *testing.T) {
 		t.Errorf("no true branch: a repository with a cap of its own and no global one must pass: %s", ok)
 	}
 	for _, side := range []string{
-		"root.child('config/caps/repos').child($slug).child('perRunMicros')",
-		"root.child('config/caps/defaults/repoPerRunMicros')",
-		"root.child('config/caps/global/perRunMicros')",
+		perRunOwnSnap,
+		perRunDefaultSnap,
+		perRunGlobalSnap,
 	} {
 		if !strings.Contains(ok, side) {
 			t.Errorf("the comparison does not read %s: %s", side, ok)
 		}
+	}
+	// A node above its ceiling counts as the ceiling (spec §5.6, B18), so the
+	// repository's own value is read once for the bound and once for the
+	// ceiling the bound is clamped to. One read is the expression without the
+	// clamp, which is what this pins.
+	if n := strings.Count(ok, perRunOwnSnap+".val()"); n != 2 {
+		t.Errorf("the repository's per-run value is read %d times, want 2 (the bound and the ceiling it is clamped to): %s", n, ok)
 	}
 	if strings.Count(ok, "(") != strings.Count(ok, ")") || strings.Count(ok, "'")%2 != 0 {
 		t.Errorf("unbalanced parentheses or quotes: %s", ok)
@@ -301,16 +308,35 @@ func TestPerRunOK(t *testing.T) {
 // change of intent visible.
 func TestGoMirrorOfThePerRunBranches(t *testing.T) {
 	m := func(v int64) *budget.Micros { x := budget.Micros(v); return &x }
+	// ceiling clamps one cap to its ceiling (spec §5.6, B18): the project's
+	// global cap where it is set, else the default repository cap -- and where
+	// neither is set the cap stands. It is the rule the rules' own comparison
+	// now reads the repository's node through (perRunClamp) and the one
+	// budget.Caps.RepoPerRun reads it through once RC1's RepoCeiling lands in
+	// internal/budget/model.go. The test applies it to the model's answer too,
+	// so this mirror, the model and the rules agree whichever of the two lands
+	// first: a value already at or below its ceiling is unchanged, so the
+	// second application is a no-op.
+	ceiling := func(cap budget.Micros, def, global *budget.Micros) budget.Micros {
+		ceil := def
+		if global != nil {
+			ceil = global
+		}
+		if ceil != nil && cap > *ceil {
+			return *ceil
+		}
+		return cap
+	}
 	// mirror is perRunOK read as prose: the repository's own cap, else the
-	// default, and the global one where it is set; with neither side set the
-	// comparison is false (the rules deny).
+	// default, clamped to its ceiling, and the global one where it is set; with
+	// neither side set the comparison is false (the rules deny).
 	mirror := func(repo, def, global *budget.Micros, delta budget.Micros) bool {
 		if repo != nil || def != nil {
 			own := repo
 			if own == nil {
 				own = def
 			}
-			return delta <= *own && (global == nil || delta <= *global)
+			return delta <= ceiling(*own, def, global) && (global == nil || delta <= *global)
 		}
 		return global != nil && delta <= *global
 	}
@@ -339,6 +365,13 @@ func TestGoMirrorOfThePerRunBranches(t *testing.T) {
 				c.Global = &budget.GlobalCaps{PerRunMicros: sides.gl}
 			}
 			cap, ok := c.PerRun()
+			if ok {
+				// The model's own clamp is RC1's; until it lands, the answer
+				// here is the unclamped node and the ceiling is applied by the
+				// test, which is what keeps this row meaningful on either side
+				// of that landing.
+				cap = ceiling(cap, sides.def, sides.gl)
+			}
 			for _, delta := range []budget.Micros{0, 5, 10, 20, 30, 50} {
 				if got, want := mirror(sides.repo, sides.def, sides.gl, delta), ok && delta <= cap; got != want {
 					t.Errorf("delta %d: the rules' branches say %v, Caps.PerRun %d %v says %v", delta, got, cap, ok, want)
@@ -2412,6 +2445,31 @@ var (
 	actionRequiredNow = "newData.hasChildren(['id', 'verb', 'target']) && (newData.child('verb').val() == 'launch' ? newData.child('mode').exists() : (newData.hasChildren(['confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)))"
 )
 
+// perRunDepth is the depth of the lease's reserved leaf, the one site PERRUNOK
+// is expanded at.
+const perRunDepth = 4
+
+// perRunClampClause is the conjunct RC2 adds to the lease's reserved validator
+// (spec §5.6, B18): where the repository has a per-run cap of its own, the
+// run's outstanding is compared against that cap *and* against the cap's
+// ceiling — the project's global cap where it is set, else the default
+// repository cap, and the node itself where neither is set, which leaves the
+// node standing. Built from the helpers perRunOK builds it from, because a
+// second spelling of either half here would be a second thing to keep in step.
+var perRunClampClause = func() string {
+	delta, err := perRunDelta(perRunDepth)
+	if err != nil {
+		panic(err)
+	}
+	return perRunClamp(delta)
+}()
+
+// dailyClampClause is the conjunct RC2 adds to the day counter's validator
+// (spec §5.6, B18: the ceiling is "for each of daily and per-run"): the day's
+// new repository total against the ceiling that repository's own daily cap is
+// read as. Built from dailyClamp, for perRunClampClause's reason.
+var dailyClampClause = dailyClamp()
+
 // namedRuleChanges is the whole of what this document's existing rules may
 // change: each path, and the edits the change makes to its validator, each one
 // a substring the new string carries and the substring — often nothing — that
@@ -2468,6 +2526,16 @@ var namedRuleChanges = map[string][]ruleChange{
 	"mailbox/$mb/heartbeat": {
 		{was: "newData.hasChildren(['at', 'boot', 'mac'])", now: "newData.hasChildren(['at', 'boot']) && " + exactlyOneTag("newData")},
 	},
+	// The lease's reserved leaf reads the repository's per-run cap clamped to
+	// its ceiling (RC2, spec §5.6, B18): a node above the ceiling counts as the
+	// ceiling, so a cap an admin wrote past `fugaro budget set --repo`'s refusal
+	// grants no larger lease than the ceiling does.
+	"runs/" + slugForPath + "/$run/reserved": {{now: perRunClampClause}},
+	// The day counter's leaf reads the repository's daily cap clamped to its
+	// ceiling the same way (RC2, spec §5.6, B18): the lease's multi-path write
+	// raises this counter as it takes a reservation, so it is one of the
+	// comparisons the check is made of.
+	"spend/$day/repos/" + slugForPath + "/counted": {{now: dailyClampClause}},
 }
 
 // TestOutcomeRuleAcceptsEveryRunStatus: the outcome's status validator accepts
@@ -2556,6 +2624,19 @@ const outcomeStatusNone = "none"
 // document infra.SameJSON reports as different, whatever the marker says
 // (internal/infra's DB.Plan) — and doctor's policy-rules-skew already reports
 // the installation that has not run it yet.
+//
+// The second named change is RC2's clamp on that comparison (spec §5.6, B18),
+// and it takes no generation either, for the rule the note on the fourth
+// generation in internal/projectpolicy/version.go states: "a generation that
+// only adds a deny, or a node no client may reach, would not need the bump
+// either". This change adds a deny and nothing else — the comparison against
+// the repository's own node gets stricter, a node above its ceiling counting as
+// the ceiling — at a path, under a `.write`, that generation 3 already carried,
+// and every generation so far (4 through 10) moved the number for a read grant
+// or for a write a client may now reach. What the older document leaves a
+// client is a lease the clamped one refuses, and RC1's clamp on
+// Caps.RepoPerRun covers exactly that from the run's own side until the deploy
+// lands; `fugaro update` publishes the document either way, as above.
 //
 // The check is exact: one of the named paths, the `.validate` attribute of it
 // alone, and applying that path's own edits to the new string leaving the
@@ -3066,6 +3147,19 @@ func isNewCredsPath(p string) bool {
 //     device node decides which one), and `launch` is a **verb it writes** — a
 //     word the older document's enumeration does not carry, so a phone's start
 //     is refused there (P5.1g's reason one shape along).
+//     RC2 leaves it at 11, and it is the first change here that could: it is
+//     not a grant and not a write a client may now reach, but a **deny added**
+//     — the lease's per-run comparison reads the repository's node clamped to
+//     its ceiling (spec §5.6, B18), so an enforcing document refuses leases the
+//     document behind accepts where that node sits above the ceiling. A
+//     generation that only adds a deny does not need the bump (version.go's
+//     note on the fourth generation), which is also why nothing is dropped on
+//     an installation that has not redeployed: it keeps a document that is
+//     *looser* than this binary's on exactly the cap `fugaro budget set --repo`
+//     refuses to write (RC3) and Caps.RepoPerRun clamps on the run's own side
+//     (RC1). `fugaro update`'s rules stage publishes it either way, as it does
+//     every generation, and `fugaro doctor` reports policy-rules-skew until it
+//     has.
 //   - projectpolicy.PolicyRulesVersion gates the policy nodes, which neither
 //     change touches. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,

@@ -404,10 +404,17 @@ func (p *Provider) GitAuth(ctx context.Context, minValid time.Duration) (gitprov
 	return gitprov.GitAuth{Username: GitUsername, Token: tok, Expires: expires}, nil
 }
 
-// Repository implements gitprov.Provider.
+// Repository implements gitprov.Provider. The reply names the repository's
+// default branch as well — the mainbranch field defaultBranch reads and
+// refuses a read without — so it is carried out of this read rather than
+// fetched by a call of its own. Nothing here refuses a repository that names
+// none: only a read that needs the name can judge that, as defaultBranch does.
 func (p *Provider) Repository(ctx context.Context) (gitprov.RepoInfo, error) {
 	var repo struct {
-		IsPrivate *bool `json:"is_private"`
+		IsPrivate  *bool `json:"is_private"`
+		MainBranch *struct {
+			Name string `json:"name"`
+		} `json:"mainbranch"`
 	}
 	path := "/repositories/" + url.PathEscape(p.o.Workspace) + "/" + url.PathEscape(p.o.Slug)
 	if err := p.api.Do(ctx, "GET", path, nil, &repo); err != nil {
@@ -418,7 +425,11 @@ func (p *Provider) Repository(ctx context.Context) (gitprov.RepoInfo, error) {
 		// follow-up run there without allow_public.
 		return gitprov.RepoInfo{}, errors.New("reading the repository: the response has no is_private field")
 	}
-	return gitprov.RepoInfo{Private: *repo.IsPrivate}, nil
+	info := gitprov.RepoInfo{Private: *repo.IsPrivate}
+	if repo.MainBranch != nil {
+		info.DefaultBranch = repo.MainBranch.Name
+	}
+	return info, nil
 }
 
 // pullDetail is GET …/pullrequests/{id}.

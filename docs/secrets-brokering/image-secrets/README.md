@@ -24,6 +24,7 @@ build stops mounting its git credential; and the parent plan's guard gains a mou
 | [reconciliation.md](reconciliation.md) | Assumptions A1–A5, what exists, findings F1–F24, decisions D3320–D3335 with the owner's answers, resolutions R1–R6, tensions T1–T3 (T2 withdrawn), open items O1–O2 (both answered 2026-11-23), UNVERIFIED U1–U5. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | One contract (C1), one integration (I1) and thirteen tasks (IS1–IS13) in five levels, the edges broken and kept, shared files, Checks 920–921. **Nothing in it is approved** |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan as the graph `fugaro plan graph` reads |
+| [contract.md](contract.md) | The workflow-secrets wire contract C1 writes: the two request shapes, what each side may rely on, the refusal codes version 2 answers, the `file` field and the stub |
 
 ## Typos fixed in the spec
 

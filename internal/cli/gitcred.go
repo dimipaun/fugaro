@@ -514,17 +514,17 @@ func runGitCredentialForEntry(cmd *cobra.Command, o gitCredentialOptions) error 
 // is written for the one host the answer itself names, held to the provider's
 // own host, and nothing else of the answer reaches the file. A Bitbucket build
 // is answered a proxy grant and no token (R6), and there is nothing here to
-// write for it — the generated clone step consumes the grant (B8) — so a grant
-// is refused rather than turned into a credential file that would hold a
-// placeholder. An answer that is neither, or both, is refused: the contract
-// says exactly one, and a step that guessed would be the widening it exists to
-// prevent.
+// write for it — a grant is spent by a clone that rewrites its own git traffic
+// to the proxy, which this build's clone step does not — so a grant is refused
+// rather than turned into a credential file that would hold a placeholder. An
+// answer that is neither, or both, is refused: the contract says exactly one,
+// and a step that guessed would be the widening it exists to prevent.
 func writeBuildToken(out, provider string, resp buildtoken.Response) error {
 	switch {
 	case resp.Token != nil && resp.Proxy != nil:
 		return userErr("the credentials service answered a token and a proxy grant, and the contract says exactly one")
 	case resp.Proxy != nil:
-		return userErr("this build is answered a Bitbucket proxy grant and no token: the generated clone step consumes the grant, so there is no git credential to write here")
+		return userErr("the credentials service answered this Bitbucket build a proxy grant and no token, and a token is all this step writes: a grant is spent by rewriting the clone's git traffic to the proxy it names and presenting the build's own identity there, and this build's generated clone step does neither. Nothing is written, so the clone that follows fails and this build is refused rather than cloning with a credential this step invented")
 	case resp.Token == nil:
 		return userErr("the credentials service answered neither a token nor a proxy grant")
 	}

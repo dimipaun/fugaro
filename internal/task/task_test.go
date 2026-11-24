@@ -814,6 +814,43 @@ func TestRecipeValidate(t *testing.T) {
 	}
 }
 
+// TestEveryNameCheckAcceptsACopy covers this package's half of R19: a spec
+// carrying a copy name validates, and any other dotted name is still refused.
+// The rule is one rule over three checks — internal/recipe's parser (with the
+// schema) and internal/localcfg's cache test their halves under the same name
+// — and the full table of names they agree about lives with the parser's; the
+// cases here are the ones this check can get wrong on its own.
+func TestEveryNameCheckAcceptsACopy(t *testing.T) {
+	spec := func(name string) *Spec {
+		y := "version: 1\nname: " + name + "\nsteps:\n  - review: {}\n"
+		return &Spec{
+			Version: 1, RunID: "20260926-221530-a1b2", Repo: "acme/app", Ref: "main", Task: "x",
+			Recipe: &Recipe{Name: name, Source: "project", SHA256: recipe.Sum([]byte(y)), YAML: y},
+		}
+	}
+	maxCopy := recipe.CopyName(strings.Repeat("n", 40), "github", "acme/"+strings.Repeat("m", 60))
+	for _, name := range []string{
+		recipe.CopyName("review", "github", "acme/app-web"),
+		maxCopy,
+	} {
+		if err := spec(name).Validate(); err != nil {
+			t.Errorf("%q: %v", name, err)
+		}
+	}
+	for _, name := range []string{
+		"review.acme-app-web",
+		"review.acme-app-web-1234567",
+		"review..acme-app-web-12345678",
+		"Review.acme-app-web-12345678",
+		maxCopy + "m",
+	} {
+		err := spec(name).Validate()
+		if err == nil || !strings.Contains(err.Error(), "is not a recipe name") {
+			t.Errorf("%q: err = %v, want a name refusal", name, err)
+		}
+	}
+}
+
 // TestSpecMode covers Spec.Mode (artifact-runs plan Task 2): the launcher
 // writes the resolved recipe's mode, "artifact" today, and nothing at all
 // for implement or review, so every existing spec stays byte-identical to
