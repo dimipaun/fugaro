@@ -13038,7 +13038,9 @@ signing key (R5 as amended by D440).
 **NOT RUN.** Written by task **S3.6** of the subscriptions plan
 ([subscriptions/implementation-plan.md](subscriptions/implementation-plan.md), its "Checks this plan
 takes (170–179)"), and run by the owner in task **S3.7** once S3.8's key ring exists and S2.9's
-production public half is published in the three verifiers. Until the service is deployed, a key the
+production public half is published — in `ee/licence/keys/production.pub`, the CLI's ring built
+from it, and the app's ring; the ring the console verifies with is filled by the CLI release that
+takes the key back out of its own environment. Until the service is deployed, a key the
 owner mints by hand with S2.10's tool is the same format, and this check measures the same thing
 with it.
 
@@ -23579,9 +23581,10 @@ wrong.
 
 **Why the build is the released CLI.** The production build this check drives is the released `fugaro`, the
 verifier a person's own installation really runs (`ee/register`'s `licenceRing`, the ring `licence set` and
-`licence status` both verify with). Its ring is empty in a build of P9.4 and stays empty until S2.9
-publishes the owner's production public keys in `ee/licence`'s own table — which is why every key is
-refused by its id today, and why the check **reads the state of that ring rather than assuming it**.
+`licence status` both verify with). Its ring is empty in a build of P9.4 and stays empty until the release that
+creates the renewal secret container publishes it (K4.2; the production half itself is published in
+`ee/licence/keys/production.pub`, S2.9) — which is why every key is refused by its id today, and why
+the check **reads the state of that ring rather than assuming it**.
 
 **What it settles.**
 
