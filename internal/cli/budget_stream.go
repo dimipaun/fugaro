@@ -68,9 +68,10 @@ type budgetKillRow struct {
 //
 // What the feed does not carry is the rest of the document: the project's own
 // counters, the defaults, the mode, the runs in flight and the warnings are not
-// rows, and RS1's end line has room for a count and a shape version and nothing
-// else. A consumer that needs them reads the whole document; the feed is the
-// caps table drawn as it arrives.
+// rows, and this feed's end line carries a count and a shape version and none
+// of the index facts a listing of runs puts there (streamEndLine). A consumer
+// that needs them reads the whole document; the feed is the caps table drawn as
+// it arrives.
 func streamBudgetRows(w io.Writer, rows []showRepo, kill *showKill) error {
 	sw := newStreamWriter(w)
 	for _, r := range rows {
@@ -81,7 +82,7 @@ func streamBudgetRows(w io.Writer, rows []showRepo, kill *showKill) error {
 	if err := sw.row(budgetKillRow{Slug: budgetKillRowSlug, Kill: kill}); err != nil {
 		return sw.failed(err)
 	}
-	if err := sw.end(budgetStreamDocVersion); err != nil {
+	if err := sw.end(budgetStreamDocVersion, nil); err != nil {
 		return sw.failed(err)
 	}
 	return nil

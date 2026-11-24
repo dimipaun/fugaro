@@ -959,11 +959,19 @@ D2906, R8). `--stream` is accepted only with `--json`.
 carries **one element of this document's `runs` array, unchanged, in the
 document's own order** (created descending, then the run descending) under the
 line's `row` key; `end` is the last line of a feed that ran to completion, with
-`count` — how many `row` lines went before it — and the same `version`; `error`
-is a feed that failed after its first row, carrying the sentence the command
-would have printed, in one line. **A feed with no `end` line is an interrupted
-read**, which is why the count is carried: an empty window and a truncated read
-are otherwise the same bytes. `schemas/runs-stream.schema.json` is the authority
+`count` — how many `row` lines went before it — and the same `version`, plus the
+index's own two facts where the page came from the run index: **`index_complete`
+and `folded_through`, the same members and the same meaning as the document's
+(§5)**, absent exactly when they are absent there, which is the shape a consumer
+drawing rows as they arrive needs to tell a page of an index that is still
+building from the whole history — the feed is the shape most able to print a
+silently short list, since it never holds the document to check against. They
+are why the feed's version is **2** (a feed of version 1 carries neither); the
+`row` line is unchanged by that version, member for member; `error` is a feed
+that failed after its first row, carrying the sentence the command would have
+printed, in one line. **A feed with no `end` line is an interrupted read**,
+which is why the count is carried: an empty window and a truncated read are
+otherwise the same bytes. `schemas/runs-stream.schema.json` is the authority
 for the line — it is the schema of ONE line and not of the feed, and no object
 in it is closed, because members are added within a version and a consumer that
 refused one it does not know would refuse a newer CLI's feed — and

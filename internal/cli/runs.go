@@ -383,7 +383,7 @@ func newLsCmd() *cobra.Command {
 	f.StringVar(&o.state, "state", "", "only runs in this state, a run's or its pull request's ("+strings.Join(lsStateWords(), ", ")+")")
 	f.StringVar(&o.groupBy, "group-by", "", "group the listing by one field ("+strings.Join(lsGroupings, ", ")+")")
 	f.BoolVar(&o.debt, "debt", false, "only runs filed from a triage deferral (a task marked debt)")
-	f.IntVar(&o.limit, "limit", 0, "print only the newest N rows (0, the default, is every row of the window; the totals stay the window's)")
+	f.IntVar(&o.limit, "limit", 0, "print only the newest N rows of the listing (0, the default, is every row of it; the totals stay the listing's)")
 	f.StringVar(&o.after, "after", "", "print only the rows after this run id in the listing")
 	f.IntVar(&o.pr, "pr", 0, "only runs on this pull request (needs one repository; --since defaults to "+prLookback+")")
 	f.BoolVar(&o.watch, "watch", false, "redraw until every run has settled")
@@ -523,7 +523,7 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 			fmt.Fprint(out, "\x1b[H\x1b[2J")
 		}
 		if o.stream {
-			err = streamRows(out, read.page)
+			err = streamRows(out, read.page, read.index)
 		} else if o.groupBy != "" {
 			err = printGroupsWithTotals(out, env.lc.Name, read.page, read.tot, warnings, now, o.asJSON)
 		} else {
@@ -813,6 +813,11 @@ func readRefRows(ctx context.Context, env *cloudEnv, f lsFilter, refs []lsRef, l
 	// that listing found: its answer is the join's, so the two states cost one
 	// backend call and never two (U2).
 	execs := map[string]backend.Execution{}
+	// listed is set only when the listing below is the whole of the window: an
+	// execution it lacks is then one the platform no longer holds, which is
+	// what a read of it would answer, one call per run, for every run of the
+	// window whose execution Cloud Run has already deleted.
+	listed := false
 	switch {
 	case live != nil:
 		execs = live.execs
@@ -830,6 +835,7 @@ func readRefRows(ctx context.Context, env *cloudEnv, f lsFilter, refs []lsRef, l
 				execs[id.Key()] = e
 			}
 		}
+		listed = true
 	}
 
 	// The price book warns through warnf too: a VM run whose region or
@@ -840,7 +846,7 @@ func readRefRows(ctx context.Context, env *cloudEnv, f lsFilter, refs []lsRef, l
 	rows := make([]runview.Row, len(runs))
 	errs = make([]error, len(runs))
 	parallelN(len(runs), followWorkers, func(i int) {
-		if errs[i] = followExecution(ctx, env, &runs[i], execs, warnf); errs[i] == nil {
+		if errs[i] = followExecution(ctx, env, &runs[i], execs, listed, warnf); errs[i] == nil {
 			rows[i] = runview.Join(runs[i].in, prices, now)
 		}
 	})
@@ -943,18 +949,6 @@ func pageRows(rows []runview.Row, after string, limit int) ([]runview.Row, error
 // 100x the history costs the same handful of requests, and every row read costs
 // its own objects (I-INDEX's TestIndexedReadsConstantRequests).
 const lsIndexPage = 50
-
-// runIndexReader is the run index a listing reads: the C-INDEX Reader
-// (internal/runindex), which is the stub until I-INDEX wires the real one.
-// Returning nil says this release has no index to read at all, which reads the
-// window exactly as every listing did before the index existed; the stub is
-// what a listing is handed today, and it answers an index that has folded
-// nothing, which comes to the same thing (indexAnswers).
-//
-// It is a variable so a test can hand a listing an index of its own
-// (internal/cli: runs_index_test.go) -- the read the real one makes is RI3's,
-// and nothing here cares which reader answered.
-var runIndexReader = func(context.Context, *cloudEnv) (runindex.Reader, error) { return runindex.NewStub(), nil }
 
 // indexAnswers reports whether a page came from an index that can be believed.
 //
@@ -1534,8 +1528,12 @@ func readRecord(ctx context.Context, s *runstore.Store, rd runcache.Reader) (*ru
 }
 
 // followExecution joins r with its execution, from execs (the listing)
-// or, when the listing lacks it, from the backend.
-func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs map[string]backend.Execution, warnf func(string, ...any)) error {
+// or, when the listing lacks it, from the backend. A listing that is the whole
+// of the window (listed) is the platform's answer for every run in it, so a run
+// it lacks has no execution and none is read: a read would be one request per
+// run of the window, which on a long history is thousands against a quota the
+// launches share.
+func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs map[string]backend.Execution, listed bool, warnf func(string, ...any)) error {
 	in, s, name := &r.in, r.store, r.execution
 	if name == "" || in.Problem != "" {
 		return nil
@@ -1552,7 +1550,15 @@ func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs ma
 	if e, ok := execs[eid.Key()]; ok {
 		hint = &e
 	}
-	x, err := env.checkExecution(ctx, hint, name, in.Slug, in.RunID)
+	var (
+		x   *backend.Execution
+		err error
+	)
+	if hint != nil || !listed {
+		x, err = env.checkExecution(ctx, hint, name, in.Slug, in.RunID)
+	} else {
+		err = env.checkExecutionName(name)
+	}
 	if err != nil {
 		in.Problem = "not following its execution: " + err.Error()
 		warnf("warning: run %s/%s: %s\n", in.Slug, task.ShortRun(in.RunID), in.Problem)

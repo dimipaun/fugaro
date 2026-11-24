@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/runview"
 )
@@ -38,7 +39,14 @@ import (
 // for member and byte for byte, so no member -- a version among them -- could
 // be added to it. A stream written by lines is a document of its own, and its
 // first version is 1.
-const runsStreamDocVersion = 1
+//
+// Version 2 added the page's own completeness to the end line (D3215): the
+// index's two facts, where a version-1 consumer could read them only from the
+// whole document. A feed is the shape a consumer draws as its lines arrive, so
+// it is the shape most able to print an incomplete page as a whole history,
+// which is the one thing the plan's cross-cutting pin forbids a reader
+// (docs/console-fixes/implementation-plan.md, IR1's acceptance item 4).
+const runsStreamDocVersion = 2
 
 // The line kinds, the words the `type` member carries.
 const (
@@ -61,10 +69,18 @@ type streamRowLine struct {
 // lines the feed carried -- not what the document's totals block says about
 // the window, which a feed of a page counts differently -- and Version is
 // runsStreamDocVersion, the shape these lines are written in.
+//
+// The two index members are the document's own (lsDoc), absent for a listing
+// the window answered as they are absent there: they say whether the page the
+// feed just wrote is the whole history, which is what a consumer drawing rows
+// as they arrive cannot otherwise know, and what tells it not to draw an
+// incomplete page as a complete one.
 type streamEndLine struct {
-	Type    string `json:"type"`
-	Count   int    `json:"count"`
-	Version int    `json:"version"`
+	Type          string     `json:"type"`
+	Count         int        `json:"count"`
+	Version       int        `json:"version"`
+	IndexComplete *bool      `json:"index_complete,omitempty"`
+	FoldedThrough *time.Time `json:"folded_through,omitempty"`
 }
 
 // streamErrorLine is a feed that stopped after at least one row. Error is the
@@ -106,9 +122,17 @@ func (s *streamWriter) row(v any) error {
 }
 
 // end writes the line that says the feed ran to completion: the rows it
-// carried, and the version of the shape they were written in.
-func (s *streamWriter) end(version int) error {
-	return s.enc.Encode(streamEndLine{Type: streamLineEnd, Count: s.rows, Version: version})
+// carried, the version of the shape they were written in, and what the index
+// said of itself. index is nil for a listing the window answered, and for the
+// feeds that carry no listing of runs at all (budgetStreamDocVersion's own),
+// both of which have nothing to say about an index.
+func (s *streamWriter) end(version int, index *lsIndexState) error {
+	line := streamEndLine{Type: streamLineEnd, Count: s.rows, Version: version}
+	if index != nil {
+		complete := index.complete
+		line.IndexComplete, line.FoldedThrough = &complete, index.foldedThrough
+	}
+	return s.enc.Encode(line)
 }
 
 // failed closes a feed that did not run to completion, and answers the failure
@@ -143,7 +167,9 @@ func (s *streamWriter) failed(err error) error {
 // streamRows writes a listing as a --stream feed: one line per row, in the
 // order the whole document's runs array has, then the end line. The rows are
 // the page the listing prints, so a feed of a page and the document of that
-// page carry the same rows.
+// page carry the same rows, and index -- the index the page came from, nil for
+// a listing the window answered -- rides the end line, so a feed never draws a
+// page of an index that is still building as the whole history (D3215).
 //
 // The rows are written after the window has been read, and they cannot be
 // written before it: a row carries the state of the pull request it is on
@@ -152,14 +178,14 @@ func (s *streamWriter) failed(err error) error {
 // order is over the window, not over the reads. What the flag buys a consumer
 // is a document it renders as its lines arrive, rather than one it must hold
 // whole before it can draw the first row.
-func streamRows(w io.Writer, rows []runview.Row) error {
+func streamRows(w io.Writer, rows []runview.Row, index *lsIndexState) error {
 	sw := newStreamWriter(w)
 	for _, r := range rows {
 		if err := sw.row(r); err != nil {
 			return sw.failed(err)
 		}
 	}
-	if err := sw.end(runsStreamDocVersion); err != nil {
+	if err := sw.end(runsStreamDocVersion, index); err != nil {
 		return sw.failed(err)
 	}
 	return nil

@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/runindex"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/userstats"
@@ -52,6 +53,16 @@ const userStatsDefaultSince = "7d"
 // userStatsMaxRuns runs, and the output says so. Raising it is the caller's
 // choice (--max-runs) and costs one object read per run.
 const userStatsMaxRuns = 5000
+
+// runIndexReader opens the run index `runs stats` reads its window from. It is
+// the package's stub until I-INDEX wires the real Reader in
+// (internal/cli/runindex_wire.go), and tests replace it. The stub answers an
+// empty page and says the index has never finished a walk, which is what sends
+// the command to the run records (readUserStatsRuns) rather than printing an
+// empty window as the truth.
+var runIndexReader = func(context.Context, *cloudEnv) (runindex.Reader, error) {
+	return runindex.NewStub(), nil
+}
 
 // userStatsByUser is the only breakdown this command publishes. --by names
 // it, so that the day a second one exists it is a value here and not a

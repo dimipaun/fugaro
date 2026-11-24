@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/runs-stream.schema.json",
   "title": "Fugaro runs ls --stream",
-  "description": "One line of the newline-delimited feed `fugaro runs ls --stream --json` writes (docs/console-improvements spec §7, D2906): the listing `runs ls --json` prints whole, written as one record per line so a consumer renders each run as its line arrives instead of holding the document. The schema is of ONE LINE and not of the feed: a reader validates each line as it reads it, and the feed is the lines in order. Three kinds, and a reader may rely on nothing else: `row` carries one element of the whole document's own `runs` array, unchanged and in the document's own order, under the line's `row` key; `end` is the last line of a feed that ran to completion, carrying how many `row` lines went before it and the version of the shape they were written in; `error` is a feed that failed once at least one row had gone out, carrying the sentence the command would have printed, in one line. A feed with no `end` line is an interrupted read -- which is why the count is carried, since an empty window and a truncated read are otherwise the same bytes. The line shape's first version is 1 (runsStreamDocVersion in internal/cli/runs_stream.go), and it is the stream's own version: the document `runs ls --json` prints without `--stream` is unchanged by the flag, member for member and byte for byte, so no member -- a version among them -- could be added to it. Members are only ever added within a version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's feed. The `row` is not restated here: it is `runview.Row`, whose every member §5 of console/docs/json-contract.md documents and `runs ls --json`'s own reader already holds, and a second copy in this file would be a shape that drifts from the struct.",
+  "description": "One line of the newline-delimited feed `fugaro runs ls --stream --json` writes (docs/console-improvements spec §7, D2906): the listing `runs ls --json` prints whole, written as one record per line so a consumer renders each run as its line arrives instead of holding the document. The schema is of ONE LINE and not of the feed: a reader validates each line as it reads it, and the feed is the lines in order. Three kinds, and a reader may rely on nothing else: `row` carries one element of the whole document's own `runs` array, unchanged and in the document's own order, under the line's `row` key; `end` is the last line of a feed that ran to completion, carrying how many `row` lines went before it and the version of the shape they were written in; `error` is a feed that failed once at least one row had gone out, carrying the sentence the command would have printed, in one line. A feed with no `end` line is an interrupted read -- which is why the count is carried, since an empty window and a truncated read are otherwise the same bytes. The line shape's first version is 1 (runsStreamDocVersion in internal/cli/runs_stream.go), and it is the stream's own version: the document `runs ls --json` prints without `--stream` is unchanged by the flag, member for member and byte for byte, so no member -- a version among them -- could be added to it. **Version 2 is 1 plus the index's two facts on the `end` line**: a feed is the shape a consumer draws as its lines arrive, so it is the shape most able to print a page of an index that is still building as the whole history, and the line that closes it is where it learns otherwise. Members are only ever added within a version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's feed. The `row` is not restated here: it is `runview.Row`, whose every member §5 of console/docs/json-contract.md documents and `runs ls --json`'s own reader already holds, and a second copy in this file would be a shape that drifts from the struct.",
   "oneOf": [
     { "$ref": "#/$defs/row" },
     { "$ref": "#/$defs/end" },
@@ -26,7 +26,7 @@
     },
     "end": {
       "type": "object",
-      "description": "The last line of a feed that ran to completion. Its presence is the whole of it: a consumer that read rows and no end line is holding a read that was interrupted, and the count is what tells it how many it lost.",
+      "description": "The last line of a feed that ran to completion. Its presence is the whole of it: a consumer that read rows and no end line is holding a read that was interrupted, and the count is what tells it how many it lost. The two index members say what the index said about the page the feed just wrote, and are absent for a listing the window answered, exactly as `index_complete` and `folded_through` are absent from the whole document.",
       "required": ["type", "count", "version"],
       "properties": {
         "type": {
@@ -39,8 +39,17 @@
           "description": "How many `row` lines the feed carried before this one -- not what the document's `totals.runs` says about the window. The two differ under `--limit` and `--after`, which page the rows the feed carries: the count is the feed's own, and the window's totals are the document's."
         },
         "version": {
-          "const": 1,
+          "const": 2,
           "$comment": "runsStreamDocVersion in internal/cli/runs_stream.go."
+        },
+        "index_complete": {
+          "type": "boolean",
+          "description": "Whether the index this page came from has ever finished a walk over the installation's history (D3215) -- `lsDoc.index_complete`, §5 of console/docs/json-contract.md. **`false` means the pages of this feed are not the whole history yet**, which is what a consumer drawing rows as they arrive must not draw as a complete list; the text listing says the same in one line above its table and the whole document carries the same member. Absent when the listing answered from the bucket's own window instead of the index, and absent from a feed whose version is 1."
+        },
+        "folded_through": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The moment the index is folded through, RFC 3339 UTC, when it has one -- `lsDoc.folded_through`, §5. It is the age of the page: an index that is still building is folded through some moment in the past, and the runs after it are not in it. Absent when the index has folded nothing, and when the listing answered from the window."
         }
       }
     },

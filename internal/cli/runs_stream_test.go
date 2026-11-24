@@ -14,6 +14,8 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/dimipaun/fugaro/internal/failure"
+	"github.com/dimipaun/fugaro/internal/runindex"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // pinLsClock pins runs ls's clock, so a feed's rows are the same bytes on every
@@ -210,6 +212,43 @@ func TestRunsLsStreamEndsWithCount(t *testing.T) {
 	if len(page.rows) != 2 || page.end == nil || page.end.Count != 2 {
 		t.Errorf("--limit 2 carried %d rows and the end line %+v, want two rows counted as two:\n%s",
 			len(page.rows), page.end, paged)
+	}
+}
+
+// TestRunsLsStreamCarriesTheIndexFacts: a feed of a page the run index answered
+// carries what the index said of itself on the line that ends it (D3215), so a
+// consumer drawing rows as they arrive never draws a page of an index that is
+// still building as the whole history -- the shape most able to print a
+// silently short list is the one that reads no whole document to check against
+// (the plan's cross-cutting pin and IR1's acceptance item 4).
+//
+// Mutation caught: writing count and version alone, which is what a console's
+// Live tab reads today: the feed then says nothing about the page being short.
+func TestRunsLsStreamCarriesTheIndexFacts(t *testing.T) {
+	f := newCloudFixture(t)
+	idx := &indexFake{}
+	lsIndex(t, idx)
+	lsIndexRun(t, f, idx, 30*time.Minute, runstore.StatusSucceeded, "aaaa")
+	folded := time.Date(2026, 11, 22, 9, 30, 0, 0, time.UTC)
+	idx.summary = runindex.Summary{Version: runindex.Version, Complete: false, FoldedThrough: &folded,
+		States: map[string]int64{}}
+
+	out, errOut, err := execute(t, "runs", "ls", "--json", "--stream")
+	if err != nil {
+		t.Fatalf("runs ls --stream: %v (%s)", err, errOut)
+	}
+	feed := readFeed(t, out)
+	if feed.end == nil {
+		t.Fatalf("the feed ends with %q and carries no end line:\n%s", feed.last, out)
+	}
+	if feed.end.Version != runsStreamDocVersion {
+		t.Errorf("the end line's version is %d, want runsStreamDocVersion (%d)", feed.end.Version, runsStreamDocVersion)
+	}
+	if feed.end.IndexComplete == nil || *feed.end.IndexComplete {
+		t.Errorf("the end line's index_complete is %v, want false: the listing read an index that has not finished a walk, and a consumer that drew these rows would be drawing a short list as the whole history", feed.end.IndexComplete)
+	}
+	if feed.end.FoldedThrough == nil || !feed.end.FoldedThrough.Equal(folded) {
+		t.Errorf("the end line's folded_through is %v, want %s", feed.end.FoldedThrough, folded)
 	}
 }
 
@@ -469,8 +508,8 @@ func TestRunsStreamSchema(t *testing.T) {
 
 	for _, bad := range []string{
 		`{"type":"end","count":1}`,               // an end line that does not say which shape it ends
-		`{"type":"end","version":1}`,             // and one that does not count the rows it carried
-		`{"type":"end","count":"1","version":1}`, // a count that is not a number
+		`{"type":"end","version":2}`,             // and one that does not count the rows it carried
+		`{"type":"end","count":"1","version":2}`, // a count that is not a number
 		`{"type":"row"}`,                         // a row line with no row
 		`{"type":"row","row":1}`,                 // a row that is not an element of a document's array
 		`{"type":"error"}`,                       // an error line with no sentence
@@ -522,5 +561,10 @@ func TestRunsStreamGolden(t *testing.T) {
 	}
 	if feed.last != streamLineEnd {
 		t.Errorf("the golden's last line is %q, want %q", feed.last, streamLineEnd)
+	}
+	// The listing here read the window (the index is the stub), so the end line
+	// carries no index fact, exactly as the same listing's document does not.
+	if feed.end.IndexComplete != nil || feed.end.FoldedThrough != nil {
+		t.Errorf("the golden's end line carries an index fact, want none: the listing read the window:\n%s", want)
 	}
 }
