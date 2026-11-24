@@ -516,9 +516,9 @@ func runGitCredentialForEntry(cmd *cobra.Command, o gitCredentialOptions) error 
 // is answered a proxy grant and no token (R6), and there is nothing here to
 // write for it — a grant is spent by a clone that rewrites its own git traffic
 // to the proxy, which this build's clone step does not — so a grant is refused
-// rather than turned into a credential file that would hold a placeholder. An answer that is neither, or both, is refused: the contract
-// says exactly one, and a step that guessed would be the widening it exists to
-// prevent.
+// rather than turned into a credential file that would hold a placeholder. An
+// answer that is neither, or both, is refused: the contract says exactly one,
+// and a step that guessed would be the widening it exists to prevent.
 func writeBuildToken(out, provider string, resp buildtoken.Response) error {
 	switch {
 	case resp.Token != nil && resp.Proxy != nil:

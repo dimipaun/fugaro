@@ -113,7 +113,13 @@ type catalogCheckRepo struct {
 	Slug string `json:"slug"`
 	// Provider, RepoURL and BaseBranch are the repository as a build clones
 	// it, and GitSecretID, GitUser and GitHubAppID the credential it clones
-	// with — the repository's own, never the job's.
+	// with — the repository's own, never the job's. GitSecretID no longer
+	// reaches the build of an entry as a secret since IS8 (D3330): the build
+	// fetches the credential from the installation's credentials service and
+	// names no secret of its own, so the field is carried (and required, since
+	// gcp.CatalogBuildSpec.check reads it) only because a deployed job's spec
+	// decodes strictly and dropping it would refuse the spec of a job an
+	// update has not re-deployed yet.
 	Provider    string `json:"provider"`
 	RepoURL     string `json:"repo_url"`
 	BaseBranch  string `json:"base_branch"`
