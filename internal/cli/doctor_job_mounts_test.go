@@ -68,11 +68,14 @@ func TestDoctorJobMountsIgnoresOtherClasses(t *testing.T) {
 		config.ReservedSecrets[config.AnthropicSecret]:  gcp.SecretID("acme-app-ab12cd34", config.AnthropicSecret),
 		config.ProviderKeyEnv("openrouter-api-key"):     gcp.SecretID("acme-app-ab12cd34", "openrouter-api-key"),
 	})
-	// A plain-value variable stands in the same env list as the mounts, which is
-	// what a real job's container carries: it is no mount at all (a value would
-	// be printed, which this line never does), and the image-env report reads it
-	// from that same body.
-	r.run.SetJobEnv(job, map[string]string{"FUGARO_IMAGE_ENTRY": "acme-base"})
+	// Plain-value variables stand in the same env list as the mounts, which is
+	// what a real job's container carries. NODE_ENV is no name Fugaro reserves,
+	// so only the check that an entry has to be a value_source.secret_key_ref to
+	// be a mount keeps it off this report — without it every plain variable of
+	// every job would be listed as a mounted workflow secret. FUGARO_IMAGE_ENTRY
+	// is the stamp the control below reads from that same body; it is reserved,
+	// so it never would have told that check anything.
+	r.run.SetJobEnv(job, map[string]string{"FUGARO_IMAGE_ENTRY": "acme-base", "NODE_ENV": "production"})
 
 	o := r.runDoctorJSON(t)
 	// The other report's line about this job is the control: it is built from
