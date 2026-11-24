@@ -843,6 +843,7 @@ var liveCheckScripts = []struct {
 	{"check-890-data-layout.sh", "check-890-data-layout_test.sh"},
 	{"check-891-update-trace.sh", "check-891-update-trace_test.sh"},
 	{"check-892-iam.sh", "check-892-iam_test.sh"},
+	{"check-900-version-stamp.sh", "check-900-version-stamp_test.sh"},
 	{"check920.sh", "check920_test.sh"},
 	{"check-390.sh", "check-390_test.sh"},
 	{"check-391.sh", "check-391_test.sh"},
