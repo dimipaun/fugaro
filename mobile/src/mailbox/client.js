@@ -133,6 +133,7 @@ import { SECURE_STORE_CODES } from '../accounts/secure-store.js';
 // the door would make the mailbox suite need an install. `store.test.js` and
 // `verify.test.js` reach the modules behind the door the same way.
 import { UNENFORCED_LICENCE, lapseRefusalAt, licenceSpeech, writeOf } from '../licence/state.js';
+import { jobWrite } from '../../../shared/command/index.js';
 import {
   TEXT_MAX,
   canonicalBytes,
@@ -287,6 +288,22 @@ export const EXPIRED = 'expired';
  */
 const WRITE_DIRECTION = 'inbox';
 
+/**
+ * The client's word on what it is saying, passed as the speaker port's optional
+ * second argument.
+ *
+ * The port is text in, verdict out, and this is **provenance rather than
+ * audio**: the client speaks two different things through the one port -- a
+ * reply it read and verified out of the outbox, and, when the owner's own
+ * message was not sent, the refusal sentence it looked up in `gate.js` or
+ * `licence/state.js` (S6.3). A port that keeps the conversation (`src/text`'s
+ * `transcriptSpeaker`) has no other way to tell them apart, and a refusal
+ * recorded as the agent's line would be words the agent never said. A port is
+ * free to ignore it -- the pipeline adapter and `MemorySpeaker` do -- because
+ * the only answer the client needs is whether the owner heard it.
+ */
+const REFUSAL_SPEECH = Object.freeze({ refusal: true });
+
 function refuse(code, field) {
   return Object.freeze({ ok: false, code, field });
 }
@@ -436,7 +453,9 @@ function readOutbox(value) {
  *   `isOnline()`. **Optional, and the default refuses**: a client built without
  *   one uses `UNWIRED_CONNECTION` and answers `no-connection`, because the
  *   unsafe default is the one that sends into the SDK's queue
- * @param {object} options.speaker the audio port (P3.6's stub of P3.4): `speak(text)`
+ * @param {object} options.speaker the audio port (P3.6's stub of P3.4):
+ *   `speak(text, speech?)`, where the optional second argument is the client's
+ *   word on what it is saying -- see `REFUSAL_SPEECH`
  * @param {() => number} options.now D117's server-anchored now, in ms
  * @param {() => string} options.newId a fresh message id per call
  * @param {string[]} options.secrets P1.3's secret list (D118)
@@ -614,7 +633,9 @@ export function createMailboxClient(options = {}) {
     // `licence-lapsed` -- so the order of the lookup cannot decide anything, and
     // it is written this way so that it stays that way.
     const message = offlineSpeech(verdict.code) ?? licenceSpeech(verdict.code);
-    const said = await speaker.speak(message);
+    // Marked as the app's own speech, so a port that keeps a transcript does
+    // not record it as the agent's reply (`REFUSAL_SPEECH` above).
+    const said = await speaker.speak(message, REFUSAL_SPEECH);
     if (keepText) unsent.push(Object.freeze({ text, at, code: verdict.code }));
     return Object.freeze({
       ok: false,
@@ -653,7 +674,13 @@ export function createMailboxClient(options = {}) {
    *   the caller's classification that lets the lapse refuse it (see "The lapse"
    *   above). Neither option is written to the record: what the record carries is
    *   P6.3's.
-   * @returns {Promise<{ok: true, id: string, at: number}
+   * The accepted verdict carries **the redacted text** as `text`. D118 makes
+   * redaction this file's rule and no other's, so a caller that has to show or
+   * keep what was sent -- a conversation, D167's `unsent()` parity -- is given
+   * the string that was signed rather than left to redact it again, or to
+   * record the owner's raw words and put a secret on a screen.
+   *
+   * @returns {Promise<{ok: true, id: string, at: number, text: string}
    *   | {ok: false, code: string, field: string|null}>}
    */
   async function send(text, options) {
@@ -769,7 +796,7 @@ export function createMailboxClient(options = {}) {
       // is not in `outbound`, so `flush` cannot re-send it, `pending()` cannot
       // offer it and nothing here will ever write it a second time.
       if (!isAction) outbound.set(id, { record, landed: true });
-      return Object.freeze({ ok: true, id, at });
+      return Object.freeze({ ok: true, id, at, text: body.text });
     }
     // It did not land. The record is kept VERBATIM for `flush` -- never
     // re-minted, never re-stamped (P1.1's caller duty: "never retry an id with
@@ -780,6 +807,39 @@ export function createMailboxClient(options = {}) {
     // that did not land is reported and dropped, and the owner confirms again.
     if (!isAction) outbound.set(id, { record, landed: false });
     return refuse(written.code, written.field);
+  }
+
+  /**
+   * **A job command, from the phone** (J4; D2787, D162, D169): a start or a
+   * cancel, composed by `shared/command`'s `jobWrite` and written by `send`.
+   *
+   * The composition is elsewhere and the write is here, deliberately. `jobWrite`
+   * decides which KIND of record a verb makes -- D162's plain launch message, or
+   * D169's action record -- and whether the session's role may make it at all,
+   * and it answers both with no store, no gate and no clock, so a screen can ask
+   * it what to draw. What only this file can do is the rest of D113: redact,
+   * lapse, gate, tag, validate and store. It does exactly that, through the same
+   * `send` every other write goes through, so there is still one write path.
+   *
+   * The role is read as a display claim and nothing more (F14, D2791): a viewer's
+   * write is refused here, before anything is redacted, minted or signed, and the
+   * consumer refuses it independently with `internal/access` if a modified client
+   * sends it anyway. `jobWrite`'s refusal comes back unchanged -- the same
+   * `{ ok: false, code, field }` shape `send` returns -- so a screen switches on
+   * one vocabulary, not two.
+   *
+   * @param {unknown} session the paired project's session (C2's port value);
+   *   only its `role` is read
+   * @param {{verb: string, text: string, record?: object}} request the verb, the
+   *   message's text, and -- for a cancel -- the action record P6.2's machine
+   *   built
+   * @returns {Promise<{ok: true, id: string, at: number}
+   *   | {ok: false, code: string, field: string|null}>}
+   */
+  function sendJob(session, request) {
+    const write = jobWrite(session, request);
+    if (!write.ok) return write;
+    return send(write.text, write.options);
   }
 
   /**
@@ -1272,6 +1332,10 @@ export function createMailboxClient(options = {}) {
     ok: true,
     paths,
     send: (text, options) => serial(() => send(text, options)),
+    // J4's job commands, in the chain with `send` for the same reason `register`
+    // is: a start and a cancel mint an id and read `minted`, and the write must
+    // be one pass at a time. Composed by `jobWrite`, written by `send`.
+    sendJob: (session, request) => serial(() => sendJob(session, request)),
     // P5.2.8's registration, in the same chain as `send` and for a reason of
     // its own: it mints an id and adds it to `minted`, which is the set `send`
     // reads to keep an id source from reusing one.

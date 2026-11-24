@@ -779,6 +779,11 @@ func (r *rend) repo(tier int, b RepoBlock, sel Cursor, expanded map[Cursor]bool,
 // b.Runs alone — so the whole id is not on this screen for a finished run at
 // all: it is `--json`'s, and `runs ls` prints `<slug>/<full id>` (design
 // generic-tool §10.3).
+//
+// A run that suspended itself is one of these rows — its own record's status
+// word is PAUSED — and its pause's two facts follow it: the instant its resume
+// is due at and the run that resumed it, each said only when the reader has it
+// (MergePaused).
 func (r *rend) finishedRow(run RunRow, selected bool, ending string) string {
 	cur := " "
 	if selected {
@@ -803,6 +808,20 @@ func (r *rend) finishedRow(run RunRow, selected bool, ending string) string {
 	segs := []seg{{cur + " " + ending + " ", ""}, {dash(run.Title) + " ", cBold}, {word, c}}
 	if run.PRURL != "" {
 		segs = append(segs, seg{" " + run.PRURL, ""})
+	}
+	// A paused run's own two facts, in the same words the waiting line uses
+	// for the instant a held-up run expects to come back (detail): the run's
+	// record says it suspended itself, and these say when it comes back and
+	// what brought it back. Either may be missing — the instant is the
+	// credentials service's node and the resumer is another run's task — and a
+	// missing one is simply not said.
+	if run.Paused {
+		if run.ResumeAt > 0 {
+			segs = append(segs, seg{r.g.sep + "expected resume " + stampText(run.ResumeAt), cWarn})
+		}
+		if run.ResumedBy != "" {
+			segs = append(segs, seg{r.g.sep + "resumed by " + task.ShortRun(run.ResumedBy), cFaint})
+		}
 	}
 	segs = append(segs, seg{r.g.sep + ageText(run) + " ago", cFaint})
 	return r.line(segs...)
@@ -940,6 +959,21 @@ func (r *rend) detail(run RunRow) []string {
 	if run.Recipe != "" {
 		models += " · " + run.Recipe
 	}
+	// The source the running stage goes out on (model-credentials-routing CS9,
+	// D3070): a kind and a name, never a value, and the dash for a run the
+	// project's table does not serve — which is "not recorded", like every other
+	// dash here. FALLBACK rides the same line rather than taking one of its own:
+	// it is not a second fact but the source's own qualifier, saying the run is
+	// paying on something other than the first of its chain, and the detail is
+	// where the table's FLAGS column has no room for it.
+	// The row's "-" comes from the builders that have no registry entry to read
+	// (queuedRow, finishedRow), and dashIfEmpty is the backstop for a RunRow
+	// built anywhere else with nothing recorded: an empty source must draw the
+	// same dash its neighbours do, never a blank line.
+	src := dashIfEmpty(run.Source)
+	if run.Fallback {
+		src += " FALLBACK"
+	}
 	// The launcher is shown whole here, where the BY column of the run table
 	// and of the plain frames holds only the part before an address's @: the
 	// detail has the room, and the whole value is what tells a person from an
@@ -960,6 +994,7 @@ func (r *rend) detail(run RunRow) []string {
 		// (C1.21), and the dash for a run that has reported none — which is
 		// "not recorded", not "no credential" (RunRow.Credential).
 		{"credential", dashIfEmpty(run.Credential)},
+		{"source", src},
 		{"deadline", dl},
 		{"models", models},
 	}

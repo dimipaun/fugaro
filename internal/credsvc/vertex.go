@@ -171,14 +171,35 @@ func (s *Server) serveVertex(ctx context.Context, w http.ResponseWriter, id Iden
 			"the model this call asked for has no spelling Vertex is reached with, so this source could not be sent it: a model is written on a source by the checked-in map alone, and a model the map does not spell for Vertex is refused rather than sent there as something nobody measured")
 		return true, Tried{}
 	}
-	path, ok := vertexPath(cl.path, project, location, spelling, vertexStreams(cl.body))
+	// Which PUBLISHER serves the model decides the whole request and not only
+	// the path: Vertex's Anthropic publisher takes a Messages call (the
+	// translation above), its Google publisher a generateContent call
+	// (vertex_gemini.go, GV1), and the two bodies have nothing in common. The
+	// map that spells the model for Vertex is the one that says which — a
+	// spelling answers both questions or neither — so a caller cannot build a
+	// request for one publisher out of the other's answer.
+	publisher, published := pricing.VertexPublisher(served)
+	if !published {
+		s.refuseCall(ctx, w, id, PurposeForward, name, tier, StatusUnavailable, ErrorNoCandidateCredentials,
+			"the model this call asked for has no publisher Vertex serves it under, so this source could not be sent it: which publisher a model goes to is the checked-in map's answer, as its spelling is")
+		return true, Tried{}
+	}
+	path, ok := vertexPathFor(publisher, cl.path, project, location, spelling, vertexStreams(cl.body))
 	if !ok {
 		s.refuseCall(ctx, w, id, PurposeForward, name, tier, StatusUnavailable, ErrorStateUnavailable,
 			"the vertex source was reached on a path it does not serve")
 		return true, Tried{}
 	}
-	body, err := vertexBody(cl.body, spelling, cl.path == CountTokensPath)
+	body, err := vertexBodyFor(publisher, cl.body, spelling, cl.path == CountTokensPath)
 	if err != nil {
+		// A member this translation cannot carry faithfully is the one error
+		// that is the CALLER's: the call is well-formed and it is this wire that
+		// has no form of it, which is what the typed reason says (GV1). Every
+		// other error here is the service's own reading of the body.
+		if reason, typed := vertexTranslationRefusal(err); typed {
+			s.refuseCallCause(ctx, w, id, PurposeForward, name, tier, StatusRequestRefused, ErrorRequestRefused, reason, err)
+			return true, Tried{}
+		}
 		s.refuseCallCause(ctx, w, id, PurposeForward, name, tier, StatusRequestRefused, ErrorRequestRefused,
 			requestRefused+"the body of this call is not one Vertex could be sent", err)
 		return true, Tried{}
@@ -317,6 +338,30 @@ func vertexPath(callPath, project, location, spelling string, stream bool) (stri
 		return prefix + "count-tokens:rawPredict", true
 	}
 	return "", false
+}
+
+// vertexPathFor is the path one call takes on the publisher that serves the
+// model — the Anthropic publisher CS4 builds for every model this repository
+// served on Vertex before GV1, and the Google publisher GV1 builds for a Gemini
+// model. The publisher is not a preference and is never a fallback: it is the
+// map's answer for the model (pricing.VertexPublisher), and serveVertex has
+// already refused a model with none.
+func vertexPathFor(publisher, callPath, project, location, spelling string, stream bool) (string, bool) {
+	if publisher == pricing.VertexPublisherGoogle {
+		return vertexGeminiPath(callPath, project, location, spelling, stream)
+	}
+	return vertexPath(callPath, project, location, spelling, stream)
+}
+
+// vertexBodyFor is the body of that same call, drawn from the same publisher:
+// vertexBody (the Messages translation) for the Anthropic publisher, and
+// vertexGeminiBody (GV1's) for the Google one. The counting flag is C1's token
+// count, which each publisher's counting endpoint takes a different body for.
+func vertexBodyFor(publisher string, body []byte, spelling string, counting bool) ([]byte, error) {
+	if publisher == pricing.VertexPublisherGoogle {
+		return vertexGeminiBody(body, counting)
+	}
+	return vertexBody(body, spelling, counting)
 }
 
 // vertexDestination is the URL one Vertex call goes to: the host the location

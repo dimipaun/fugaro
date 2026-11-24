@@ -47,15 +47,17 @@ type JobRef struct {
 	Account  string
 }
 
-// RunFacts is what a run's own launch.json says about it that its row cannot
-// carry by itself: the job it is in (JobRef, plan task 3.5 step 2) and who
-// started it.
+// RunFacts is what a run's own records say about it that its row cannot carry
+// by itself: the job it is in (JobRef, plan task 3.5 step 2), who started it,
+// and the paused run it was launched to resume (Resumes).
 //
-// The two travel together because they come from the same read. The watch scan
-// reads launch.json for every run it lists — live ones included — and both
+// The first two travel together because they come from the same read. The watch
+// scan reads launch.json for every run it lists — live ones included — and both
 // facts are stamped onto the rows a frame draws by MergeFacts. Neither is in
 // the RTDB registry entry a live row is built from: nothing writes a job there,
 // and a launcher-writable field would not be trustworthy if something did.
+// Resumes comes from the same scan and the run's task rather than its
+// launch.json, and PausesOf is what reads it.
 type RunFacts struct {
 	JobRef
 	// LaunchedBy is who started the run, as launch.json recorded it at launch:
@@ -86,6 +88,18 @@ type RunFacts struct {
 	// reads the same in watch --json and fugaro runs ls --json; never an
 	// authority: nothing decides anything by it.
 	PlanTask string
+	// Resumes is the paused run this run was launched to resume (task.Spec's
+	// Resumes, at the orchestrator's own launch): the run's task names it, so
+	// it is not in the launch.json the two facts above come from and it is
+	// read from the task the scan already has. It is what makes the paused
+	// run's row say which run resumed it (PausesOf, contract-pause): the
+	// contract keeps the resumer off the pause's node, so the chain is where a
+	// reader finds it, and this is the chain read. "" for every run that
+	// resumed nothing, which is nearly all of them.
+	//
+	// MergeFacts does not stamp it: it names another run, not this row, and
+	// PausesOf is what turns it into the paused run's own ResumedBy.
+	Resumes string
 }
 
 // Facts is the RunFacts of each run a scan saw, by the run's key.

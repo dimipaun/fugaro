@@ -32,6 +32,12 @@ workflows:
   app: { commands: { build: sh build.sh, test: sh test.sh } }
 `
 
+// cliPinnedYAML is cliMinimalYAML with the three role models named, for the
+// tests that validate the file with a project config in reach: the price rules
+// hold in every mode now (AB3, D3020), so a file that names no model is refused
+// there before the warning the test is about.
+var cliPinnedYAML = strings.Replace(cliMinimalYAML, "workflows:", "agent:\n"+pinnedAgent+"\nworkflows:", 1)
+
 func writeConfig(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "fugaro.yaml")
@@ -314,20 +320,6 @@ func TestValidateAppliesPinsWhenBudgetOn(t *testing.T) {
 		"  auth: api-key\n  model: claude-acme-1\n  models: { background: claude-haiku-4-5 }")
 	if out, err := validateProblems(t, path); err != nil {
 		t.Fatalf("override ID refused: %v %s", err, out)
-	}
-}
-
-func TestValidateSkipsPinsWhenBudgetOff(t *testing.T) {
-	for _, budget := range []string{"", "budget: { mode: off }\n"} {
-		path := budgetProject(t, budget, "  auth: api-key\n  model: sonnet")
-		if out, err := validateProblems(t, path); err != nil {
-			t.Fatalf("budget %q: %v %s", budget, err, out)
-		}
-	}
-	// No project config at all: nothing to say the budget is on.
-	isolateProjects(t, t.TempDir())
-	if out, err := validateProblems(t, writeConfig(t, cliMinimalYAML)); err != nil {
-		t.Fatalf("%v %s", err, out)
 	}
 }
 
@@ -655,7 +647,12 @@ func TestValidateEnforceWithoutCapWarnsNoCap(t *testing.T) {
 func TestValidateNotOnDefaultBranchSaysSo(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	writeProject(t, "aurora", "proj-1234")
-	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), cliMinimalYAML)
+	// The file names its three role models: with the project's config in reach
+	// the price rules hold in every mode (AB3, D3020), so a file that names no
+	// model at all is refused before the note this test is about.
+	pinned := strings.Replace(cliMinimalYAML, "workflows:",
+		"agent:\n"+pinnedAgent+"\n  levels: { l2: { model: claude-opus-5-5 } }\nworkflows:", 1)
+	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), pinned)
 	testutil.Git(t, root, "add", ".")
 	testutil.Git(t, root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
 	testutil.Git(t, root, "branch", "-M", "main")
@@ -674,7 +671,7 @@ func TestValidateNotOnDefaultBranchSaysSo(t *testing.T) {
 		len(noPolicy.Warnings) != 1 || noPolicy.Warnings[0].Path != "workflows.app" {
 		t.Fatalf("no policy keys: %v out %q stderr %q", err, out, errOut)
 	}
-	withBudget := strings.Replace(cliMinimalYAML, "workflows:", "budget: { per_run_usd: 1 }\nworkflows:", 1)
+	withBudget := strings.Replace(pinned, "workflows:", "budget: { per_run_usd: 1 }\nworkflows:", 1)
 	if err := os.WriteFile(file, []byte(withBudget), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -3111,7 +3108,7 @@ func TestReviewFloorUnpublishableWarns(t *testing.T) {
 		}
 		return got
 	}
-	_, errOut, err := execute(t, "validate", writeConfig(t, cliMinimalYAML))
+	_, errOut, err := execute(t, "validate", writeConfig(t, cliPinnedYAML))
 	if err != nil {
 		t.Fatalf("a floor nothing can publish is valid: %v (%q)", err, errOut)
 	}
@@ -3120,7 +3117,7 @@ func TestReviewFloorUnpublishableWarns(t *testing.T) {
 		t.Fatalf("floor warnings = %q (stderr %q)", got, errOut)
 	}
 	// --json carries it as a warning, never a problem.
-	out, _, err := execute(t, "validate", "--json", writeConfig(t, cliMinimalYAML))
+	out, _, err := execute(t, "validate", "--json", writeConfig(t, cliPinnedYAML))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3196,10 +3193,15 @@ func reviewInstallation(t *testing.T, naming bool, local, agent, fileBlock strin
 		local += "claude_accounts:\n  team-a:\n    allow_data_to:\n      - acme/sandbox\n"
 	}
 	projectRouting(t, local)
-	body := cliMinimalYAML
+	// The three role pins are always written, whatever the caller's own agent
+	// lines are: a file that names none is refused once the price rules hold in
+	// every mode (AB3, D3020), and the notes below are about a file a run would
+	// start.
+	lines := pinnedAgent + "\n"
 	if agent != "" {
-		body = strings.Replace(cliMinimalYAML, "workflows:", "agent:\n"+agent+"\nworkflows:", 1)
+		lines = agent + "\n" + lines
 	}
+	body := strings.Replace(cliMinimalYAML, "workflows:", "agent:\n"+lines+"workflows:", 1)
 	return writeConfig(t, body+fileBlock)
 }
 

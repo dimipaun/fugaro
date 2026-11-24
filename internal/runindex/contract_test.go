@@ -48,6 +48,7 @@ func TestContractShapes(t *testing.T) {
 			Status:       runstore.StatusSucceeded,
 			PlanTask:     "C-INDEX",
 			PR:           3540,
+			Branch:       "fugaro/20261120-093000-a1b2",
 			RequestedBy:  "dev@example.invalid",
 			LaunchedBy:   "dev@example.invalid",
 			Batch:        "20261120-093000",
@@ -78,6 +79,8 @@ func TestContractShapes(t *testing.T) {
 				Cost:  &runstore.Cost{ModelUSD: 1.25, ComputeUSD: 0.41, ComputeEstimated: true, TotalUSD: 1.66, ModelBasis: runstore.BasisAPIList},
 				PR:    &runstore.PRRef{Number: 3540, URL: "https://example.invalid/acme/widgets/pull/3540"},
 			},
+			LaunchUnreadable: true,
+			RecordUnreadable: true,
 		}
 		roundTrip(t, want)
 		// The round trip above would survive a tag rename, because both
@@ -89,10 +92,11 @@ func TestContractShapes(t *testing.T) {
 		// not in the document fails too.
 		keysAre(t, want, []string{
 			"run_id", "slug", "repo", "updated_at", "status", "plan_task", "pr",
+			"branch",
 			"requested_by", "launched_by", "batch", "tier", "rigor",
 			"started_at", "finished_at", "workflow", "title", "recipe",
 			"oauth_account", "previous_run", "follow_up", "follow_up_of",
-			"launch", "record",
+			"launch", "record", "launch_unreadable", "record_unreadable",
 		})
 	})
 

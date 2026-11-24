@@ -165,11 +165,13 @@ func credentialsImage(rel string) string {
 var runEndpointRE = regexp.MustCompile(`\brun: [^,}]+`)
 
 // providerKeyEndpoint repoints the fixture's Cloud Run endpoint at skew for the
-// credentials service's own reads and at the fixture's jobs fake for everything
-// else: one local config names one Cloud Run endpoint (cloudRunEndpoint's
-// comment in doctor_secret_readers_test.go has the same shape for doctor), and
-// the guard every provider-key write makes (bundleReaderRelease, creds.go) reads
-// a SERVICE where a converge or a launch reads JOBS.
+// guard's own two reads of the credentials service and at the fixture's jobs
+// fake for everything else: one local config names one Cloud Run endpoint
+// (cloudRunEndpoint's comment in doctor_secret_readers_test.go has the same
+// shape for doctor), and the guard every provider-key write makes
+// (bundleReaderRelease, creds.go) reads a SERVICE and its REVISIONS where a
+// converge, a launch or doctor's own check reads JOBS — or a service's IAM
+// policy, which is a jobs-shaped read this fake answers and the skew does not.
 //
 // A skew with no deployed service (newRunServiceSkew alone) answers Cloud Run's
 // 404, which is the installation whose credentials service is not deployed: the
@@ -180,10 +182,16 @@ var runEndpointRE = regexp.MustCompile(`\brun: [^,}]+`)
 // The jobs arm is the fixture's own handler rather than a copy of it, so a
 // fixture's records, jobs and projects stay exactly what they were: this
 // replaces the URL and not the fake behind it.
+//
+// The file it repoints is the one the CLI would read the endpoint from:
+// FUGARO_CONFIG where a fixture names it, and the installation's own copy in
+// the XDG projects directory where it is cleared — which is the converge rig,
+// whose config the doors read by project name.
 func providerKeyEndpoint(t *testing.T, run *gcpfake.Run, skew *runServiceSkew) {
 	t.Helper()
+	service := "/services/" + infra.CredentialsServiceName
 	mux := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/services/"+infra.CredentialsServiceName) {
+		if p := r.URL.Path; strings.HasSuffix(p, service) || strings.Contains(p, service+"/revisions/") {
 			skew.handle(w, r)
 			return
 		}
@@ -191,6 +199,9 @@ func providerKeyEndpoint(t *testing.T, run *gcpfake.Run, skew *runServiceSkew) {
 	}))
 	t.Cleanup(mux.Close)
 	path := os.Getenv("FUGARO_CONFIG")
+	if path == "" {
+		path = installationConfigPath()
+	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

@@ -108,6 +108,13 @@ func (r *run) recordRigor(at string, paths []string) {
 	}
 	r.rec.Rigor = r.rec.Rigor.Applied(runstore.Moment{Resolved: res, At: at, Revision: r.rigorRev})
 	r.noteRigorRaise(at, before, res)
+	// A raise moves the number the remaining senior and adversarial rounds are
+	// spent under, and the plan block is where a reader finds that number: it is
+	// rewritten here, at the one place a raise is known, so the block and the
+	// loop can never disagree (V1.3, refreshPlanRounds).
+	if res.Level != before {
+		r.refreshPlanRounds()
+	}
 	// The registry carries the same pair, so a live row in `fugaro watch`
 	// shows the mode the run is at now and not only the one bootstrap
 	// resolved. It is the record's own value, written by the same fold that

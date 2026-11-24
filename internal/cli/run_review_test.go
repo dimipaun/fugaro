@@ -21,7 +21,7 @@ import (
 // ReviewPRs empty.
 func TestRunRecipeReviewModeWritesReviewPRs(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "review-only", "--pr", "7"); err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestRunRecipeReviewModeWritesReviewPRs(t *testing.T) {
 // recipe or ref would end up embedded instead of review-only's.
 func TestRunRecipeReviewModeIgnoresAnyExistingChain(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--recipe", "review-only"); err != nil {
 		t.Fatal(err)
@@ -96,7 +96,7 @@ func TestRunAtMostFourPR(t *testing.T) {
 // both, in order.
 func TestRunPickWritesSeveralReviewPRs(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "pick", "--pr", "7", "--pr", "9"); err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestRunPickRefusesSinglePR(t *testing.T) {
 // from a pull request's own history).
 func TestRunReviewModeKeepsRefWorkflowFlags(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "review-only", "--pr", "7", "--ref", "main", "--workflow", "web")
 	if err != nil {
 		t.Fatal(err)

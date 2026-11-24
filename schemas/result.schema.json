@@ -250,9 +250,32 @@
       "additionalProperties": false,
       "required": ["name", "source", "sha256"],
       "properties": {
-        "name": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$" },
+        "name": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,44}[a-z0-9])?-[0-9a-f]{8})?$", "description": "The recipe the run's loop came from: a recipe name, or the name of the project's copy of one (recipe.IsNameOrCopy), which is what a migrated repository's runs carry." },
         "source": { "enum": ["repo", "project", "catalog"] },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["steps"],
+      "description": "The plan the runner resolved for this run: one entry per step of the loop after implement, in the order the runner ran them (docs/review-levels-ab-jobmax/implementation-plan.md V1.3). It is the only place a reader finds a review level's cap: the resolution reads the recipe's text, the run's own configuration and the rigor mode, none of which the record keeps, and the recipe member beside it names the recipe and never its steps — so nothing outside the runner can replay the number. The runner writes it with the plan it runs, and rebuilds it with the plan when the security escalation turns level 3 on. Absent for a run that built no plan (a mode: review or artifact run, whose loop planOf is never called for) and in every record written before this field existed, so an old reader sees the record it always saw and version stays 1 (the field is additive).",
+      "properties": {
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "description": "The plan's steps, in run order. Each is a step kind the runner's plan holds — `first_line`, `review`, `adversarial` (review levels 1, 2 and 3) and `rebase` — with the rounds resolved for it.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "rounds"],
+            "properties": {
+              "kind": { "type": "string", "minLength": 1, "maxLength": 40, "description": "The step's kind (internal/recipe's StepKind: first_line, review, adversarial, rebase). Not an enum here, deliberately: a release can register a step kind this schema has never heard of (recipe.RegisterStepKind), and a record it writes is valid — the field's whole meaning is one kind per step, whatever the kind is spelled." },
+              "rounds": { "type": "integer", "minimum": 1, "description": "The rounds the plan resolved for this step, which is the cap its loop is held inside (planOf's number: the task's own override, the recipe's max_rounds, the agent's key or the rigor mode's row, inside the recipe's bound). Where the mode's row supplies it, it is re-resolved at every moment a raise moved the mode (refreshPlanRounds, V1.3), so the number is the cap the step's loop is held inside and never the one bootstrap resolved. It is a cap and never a figure the run spent: what a run spent is the rounds its reviews carry." }
+            }
+          }
+        }
       }
     },
     "project_layer": {

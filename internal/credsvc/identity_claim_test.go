@@ -392,8 +392,9 @@ func (f *claimFixture) identityLines(t *testing.T) []map[string]any {
 // the ticket must have nowhere to land (R2).
 //
 // The status is the audit's own closed vocabulary and not the contract's code
-// the caller is answered (identityAuditStatus): audit.go's validErrorType is
-// the older ten and no task of this plan edits that file.
+// the caller is answered (identityAuditStatus): audit.go's validErrorType
+// carries the wire's own codes and not the identity wire's, and no task of this
+// plan edits that file.
 func wantIdentityLine(t *testing.T, line map[string]any, run, repository, status string) {
 	t.Helper()
 	checkAuditShape(t, line)

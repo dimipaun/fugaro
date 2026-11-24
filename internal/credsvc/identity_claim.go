@@ -490,9 +490,10 @@ func (s *Server) refuseIdentityCall(ctx context.Context, w http.ResponseWriter, 
 // RefusalIdentityRefused and its siblings).
 //
 // The audit's status is a closed vocabulary (audit.go's validErrorType lists
-// the wire's older ten) and the conventions of this plan say no task edits that
-// file: the identity codes are the CLI's to branch on and the line's to
-// classify, so a refusal here is recorded as the class of thing it is. The
+// the wire's codes and not the identity wire's) and the conventions of this
+// plan say no task edits that file: the identity codes are the CLI's to branch
+// on and the line's to classify, so a refusal here is recorded as the class of
+// thing it is. The
 // class is the refusal's own HTTP status, which the route has already decided —
 // 503 is this service's own failure, 400 is a request this contract does not
 // read, and 403 is a run whose identity is not this caller's. There is no case
