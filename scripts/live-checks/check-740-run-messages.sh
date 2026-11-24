@@ -37,12 +37,14 @@
 # takes the REAL account of the job the run landed on (the record's own
 # `execution`, then `gcloud run jobs describe`) — and, where the installation
 # deploys one, the account of a shared project job — and asks the IAM Policy
-# Troubleshooter whether that account holds `storage.objects.create` on a
-# message object. It must be denied (D2941): both accounts hold
-# `roles/storage.objectViewer` on `tokens/`, which carries no write at all. A
-# throwaway account given only `objectViewer` would prove nothing — the role
-# cannot write by definition — which is why the accounts this check asks about
-# are the installation's own.
+# Troubleshooter whether that account holds `storage.objects.create` on the runs
+# bucket. It must be denied (D2941): both accounts hold
+# `roles/storage.objectViewer` on `tokens/`, which carries no write at all. The
+# question is at BUCKET level because the Troubleshooter refuses an object-level
+# resource name, so the object-name fence is read off the condition the answer
+# explains rather than off the decision. A throwaway account given only
+# `objectViewer` would prove nothing — the role cannot write by definition —
+# which is why the accounts this check asks about are the installation's own.
 #
 # Usage:      bash scripts/live-checks/check-740-run-messages.sh \
 #               --installation <name> --repo <owner/name> [--recipe <name>] \
@@ -633,9 +635,10 @@ def cmd_record(path):
             # quiet point was NOT found, and where a forced stop left a session
             # that could not be resumed.
             clip(e.get("reason") or ""),
-            # The object the message is, as the store names it. The check asks
-            # the Policy Troubleshooter about this one, so the resource in the
-            # answer is an object that really exists under tokens/.
+            # The object the message is, as the store names it. The check names
+            # it in the rows as the object the fence is about; the question posed
+            # to the Policy Troubleshooter is the bucket, because an object-level
+            # resource name is refused.
             clip(e.get("object") or "", 300),
         ))
 
@@ -644,7 +647,9 @@ def cmd_job(path):
     """`gcloud run jobs describe --format=json`: the job's own service account.
     That account, and never a throwaway one, is the principal the Policy
     Troubleshooter is asked about: the question is whether the account a run of
-    this installation really runs as may write a message object."""
+    this installation really runs as holds storage.objects.create on the runs
+    bucket (the object-name fence beside it is read from the answer's explained
+    condition)."""
     doc = load(path)
     spec = job_spec(doc)
     print("name=%s" % clip((doc.get("metadata") or {}).get("name") or ""))
@@ -678,7 +683,16 @@ def cmd_troubleshoot(path):
     spellings the API has carried it in -- v3 answers `accessDecision` and v1
     answers `access` -- and anything that is not one of the answers this check
     knows is reported as it stands, so a run that could not measure prints what
-    it got rather than a guess."""
+    it got rather than a guess.
+
+    The `fence` line is the other half, and the half the question is asked about
+    here: the resource is the BUCKET (the API refuses an object-level full
+    resource name), so the condition on the object name -- the tokens/ prefix
+    fence D2941 pins -- is not evaluated by the decision. What the answer does
+    explain is the binding's own condition, wherever the payload carries one
+    (v3 `explainedPolicies[].explainedBindings[]`, v1 `policy.bindings[]`, and
+    any nested `bindings`), and the rows report that text instead of a verdict
+    about an object."""
     doc = load(path)
     decision = one(doc, "accessDecision", "access")
     if isinstance(decision, dict):
@@ -689,6 +703,34 @@ def cmd_troubleshoot(path):
     if errors:
         first = errors[0] if isinstance(errors[0], dict) else {}
         print("problem=%s" % clip(first.get("message") or first.get("reason") or ""))
+    conditions = []
+    walk_conditions(doc, conditions)
+    seen = []
+    for text in conditions:
+        text = " ".join(text.split())
+        if text and text not in seen:
+            seen.append(text)
+    print("conditions=%d" % len(seen))
+    print("fence=%s" % clip(" ; ".join(seen), 600))
+
+
+def walk_conditions(node, found):
+    """Every binding condition's text in a troubleshooter payload, in the order
+    the payload carries it. The walk is shape-tolerant on purpose: the payload's
+    binding lists sit under different keys across the v1 and v3 spellings, and a
+    reader that only knew one of them would report no fence on the other."""
+    if isinstance(node, dict):
+        cond = node.get("condition")
+        if isinstance(cond, dict):
+            for key in ("expression", "title", "description"):
+                text = cond.get(key)
+                if isinstance(text, str):
+                    found.append(text)
+        for value in node.values():
+            walk_conditions(value, found)
+    elif isinstance(node, list):
+        for value in node:
+            walk_conditions(value, found)
 
 
 def cmd_lifecycle(path):
@@ -907,12 +949,12 @@ PY
   fi
   SLUG=${RUN_REF%%/*}
   LAUNCH_REPO=${LAUNCH_REPO:-$REPO}
-  # The object the Policy Troubleshooter is asked about. The plain message's own
-  # key replaces this one when the record names it; this is the key the store
-  # gives a run's first message (internal/runmsg.Path), used only when the record
-  # could not be read. Which object it is does not change the answer — the grant
-  # on tokens/ is pattern-wide (gcp.TokenBucketCondition) — but a real key is
-  # what the owner would type by hand.
+  # The object the fence is about, for the rows to NAME: the key the store gives
+  # a run's first message (internal/runmsg.Path). It never reaches a command the
+  # owner copies — the plan's Never list forbids one built from result.json — and
+  # the Troubleshooter itself is asked about the BUCKET, which refuses an
+  # object-level resource name; this is the object the fence is about, not a
+  # resource the check passes.
   MESSAGE_KEY="tokens/${SLUG}/${RUN_ID}/messages/0001.msg.json"
   fact run-launched PASS "fugaro run launched ${RUN_REF} (${RUN_ID}) on ${LAUNCH_REPO}, status ${LAUNCH_STATUS:-unknown}: the run is this check's own, and every row below is that one run and no other"
 }
@@ -1085,9 +1127,10 @@ step_record() {
   # a message and before the turn it resumes runs (the --now row).
   RECORD_STAGE=$(field_of stage "$REC")
   RECORD_STATUS=$(field_of status "$REC")
-  # The object the plain message really is, when the record names it: the
-  # Policy Troubleshooter is then asked about an object that exists, rather than
-  # about the key the store would give a run's first message.
+  # The object the plain message really is, when the record names it. It is read
+  # here to NAME the object in the rows and never to build a command from: the
+  # plan's Never list forbids a copy-paste command built from result.json, and
+  # the resource the Troubleshooter is asked about is the bucket anyway.
   if [ -n "${SEQ_PLAIN:-}" ]; then
     local object
     object=$(msg_field "$SEQ_PLAIN" 6 "$SCRATCH/record.txt")
@@ -1229,8 +1272,12 @@ step_messages() {
 # as. The record's own `execution` names the job and the location it ran in, and
 # `gcloud run jobs describe` names that job's service account; the Policy
 # Troubleshooter is then asked, for that account and not for a throwaway one,
-# whether it may create a message object. It must be denied: a job account holds
-# `roles/storage.objectViewer` on tokens/ and nothing more (D2941).
+# whether it holds `storage.objects.create` on the runs bucket. It must be
+# denied: a job account holds `roles/storage.objectViewer` on tokens/ and nothing
+# more (D2941), and that role carries no create at all. The question is at BUCKET
+# level because the Troubleshooter refuses an object-level name; the object-name
+# fence is read off the answer's explained binding condition, which the row
+# reports as it stands.
 step_workflow_iam() {
   if [ -z "${EXECUTION:-}" ]; then
     unmeasured iam-workflow-job "the record carries no execution, so this check cannot name the job the run landed on and cannot ask about its account. Read it yourself with 'gcloud storage cat gs://${BUCKET}/runs/${SLUG:-<slug>}/${RUN_ID:-<run>}/result.json'"
@@ -1257,18 +1304,18 @@ step_workflow_iam() {
   }
   ask_troubleshooter "$WORKFLOW_SA" "$SCRATCH/ts-job"
   if [ -z "$TS_DECISION" ]; then
-    unmeasured iam-workflow-job "the Policy Troubleshooter did not answer for the job's own account ${WORKFLOW_SA} on a message object (${TS_NOTE:-no answer}), so D2941's fence was NOT measured. Ask it yourself: gcloud policy-troubleshoot iam troubleshoot --permission=storage.objects.create --principal-email=${WORKFLOW_SA} --resource=\"//storage.googleapis.com/projects/_/buckets/${BUCKET}/objects/${MESSAGE_KEY}\" --project=${PROJECT} --format=json --quiet"
+    unmeasured iam-workflow-job "the Policy Troubleshooter did not answer for the job's own account ${WORKFLOW_SA} (${TS_NOTE:-no answer}), so D2941's fence was NOT measured. ${TS_ASK}"
     return 0
   fi
   case "$TS_DECISION" in
   NOT_GRANTED)
-    fact iam-workflow-job PASS "the IAM Policy Troubleshooter says NOT_GRANTED for storage.objects.create by ${WORKFLOW_SA} — the job's OWN service account, the one the run this check launched really ran as (${EXEC_JOB}) — on //storage.googleapis.com/projects/_/buckets/${BUCKET}/objects/${MESSAGE_KEY}. That is D2941's fence read off the installation's own account and not off a throwaway one: a job account holds roles/storage.objectViewer on tokens/, which carries no write at all${TS_NOTE:+ (${TS_NOTE})}"
+    fact iam-workflow-job PASS "the IAM Policy Troubleshooter says NOT_GRANTED for storage.objects.create by ${WORKFLOW_SA} — the job's OWN service account, the one the run this check launched really ran as (${EXEC_JOB}) — on the runs bucket //storage.googleapis.com/projects/_/buckets/${BUCKET}. That is D2941's fence read off the installation's own account and not off a throwaway one: a job account holds roles/storage.objectViewer on tokens/, which carries no write at all. The question is asked at BUCKET level — the Troubleshooter refuses an object-level resource name (INVALID_RESOURCE_NAME), so the object-name condition is not evaluated by this answer — and ${TS_FENCE}${TS_NOTE:+ (${TS_NOTE})}. The object the fence is about is ${MESSAGE_KEY}"
     ;;
   GRANTED)
-    fact iam-workflow-job FAIL "the IAM Policy Troubleshooter says GRANTED for storage.objects.create by ${WORKFLOW_SA} — the account the run this check launched really ran as — on //storage.googleapis.com/projects/_/buckets/${BUCKET}/objects/${MESSAGE_KEY}: an agent running as its job account can write a message into its own inbox, and, on a shared project job, into another repository's run. D2941's whole fence is that this is denied (its grant on tokens/ is objectViewer, gcp.TokenBucketCondition); read the bucket's IAM with 'gcloud storage buckets get-iam-policy gs://${BUCKET} --project=${PROJECT}'${TS_NOTE:+ (${TS_NOTE})}"
+    fact iam-workflow-job FAIL "the IAM Policy Troubleshooter says GRANTED for storage.objects.create by ${WORKFLOW_SA} — the account the run this check launched really ran as — on the runs bucket //storage.googleapis.com/projects/_/buckets/${BUCKET}: an agent running as its job account can write an object on the bucket the messages live in, and, on a shared project job, into another repository's run. D2941's whole fence is that this is denied (its grant on tokens/ is objectViewer, gcp.TokenBucketCondition, which carries no create at all); the question is at BUCKET level, so ${TS_FENCE}. Read the bucket's IAM with 'gcloud storage buckets get-iam-policy gs://${BUCKET} --project=${PROJECT}'${TS_NOTE:+ (${TS_NOTE})}"
     ;;
   *)
-    unmeasured iam-workflow-job "the IAM Policy Troubleshooter answered '${TS_DECISION}' for storage.objects.create by ${WORKFLOW_SA} on //storage.googleapis.com/projects/_/buckets/${BUCKET}/objects/${MESSAGE_KEY}, which is neither GRANTED nor NOT_GRANTED: the answer this check reads did not settle D2941's fence${TS_NOTE:+ (${TS_NOTE})}"
+    unmeasured iam-workflow-job "the IAM Policy Troubleshooter answered '${TS_DECISION}' for storage.objects.create by ${WORKFLOW_SA} on the runs bucket //storage.googleapis.com/projects/_/buckets/${BUCKET}, which is neither GRANTED nor NOT_GRANTED: the answer this check reads did not settle D2941's fence. Asked at BUCKET level, ${TS_FENCE}${TS_NOTE:+ (${TS_NOTE})}"
     ;;
   esac
 }
@@ -1310,18 +1357,18 @@ step_project_iam() {
   esac
   ask_troubleshooter "$sa" "$SCRATCH/ts-project"
   if [ -z "$TS_DECISION" ]; then
-    unmeasured iam-project-job "the Policy Troubleshooter did not answer for the shared project job's account ${sa} on a message object (${TS_NOTE:-no answer}), so D2941's wider case was NOT measured. Ask it yourself: gcloud policy-troubleshoot iam troubleshoot --permission=storage.objects.create --principal-email=${sa} --resource=\"//storage.googleapis.com/projects/_/buckets/${BUCKET}/objects/${MESSAGE_KEY}\" --project=${PROJECT} --format=json --quiet"
+    unmeasured iam-project-job "the Policy Troubleshooter did not answer for the shared project job's account ${sa} (${TS_NOTE:-no answer}), so D2941's wider case was NOT measured. ${TS_ASK}"
     return 0
   fi
   case "$TS_DECISION" in
   NOT_GRANTED)
-    fact iam-project-job PASS "the IAM Policy Troubleshooter says NOT_GRANTED for storage.objects.create by ${sa} — the account of ${name}, the installation's own shared project job (of ${PROJECT_JOBS} deployed) — on //storage.googleapis.com/projects/_/buckets/${BUCKET}/objects/${MESSAGE_KEY}. A project job's grant on tokens/ is roles/storage.objectViewer with no slug (gcp.ProjectTokenBucketCondition), so the wider reach it carries is over reads and never over writes${TS_NOTE:+ (${TS_NOTE})}"
+    fact iam-project-job PASS "the IAM Policy Troubleshooter says NOT_GRANTED for storage.objects.create by ${sa} — the account of ${name}, the installation's own shared project job (of ${PROJECT_JOBS} deployed) — on the runs bucket //storage.googleapis.com/projects/_/buckets/${BUCKET}. A project job's grant on tokens/ is roles/storage.objectViewer with no slug (gcp.ProjectTokenBucketCondition), so the wider reach it carries is over reads and never over writes. The question is asked at BUCKET level — the Troubleshooter refuses an object-level resource name (INVALID_RESOURCE_NAME), so the object-name condition is not evaluated by this answer — and ${TS_FENCE}${TS_NOTE:+ (${TS_NOTE})}"
     ;;
   GRANTED)
-    fact iam-project-job FAIL "the IAM Policy Troubleshooter says GRANTED for storage.objects.create by ${sa}, the account of the shared project job ${name}, on //storage.googleapis.com/projects/_/buckets/${BUCKET}/objects/${MESSAGE_KEY}: an agent on a shared project job can write a message into ANOTHER repository's running run — the reach D2941 exists to bound. Read the bucket's IAM with 'gcloud storage buckets get-iam-policy gs://${BUCKET} --project=${PROJECT}'${TS_NOTE:+ (${TS_NOTE})}"
+    fact iam-project-job FAIL "the IAM Policy Troubleshooter says GRANTED for storage.objects.create by ${sa}, the account of the shared project job ${name}, on the runs bucket //storage.googleapis.com/projects/_/buckets/${BUCKET}: an agent on a shared project job can write an object into ANOTHER repository's running run — the reach D2941 exists to bound. The question is at BUCKET level, so ${TS_FENCE}. Read the bucket's IAM with 'gcloud storage buckets get-iam-policy gs://${BUCKET} --project=${PROJECT}'${TS_NOTE:+ (${TS_NOTE})}"
     ;;
   *)
-    unmeasured iam-project-job "the IAM Policy Troubleshooter answered '${TS_DECISION}' for storage.objects.create by ${sa} (the shared project job ${name}) on //storage.googleapis.com/projects/_/buckets/${BUCKET}/objects/${MESSAGE_KEY}, which is neither GRANTED nor NOT_GRANTED: the answer did not settle D2941's wider case${TS_NOTE:+ (${TS_NOTE})}"
+    unmeasured iam-project-job "the IAM Policy Troubleshooter answered '${TS_DECISION}' for storage.objects.create by ${sa} (the shared project job ${name}) on the runs bucket //storage.googleapis.com/projects/_/buckets/${BUCKET}, which is neither GRANTED nor NOT_GRANTED: the answer did not settle D2941's wider case. Asked at BUCKET level, ${TS_FENCE}${TS_NOTE:+ (${TS_NOTE})}"
     ;;
   esac
 }
@@ -1329,28 +1376,42 @@ step_project_iam() {
 # ask_troubleshooter PRINCIPAL PREFIX — the one call this check makes that is not
 # a plain read, and it reads only: the IAM Policy Troubleshooter answers whether
 # a principal holds a permission on a resource, and changes nothing. The command
-# group is `policy-troubleshoot` — the `troubleshoot` verb under its own group,
-# `gcloud policy-troubleshoot iam troubleshoot`, never a `policy-troubleshooter`
-# group, which gcloud does not know — and it is tried on gcloud's GA surface
-# first and on its alpha surface after, because the verb has moved between them
-# across gcloud releases: a gcloud that does not know the GA verb says so at
-# once, and an answer that is not a document is reported as the note rather than
-# as a fence that is absent. `--quiet` is passed on both surfaces: without it the
-# call stops at a prompt a session with no terminal cannot answer, which is how
-# every row here came out UNVERIFIED before the flag was added.
+# group is `policy-troubleshoot` (`gcloud policy-troubleshoot iam RESOURCE`), the
+# RESOURCE is a POSITIONAL argument — `--resource=` is not a flag gcloud has, and
+# a call that passes one fails with 'unrecognized arguments' — and it is the
+# BUCKET, because the Troubleshooter refuses an object-level full resource name
+# (INVALID_ARGUMENT INVALID_RESOURCE_NAME, accessTuple.fullResourceName) and
+# accepts `//storage.googleapis.com/projects/_/buckets/<bucket>`. The object-name
+# fence the plan pins (the tokens/ prefix) is therefore not evaluated at the
+# level asked: what the answer explains is the binding's own condition, and the
+# rows report that text rather than a verdict about an object. The call is tried
+# on gcloud's GA surface first and on its alpha surface after, because the verb
+# has moved between them across gcloud releases: a gcloud that does not know the
+# GA verb says so at once, and an answer that is not a document is reported as
+# the note rather than as a fence that is absent. `--quiet` is passed on both
+# surfaces: without it the call stops at a prompt a session with no terminal
+# cannot answer, which is how every row here came out UNVERIFIED before the flag
+# was added.
 TS_DECISION=""
 TS_NOTE=""
+TS_ASK=""
+TS_FENCE=""
 ask_troubleshooter() { # ask_troubleshooter PRINCIPAL PREFIX
   local principal=$1 prefix=$2 status=0 verb
+  local resource="//storage.googleapis.com/projects/_/buckets/${BUCKET}"
   TS_DECISION=""
   TS_NOTE=""
+  TS_FENCE=""
+  # What the owner is handed when the answer does not come. It is built from the
+  # bucket the installation records and the account the documents name, never
+  # from a value read out of the run's record.
+  TS_ASK="Ask it yourself: gcloud policy-troubleshoot iam ${resource} --permission=storage.objects.create --principal-email=${principal} --project=${PROJECT} --format=json --quiet"
   for verb in "" "alpha "; do
     status=0
     run_call "$CALL_SECONDS" "$prefix.out" "$prefix.err" \
-      gcloud ${verb}policy-troubleshoot iam troubleshoot \
+      gcloud ${verb}policy-troubleshoot iam "$resource" \
       --permission=storage.objects.create \
       --principal-email="$principal" \
-      --resource="//storage.googleapis.com/projects/_/buckets/${BUCKET}/objects/${MESSAGE_KEY}" \
       --project="$PROJECT" --format=json --quiet || status=$?
     [ "$status" = 0 ] && break
     # A gcloud that does not know the verb at all says so on its own first line;
@@ -1358,12 +1419,22 @@ ask_troubleshooter() { # ask_troubleshooter PRINCIPAL PREFIX
     grep -qiE 'unknown command|Invalid choice|not found|no such group' "$prefix.err" || break
   done
   if [ "$status" != 0 ]; then
-    TS_NOTE="gcloud exited ${status}: $(last_line "$prefix.err")"
+    # An API that was never enabled on the project is the one refusal whose fix
+    # is another command rather than another permission: the row says which one.
+    if grep -qiE 'SERVICE_DISABLED|has not been used in project|is not enabled|is disabled' "$prefix.err" 2>/dev/null; then
+      local reason=""
+      grep -qi 'SERVICE_DISABLED' "$prefix.err" 2>/dev/null && reason=", reason SERVICE_DISABLED"
+      TS_NOTE="the Policy Troubleshooter API (policytroubleshooter.googleapis.com) is NOT enabled on ${PROJECT}${reason} (gcloud exited ${status}: $(last_line "$prefix.err"))"
+      TS_ASK="Enable it first: gcloud services enable policytroubleshooter.googleapis.com --project=${PROJECT} — then ask: gcloud policy-troubleshoot iam ${resource} --permission=storage.objects.create --principal-email=${principal} --project=${PROJECT} --format=json --quiet"
+    else
+      TS_NOTE="gcloud exited ${status}: $(last_line "$prefix.err")"
+    fi
     return 0
   fi
   local answer
   answer=$(reader troubleshoot "$prefix.out" 2>/dev/null || true)
   TS_DECISION=$(field_of decision "$answer")
+  TS_FENCE=$(field_of fence "$answer")
   case "$TS_DECISION" in
   "" | none)
     TS_DECISION=""
@@ -1373,6 +1444,15 @@ ask_troubleshooter() { # ask_troubleshooter PRINCIPAL PREFIX
     TS_NOTE="errors=$(field_of errors "$answer")"
     ;;
   esac
+  # The object-name fence is not evaluated at bucket level, so what the row can
+  # honestly report is the condition text the answer explains; where it explains
+  # none, the row says the fence was not read off it rather than implying a
+  # verdict about the object.
+  if [ -z "$TS_FENCE" ]; then
+    TS_FENCE="the answer explained no binding condition whose text this check can read, so the tokens/ prefix fence was NOT read off it"
+  else
+    TS_FENCE="the explained binding's own condition reads: ${TS_FENCE}"
+  fi
 }
 
 # step_lifecycle: U4, on the applied bucket. The message objects live under
@@ -1508,9 +1588,12 @@ What the run will do, in this order:
      the row quotes the reason it wrote instead when it did not;
   6. read the record's 'execution', describe that job with 'gcloud run jobs
      describe' and take the service account it really ran as, then ask the IAM
-     Policy Troubleshooter whether THAT account holds storage.objects.create on a
-     message object: it must be denied (D2941 — a job account's grant on tokens/ is
-     objectViewer, which carries no write);
+     Policy Troubleshooter whether THAT account holds storage.objects.create on
+     the runs bucket: it must be denied (D2941 — a job account's grant on tokens/ is
+     objectViewer, which carries no write). The question is asked of the BUCKET
+     (gcloud policy-troubleshoot iam <resource> takes the resource positionally,
+     and the Troubleshooter refuses an object-level name), so the object-name
+     fence is read off the condition the answer explains and the row reports it;
   7. ask the same question about the account of a shared project job, where
      'gcloud run jobs list' shows the installation deploys one (its reach on tokens/
      is wider and still read-only);

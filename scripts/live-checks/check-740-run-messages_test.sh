@@ -184,6 +184,52 @@ serve() { # serve FILE STATUSFILE
   [ ! -f "$2" ] || exit "$(cat "$2")"
   cat "$1"
 }
+ts_serve() { # ts_serve SURFACE RESOURCE ARGV... -- the Troubleshooter's own surface
+  # The argv a real gcloud has for `policy-troubleshoot iam` is `iam` and then
+  # the RESOURCE, positionally: a `--resource=` flag is refused ('unrecognized
+  # arguments'), and the API refuses an object-level full resource name
+  # (INVALID_ARGUMENT INVALID_RESOURCE_NAME) while accepting the bucket. Both
+  # refusals are here, so a check that asks the wrong shape gets nothing.
+  local surface=$1 resource=$2
+  shift 2
+  case " $* " in
+  *" --resource="*)
+    printf 'ERROR: (gcloud) unrecognized arguments: --resource=\n' >&2
+    exit 2
+    ;;
+  esac
+  case " $* " in
+  *" --quiet "*) ;;
+  *)
+    printf 'fake gcloud: policy-troubleshoot without --quiet: This prompt could not be answered because you are not in an interactive session\n' >&2
+    exit 64
+    ;;
+  esac
+  case "$resource" in
+  troubleshoot)
+    printf 'fake gcloud: there is no troubleshoot verb under iam: the resource IS the positional argument (gcloud policy-troubleshoot iam RESOURCE)\n' >&2
+    exit 64
+    ;;
+  *"/objects/"*)
+    printf 'ERROR: (google.cloud.policytroubleshooter.v3.PolicyTroubleshooter) INVALID_ARGUMENT: accessTuple.fullResourceName is invalid: %s\n' "$resource" >&2
+    exit 1
+    ;;
+  //storage.googleapis.com/projects/_/buckets/*) ;;
+  *)
+    printf 'fake gcloud: unexpected troubleshooter resource %s\n' "${resource:-none}" >&2
+    exit 64
+    ;;
+  esac
+  # ts.ga.status makes the GA surface answer the way a gcloud that does not know
+  # the group does, so a case can drive the check onto the alpha surface. The
+  # alpha surface has no such file: it is the surface the fallback reaches.
+  if [ "$surface" = ga ] && [ -f "$FAKE740_DIR/ts.ga.status" ]; then
+    printf "ERROR: (gcloud) Invalid choice: 'policy-troubleshoot'.\n" >&2
+    exit "$(cat "$FAKE740_DIR/ts.ga.status")"
+  fi
+  [ ! -f "$FAKE740_DIR/ts.err" ] || cat "$FAKE740_DIR/ts.err" >&2
+  serve "$FAKE740_DIR/ts.out" "$FAKE740_DIR/ts.status"
+}
 case "${1:-}" in
 run)
   case "${2:-}" in
@@ -214,37 +260,22 @@ storage)
   esac
   ;;
 policy-troubleshoot)
-  # The verb's real name is 'gcloud policy-troubleshoot iam troubleshoot' -- the
-  # `troubleshoot` verb under the `policy-troubleshoot` group, not a
-  # `policy-troubleshooter` group -- and the call must carry --quiet, because
-  # without it gcloud stops at a prompt a session with no terminal cannot answer.
-  # The fake refuses a call that asks the old group or leaves --quiet off, so the
-  # test catches either mistake the way the owner's gcloud did.
-  case " $* " in
-  *" --quiet "*) ;;
-  *)
-    printf 'fake gcloud: policy-troubleshoot without --quiet: This prompt could not be answered because you are not in an interactive session\n' >&2
-    exit 64
-    ;;
-  esac
-  # ts.ga.status makes the GA surface answer the way a gcloud that does not know
-  # the verb does, so a case can drive the check onto the alpha surface.
-  if [ -f "$FAKE740_DIR/ts.ga.status" ]; then
-    printf "ERROR: (gcloud) Invalid choice: 'policy-troubleshoot'.\n" >&2
-    exit "$(cat "$FAKE740_DIR/ts.ga.status")"
-  fi
-  serve "$FAKE740_DIR/ts.out" "$FAKE740_DIR/ts.status"
+  # `gcloud policy-troubleshoot iam RESOURCE`: the resource is a POSITIONAL
+  # argument -- `--resource=` is not a flag gcloud has, and a `troubleshoot` verb
+  # under `iam` does not exist -- and it must be the BUCKET, because the API
+  # refuses an object-level full resource name. ts_serve holds the call to
+  # exactly that argv, so the fake refuses the invented verb, a --resource= flag,
+  # an object-level name and a call without --quiet, each the way a real gcloud
+  # or the real API does. ts.ga.status makes the GA surface answer the way a
+  # gcloud that does not know the group does, so a case can drive the check onto
+  # the alpha surface.
+  [ "${2:-}" = iam ] || { printf 'fake gcloud: policy-troubleshoot takes iam and then the RESOURCE, got %s\n' "${2:-}" >&2; exit 64; }
+  ts_serve ga "${3:-}" "$@"
   ;;
 alpha)
   [ "${2:-}" = policy-troubleshoot ] || { printf 'fake gcloud: unexpected alpha %s\n' "${2:-}" >&2; exit 64; }
-  case " $* " in
-  *" --quiet "*) ;;
-  *)
-    printf 'fake gcloud: alpha policy-troubleshoot without --quiet: This prompt could not be answered because you are not in an interactive session\n' >&2
-    exit 64
-    ;;
-  esac
-  serve "$FAKE740_DIR/ts.out" "$FAKE740_DIR/ts.status"
+  [ "${3:-}" = iam ] || { printf 'fake gcloud: alpha policy-troubleshoot takes iam and then the RESOURCE, got %s\n' "${3:-}" >&2; exit 64; }
+  ts_serve alpha "${4:-}" "$@"
   ;;
 policy-troubleshooter)
   # Not a command group on any gcloud: the old spelling this check must never ask.
@@ -345,8 +376,16 @@ EOF
   fi
 }
 
-write_ts() { # dir DECISION
-  printf '{"accessDecision":"%s","errors":[]}\n' "$2" >"$1/state/ts.out"
+write_ts() { # dir DECISION [no-condition]
+  # The answer explains the binding's own condition -- the tokens/ prefix fence
+  # on the object name -- which is what a question asked at BUCKET level leaves
+  # the row to report. A case that wants an answer explaining no condition passes
+  # 'no-condition'.
+  local cond=""
+  if [ "${3:-}" != no-condition ]; then
+    cond=$(printf ',"explainedPolicies":[{"explainedBindings":[{"role":"roles/storage.objectViewer","members":["serviceAccount:%s"],"condition":{"expression":"resource.name.startsWith(\\"projects/_/buckets/%s/objects/tokens/\\")"}}]}]' "$WORKFLOW_SA" "$BUCKET")
+  fi
+  printf '{"accessDecision":"%s","errors":[]%s}\n' "$2" "$cond" >"$1/state/ts.out"
 }
 
 write_bucket() { # dir yes|no-token|no-rule|not-delete
@@ -484,17 +523,21 @@ case_healthy() {
   expect_contains "$second" "--now" "healthy: the second message is the --now one"
   expect_absent "$(printf '%s\n' "$tells" | sed -n '3p')" "tell" "healthy: exactly two messages are sent"
   # D2941 is asked about the REAL job account, and about the shared project
-  # job's own account: the two calls name the accounts from the documents, and
-  # the resource is an object under tokens/ that really exists.
-  expect_calls "policy-troubleshoot iam troubleshoot --permission=storage.objects.create" \
-    "healthy: the Policy Troubleshooter is what answers D2941"
+  # job's own account: the two calls name the accounts from the documents, the
+  # resource is POSITIONAL and it is the BUCKET (the API refuses an object-level
+  # name), and the fence the question cannot evaluate at that level comes back as
+  # the condition the answer explains.
+  expect_calls "policy-troubleshoot iam //storage.googleapis.com/projects/_/buckets/$BUCKET --permission=storage.objects.create" \
+    "healthy: the Policy Troubleshooter is asked about the bucket, the resource positional"
   expect_calls "--quiet" "healthy: the call carries --quiet, or gcloud stops at a prompt no session can answer"
   expect_no_calls "policy-troubleshooter " "healthy: the old 'policy-troubleshooter' group is never asked"
   expect_no_calls "alpha " "healthy: the GA surface answers, so no alpha fallback is made"
+  expect_no_calls " --resource=" "healthy: the resource is positional; --resource= is not a flag gcloud has"
+  expect_no_calls "/objects/" "healthy: no object-level resource name is asked"
   expect_calls "--principal-email=$WORKFLOW_SA" "healthy: the workflow job's OWN account is asked about"
   expect_calls "--principal-email=$PROJECT_SA" "healthy: the shared project job's own account is asked about"
-  expect_calls "//storage.googleapis.com/projects/_/buckets/$BUCKET/objects/tokens/acme-widgets/$RUN_ID/messages/0001.msg.json" \
-    "healthy: the resource is the object the record names"
+  expect_contains "$out" "resource.name.startsWith" "healthy: the row reports the binding condition the answer explains"
+  expect_contains "$out" "object-name condition is not evaluated" "healthy: the row says the object-name fence is not evaluated at bucket level"
   expect_calls "storage buckets describe gs://$BUCKET" "healthy: the applied bucket's own configuration is read"
 }
 
@@ -939,23 +982,41 @@ case_troubleshooter_alpha() {
   run740 --installation "$INSTALLATION" --repo "$REPO"
   expect_status "$status" 0 "ts-alpha"
   expect_fact iam-workflow-job PASS "ts-alpha"
-  expect_calls "alpha policy-troubleshoot iam troubleshoot" "ts-alpha: the alpha surface is asked"
+  expect_calls "alpha policy-troubleshoot iam //storage.googleapis.com/projects/_/buckets/$BUCKET" "ts-alpha: the alpha surface is asked, resource positional"
   expect_calls "--quiet" "ts-alpha: the alpha call carries --quiet too"
 }
 
 case_troubleshooter_silent() {
   setup_case ts-silent
-  # Neither surface answers -- the GA verb is not known and the alpha surface is
+  # Neither surface answers -- the GA group is not known and the alpha surface is
   # refused too -- so both rows are UNVERIFIED, and the command each hands the
-  # owner to ask by hand is the one that works: the real group name and --quiet.
+  # owner to ask by hand is the one that works: the real group, the resource
+  # positional, and --quiet.
   printf '2\n' >"$dir/state/ts.ga.status"
   printf '5\n' >"$dir/state/ts.status"
   run740 --installation "$INSTALLATION" --repo "$REPO"
   expect_status "$status" 3 "ts-silent"
   expect_fact iam-workflow-job UNVERIFIED "ts-silent"
   expect_fact iam-project-job UNVERIFIED "ts-silent"
-  expect_contains "$out" "Ask it yourself: gcloud policy-troubleshoot iam troubleshoot" "ts-silent: the row hands over the command that works"
+  expect_contains "$out" "Ask it yourself: gcloud policy-troubleshoot iam //storage.googleapis.com/projects/_/buckets/$BUCKET --permission=storage.objects.create" "ts-silent: the row hands over the command that works, resource positional"
   expect_contains "$out" "--quiet" "ts-silent: the command it hands over carries --quiet"
+  expect_absent "$out" "--resource=" "ts-silent: the row must not hand over the invented --resource= flag"
+}
+
+case_troubleshooter_disabled() {
+  setup_case ts-disabled
+  # The API was never enabled on the project: gcloud answers SERVICE_DISABLED,
+  # which is not a 'the verb moved' answer, so the alpha surface is not tried --
+  # and the row names the one command that fixes it rather than asking again.
+  printf '1\n' >"$dir/state/ts.status"
+  printf 'ERROR: (gcloud.policy-troubleshoot.iam) PERMISSION_DENIED: Policy Troubleshooter API (policytroubleshooter.googleapis.com) has not been used in project prj-sandbox740 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/policytroubleshooter.googleapis.com/overview?project=prj-sandbox740 then retry. reason: SERVICE_DISABLED\n' >"$dir/state/ts.err"
+  run740 --installation "$INSTALLATION" --repo "$REPO"
+  expect_status "$status" 3 "ts-disabled"
+  expect_fact iam-workflow-job UNVERIFIED "ts-disabled"
+  expect_fact iam-project-job UNVERIFIED "ts-disabled"
+  expect_contains "$out" "SERVICE_DISABLED" "ts-disabled: the row quotes the refusal the API gave"
+  expect_contains "$out" "gcloud services enable policytroubleshooter.googleapis.com --project=$GCP_PROJECT" "ts-disabled: the row names the one command that enables the API"
+  expect_no_calls "alpha policy-troubleshoot" "ts-disabled: a disabled API is not a moved verb, so the alpha surface is not tried"
 }
 
 case_unknown_argument() {
@@ -1056,6 +1117,7 @@ t case_no_args
 t case_repo_needs_a_slash
 t case_troubleshooter_alpha
 t case_troubleshooter_silent
+t case_troubleshooter_disabled
 t case_unknown_argument
 t case_dry_run
 t case_help
