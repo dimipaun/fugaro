@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -183,7 +184,15 @@ func coverage(sources ...routing.Source) []creds.GrantSource {
 // walk built over it exactly as server.go builds it.
 func (s *svc) walk(t *testing.T, body string, binding *slipBinding) *chainWalk {
 	t.Helper()
-	ctx := context.Background()
+	return s.walkIn(t, context.Background(), body, binding)
+}
+
+// walkIn is walk under a call's own context, which is what a test needs when the
+// call's SCOPE is not the installation's: the offering a chain is narrowed by is
+// read out of the call's scope (C1's OfferingReader), so a member's own chain is
+// only reachable with the scope on the context (withScope).
+func (s *svc) walkIn(t *testing.T, ctx context.Context, body string, binding *slipBinding) *chainWalk {
+	t.Helper()
 	b, err := s.server.cfg.Bundles.Load(ctx)
 	if err != nil {
 		t.Fatalf("loading the fixture's bundle: %v", err)
@@ -873,4 +882,388 @@ func TestAChainProbeMayAskAnySourceItServes(t *testing.T) {
 		t.Errorf("a call the cascade serves may probe %d candidates, want the policy's own answer (%d)",
 			len(got), 1)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// 12. A chain is served out of the scope's offering and nothing wider
+// ---------------------------------------------------------------------------
+
+// TestAChainIsNarrowedByTheScopesOffering: a pool source is served from the pool
+// the SCOPE offers this call (C1's OfferingReader), and out of nothing wider.
+//
+// For an installation that is a no-op BY CONSTRUCTION — the offering is
+// b.Credentials() and a pool's members are read out of that same list
+// (poolOfferingOf) — so the case this pins is the one where it is not: a
+// WORKSPACE MEMBER, whose bundle is the member's own node and whose offering is
+// what the workspace's administrator shared with it. A member's published table
+// must never serve it a credential its own administrator did not share (R5, R8),
+// and the narrowing is the scope's and not a second rule of the walk's.
+//
+// The pool lists two members and the scope offers ONE, so the two readings differ
+// at the credential that serves: the walk must serve the second, and the first
+// must be recorded as a credential this call may not be served by rather than
+// vanishing.
+//
+// Each half builds its OWN fixture, and that is not tidiness: a serve places the
+// credential it chose for the run (R16), so a second call over one fixture would
+// be answered by the pool's next member whatever the offering said and both
+// halves would hold for the wrong reason.
+func TestAChainIsNarrowedByTheScopesOffering(t *testing.T) {
+	// The member's own shared node: the pool's SECOND member alone. The fixture's
+	// pool lists it second, so a walk that served the pool's first member would
+	// be serving a credential this scope never offered.
+	offered := poolOfferingWithout{{Name: testSecondPoolCredential, Tier: creds.TierA}}
+
+	t.Run("the walk serves what the scope offers", func(t *testing.T) {
+		pool := teamPool("")
+		table := routing.Table{{Match: testModel, Chain: []routing.Source{{Kind: routing.KindPool, Pool: pool.Name}}}}
+		s := chainFixture(t, table, pool)
+		sc := scopeWithout{Scope: installationScope{s: s.server}, offering: offered}
+		w := s.walkIn(t, withScope(context.Background(), sc), callBody("scope-offer"),
+			chainBinding(coverage(table[0].Chain...), ""))
+		if got := w.picked(t); got.Name != testSecondPoolCredential {
+			t.Errorf("the call was served by %q, want %q: the pool lists %q first, and this scope offers the second "+
+				"member alone (C1's OfferingReader)", got.Name, testSecondPoolCredential, testPoolCredential)
+		}
+		wantChainSkipped(t, w.plan, ReasonNotAdmitted)
+	})
+
+	t.Run("the answer's own line names what was served", func(t *testing.T) {
+		// The same narrowing end to end, through the front door: what a caller
+		// reads is the credential the answer's audit line names, and nothing of
+		// this is visible at the seam alone.
+		pool := teamPool("")
+		table := routing.Table{{Match: testModel, Chain: []routing.Source{{Kind: routing.KindPool, Pool: pool.Name}}}}
+		s := chainFixture(t, table, pool)
+		s.server.resolver = resolverWithout{inner: installationResolver{s: s.server}, offering: offered}
+		resp, body := s.call(t, callBody("scope-offer"))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the call is %d, want 200: %s", resp.StatusCode, body)
+		}
+		if got := auditField(s.onlyAuditLine(t), "credential"); got != testSecondPoolCredential {
+			t.Errorf("the answer's line names the credential %q, want %q: the scope's offering is the pool this call "+
+				"may be served from at all", got, testSecondPoolCredential)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// 13. A review call is never served by the chain
+// ---------------------------------------------------------------------------
+
+// TestAReviewCallIsNeverServedByTheChain: the review class's candidate list is
+// not this service's to narrow — the pairing has already resolved the ONE
+// credential the call may be served by, and the class buys no other
+// (reviewCandidates) — so a chain, which is a list this service chooses from,
+// must never serve it. Those two answers cannot both be honoured: the chain's
+// own order replaces the fixed tier order (R4), so a class the table served would
+// be served by the chain's first usable source whatever the pairing resolved.
+//
+// The call is therefore answered by the path it is answered by today, and the
+// table's answer about the class is CS13's to make: with the table's entry naming
+// the repository's own paid key, a review call served by the chain would go out
+// on that key, and it goes out on the pairing's account instead.
+func TestAReviewCallIsNeverServedByTheChain(t *testing.T) {
+	// The bundle holds both: the repository's own key (which the table's entry
+	// names) and the account the pairing resolves.
+	docs := append([]byte(config.ClaudeOAuthTokenPrefix+testAccount+": "+fakeCred(t, testAccount)+"\n"), chainBundleDoc(t)...)
+	s := newReviewSvcSpelled(t, testReviewSA, testReviewSA, func(s *svc, _ *Config) {
+		s.src.docs = [][]byte{docs}
+	})
+	installTable(t, routing.Table{{Match: testModel, Chain: []routing.Source{chainKey()}}})
+
+	byChain := func(t *testing.T, class JobClass) (*chainPlan, bool) {
+		t.Helper()
+		ctx := context.Background()
+		b, err := s.server.cfg.Bundles.Load(ctx)
+		if err != nil {
+			t.Fatalf("loading the fixture's bundle: %v", err)
+		}
+		cl := &call{body: []byte(callBody("review-chain")), header: http.Header{}}
+		id := Identity{Slug: s.slug, Run: s.run, Project: testProject, JobAccount: testReviewSA, JobClass: class}
+		plan, served, err := s.server.chainFor(ctx, cl, id, testRepo, s.policy.shared, b, nil)
+		if err != nil {
+			t.Fatalf("resolving the fixture's chain as %q: %v", class, err)
+		}
+		return plan, served
+	}
+
+	t.Run("the walk answers not-by-chain for the class", func(t *testing.T) {
+		if plan, served := byChain(t, ClassReview); served || plan != nil {
+			t.Errorf("a review call is served by the chain (%v, plan %+v), want the path it is served by today: the "+
+				"class's candidate list is the pairing's one credential and a chain is a list this service chooses from",
+				served, plan)
+		}
+		// And the same identity, one class over, IS served by the chain — so the
+		// answer above is the class's and not the fixture's table being unreadable.
+		plan, served := byChain(t, ClassRepository)
+		if !served || plan == nil || len(plan.sources) != 1 {
+			t.Fatalf("a repository call is served by %v sources (byChain %v), want the table's one: the fixture must "+
+				"publish a table this call would be served by", len(plan.sources), served)
+		}
+	})
+
+	t.Run("the call goes out on the pairing's account", func(t *testing.T) {
+		resp, body := s.callTokens(t, callBody("review-chain"), s.reviewRunToken(), s.reviewJobToken(), s.job)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the review call is %d, want 200: %s", resp.StatusCode, body)
+		}
+		got := auditField(s.onlyAuditLine(t), "credential")
+		if got != testReviewAccount {
+			t.Errorf("the review call was served by %q, want the pairing's account %q: the chain's entry names the "+
+				"repository's own key, and the class is never served by it", got, testReviewAccount)
+		}
+		if repoKey := repoEntryKeyFor(t, "github", testRepoPath, config.AnthropicKeyAccount); got == repoKey {
+			t.Errorf("the review call was served by the repository's own entry %q", repoKey)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// 14. A run with no slip is served the project's sources and no launcher's pool
+// ---------------------------------------------------------------------------
+
+// fakeLauncherPools is a launcher's pool lookup that designates one pool for
+// every principal and every name. PL4 lands the real one, which resolves from the
+// principal the run's slip carries and the pool a launch named with `--pool`
+// (CS12); the stub this release ships designates nothing at all (D3180), so a
+// KindLauncherPool source never serves without a fake like this one.
+type fakeLauncherPools struct{ pool string }
+
+func (f fakeLauncherPools) LauncherPool(context.Context, routing.Principal, string) (routing.PoolRef, bool, error) {
+	return routing.PoolRef{Pool: f.pool}, true, nil
+}
+
+// designateLauncherPool installs that fake for the duration of one test.
+func designateLauncherPool(t *testing.T, pool string) {
+	t.Helper()
+	prev := LauncherPools
+	LauncherPools = fakeLauncherPools{pool: pool}
+	t.Cleanup(func() { LauncherPools = prev })
+}
+
+// TestARunWithNoSlipIsServedTheProjectsSources: a run nothing granted — an
+// orchestrator's launch, or a call of a scope that never wrote a slip — is
+// served the project's sources its repository is admitted to and NO launcher's
+// pool, because the launcher's pool's whole content is a per-run designation
+// such a run does not have (grantCovers).
+//
+// The chain lists the launcher's pool FIRST and the repository's own key behind
+// it, and both halves are asserted: the run is served the key, and the plan it
+// was served from holds no launcher's pool. The with-slip control is what makes
+// that a fact about the grant rather than about the fixture's table: the same
+// chain, under a slip that covers both sources, IS served the launcher's pool.
+func TestARunWithNoSlipIsServedTheProjectsSources(t *testing.T) {
+	pool := teamPool("")
+	table := routing.Table{{Match: testModel, Chain: []routing.Source{
+		{Kind: routing.KindLauncherPool}, chainKey(),
+	}}}
+	s := chainFixture(t, table, pool)
+	designateLauncherPool(t, pool.Name)
+
+	t.Run("no slip: the project's key serves and no launcher's pool does", func(t *testing.T) {
+		w := s.walk(t, callBody("no-slip"), nil)
+		if len(w.plan.sources) != 1 {
+			t.Fatalf("a run with no slip is served by %d sources, want the chain's key alone: a launcher's pool is the "+
+				"designation THIS run's grant holds (C2), and a run with no slip holds none", len(w.plan.sources))
+		}
+		if got := w.picked(t); got.Tier != creds.TierB {
+			t.Errorf("the call was served by %q (tier %s), want the repository's key (tier b): the launcher's pool is "+
+				"listed first and is not this run's to be served from", got.Name, got.Tier)
+		}
+	})
+
+	t.Run("a slip covering both is served the launcher's pool", func(t *testing.T) {
+		w := s.walk(t, callBody("no-slip"), chainBinding(coverage(table[0].Chain...), pool.Name))
+		if len(w.plan.sources) != 2 {
+			t.Fatalf("the same chain under a slip that covers both sources is served by %d sources, want both: this is "+
+				"the control that makes the answer above the grant's", len(w.plan.sources))
+		}
+		if got := w.picked(t); got.Tier != creds.TierA {
+			t.Errorf("the call was served by %q (tier %s), want a pool member (tier a)", got.Name, got.Tier)
+		}
+	})
+
+	// The rule itself, at the seam the walk cannot reach: a nil binding is ALSO
+	// caught by the walk's own "no designation" check (planSource), so a
+	// grantCovers that covered the launcher's pool for a nil grant would pass
+	// every assertion above and still be wrong — the bridge's own reading of a
+	// record passes a nil grant on purpose (chainFor), and it is this function
+	// that keeps a launcher's pool out of it.
+	t.Run("a nil grant covers every kind but the launcher's pool", func(t *testing.T) {
+		for _, tc := range []struct {
+			kind routing.Kind
+			want bool
+		}{
+			{routing.KindLauncherPool, false},
+			{routing.KindPool, true},
+			{routing.KindAnthropic, true},
+			{routing.KindProvider, true},
+			{routing.KindVertex, true},
+		} {
+			if got := grantCovers(nil, routing.Source{Kind: tc.kind}); got != tc.want {
+				t.Errorf("grantCovers(nil, %s) = %v, want %v: a run with no slip is served the project's sources its "+
+					"repository is admitted to, and the launcher's pool is the one kind it does not have", tc.kind, got, tc.want)
+			}
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// 15. Every chain refusal writes one audit line and no value
+// ---------------------------------------------------------------------------
+
+// TestEveryChainRefusalWritesOneLineAndNoValue: a refusal of the chain path is
+// audited by the one path that audits refusals — exactly one line, never zero and
+// never two — and no line, no log line and no sentence of the refusal carries a
+// credential's value.
+//
+// The four refusals this path can write before a credential is touched are the
+// four here, and each is driven through the front door rather than at the seam,
+// because a line is what a call writes and not what a function returns: a body
+// naming no model, a table with no entry for the model the body names (R22), a
+// release-behind grant whose bridge holds no record, and a table the resolver
+// refuses to read. Each names the fields of the contract with no credential and
+// no tier, because none was read.
+func TestEveryChainRefusalWritesOneLineAndNoValue(t *testing.T) {
+	const noModel = `{"max_tokens":16,"messages":[{"role":"user","content":"no model"}]}`
+
+	for _, tc := range []struct {
+		name   string
+		status int
+		typ    string
+		// want is a phrase the refusal's own sentence must carry, for the row
+		// whose status and type another refusal of the same path shares: the
+		// bridge's refusal is a 503 like the forward path's, so without this the
+		// row would hold for the wrong one.
+		want string
+		// call makes the call and answers the fixture, the answer, and how many
+		// audit lines the fixture had already written when the call was made (a
+		// grant and a claim write their own).
+		call func(t *testing.T) (*svc, *http.Response, []byte, int)
+	}{
+		{
+			name:   "the body names no model",
+			status: StatusRequestRefused,
+			typ:    ErrorRequestRefused,
+			want:   "names none",
+			call: func(t *testing.T) (*svc, *http.Response, []byte, int) {
+				s := chainFixture(t, routing.Table{{Match: "", Chain: []routing.Source{chainKey()}}})
+				resp, answer := s.callPath(t, CountTokensPath, noModel)
+				return s, resp, answer, 0
+			},
+		},
+		{
+			name:   "the table has no entry for the model",
+			status: StatusRequestRefused,
+			typ:    ErrorRequestRefused,
+			want:   "holds no entry for the model",
+			call: func(t *testing.T) (*svc, *http.Response, []byte, int) {
+				s := chainFixture(t, routing.Table{{Match: "claude-nothing-*", Chain: []routing.Source{chainKey()}}})
+				resp, answer := s.call(t, callBody("no-entry"))
+				return s, resp, answer, 0
+			},
+		},
+		{
+			// The bridge is reached by a call whose binding CARRIES the grant
+			// record, and on the installation's own path it does not: only the
+			// workspace's reading hands the record to the binding
+			// (verifyPersonCallSlip, server.go), because the personal reader is
+			// the one reader that is handed it (slipBinding.slip). A record
+			// with no sources is therefore driven here through the workspace's
+			// own slip — the grant shape that carries none at all (C1's
+			// PersonGrantRequest) — and the installation's slip-less call is
+			// the case the walk is served by the project's sources instead
+			// (TestARunWithNoSlipIsServedTheProjectsSources).
+			name:   "a release-behind grant whose bridge holds no record",
+			status: StatusUnavailable,
+			typ:    ErrorStateUnavailable,
+			want:   "predates the table",
+			call: func(t *testing.T) (*svc, *http.Response, []byte, int) {
+				p := newWSPerson(t)
+				personalSwitch(t, true, nil)
+				tbl := routing.Table{{Match: testModel, Chain: []routing.Source{chainKey()}}}
+				s := p.service(t, func(*svc, *Config) { installTable(t, tbl) })
+				granted := p.granted(t, s, p.grantBody(t, wsAccountA, creds.PersonTokenName))
+				secret := p.claimed(t, s, granted)
+				before := len(s.auditLines(t))
+				resp, answer := p.personCall(t, s, granted, secret, callBody("bridged-no-record"))
+				return s, resp, answer, before
+			},
+		},
+		{
+			name:   "the table cannot be read",
+			status: StatusUnavailable,
+			typ:    ErrorStateUnavailable,
+			want:   "the call's routing table could not be read",
+			call: func(t *testing.T) (*svc, *http.Response, []byte, int) {
+				// The winning pattern written twice: the resolver refuses to pick
+				// between two entries a project wrote for one pattern (D3172).
+				entry := routing.Table{{Match: testModel, Chain: []routing.Source{chainKey()}}}
+				s := chainFixture(t, append(entry, entry...))
+				resp, answer := s.call(t, callBody("two-entries"))
+				return s, resp, answer, 0
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, resp, answer, before := tc.call(t)
+			if resp.StatusCode != tc.status {
+				t.Fatalf("the call is %d, want %d: %s", resp.StatusCode, tc.status, answer)
+			}
+			if e := refusal(t, resp.StatusCode, answer); e.Error != tc.typ {
+				t.Errorf("the refusal is %q, want %q", e.Error, tc.typ)
+			}
+			if tc.want != "" && !strings.Contains(string(answer), tc.want) {
+				t.Errorf("the refusal's sentence does not carry %q, so this is another refusal of the same class: %s",
+					tc.want, answer)
+			}
+			if sent := s.up.Seen(); len(sent) != 0 {
+				t.Errorf("the upstream saw %d requests, want none: every one of these is refused before a credential "+
+					"is touched", len(sent))
+			}
+
+			lines := s.auditLines(t)
+			if len(lines) != before+1 {
+				t.Fatalf("the refusal wrote %d audit lines, want exactly one (the fixture had written %d before the "+
+					"call): %v", len(lines)-before, before, lines)
+			}
+			line := lines[len(lines)-1]
+			checkAuditShape(t, line)
+			for _, f := range []string{"credential", "tier"} {
+				if got := auditField(line, f); got != "" {
+					t.Errorf("the refusal's line carries %s=%q, want nothing: no credential was read", f, got)
+				}
+			}
+
+			// And no credential VALUE is anywhere the refusal reached, which is
+			// what the line's credential field being empty does not yet say: the
+			// sentence, the service's own log and the line itself are all read
+			// here, and the fixture's bundle is what the values are.
+			for _, what := range []string{config.DefaultClaudeAccount, testPoolCredential, testSecondPoolCredential, "paid"} {
+				value := fakeCred(t, what)
+				for name, text := range map[string]string{
+					"the refusal's sentence": string(answer),
+					"the service's log":      s.logs.String(),
+					"the audit line":         lineJSON(t, line),
+				} {
+					if strings.Contains(text, value) {
+						t.Errorf("%s carries the value of %q: a refusal names the field and never its content", name, what)
+					}
+				}
+			}
+		})
+	}
+}
+
+// lineJSON is one audit line as the JSON the service wrote: a value that reached
+// a line is in it whichever field carried it, and the parsed line's own fields
+// are what the checks above read.
+func lineJSON(t *testing.T, line map[string]any) string {
+	t.Helper()
+	raw, err := json.Marshal(line)
+	if err != nil {
+		t.Fatalf("the audit line does not marshal back: %v", err)
+	}
+	return string(raw)
 }

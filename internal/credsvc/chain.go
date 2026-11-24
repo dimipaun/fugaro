@@ -38,6 +38,33 @@ package credsvc
 // not admitted to — is named, because it is one of the four reasons and it is
 // exactly what the run's halt message is built from.
 //
+// # Where a chain's credentials come from, and the one narrowing it does not read
+//
+// A chain is served out of the SCOPE's offering and the repository's own
+// entries, and out of nothing else. A source of one of the two pool kinds is
+// narrowed by C1's OfferingReader before its members are judged (planSource):
+// the bundle's own credentials for an installation, the workspace's shared node
+// over them for a member, so a member's table can never serve it a credential
+// its own administrator did not share (R5, R8). A source of the three
+// single-credential kinds is read out of the bundle BY THE REPOSITORY'S OWN
+// NAME (ownNamedEntry, D3008), which is the same rule the cascade's own path
+// applies to them after its pool intersection — the offering deliberately does
+// not hold them, so intersecting them with it would drop the repository's own
+// key from every chain that names it.
+//
+// What this path does NOT read is the repository's own recorded auth
+// (`creds/repoauth/<slug>`, narrowToRepoAuth's mode and tier rules): the record
+// is derived FROM the table on every write of either (MG3), so it is the
+// table's own reading of one repository and never wider than it, and its mode
+// rule — a call that declares an auth its record disagrees with is refused — is
+// the CASCADE path's boundary for a project that publishes no table. The two
+// rules of that function which are about WHICH repository's credentials these
+// are hold here by construction and not by a second check: every source is
+// built from the run's own verified slug. A later task that wants the record
+// read on this path has to say what a chain call declaring no auth against a
+// recorded `oauth` repository means, because that is a product decision (X4
+// removes both the record and the headers and leaves the table alone).
+//
 // # The two halves this file does not own
 //
 // The TABLE arrives through PublishedTable below: it is RT4's member of the
@@ -439,6 +466,19 @@ func chainRemaining(members []creds.Credential, sent map[string]bool) []creds.Cr
 // the project publishes no table (PublishedTable). Every other answer is a plan
 // or a refusal, and the refusal is a *chainRefusal the caller writes itself.
 func (s *Server) chainFor(ctx context.Context, cl *call, id Identity, canonical string, shared *projectpolicy.Policy, b *Bundle, binding *slipBinding) (*chainPlan, bool, error) {
+	if id.JobClass == ClassReview {
+		// A review caller is the one caller whose candidate list is not this
+		// service's to narrow: the pairing has already resolved the ONE
+		// credential it may be served by, and the class buys no other
+		// (reviewCandidates). A chain is a list this service chooses from, so
+		// serving a review call by one would hand it the project's whole pool —
+		// which is why such a call is NOT served by the table in this release
+		// and is served by the path it is served by today. It is CS13's task
+		// that takes the review job (with the shared project jobs and the
+		// diagnose agent) to the table, and it is the task that has to say what
+		// a chain means for a class whose list is read-only.
+		return nil, false, nil
+	}
 	if shared == nil {
 		return nil, false, nil
 	}
@@ -511,13 +551,42 @@ func (s *Server) chainFor(ctx context.Context, cl *call, id Identity, canonical 
 	return s.planSources(ctx, entry.Chain, model, id, canonical, shared, b, binding, grant)
 }
 
+// planReads is what building one call's chain reads at most once: the scope's
+// offering, and the repository's own admission node. Both are reads of a
+// published document, and a chain that holds no pool of either kind makes
+// neither of them — which is the shape of every chain of a single key.
+type planReads struct {
+	// offered is the pool this call may be served from (C1's OfferingReader).
+	offered     []creds.Credential
+	offeredRead bool
+	// admitted is the repository's own node intersected with the project's
+	// (admittedAccounts, R20).
+	admitted map[string]bool
+}
+
+// offering is the pool this call may be served from, as the SCOPE answers it:
+// the bundle's own credentials for an installation, the workspace's shared node
+// over them for a member. It is read at most once per call and only where a
+// pool source has members to narrow, because it is a policy read on the path of
+// a call.
+func (s *Server) offering(ctx context.Context, reads *planReads, b *Bundle) ([]creds.Credential, error) {
+	if !reads.offeredRead {
+		offered, err := scopeOfCall(ctx, s).Offering().Offering(ctx, b)
+		if err != nil {
+			return nil, err
+		}
+		reads.offered, reads.offeredRead = offered, true
+	}
+	return reads.offered, nil
+}
+
 // planSources builds a call's chain from a list of sources: the table's entry,
 // or the release-1 bridge's own answer about an old record — and the grant the
 // sources are read against, which the bridge path passes nil for (chainFor).
 func (s *Server) planSources(ctx context.Context, sources []routing.Source, model string, id Identity, canonical string, shared *projectpolicy.Policy, b *Bundle, binding *slipBinding, grant *creds.SlipChain) (*chainPlan, bool, error) {
 	plan := &chainPlan{model: model}
 	held := bundleTiers(b)
-	var admitted map[string]bool
+	reads := &planReads{}
 	for i, src := range sources {
 		if !grantCovers(grant, src) {
 			// A source the run's grant does not cover is never served — not
@@ -527,7 +596,7 @@ func (s *Server) planSources(ctx context.Context, sources []routing.Source, mode
 			// outside it was never this call's to consider.
 			continue
 		}
-		out, skipped, err := s.planSource(ctx, src, model, i == 0, id, canonical, shared, b, binding, held, &admitted)
+		out, skipped, err := s.planSource(ctx, src, model, i == 0, id, canonical, shared, b, binding, held, reads)
 		if err != nil {
 			return nil, true, err
 		}
@@ -543,10 +612,11 @@ func (s *Server) planSources(ctx context.Context, sources []routing.Source, mode
 // planSource is one source of a chain, resolved: the credential material this
 // service may serve it with, or a credential-level skip (or nothing at all).
 //
-// admitted is filled at most once per call, and only where a pool member's
-// account has to be checked against the repository's own node (R20): the read
-// is a policy read, and a call whose chain holds no pool never makes it.
-func (s *Server) planSource(ctx context.Context, src routing.Source, model string, first bool, id Identity, canonical string, shared *projectpolicy.Policy, b *Bundle, binding *slipBinding, held map[string]creds.Tier, admitted *map[string]bool) (chainSource, []Tried, error) {
+// reads is what this source is allowed to read on the way (planReads), and both
+// of its reads — the scope's offering and the repository's own admission — are
+// made only where a POOLED source has members to judge: a call whose chain
+// holds no pool makes neither of them.
+func (s *Server) planSource(ctx context.Context, src routing.Source, model string, first bool, id Identity, canonical string, shared *projectpolicy.Policy, b *Bundle, binding *slipBinding, held map[string]creds.Tier, reads *planReads) (chainSource, []Tried, error) {
 	name := routing.SourceName{Kind: src.Kind, Name: sourceNameOf(src)}
 	out := chainSource{name: name, first: first, spelling: ""}
 	if model != "" {
@@ -641,6 +711,30 @@ func (s *Server) planSource(ctx context.Context, src routing.Source, model strin
 		if len(out.members) == 0 {
 			return out, nil, nil
 		}
+		// C1's Offering is the pool this call may be served from at all, and a
+		// pool source is narrowed by it FIRST: what a workspace shares with a
+		// member is the member's ceiling, so a pool whose members are not all in
+		// it serves that member only the ones that are. It is a narrowing and
+		// never a widening — the intersection can only take members away — and
+		// for an installation it is a no-op BY CONSTRUCTION, because the
+		// offering is b.Credentials() and a pool's members are read out of that
+		// same list (poolOfferingOf).
+		//
+		// It is applied here and to the two pool kinds alone, because the three
+		// single-credential kinds are read out of the bundle by the REPOSITORY'S
+		// own name (ownNamedEntry) and the offering deliberately does not hold a
+		// repository's own entry or the provider key: the cascade's own path
+		// joins those to its list after its pool intersection for the same
+		// reason (ownNamedEntries).
+		offered, err := s.offering(ctx, reads, b)
+		if err != nil {
+			return out, nil, err
+		}
+		var skipped []Tried
+		out.members, skipped = offeredBy(out.members, offered)
+		if len(out.members) == 0 {
+			return out, skipped, nil
+		}
 		// R20: a pool's admission is its members' own. A member the repository
 		// is not admitted to is skipped for it, so two repositories admitted to
 		// two different accounts can share one pool and neither moves.
@@ -649,17 +743,16 @@ func (s *Server) planSource(ctx context.Context, src routing.Source, model strin
 		// project's (admittedAccounts), which is the same read the cascade's own
 		// path makes — and it is made only here, at the first pool that has a
 		// member to check.
-		if *admitted == nil {
+		if reads.admitted == nil {
 			a, err := s.admittedAccounts(ctx, id, canonical)
 			if err != nil {
 				return out, nil, err
 			}
-			*admitted = a
+			reads.admitted = a
 		}
 		kept := make([]creds.Credential, 0, len(out.members))
-		var skipped []Tried
 		for _, c := range out.members {
-			if c.Tier == creds.TierA && !(*admitted)[c.Name] {
+			if c.Tier == creds.TierA && !reads.admitted[c.Name] {
 				skipped = append(skipped, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonNotAdmitted})
 				continue
 			}
@@ -669,6 +762,34 @@ func (s *Server) planSource(ctx context.Context, src routing.Source, model strin
 		return out, skipped, nil
 	}
 	return out, nil, nil
+}
+
+// offeredBy is a pool's members restricted to the names the SCOPE offers this
+// call, in the pool's own order, reporting each member that is left out as the
+// credential this call may not be served by.
+//
+// The offering is the scope's answer and the pool is the project's, so the two
+// can disagree in exactly one direction that matters: a workspace's offering is
+// a member's own shared node, and a pool may list a credential that node does
+// not share. Serving the pool unchanged would let a project's table hand a
+// member a credential its own administrator never shared, which is the
+// narrowing the cascade's own path makes in the other order (heldBy, MC6) and
+// for the same reason.
+//
+// A dropped member is named rather than dropped in silence: it is one of the
+// contract's four reasons (ReasonNotAdmitted), and the run's halt message is
+// built from the list it was served from and what left it.
+func offeredBy(members, offer []creds.Credential) ([]creds.Credential, []Tried) {
+	kept := make([]creds.Credential, 0, len(members))
+	var skipped []Tried
+	for _, c := range members {
+		if !named(offer, c.Name) {
+			skipped = append(skipped, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonNotAdmitted})
+			continue
+		}
+		kept = append(kept, c)
+	}
+	return kept, skipped
 }
 
 // grantOf is the chain half of a call's slip, and nil for a run that carries no
