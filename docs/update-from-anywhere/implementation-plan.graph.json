@@ -5,7 +5,7 @@
  "nodes": [
   {
    "id": "C1",
-   "title": "contract: the per-repository view every stage reads",
+   "title": "contract: the per-repository view, its lines and how a stage reports them",
    "run": null,
    "version": null,
    "tier": "small",
@@ -25,7 +25,7 @@
   },
   {
    "id": "U1",
-   "title": "the reader's extra paths",
+   "title": "the reader's extra paths, branch and head",
    "run": null,
    "version": null,
    "tier": "small",
@@ -40,7 +40,7 @@
   },
   {
    "id": "U2",
-   "title": "the enrolled list, read once per run, and the hint",
+   "title": "the enrolled list, its parse and the token fallback",
    "run": null,
    "version": null,
    "tier": "medium",
@@ -49,14 +49,14 @@
     "prediction": true,
     "paths": [
      "internal/cli/update_repos_read.go",
-     "internal/cli/update_hint.go",
+     "internal/cli/update_repos_token.go",
      "internal/cli/update_repos_read_test.go"
     ]
    }
   },
   {
    "id": "U3",
-   "title": "the secrets stage over every repository",
+   "title": "the secrets stage over every repository, and --ask for values",
    "run": null,
    "version": null,
    "tier": "large",
@@ -65,6 +65,9 @@
     "prediction": true,
     "paths": [
      "internal/cli/initsecrets.go",
+     "internal/cli/init.go",
+     "docs/no-prompt-policy/reconciliation.md",
+     "website/content/cli-reference.md",
      "internal/cli/initsecrets_repos_test.go"
     ]
    }
@@ -104,8 +107,8 @@
    }
   },
   {
-   "id": "U6",
-   "title": "the pin and budget.mode: off become notices in update and doctor",
+   "id": "U6a",
+   "title": "the pin and budget.mode: off become notices in update",
    "run": null,
    "version": null,
    "tier": "medium",
@@ -115,15 +118,31 @@
     "paths": [
      "internal/cli/init_plugin_stage.go",
      "internal/cli/update_budget_off.go",
-     "internal/cli/doctor_repo_notices.go",
+     "internal/cli/repo_notices.go",
+     "internal/cli/repo_notices_test.go"
+    ]
+   }
+  },
+  {
+   "id": "U6b",
+   "title": "doctor's plugin-pin and budget-mode checks read the default branch",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
      "internal/cli/doctor.go",
+     "internal/cli/doctor_render.go",
+     "internal/cli/doctor_budget_mode.go",
      "internal/cli/doctor_repo_notices_test.go"
     ]
    }
   },
   {
-   "id": "U7",
-   "title": "the HARD RULE's pin sentence, the update skill and the docs",
+   "id": "U7a",
+   "title": "the HARD RULE's pin clause, the update skill and the README",
    "run": null,
    "version": null,
    "tier": "small",
@@ -133,7 +152,26 @@
     "paths": [
      "CLAUDE.md",
      "plugin/skills/update/SKILL.md",
-     "docs/gcp-live-checklist.md"
+     "README.md",
+     "internal/cli/docs_update_anywhere_test.go"
+    ]
+   }
+  },
+  {
+   "id": "U7b",
+   "title": "the design and check documents that describe the changed steps",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "docs/design/update-in-flight.md",
+     "docs/upgrade/spec.md",
+     "docs/gcp-live-checklist.md",
+     "scripts/live-checks/check-884-update-migrates.sh",
+     "scripts/live-checks/check-884-update-migrates_test.sh"
     ]
    }
   },
@@ -155,8 +193,8 @@
    }
   },
   {
-   "id": "U9",
-   "title": "the anchor moves to project repos add",
+   "id": "U9a",
+   "title": "the anchor moves into project repos add",
    "run": null,
    "version": null,
    "tier": "medium",
@@ -164,11 +202,48 @@
    "footprint": {
     "prediction": true,
     "paths": [
+     "internal/cli/project_enroll_converge.go",
      "internal/cli/project_enroll.go",
-     "internal/cli/init_anchor.go",
-     "internal/cli/init_fugaroyaml.go",
-     "internal/cli/init.go",
      "internal/cli/project_enroll_anchor_test.go"
+    ]
+   }
+  },
+  {
+   "id": "U9b",
+   "title": "update and setup lose --anchor",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/init.go",
+     "internal/cli/setup.go",
+     "internal/cli/update.go",
+     "internal/cli/init_anchor.go",
+     "internal/cli/init_repo_stage.go",
+     "internal/cli/testdata/init_retire.golden",
+     "website/content/cli-reference.md"
+    ]
+   }
+  },
+  {
+   "id": "U9c",
+   "title": "every pointer to --anchor names project repos add",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/doctor.go",
+     "internal/cli/doctor_render.go",
+     "internal/cli/image_refresh.go",
+     "README.md",
+     "docs/how-to/teammates.md",
+     ".claude/skills/new-release/SKILL.md"
     ]
    }
   },
@@ -184,7 +259,26 @@
     "paths": [
      "internal/cli/update_check.go",
      "internal/cli/init.go",
+     "website/content/cli-reference.md",
      "internal/cli/update_check_repos_test.go"
+    ]
+   }
+  },
+  {
+   "id": "U13",
+   "title": "the repos member and the notices member in --json and --events",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/initflow/loop.go",
+     "internal/cli/setup_events.go",
+     "schemas/setup-events.schema.json",
+     "internal/cli/testdata/setup_events.golden.ndjson",
+     "console/docs/json-contract.md"
     ]
    }
   },
@@ -201,13 +295,14 @@
      "internal/cli/init_repo_stage.go",
      "internal/cli/init_repo_target.go",
      "internal/cli/init.go",
+     "internal/cli/update_anywhere_test.go",
      "internal/cli/init_repo_repos_test.go"
     ]
    }
   },
   {
    "id": "I1",
-   "title": "integration: the real list in the engine, the repos event member, the end-to-end tests",
+   "title": "integration: the real list, the reports wired to the output, the end-to-end tests",
    "run": null,
    "version": null,
    "tier": "medium",
@@ -218,7 +313,6 @@
      "internal/cli/update_repos_stub.go",
      "internal/cli/update_repos_read.go",
      "internal/cli/init_stages.go",
-     "internal/cli/setup_events.go",
      "internal/cli/update_anywhere_test.go",
      "internal/cli/update_in_flight_test.go"
     ]
@@ -227,21 +321,19 @@
   },
   {
    "id": "K1",
-   "title": "Check 930: Check 891's script from four directories",
+   "title": "Check 930: Check 891's script from four directories, read stage by stage",
    "run": null,
    "version": null,
    "tier": "trivial",
    "size": 1,
    "footprint": {
     "prediction": true,
-    "paths": [
-     "scripts/live-checks/check-891-update-trace.sh"
-    ]
+    "paths": []
    }
   },
   {
    "id": "R-view-files",
-   "title": "amend contract C1: if the refresh needs a repository file the view does not carry",
+   "title": "amend contract C1: if a stage needs a repository file the view does not carry",
    "run": null,
    "version": null,
    "tier": "trivial",
@@ -260,32 +352,47 @@
   {
    "task": "U2",
    "needs": "U1",
-   "reason": "it reads the extra paths through the reader's option"
+   "reason": "kept, behaviour: it reads through U1's option, branch and head"
   },
   {
    "task": "U3",
    "needs": "C1",
-   "reason": "the view"
+   "reason": "the view and the report"
   },
   {
    "task": "U4",
    "needs": "C1",
-   "reason": "the view"
+   "reason": "the view and the report"
   },
   {
    "task": "U5",
    "needs": "C1",
-   "reason": "the view"
+   "reason": "the view and the report"
   },
   {
-   "task": "U6",
+   "task": "U6a",
    "needs": "C1",
-   "reason": "the view, and its extra files"
+   "reason": "the view, its extra files and the report"
+  },
+  {
+   "task": "U6b",
+   "needs": "C1",
+   "reason": "the free function enrolledRepos"
+  },
+  {
+   "task": "U6b",
+   "needs": "U6a",
+   "reason": "kept, behaviour: the notice text doctor prints is U6a's"
   },
   {
    "task": "U8",
    "needs": "C1",
-   "reason": "the view, and its extra files"
+   "reason": "the view, its extra trees and the report"
+  },
+  {
+   "task": "U13",
+   "needs": "C1",
+   "reason": "the line type it carries"
   },
   {
    "task": "U10",
@@ -294,13 +401,63 @@
   },
   {
    "task": "U10",
-   "needs": "U9",
-   "reason": "both write init.go (the flags' help)"
+   "needs": "U3",
+   "reason": "kept: both write init.go and the generated CLI reference"
   },
   {
-   "task": "U7",
-   "needs": "U6",
-   "reason": "the doctor check's id and line text the docs pin"
+   "task": "U10",
+   "needs": "U4",
+   "reason": "kept, behaviour: the per-repository staleness function U4 writes"
+  },
+  {
+   "task": "U9b",
+   "needs": "U9a",
+   "reason": "kept, behaviour: the flag goes only once repos add does the edit"
+  },
+  {
+   "task": "U9b",
+   "needs": "U10",
+   "reason": "kept: both write init.go and the generated CLI reference"
+  },
+  {
+   "task": "U9c",
+   "needs": "U9b",
+   "reason": "kept, behaviour: the pointers follow the flag's removal"
+  },
+  {
+   "task": "U9c",
+   "needs": "U4",
+   "reason": "kept: both write image_refresh.go"
+  },
+  {
+   "task": "U9c",
+   "needs": "U6b",
+   "reason": "kept: both write doctor.go and doctor_render.go"
+  },
+  {
+   "task": "U7a",
+   "needs": "U6a",
+   "reason": "kept, behaviour: the notice text the docs pin"
+  },
+  {
+   "task": "U7a",
+   "needs": "U10",
+   "reason": "kept, behaviour: the skill's --check sentence"
+  },
+  {
+   "task": "U7b",
+   "needs": "U4",
+   "reason": "kept, behaviour: the rows describe the new checkout step"
+  },
+  {
+   "task": "U7b",
+   "needs": "U5",
+   "reason": "kept, behaviour: the images row"
+  },
+  {
+   "task": "U7b",
+   "needs": "U6a",
+   "reason": "kept, behaviour: the budget.mode and pin rows and check 884's expectation"
   },
   {
    "task": "I1",
@@ -324,7 +481,12 @@
   },
   {
    "task": "I1",
-   "needs": "U6",
+   "needs": "U6a",
+   "reason": "integration: the end-to-end test needs every side of C1 and the real list"
+  },
+  {
+   "task": "I1",
+   "needs": "U6b",
    "reason": "integration: the end-to-end test needs every side of C1 and the real list"
   },
   {
@@ -338,6 +500,21 @@
    "reason": "integration: the end-to-end test needs every side of C1 and the real list"
   },
   {
+   "task": "I1",
+   "needs": "U13",
+   "reason": "integration: the end-to-end test needs every side of C1 and the real list"
+  },
+  {
+   "task": "U11",
+   "needs": "I1",
+   "reason": "kept, behaviour: it reports through the wired engine, and removes I1's exemption"
+  },
+  {
+   "task": "U11",
+   "needs": "U9b",
+   "reason": "kept: both write init.go and init_repo_stage.go"
+  },
+  {
    "task": "K1",
    "needs": "I1",
    "reason": "the release that carries the integration"
@@ -345,17 +522,7 @@
   {
    "task": "R-view-files",
    "needs": "I1",
-   "reason": "kept: a change to C1's files comes after every consumer has landed, never beside the contract; the consumers that raised it get a follow-up run"
-  },
-  {
-   "task": "U11",
-   "needs": "U2",
-   "reason": "kept, behaviour: it applies each repository's root over the list U2 reads (and it is gated on L2, outside this plan)"
-  },
-  {
-   "task": "U11",
-   "needs": "U10",
-   "reason": "kept: both write internal/cli/init.go"
+   "reason": "kept: a change to C1's files comes after every consumer has landed, never beside the contract"
   }
  ],
  "decoupling": [
@@ -366,7 +533,7 @@
     "needs": "U2"
    },
    "integration": "I1",
-   "reason": "it needs only the view's shape (the repository, its files or why it was unread), which the contract writes down, not the list U2 reads"
+   "reason": "it needs only the view's shape and the report call, which the contract writes down, not the list U2 reads"
   },
   {
    "contract": "C1",
@@ -375,7 +542,7 @@
     "needs": "U2"
    },
    "integration": "I1",
-   "reason": "it needs only the view's shape (the repository, its files or why it was unread), which the contract writes down, not the list U2 reads"
+   "reason": "it needs only the view's shape and the report call, which the contract writes down, not the list U2 reads"
   },
   {
    "contract": "C1",
@@ -384,16 +551,25 @@
     "needs": "U2"
    },
    "integration": "I1",
-   "reason": "it needs only the view's shape (the repository, its files or why it was unread), which the contract writes down, not the list U2 reads"
+   "reason": "it needs only the view's shape and the report call, which the contract writes down, not the list U2 reads"
   },
   {
    "contract": "C1",
    "was": {
-    "task": "U6",
+    "task": "U6a",
     "needs": "U2"
    },
    "integration": "I1",
-   "reason": "it needs only the view's shape (the repository, its files or why it was unread), which the contract writes down, not the list U2 reads"
+   "reason": "it needs only the view's shape and the report call, which the contract writes down, not the list U2 reads"
+  },
+  {
+   "contract": "C1",
+   "was": {
+    "task": "U6b",
+    "needs": "U2"
+   },
+   "integration": "I1",
+   "reason": "it needs only the view's shape and the report call, which the contract writes down, not the list U2 reads"
   },
   {
    "contract": "C1",
@@ -402,7 +578,7 @@
     "needs": "U2"
    },
    "integration": "I1",
-   "reason": "it needs only the view's shape (the repository, its files or why it was unread), which the contract writes down, not the list U2 reads"
+   "reason": "it needs only the view's shape and the report call, which the contract writes down, not the list U2 reads"
   },
   {
    "contract": "C1",
@@ -411,7 +587,16 @@
     "needs": "U2"
    },
    "integration": "I1",
-   "reason": "it needs only the view's shape (the repository, its files or why it was unread), which the contract writes down, not the list U2 reads"
+   "reason": "it needs only the view's shape and the report call, which the contract writes down, not the list U2 reads"
+  },
+  {
+   "contract": "C1",
+   "was": {
+    "task": "U13",
+    "needs": "U2"
+   },
+   "integration": "I1",
+   "reason": "it needs only the view's shape and the report call, which the contract writes down, not the list U2 reads"
   }
  ],
  "contract_changes": [
@@ -419,7 +604,7 @@
    "change": "R-view-files",
    "contract": "C1",
    "raised_by": "U4",
-   "reason": "if the refresh needs a repository file the view does not carry (for example a Dockerfile a workflow names)",
+   "reason": "if a stage needs a repository file the view does not carry (for example a Dockerfile a workflow names)",
    "affects": [
     "U2",
     "U4"
