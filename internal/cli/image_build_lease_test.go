@@ -97,6 +97,7 @@ func dropBudgetBackend(t *testing.T, f *cloudFixture) {
 	if err := os.WriteFile(path, []byte(strings.Replace(string(data), block, "", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	f.ledgerDB = nil
 }
 
 // adoptBudgetFake marks a budget fake as this installation's own, the way

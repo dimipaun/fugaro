@@ -1422,9 +1422,38 @@ describe('the spawn table and the argv it builds', () => {
     // word rather than the word with a value beside it: `--all false` is an argv
     // cobra reads as the flag being on.
     expect(argvFor('plan.status', { all: false }, safeContext({ project: 'chosen' }))).not.toContain('--all')
+    // **The Graph tab's first paint** (IR4 of the console-fixes plan, D3217 as
+    // amended): `--all --no-merges`, in the row's declared order -- the two
+    // booleans in front of the installation's project flags, because that is the
+    // order `argvFor` walks the row's arguments in. This is the one argv the
+    // canvas is drawn from.
+    expect(argvFor('plan.status', { all: true, noMerges: true }, safeContext({ project: 'chosen' }))).toEqual([
+      'plan',
+      'status',
+      '--json',
+      '--all',
+      '--no-merges',
+      '--project',
+      'chosen',
+    ])
+    // `noMerges: false` is the toggle off on `all`'s terms, and `noMerges`
+    // alone is an argv this table still builds: the floor that keeps the word
+    // from an older CLI is the entry's (`planStatusNoMergesSupported`) and the
+    // source's (`NO_PLAN_NO_MERGES`), not this row's, because what a row admits
+    // is the CLI's own flag rather than this release's use of it.
+    expect(argvFor('plan.status', { noMerges: false }, safeContext({ project: 'chosen' }))).not.toContain('--no-merges')
+    expect(argvFor('plan.status', { noMerges: true }, safeContext({ project: 'chosen' }))).toEqual([
+      'plan',
+      'status',
+      '--json',
+      '--no-merges',
+      '--project',
+      'chosen',
+    ])
     // A flag payload cannot spell a word of its own, and it cannot get as far as
     // the argv at all: the row declares a boolean and the builder refuses
-    // anything else rather than stringifying it into a word.
+    // anything else rather than stringifying it into a word. Both declared
+    // arguments are held to that, the new one included.
     expect(() =>
       argvFor(
         'plan.status',
@@ -1432,6 +1461,13 @@ describe('the spawn table and the argv it builds', () => {
         safeContext({ project: 'chosen' }),
       ),
     ).toThrow(/all is not a boolean/)
+    expect(() =>
+      argvFor(
+        'plan.status',
+        { noMerges: '--dir' } as unknown as Parameters<typeof argvFor>[1],
+        safeContext({ project: 'chosen' }),
+      ),
+    ).toThrow(/noMerges is not a boolean/)
     // `--config` is the installation's, as on every cloud row: the read runs in
     // the checkout's directory, and the config that names the project is a
     // separate fact about the installation.
@@ -1457,7 +1493,12 @@ describe('the spawn table and the argv it builds', () => {
     // context actually carries rather than against a path the row would have to
     // spell.
     const directory = '/Users/owner/src/fugaro'
-    const argumentCases: ValidatedArguments[] = [{}, { all: true }]
+    const argumentCases: ValidatedArguments[] = [
+      {},
+      { all: true },
+      { noMerges: true },
+      { all: true, noMerges: true },
+    ]
     for (const args of argumentCases) {
       const argv = argvFor('plan.status', args, safeContext({ project: 'chosen', directory }))
       expect(argv, JSON.stringify(args)).not.toContain(directory)
@@ -1465,10 +1506,14 @@ describe('the spawn table and the argv it builds', () => {
       expect(argv).not.toContain('--gcp-project')
       expect(argv).not.toContain('--region')
       // Every word is either one of the command's own, the project's name, or
-      // the flag the schema declares -- there is nothing else it could be.
-      expect(argv.filter((word) => word.startsWith('--'))).toEqual(
-        args.all === true ? ['--json', '--all', '--project'] : ['--json', '--project'],
-      )
+      // one of the two flags the schema declares -- there is nothing else it
+      // could be.
+      expect(argv.filter((word) => word.startsWith('--'))).toEqual([
+        '--json',
+        ...(args.all === true ? ['--all'] : []),
+        ...(args.noMerges === true ? ['--no-merges'] : []),
+        '--project',
+      ])
     }
   })
 

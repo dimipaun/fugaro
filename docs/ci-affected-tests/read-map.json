@@ -2050,6 +2050,7 @@
         "deploy/terraform/**",
         "docs/plans/*",
         "docs/release-streams.yaml",
+        "ee/**",
         "ee/ab/**",
         "ee/ab/cli/**",
         "ee/coordinator/**",
@@ -2060,6 +2061,7 @@
         "ee/graph/cli/**",
         "ee/identitysvc/*",
         "ee/identitysvc/**",
+        "ee/identitysvc/rtdb.rules.json",
         "ee/identitysvc/terraform/**",
         "ee/keyservice/**",
         "ee/keyservice/docstore/**",
@@ -14359,6 +14361,7 @@
         "internal/issueresolve/**",
         "internal/issues/**",
         "internal/issuesync/**",
+        "internal/lift/**",
         "internal/localcfg/**",
         "internal/lock/**",
         "internal/logtail/**",
@@ -17448,6 +17451,8 @@
     {
       "package": "./internal/routing",
       "reads": [
+        "*",
+        "*.yaml",
         "cmd/fugaro/**",
         "deploy/terraform/**",
         "docs/plans/*",
@@ -17567,7 +17572,11 @@
         "internal/repourl/**",
         "internal/rigor/**",
         "internal/rigor/personas/**",
+        "internal/routing/*",
         "internal/routing/**",
+        "internal/routing/testdata/**",
+        "internal/routing/testdata/migrate/installation.yaml",
+        "internal/routing/testdata/migrate/repos/*/*.yaml",
         "internal/rtdb/**",
         "internal/runcache/**",
         "internal/runindex/**",
@@ -17596,6 +17605,7 @@
         "internal/watch/**",
         "internal/workspace/**",
         "internal/yamledit/**",
+        "testdata/**",
         "testdata/fixture-repo/**"
       ],
       "any": true
