@@ -1094,6 +1094,17 @@ func TestInfraThePairedListIsSealedUnderItsOwnKey(t *testing.T) {
 		{"key_ring_id", "google_kms_key_ring.pairedlist.id"},
 	}, "the one account that seals and opens is the service's own, and the grant is made on K1's ring and not at the project: a grant at the project would reach every key the project ever holds (K1, A3)")
 
+	// The database grant is the counterpart asymmetry: the rules deny every
+	// client, and the service's own account is not governed by them. It is made
+	// at the project because Realtime Database has no per-instance IAM resource
+	// in Terraform, and the identity project has one database.
+	reach := tfBlock(t, `resource "google_project_iam_member" "signer_reaches_pairedlist"`)
+	tfAttrsAre(t, reach, "the paired-list database grant", []tfWant{
+		{"project", "var.project"},
+		{"role", `"roles/firebasedatabase.admin"`},
+		{"member", "google_service_account.signer.member"},
+	}, "the store reads and writes the database with the service's own account, which is the only identity the deny-all rules let through — a grant to any other member is a client that can read the tree (K1, D2796)")
+
 }
 
 // TestInfraTheSignerRoleIsTheNarrowestThatSigns: signing and publishing the
@@ -1135,9 +1146,9 @@ func TestInfraTheSignerRoleIsTheNarrowestThatSigns(t *testing.T) {
 		}
 	}
 
-	// The account the signer runs as is named in exactly three places: the
+	// The account the signer runs as is named in exactly five places: the
 	// service's template, which is the whole of what makes the service that
-	// identity, and the two grants that name it as the member. Any other
+	// identity, and the four grants that name it as the member. Any other
 	// reference is an identity able to mint that no block above would show — a
 	// second Cloud Run service or job running as the same account IS the signer,
 	// and the account key and account-IAM routes refused below are the two ways
@@ -1203,17 +1214,19 @@ var tfSanctionedGrants = map[string]string{
 	`resource "google_cloud_run_v2_service_iam_member" "signer_public"`: "the signer's public invoker, which reaches no key at all",
 	`resource "google_project_iam_custom_role" "pairedlist_sealer"`:     "K1's paired-list role: seal and open the symmetric key and nothing else, which is nothing on an asymmetric key and no reach of the signing ring",
 	`resource "google_kms_key_ring_iam_member" "signer_seals"`:          "its one grant, to the signer's own account and on K1's own ring",
+	`resource "google_project_iam_member" "signer_reaches_pairedlist"`:  "the service's read of K1's database, which is what makes the deny-all rules an asymmetry rather than an outage",
 }
 
 // tfSignerRefs is every block of this root that may name the signer's account,
 // and how many times: the service's template makes the service that identity,
-// and the three grants name it as their member. A block that names it and is not
+// and the four grants name it as their member. A block that names it and is not
 // on this list is a block that runs as the signer, grants it or exports it.
 var tfSignerRefs = map[string]int{
-	`resource "google_cloud_run_v2_service" "signer"`:            1,
-	`resource "google_kms_key_ring_iam_member" "signer_signs"`:   1,
-	`resource "google_kms_key_ring_iam_member" "signer_seals"`:   1,
-	`resource "google_storage_bucket_iam_member" "signer_reads"`: 1,
+	`resource "google_cloud_run_v2_service" "signer"`:                  1,
+	`resource "google_kms_key_ring_iam_member" "signer_signs"`:         1,
+	`resource "google_kms_key_ring_iam_member" "signer_seals"`:         1,
+	`resource "google_storage_bucket_iam_member" "signer_reads"`:       1,
+	`resource "google_project_iam_member" "signer_reaches_pairedlist"`: 1,
 }
 
 // TestInfraTheKeysetBucketIsOwnerWrittenAndServiceRead: the signed key set lives

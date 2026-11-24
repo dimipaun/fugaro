@@ -116,6 +116,19 @@ resource "google_kms_key_ring_iam_member" "signer_seals" {
   member      = google_service_account.signer.member
 }
 
+# The service's read and write of the database the list lives in, and the other
+# half of "only the function decrypts and only for its owner": the rules above
+# deny every Firebase ID token, and an account holding the database's admin role
+# is not governed by the rules at all — which is the asymmetry, not an outage.
+# Realtime Database has no per-instance IAM resource in Terraform, so the grant
+# is made at the project; the identity project has exactly one database and it
+# is the one above.
+resource "google_project_iam_member" "signer_reaches_pairedlist" {
+  project = var.project
+  role    = "roles/firebasedatabase.admin"
+  member  = google_service_account.signer.member
+}
+
 variable "database_region" {
   description = "The region the identity project's Realtime Database instance is created in. Realtime Database offers a short list of locations (us-central1, us-east1, us-east4, us-west1, europe-west1, europe-west2, asia-southeast1 at the time of writing) and an instance cannot move after creation, so this is the database's home rather than a preference. It is separate from var.region because the key ring's region and the database's are two different lists."
   type        = string
