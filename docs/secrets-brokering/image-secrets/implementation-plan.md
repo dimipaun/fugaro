@@ -56,11 +56,13 @@ Shared-job runs are out of scope (D3335).
 
 ## Slices
 
-- **S1, inert pieces:** C1, IS3, IS4, IS10, IS12. IS3 writes the project record **and** the
-  operator-local block, so version 1 keeps working; nothing a run does changes.
-- **S2, the served path:** IS1, IS2, IS5, I1, IS9. The service and runner speak version 2, update
-  copies the values, vertex repositories get the address; mounts and old containers are still there,
-  and a mounted value still wins (F7).
+- **S1, inert pieces:** C1, IS3, IS10, IS12. IS3 writes the project record **and**, for named
+  repositories, the operator-local block, so version 1 keeps working; nothing a run does changes.
+- **S2, the served path:** IS4, IS1, IS2, IS5, I1, IS9. The service and runner speak version 2 and
+  fall back to version 1 for a name the project record does not hold yet, update copies the values,
+  `secrets set` stores into the grammar, vertex repositories get the address; mounts and old
+  containers are still there. IS4 is not inert (a store lands where only version 2 reads), so it ships
+  in this release and never earlier.
 - **S3, the flip:** IS13, IS6, then IS7 and IS11. Workflow-secret mounts, grants and project-copy
   containers go; the guard and the docs follow.
 - **Apart:** IS8 (catalog build) ships whenever it is ready.
@@ -122,16 +124,18 @@ mount goes (`internal/runner/workflowsecrets.go`, the `sess == nil` refusal).
 - Acceptance: the runner sends version 2 with each declared secret's name; a `file: true` secret is
   written to a `0400` file under a tmpfs directory and its variable is set to the path, the value
   registered with the redactor before it is written; never written in an independent review run, and
-  removed at run end (G3); version 2 is not sent while `config.RepoSecretsOff` is false (G9); a mounted
-  value still wins (F7).
+  removed at run end (G3); version 2 is not sent while `config.RepoSecretsOff` is false (G9); when
+  version 2 answers "not in the record" the runner asks version 1 for the same variable, so a
+  repository already served by S3 keeps working until its name is copied (the fallback goes with
+  version 1 in the follow-up); a mounted value still wins (F7).
 - Files: `internal/runner/workflowsecrets.go`, `internal/runner/workflowsecrets_test.go`,
   `internal/runner/secretfile.go` (new), `internal/runner/secretfile_test.go` (new),
   `internal/agent/env.go`.
 - Interfaces: consumes C1 (request, `config.Secret.File`), tested against C1's stub.
 - Tests: `TestFetchWorkflowSecretsSendsName`, `TestSecretFileIsMode0400OnTmpfs`,
-  `TestSecretFileRedactedBeforeWrite`, `TestNoV2WhileRepoSecretsOn`,
+  `TestSecretFileRedactedBeforeWrite`, `TestNoV2WhileRepoSecretsOn`, `TestFallsBackToV1WhenNotInRecord`,
   `TestSecretFileRemovedAtRunEnd`, `TestReviewRunGetsNoSecretFile`.
-- Command: `go test ./internal/runner/ ./internal/agent/ -run 'TestFetchWorkflowSecretsSendsName|TestSecretFile|TestNoV2WhileRepoSecretsOn|TestReviewRunGetsNoSecretFile' -count=1`
+- Command: `go test ./internal/runner/ ./internal/agent/ -run 'TestFetchWorkflowSecretsSendsName|TestSecretFile|TestNoV2WhileRepoSecretsOn|TestFallsBackToV1WhenNotInRecord|TestReviewRunGetsNoSecretFile' -count=1`
 - Red step: `TestSecretFileIsMode0400OnTmpfs` finds the value in the environment instead of a path.
 - Depends on: C1 (request shape and the stub). **Launch hold:** not before C1 has merged after its
   independent review.
@@ -140,12 +144,16 @@ mount goes (`internal/runner/workflowsecrets.go`, the `sess == nil` refusal).
 
 ### IS3: the project secret record, and the owner's allow-list writes it
 - Acceptance: `internal/creds` encodes and decodes the project record at `creds/projectsecrets`
-  (version 1 of that record: for each workflow-secret name, its allowed repository patterns),
+  (version 1 of that record: for each workflow-secret name, its allowed repository patterns and an
+  `all_repos` member),
   refusing unknown fields; `fugaro secrets allow NAME PATTERN...` and `deny` write the name's list
   into the record **and** the operator-local `workflow_secrets` block, through the compare-and-swap,
   backup and widening diff the family already uses (G8); a `deny` that empties a list leaves the
-  entry, empty, so update cannot re-seed it (F23); `--all-repos` writes `*`, every repository
-  enrolled in the project whatever its owner; refused in an agent's session with the command to run
+  entry, empty, so update cannot re-seed it (F23); `--all-repos` sets the record's own `all_repos`
+  member for the name (every repository enrolled in the project, whatever its owner) and writes
+  nothing to the local block, whose owner-literal rule (`internal/config/project_secrets.go`
+  `ValidateProjectSecrets`) still refuses `*` and a wildcard owner — the cross-owner reach is O2, for
+  the owner to confirm; refused in an agent's session with the command to run
   (D1552); no prompt; nothing reads or prints a value.
 - Files: `internal/creds/projectsecrets.go` (new), `internal/creds/projectsecrets_test.go` (new),
   `internal/cli/secrets_allow.go`, `internal/cli/secrets_allow_test.go`,
@@ -153,9 +161,10 @@ mount goes (`internal/runner/workflowsecrets.go`, the `sess == nil` refusal).
 - Interfaces: produces `creds.ProjectSecrets`, `creds.ReadProjectSecrets`, `creds.WriteProjectSecrets`
   (compare-and-swap).
 - Tests: `TestProjectSecretsRoundTrip`, `TestProjectSecretsRefusesUnknownFields`,
-  `TestSecretsAllowWritesProjectRecordAndLocalBlock`, `TestSecretsAllowAllRepos`,
+  `TestSecretsAllowWritesProjectRecordAndLocalBlock`, `TestSecretsAllowAllReposRecordOnly`,
+  `TestLocalBlockStillRefusesWildcardOwner`,
   `TestSecretsAllowLosesNoConcurrentWrite`, `TestSecretsDenyNarrows`, `TestSecretsAllowRefusedInAgentSession`.
-- Command: `go test ./internal/creds/ ./internal/cli/ -run 'TestProjectSecrets|TestSecretsAllow|TestSecretsDeny' -count=1`
+- Command: `go test ./internal/creds/ ./internal/cli/ -run 'TestProjectSecrets|TestSecretsAllow|TestSecretsDeny|TestLocalBlockStillRefusesWildcardOwner' -count=1`
 - Red step: `TestSecretsAllowWritesProjectRecordAndLocalBlock` finds the record absent.
 - Depends on: none.
 - Commit: `creds, cli: the project secret record; secrets allow and deny write it (IS3, D3328)`
@@ -184,12 +193,17 @@ mount goes (`internal/runner/workflowsecrets.go`, the `sess == nil` refusal).
 
 ### IS5: `fugaro update` copies workflow secrets into the grammar
 - Acceptance: update copies the latest enabled version of each workflow-secret **project copy**
-  (`gcp.ProjectSecretID`, the only copy a run reads under D2313) into `fugaro_p_<name>` with the
-  marker, as the operator, comparing digests and never printing a value; it skips a name whose
+  (`gcp.ProjectSecretID`, the only copy a run reads under D2313) into `fugaro_p_<name>`, creating the
+  container with exactly the labels and annotations the intake writes for a shared container plus the
+  marker (so `checkShape` accepts it later), as the operator, never printing a value; it adds no
+  version to a `fugaro_p_` container that already holds an enabled version (a `secrets set` since
+  then is newer) and records the name as copied; it skips a name whose
   `fugaro_p_` container exists without the marker, or marked with a shape the intake does not write,
   and prints the fix (G2); it seeds a name's list only when the record holds no entry for it, only
   from the operator's `workflow_secrets` `allow_data_to`, never from a repository's declarations
-  (F22, F23), and never widens an existing entry (G8); an operator with no read on
+  (F22, F23), and never widens an existing entry (G8); it leaves `creds/workflowsecrets/<slug>` as
+  it is, for version 1, and records which names it copied in the project record so IS6 drops only
+  those; an operator with no read on
   the project copy is stopped with the fix (run it as the project's Owner); in a coding agent's
   session the copy step is refused like every other cloud write, with the command to run; it says in
   one line that runs in flight are untouched; an installation at the previous release converges in
@@ -199,9 +213,10 @@ mount goes (`internal/runner/workflowsecrets.go`, the `sess == nil` refusal).
 - Interfaces: consumes IS3's record writer and IS4's marker.
 - Tests: `TestUpdateCopiesProjectCopiesToGrammar`, `TestUpdateSkipsAnUnmarkedContainer`,
   `TestUpdateSeedsListOnlyFromAllowDataTo`, `TestUpdateNeverWidensAnExistingEntry`, `TestUpdateRefusesAForeignShape`,
+  `TestUpdateNeverOverwritesANewerValue`, `TestIntakeAcceptsAContainerUpdateMade`,
   `TestUpdateStopsANonOwnerWithTheFix`, `TestUpdateFromPreviousReleaseConvergesSecrets`,
   `TestUpdateLeavesARunInFlightRunning`.
-- Command: `go test ./internal/cli/ -run 'TestUpdateCopiesProjectCopiesToGrammar|TestUpdateSkipsAnUnmarkedContainer|TestUpdateSeedsListOnlyFromAllowDataTo|TestUpdateNeverWidensAnExistingEntry|TestUpdateRefusesAForeignShape|TestUpdateStopsANonOwnerWithTheFix|TestUpdateFromPreviousReleaseConvergesSecrets|TestUpdateLeavesARunInFlightRunning' -count=1`
+- Command: `go test ./internal/cli/ -run 'TestUpdateCopiesProjectCopiesToGrammar|TestUpdateSkipsAnUnmarkedContainer|TestUpdateSeedsListOnlyFromAllowDataTo|TestUpdateNeverWidensAnExistingEntry|TestUpdateRefusesAForeignShape|TestUpdateNeverOverwritesANewerValue|TestIntakeAcceptsAContainerUpdateMade|TestUpdateStopsANonOwnerWithTheFix|TestUpdateFromPreviousReleaseConvergesSecrets|TestUpdateLeavesARunInFlightRunning' -count=1`
 - Red step: `TestUpdateCopiesProjectCopiesToGrammar` finds no `fugaro_p_` container after update.
 - Depends on: IS3 (it writes the record through IS3's codec); IS4 (it writes the marker the intake
   defines).
@@ -211,13 +226,14 @@ mount goes (`internal/runner/workflowsecrets.go`, the `sess == nil` refusal).
 ### I1: wire the version-2 path end to end (integration)
 - Acceptance: deletes `internal/credsvc/workflowsecrets_stub.go`; an end-to-end hermetic test runs
   the owner's allow (IS3), the migration's copy and record (IS5), the real route (IS1) and the
-  runner's fetch with a file-exposed secret (IS2), and a refused unlisted repository; IS2's tests use
+  runner's fetch with a file-exposed secret (IS2), a refused unlisted repository, and the version-1
+  fallback for a name not yet copied; IS2's tests use
   the real route.
 - Files: `internal/credsvc/workflowsecrets_stub.go` (deleted), `internal/e2e/projectsecrets_test.go`
   (new), `internal/runner/workflowsecrets_test.go`.
 - Interfaces: consumes C1, IS1, IS2, IS3, IS5.
-- Tests: `TestProjectSecretFetchedEndToEnd`, `TestUnlistedRepositoryRefusedEndToEnd`.
-- Command: `go test ./internal/e2e/ ./internal/runner/ -run 'TestProjectSecretFetchedEndToEnd|TestUnlistedRepositoryRefusedEndToEnd|TestFetchWorkflowSecretsSendsName' -count=1`
+- Tests: `TestProjectSecretFetchedEndToEnd`, `TestUnlistedRepositoryRefusedEndToEnd`, `TestUncopiedNameFallsBackToV1EndToEnd`.
+- Command: `go test ./internal/e2e/ ./internal/runner/ -run 'TestProjectSecretFetchedEndToEnd|TestUnlistedRepositoryRefusedEndToEnd|TestUncopiedNameFallsBackToV1EndToEnd|TestFetchWorkflowSecretsSendsName' -count=1`
 - Red step: the end-to-end test fails while the runner still talks to the stub.
 - Depends on: IS1 and IS2 (the sides C1 separated); IS5 (the test reads the migration's record).
 - Commit: `e2e: the project secret path end to end, stub removed (I1)`
@@ -230,12 +246,13 @@ mount goes (`internal/runner/workflowsecrets.go`, the `sess == nil` refusal).
   launcher read one function for the answer; U1 is settled by a red test that a vertex run holds a
   run identity.
 - Files: `internal/infra/spec.go`, `internal/infra/spec_test.go`, `internal/cli/run.go`,
-  `internal/cli/launch_vertex_address_test.go` (new), `deploy/terraform/gcp/modules/workflow/sa.tf`,
-  `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl`.
+  `internal/cli/launch_vertex_address_test.go` (new), `internal/runner/workflowsecrets_vertex_test.go`
+  (new), `deploy/terraform/gcp/modules/workflow/sa.tf`, `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl`,
+  and the regenerated golden plans `internal/infra/tf/testdata/golden/repo-*` (`scripts/gen-golden-plans.sh`).
 - Interfaces: none from C1.
 - Tests: `TestWorkflowSecretsServedForVertex`, `TestModeOffRepoGetsNoAddress`, `TestVertexRepoKeepsModelPath`,
   `TestLaunchPutsAddressForVertexRepo`, `TestVertexRunHasRunIdentity`, the repo root's tftest run.
-- Command: `go test ./internal/infra/ ./internal/cli/ -run 'TestWorkflowSecretsServedForVertex|TestModeOffRepoGetsNoAddress|TestVertexRepoKeepsModelPath|TestLaunchPutsAddressForVertexRepo|TestVertexRunHasRunIdentity' -count=1 && go test -tags terraform ./internal/infra/... -run Repo -count=1`
+- Command: `go test ./internal/infra/ ./internal/cli/ ./internal/runner/ -run 'TestWorkflowSecretsServedForVertex|TestModeOffRepoGetsNoAddress|TestVertexRepoKeepsModelPath|TestLaunchPutsAddressForVertexRepo|TestVertexRunHasRunIdentity' -count=1 && terraform -chdir=deploy/terraform/gcp/roots/repo init -backend=false -lockfile=readonly -input=false && terraform -chdir=deploy/terraform/gcp/roots/repo test`
 - Red step: `TestWorkflowSecretsServedForVertex` finds no invoker grant.
 - Depends on: none.
 - Commit: `infra: serve workflow secrets to vertex repositories (IS9, D3326)`
@@ -249,7 +266,8 @@ mount goes (`internal/runner/workflowsecrets.go`, the `sess == nil` refusal).
   deployed job template names it (G4); inert until IS6 drops the keys; an installation at the previous
   release converges.
 - Files: `internal/infra/retire.go`, `internal/infra/retire_test.go`, `internal/infra/state.go` (new),
-  `internal/infra/state_test.go` (new).
+  `internal/infra/state_test.go` (new), `internal/cli/update_retire_copies.go` (new, the update step
+  that calls it).
 - Interfaces: consumes IS5's copy (a copy is retired only once its value is in the grammar).
 - Tests: `TestProjectCopyLeavesStateBeforeApply`, `TestRetiredCopyDeletedOnlyWhenUnreferenced`,
   `TestRetireSkipsAnUncopiedName`, `TestRetireConvergesFromPreviousRelease`.
@@ -260,19 +278,21 @@ mount goes (`internal/runner/workflowsecrets.go`, the `sess == nil` refusal).
 - Reviewer tier: opus, independent review.
 
 ### IS6: the flip (no workflow-secret mount, grant or project copy)
-- Acceptance: `modules/installation/secrets.tf` creates no project copy for a workflow-secret name
-  (IS13 takes each instance out of state first); `modules/workflow/sa.tf` grants neither the job nor
+- Acceptance: for each name the project record marks copied, and only those (a name IS5 skipped keeps
+  its mount, grants and copy until a later update copies it), `modules/installation/secrets.tf` creates
+  no project copy (IS13 takes each instance out of state first); `modules/workflow/sa.tf` grants neither the job nor
   the service on one; no job mounts a workflow secret; a repository build's request names none; a
   launch on a job image below the release that carries IS2 is refused (a new constant beside
   `vaultSince` in `internal/cli/recipes_skew.go`); `TestServiceWorkflowSecretGrantsMatchTheJobsMounts`
   is rewritten to the new sets.
 - Files: `deploy/terraform/gcp/modules/installation/secrets.tf`,
   `deploy/terraform/gcp/modules/workflow/sa.tf`, `internal/infra/spec.go`, `internal/cli/recipes_skew.go`,
-  `internal/cli/recipes_skew_test.go`, `deploy/terraform/terraform_test.go`.
+  `internal/cli/recipes_skew_test.go`, `deploy/terraform/terraform_test.go`, and the regenerated
+  golden plans `internal/infra/tf/testdata/golden/installation-*` and `repo-*` (`scripts/gen-golden-plans.sh`).
 - Interfaces: consumes IS1, IS2, IS9 and IS13's behaviour.
-- Tests: `TestNoWorkflowSecretMount`, `TestLaunchRefusesImageBelowNameFetch`,
+- Tests: `TestNoWorkflowSecretMount`, `TestUncopiedNameKeepsItsMount`, `TestLaunchRefusesImageBelowNameFetch`,
   `TestServiceWorkflowSecretGrantsMatchTheJobsMounts`, the repo and installation roots' tftest runs.
-- Command: `go test ./internal/infra/ ./internal/cli/ ./deploy/terraform/ -run 'TestNoWorkflowSecretMount|TestLaunchRefusesImageBelowNameFetch|TestServiceWorkflowSecretGrantsMatchTheJobsMounts' -count=1 && go test -tags terraform ./internal/infra/... -run 'Repo|Installation' -count=1`
+- Command: `go test ./internal/infra/ ./internal/cli/ ./deploy/terraform/ -run 'TestNoWorkflowSecretMount|TestUncopiedNameKeepsItsMount|TestLaunchRefusesImageBelowNameFetch|TestServiceWorkflowSecretGrantsMatchTheJobsMounts' -count=1 && go test -tags terraform ./internal/infra/ -run TestInstallationTerraform -count=1 && terraform -chdir=deploy/terraform/gcp/roots/repo init -backend=false -lockfile=readonly -input=false && terraform -chdir=deploy/terraform/gcp/roots/repo test`
 - Red step: `TestNoWorkflowSecretMount` finds `secret_key_ref` on a vertex repository's job.
 - Depends on: I1 (the version-2 path works end to end before anything is taken away); IS13 (the
   state removal and the retirement it relies on; IS5 before it); IS9 (vertex repositories fetch before
@@ -309,11 +329,12 @@ mount goes (`internal/runner/workflowsecrets.go`, the `sess == nil` refusal).
   `deploy/terraform/gcp/modules/installation/build_identity.tf`,
   `deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl`, `internal/cli/gitcred.go`,
   `internal/cli/gitcred_test.go` (six files: the Go and Terraform halves of one credential path, kept
-  together so neither lands alone).
+  together so neither lands alone), and the regenerated golden plans
+  `internal/infra/tf/testdata/golden/installation-*` (`scripts/gen-golden-plans.sh`).
 - Interfaces: none from C1.
 - Tests: `TestCatalogBuildRequestNamesNoSecret`, `TestCatalogGitCredentialFromService`, the
   installation root's tftest run.
-- Command: `go test ./internal/backend/gcp/ ./internal/cli/ -run 'TestCatalogBuildRequestNamesNoSecret|TestCatalogGitCredentialFromService' -count=1 && go test -tags terraform ./internal/infra/... -run Installation -count=1`
+- Command: `go test ./internal/backend/gcp/ ./internal/cli/ -run 'TestCatalogBuildRequestNamesNoSecret|TestCatalogGitCredentialFromService' -count=1 && go test -tags terraform ./internal/infra/ -run TestInstallationTerraform -count=1`
 - Red step: `TestCatalogBuildRequestNamesNoSecret` finds `availableSecrets`.
 - Depends on: none.
 - Commit: `catalog: the build reads its git credential from the service, no accessor (IS8, D3330)`
@@ -419,7 +440,10 @@ graph read is quoted under "Graph read" below.
 | `internal/credsvc/workflowsecrets_stub.go` | C1 (1, creates), I1 (3, deletes) |
 | `internal/config/validate.go` | C1 (1) |
 | `internal/backend/gcp/secrets.go` | IS5 (2) |
-| `internal/infra/retire.go`, `internal/infra/state.go` | IS13 (3) |
+| `internal/infra/retire.go`, `internal/infra/state.go`, `internal/cli/update_retire_copies.go` | IS13 (3) |
+| `internal/infra/tf/testdata/golden/repo-*` | IS9 (1), IS6 (4) |
+| `internal/infra/tf/testdata/golden/installation-*` | IS8 (1), IS6 (4) |
+| `internal/runner/workflowsecrets_vertex_test.go` | IS9 (1) |
 | `internal/cli/gitcred.go`, `internal/cli/gitcred_test.go` | IS8 (1) |
 | `deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl` | IS8 (1); IS6 runs that root's tests without editing the file unless its assertions move |
 | `internal/cli/*` | IS4 `secrets.go` (1), IS10 `doctor*.go` (1), IS9 `run.go` and `launch_vertex_address_test.go` (1), IS8 `gitcred*.go` (1), IS3 `secrets_allow*.go` and `secrets_policy_workflow_test.go` (1), IS5 `update_*.go` (2), IS6 `recipes_skew*.go` (4) — no file has two writers in one level |

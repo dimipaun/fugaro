@@ -106,8 +106,8 @@ decisions D3320–D3333 below.
 - **F10 (Gap).** `fugaro_p_<name>` is also the dynamic-delivery grammar for project-shared
   credentials (model keys and the like). A workflow secret named like one of those would share its
   container. `config.ReservedSecrets` names are already refused as workflow-secret names (D1260's
-  note on `localcfg.Config.WorkflowSecrets`); the plan pins that disjointness in a test (global
-  constraint G2).
+  note on `localcfg.Config.WorkflowSecrets`); since review round 2 the separation is the marker rule of F18
+  and G2 rather than a name list, so no task tests name disjointness on its own.
 - **F11 (Gap).** No secret is exposed as a file: `config.Secret` has `Name` and `Env` only, and the
   runner writes environment variables only. *Consequence:* D3327.
 - **F12 (Gap).** Nothing reports a deployed job's mounts live. Doctor's sweep reads IAM, not job
@@ -181,7 +181,7 @@ this document.
 | D3321 | Scope of "nothing else reads Secret Manager" | Run jobs only (per-repository, shared, Batch, build, image check); installation services stay listed exceptions under B0.2 | **As recommended** (2026-11-23) |
 | D3323 | Adding, removing or changing a workflow secret needs no Terraform: which grant? | The prefix-conditioned grant (one, at install), over per-container grants or a project-wide accessor | **As recommended, after the owner asked why a grant is needed at all** (2026-11-23). First asked as "keep per-container grants (D2074)"; the owner rejected that framing. Reopens D2074 for workflow secrets |
 | D3324 | Per-repository or project secrets? | Project only: every workflow secret is `fugaro_p_<name>`; the repository copy and D1262's repo-then-project order go | **As recommended, on the owner's own question** (2026-11-23). First asked as a naming question with a repository prefix recommended; the owner asked whether per-repository should exist at all. **Amended after review** (2026-11-23, F16): project-only is already the state under D2313; the plan moves the project copies into the grammar and leaves D2313's dormant repository-level code as that ruling keeps it (the owner's answer to the amendment) |
-| D3325 | How does `update` converge existing containers? | Copy each latest enabled version into its `fugaro_p_` container as the operator, rewrite the record, then drop the old grants and containers | **As recommended** (2026-11-23) |
+| D3325 | How does `update` converge existing containers? | Copy each latest enabled version into its `fugaro_p_` container as the operator, rewrite the record, then drop the old grants and containers (as built: the project record gains the copied names; the per-repository version-1 record stays until the follow-up) | **As recommended** (2026-11-23) |
 | D3326 | Serve workflow secrets to repositories the switch holds off? | Yes: serving workflow secrets stops depending on the model-auth switch | **As recommended** (2026-11-23). Rests on U1. **Amended after review** (2026-11-23, F17): vertex repositories only; the flip waits for always-a-budget's removal of mode `off`, and a not-ready root converges when update re-applies it (the owner's answer to the amendment) |
 | D3327 | Add file exposure? | Yes: `file: true` on a secret entry; the runner writes a `0400` tmpfs file and sets the variable to its path | **As recommended** (2026-11-23) |
 | D3328 | Which repositories may fetch a project secret by default? | An explicit list per secret (`--repo`, or `--all-repos`); unlisted is refused with the fix | **As recommended** (2026-11-23) |
@@ -257,6 +257,11 @@ this document.
   and the service's per-container grant), for held-off repositories too (they gain the address,
   D3326), so no job mounts it and the guard stays at two rows. The version-1 route and its grant stay
   until no installation reports a collision; a follow-up task removes them (plan, "After this plan").
+- **O2 (review round 3).** D3328's `--all-repos` reaches every repository enrolled in the project
+  whatever its owner, which the operator-local block's owner-literal rule (`internal/config/project_secrets.go`)
+  calls "the one widening this list is never meant to make". The plan keeps that rule for the local
+  block and stores all-repos as its own member of the project record only. The owner confirms the
+  cross-owner reach, or narrows `--all-repos` to one owner.
 - **O1.** The owner confirms that the new allow-list being repository-wide (D3333) is meant to
   replace the per-workflow binding S3 enforced (G19). Recorded as accepted; listed so a reviewer sees it.
 
@@ -276,4 +281,4 @@ this document.
   `value_source` after the release. *Settles it:* Check 920, owner-run.
 - **U5.** Whether Terraform 1.9's `removed` block can forget one `for_each` instance of
   `google_secret_manager_secret.project`, or whether `internal/infra` must run `terraform state rm`
-  per instance before the apply. *Settles it:* IS6's convergence test. *Who:* that task's run.
+  per instance before the apply. *Settles it:* IS13's `TestProjectCopyLeavesStateBeforeApply`. *Who:* that task's run.
