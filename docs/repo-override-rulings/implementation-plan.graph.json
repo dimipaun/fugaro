@@ -1,0 +1,1481 @@
+{
+  "schema_version": 3,
+  "plan": "docs/repo-override-rulings/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "A1",
+      "title": "model-credentials-routing's F7 amended for D3237",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/model-credentials-routing/reconciliation.md",
+          "docs/model-credentials-routing/README.md"
+        ]
+      }
+    },
+    {
+      "id": "C1",
+      "title": "contract: the lifted keys and their notes",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/config/lifted.go",
+          "internal/config/lifted_test.go",
+          "docs/repo-override-rulings/contract-lift-keys.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": []
+    },
+    {
+      "id": "C2",
+      "title": "contract: the migration's repository files and planners",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/lift/lift.go",
+          "internal/lift/stubs.go",
+          "docs/repo-override-rulings/contract-migrate.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/lift/stubs.go"
+      ]
+    },
+    {
+      "id": "PR0",
+      "title": "B16: a recipe's project copy, its name and its lookup order",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/recipe/copyname.go",
+          "internal/recipe/copyname_test.go"
+        ]
+      }
+    },
+    {
+      "id": "S0",
+      "title": "the scope table: kept rows cite D3237",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/config/scope.go",
+          "docs/project-layer.md",
+          "internal/config/scope_lift_test.go"
+        ]
+      }
+    },
+    {
+      "id": "S1",
+      "title": "config.Resolve drops the lifted keys, on every ref",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/config/resolve.go",
+          "internal/config/lifted_drop.go",
+          "internal/config/lifted_drop_test.go",
+          "schemas/fugaro.schema.json",
+          "internal/config/config.go"
+        ]
+      }
+    },
+    {
+      "id": "RT1",
+      "title": "B4: the tighten-only merge against the project's value",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/config/resolve.go",
+          "internal/config/tighten.go",
+          "internal/config/tighten_test.go"
+        ]
+      }
+    },
+    {
+      "id": "RT2",
+      "title": "B4: a silent project's baseline is the run's mode",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/config/levels.go",
+          "internal/runner/plan.go",
+          "internal/cli/launch_budget.go",
+          "internal/cli/budget_preview.go",
+          "internal/runner/plan_tighten_test.go"
+        ]
+      }
+    },
+    {
+      "id": "S2",
+      "title": "validate and doctor name every lifted key, every dropped value and the recipes cleanup",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/validate.go",
+          "internal/cli/doctor.go",
+          "internal/cli/lifted_notes_test.go"
+        ]
+      }
+    },
+    {
+      "id": "S4",
+      "title": "settings set and models use refuse a lifted key in a repository",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/settings_set.go",
+          "internal/cli/models_use.go",
+          "internal/cli/lifted_writers_test.go",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "S5",
+      "title": "the release-A launch: its notes, and its gate on a pre-L8 image",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/recipes_skew.go",
+          "internal/cli/l8_skew_test.go"
+        ]
+      }
+    },
+    {
+      "id": "AB1",
+      "title": "B9: ab.repos in the layer's ab block",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/config/ab.go",
+          "internal/config/ab_repos_test.go",
+          "schemas/project-layer.schema.json",
+          "internal/settings/meta_layer.go",
+          "schemas/settings.schema.json"
+        ]
+      }
+    },
+    {
+      "id": "AB2",
+      "title": "B9: ee/ab reads a repository's rate from ab.repos",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "ee/ab/launch.go",
+          "ee/ab/repos_rate_test.go"
+        ]
+      }
+    },
+    {
+      "id": "AB3",
+      "title": "B9: the planner that moves ab.rate to ab.repos",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/lift/ab.go",
+          "internal/lift/ab_test.go"
+        ]
+      }
+    },
+    {
+      "id": "MC1",
+      "title": "B3: the planner that moves the model choice to the project",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/lift/models.go",
+          "internal/lift/models_test.go"
+        ]
+      }
+    },
+    {
+      "id": "RG1",
+      "title": "B11: the new rigor precedence and Configured per repository",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/rigor/resolve.go",
+          "internal/rigor/select.go",
+          "internal/rigor/resolve_lift_test.go"
+        ]
+      }
+    },
+    {
+      "id": "RG2",
+      "title": "B11: the planner that moves rigor.default and rigor.areas to the project",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/lift/rigor.go",
+          "internal/lift/rigor_test.go"
+        ]
+      }
+    },
+    {
+      "id": "RG3",
+      "title": "B11: rigor set writes rigor.repos and member areas; --layer repo refused",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/rigor.go",
+          "internal/cli/writers_labels.go",
+          "internal/cli/rigor_repos_test.go",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "PR1",
+      "title": "B16: the launcher resolves a repository's own copy, then the flat name, then the catalog",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/recipes_resolve.go",
+          "internal/cli/recipes.go",
+          "internal/cli/budget_preview.go",
+          "internal/cli/recipes_lift_test.go"
+        ]
+      }
+    },
+    {
+      "id": "PR5",
+      "title": "B16: the cleanup diff, and validate prints it",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/recipes_cleanup.go",
+          "internal/cli/validate_recipes.go",
+          "internal/cli/recipes_cleanup_test.go"
+        ]
+      }
+    },
+    {
+      "id": "PR2",
+      "title": "B16: every launch path embeds the project copy",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/run.go",
+          "internal/cli/followup.go",
+          "internal/cli/recipes_launch_lift_test.go"
+        ]
+      }
+    },
+    {
+      "id": "PR3",
+      "title": "B16: the runner stops reading .fugaro/recipes/",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/recipe.go",
+          "internal/runner/recipe_lift_test.go"
+        ]
+      }
+    },
+    {
+      "id": "PR4",
+      "title": "B16: the planner that publishes repository recipes flat, renaming clashes",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/lift/recipes.go",
+          "internal/lift/recipes_test.go"
+        ]
+      }
+    },
+    {
+      "id": "PR6",
+      "title": "B16: every recipe-name check that refuses a dot accepts a copy name",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/recipe/recipe.go",
+          "schemas/recipe.schema.json",
+          "internal/task/task.go",
+          "internal/localcfg/recipecache.go",
+          "internal/recipe/copyname_accept_test.go"
+        ]
+      }
+    },
+    {
+      "id": "D3",
+      "title": "the in-flight design document follows the new stage and the bootstrap refusal",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/design/update-in-flight.md"
+        ]
+      }
+    },
+    {
+      "id": "CK3",
+      "title": "Check 913 as a script, and registered: does a retried execution boot on the rebuilt image",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-913-retry-image.sh",
+          "scripts/live-checks/check-913-retry-image_test.sh",
+          "scripts/live_checks_test.go",
+          "docs/gcp-live-checklist.md",
+          "scripts/live-checks/README.md"
+        ]
+      }
+    },
+    {
+      "id": "RT3",
+      "title": "B4: the planner that names the repositories whose runs now stop earlier",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/lift/tighten.go",
+          "internal/lift/tighten_test.go"
+        ]
+      }
+    },
+    {
+      "id": "DK3",
+      "title": "L13: tightenGrades loses its repository half",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/policy/grades.go",
+          "internal/policy/merge.go",
+          "internal/policy/grades_repo_test.go"
+        ]
+      }
+    },
+    {
+      "id": "PR7",
+      "title": "B16: the launcher's dead repository-recipe branches go",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/reviewspec.go",
+          "internal/cli/run_digest_manifest.go",
+          "internal/cli/recipes_dead_branches_test.go"
+        ]
+      }
+    },
+    {
+      "id": "XB6",
+      "title": "release B: validate refuses a lifted key only on the default branch",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/validate.go",
+          "internal/cli/validate_release_b_test.go"
+        ]
+      }
+    },
+    {
+      "id": "RC1",
+      "title": "B18: Caps clamps a repository cap to its ceiling",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/budget/model.go",
+          "internal/budget/model_ceiling_test.go"
+        ]
+      }
+    },
+    {
+      "id": "RC2",
+      "title": "B18: the rules' lease check clamps the same way",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/budget/rules/rules.go",
+          "internal/budget/rules/rules.json.tmpl",
+          "internal/budget/rules/testdata/rules.golden.json",
+          "internal/budget/rules/rules_test.go",
+          "internal/budget/rules/lease_ceiling_emulator_test.go"
+        ]
+      }
+    },
+    {
+      "id": "RC3",
+      "title": "B18: budget set --repo refuses a figure above the ceiling",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/budget.go",
+          "internal/cli/budget_ceiling_test.go"
+        ]
+      }
+    },
+    {
+      "id": "RC4",
+      "title": "B18: the planner that lowers a node above its ceiling",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/lift/caps.go",
+          "internal/lift/caps_test.go"
+        ]
+      }
+    },
+    {
+      "id": "M1",
+      "title": "the reader of every repository update can list",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/repofiles/reader.go",
+          "internal/repofiles/reader_test.go"
+        ]
+      }
+    },
+    {
+      "id": "M2",
+      "title": "fugaro update's L8 stage: say first, then write, once",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_lift.go",
+          "internal/cli/update_lift_test.go",
+          "internal/cli/init_stages.go",
+          "internal/cli/update_in_flight.go"
+        ]
+      }
+    },
+    {
+      "id": "I1",
+      "title": "integration: every reader of a repository's file drops every lifted key",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/consumers_test.go",
+          "internal/cli/testdata/lifted/fugaro.yaml",
+          "internal/runner/lifted_readers_test.go",
+          "internal/config/lifted_rows_test.go"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "I2",
+      "title": "integration: update converges a project whose repositories write every lifted key",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/lift/stubs.go",
+          "internal/lift/registry.go",
+          "internal/e2e/update_test.go",
+          "internal/cli/update_converge_test.go",
+          "internal/cli/update_in_flight_test.go"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "I3",
+      "title": "end to end: a migrated recipe reaches a run only from the project store",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/recipes_e2e_lift_test.go",
+          "internal/runner/recipe_embedded_lift_test.go"
+        ]
+      }
+    },
+    {
+      "id": "DK1",
+      "title": "L13: agent.compression's repository row and RepoModelGradesSet go",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/config/scope.go",
+          "internal/config/grades.go",
+          "internal/config/resolve.go",
+          "internal/config/config.go",
+          "internal/config/dead_keys_test.go"
+        ]
+      }
+    },
+    {
+      "id": "DK2",
+      "title": "L13: the grades' skew gates read the layer alone; the default branch refuses the model grades",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/recipes_skew.go",
+          "internal/cli/init.go",
+          "internal/cli/validate.go",
+          "internal/cli/dead_keys_skew_test.go"
+        ]
+      }
+    },
+    {
+      "id": "D1",
+      "title": "documents: recipes, layered config, rigor order",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/recipes.md",
+          "docs/recipes/spec.md",
+          "docs/layered-config/spec.md",
+          "docs/rigor-modes.md",
+          "docs/project-layer.md"
+        ]
+      }
+    },
+    {
+      "id": "D2",
+      "title": "skills: the model and rigor questions move to the project",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "plugin/skills/setup/SKILL.md",
+          "plugin/skills/setup/reference/decisions.md",
+          "plugin/skills/working/SKILL.md",
+          "plugin/skills/parallelism/reference/decoupling.md",
+          "plugin/skills/spec-to-pr/reference/plan.md"
+        ]
+      }
+    },
+    {
+      "id": "CK1",
+      "title": "Checks 910 and 911, as scripts: the resolved values before and after release A",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-910-lift-snapshot.sh",
+          "scripts/live-checks/check-910-lift-snapshot_test.sh",
+          "scripts/live-checks/check-911-lift-compare.sh",
+          "scripts/live-checks/check-911-lift-compare_test.sh"
+        ]
+      }
+    },
+    {
+      "id": "CK2",
+      "title": "Check 912 as a script, and Checks 910 to 912 registered",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-912-lift-refusal.sh",
+          "scripts/live-checks/check-912-lift-refusal_test.sh",
+          "scripts/live_checks_test.go",
+          "docs/gcp-live-checklist.md",
+          "scripts/live-checks/README.md"
+        ]
+      }
+    },
+    {
+      "id": "XB4",
+      "title": "release B: the launch gate for the refusal",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/recipes_skew.go",
+          "internal/cli/l8b_skew_test.go"
+        ]
+      }
+    },
+    {
+      "id": "XB1",
+      "title": "release B: config.Resolve refuses a lifted key on the default branch, ignores it on an older ref",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/config/scope.go",
+          "internal/config/lifted_drop.go",
+          "internal/config/resolve.go",
+          "internal/config/lifted_refuse_test.go",
+          "docs/project-layer.md"
+        ]
+      }
+    },
+    {
+      "id": "XB2",
+      "title": "release B: the runner's older ref, the launch's refusal and the recipes folder refused",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/followup.go",
+          "internal/runner/runner.go",
+          "internal/cli/run.go",
+          "internal/cli/recipes_cleanup.go",
+          "internal/cli/release_b_refusal_test.go"
+        ]
+      }
+    },
+    {
+      "id": "XB3",
+      "title": "release B: the schemas, the settings registry and the empty rigor block's opt-in",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "schemas/fugaro.schema.json",
+          "internal/settings/registry.go",
+          "schemas/settings.schema.json",
+          "internal/rigor/resolve.go",
+          "internal/settings/lift_rows_test.go"
+        ]
+      }
+    },
+    {
+      "id": "XB5",
+      "title": "release B: update names a lifted key still written, never stops the update; the planners retire",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_lift.go",
+          "internal/cli/update_lift_refuse_test.go"
+        ]
+      }
+    },
+    {
+      "id": "R-lift-phase",
+      "title": "amend contract C1: if release B's refusal needs a per-key phase in the list rather than the scope rows' InRepo bit",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/config/lifted.go",
+          "docs/repo-override-rulings/contract-lift-keys.md"
+        ]
+      },
+      "kind": "contract_change"
+    },
+    {
+      "id": "R-planner-change",
+      "title": "amend contract C2: if a store write (a recipe object) or a database write (a cap node) needs more than the change type carries",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/lift/lift.go",
+          "docs/repo-override-rulings/contract-migrate.md"
+        ]
+      },
+      "kind": "contract_change"
+    }
+  ],
+  "edges": [
+    {
+      "task": "S1",
+      "needs": "C1",
+      "reason": "the contract's list of lifted keys"
+    },
+    {
+      "task": "RT1",
+      "needs": "S1",
+      "reason": "kept: one file, internal/config/resolve.go"
+    },
+    {
+      "task": "RT2",
+      "needs": "RT1",
+      "reason": "kept, behaviour: it applies the mode to the unchecked value RT1 records"
+    },
+    {
+      "task": "S2",
+      "needs": "C1",
+      "reason": "the contract's notes"
+    },
+    {
+      "task": "S2",
+      "needs": "RT1",
+      "reason": "kept, behaviour: it prints the dropped values RT1 records"
+    },
+    {
+      "task": "S4",
+      "needs": "C1",
+      "reason": "the contract's list of lifted keys"
+    },
+    {
+      "task": "S5",
+      "needs": "C1",
+      "reason": "the contract's list of lifted keys"
+    },
+    {
+      "task": "S5",
+      "needs": "AB1",
+      "reason": "kept: it reads AB1's Layer.SetsABRepos, which is the field itself"
+    },
+    {
+      "task": "S5",
+      "needs": "PR0",
+      "reason": "kept: the copy gate recognises a copy name with PR0's function, which a contract would equal"
+    },
+    {
+      "task": "AB2",
+      "needs": "AB1",
+      "reason": "kept: it reads the field AB1 adds; a contract would be the field"
+    },
+    {
+      "task": "AB3",
+      "needs": "AB1",
+      "reason": "kept: it writes the field AB1 adds"
+    },
+    {
+      "task": "AB3",
+      "needs": "C2",
+      "reason": "the contract's planner and repository-file types"
+    },
+    {
+      "task": "MC1",
+      "needs": "C2",
+      "reason": "the contract's planner and repository-file types"
+    },
+    {
+      "task": "RG2",
+      "needs": "C2",
+      "reason": "the contract's planner and repository-file types"
+    },
+    {
+      "task": "RG3",
+      "needs": "S4",
+      "reason": "kept: one file, the generated website/content/cli-reference.md"
+    },
+    {
+      "task": "PR1",
+      "needs": "PR0",
+      "reason": "kept: it calls PR0's lookup order, which a contract would equal"
+    },
+    {
+      "task": "PR1",
+      "needs": "C2",
+      "reason": "kept: the migration record's path (D3308)"
+    },
+    {
+      "task": "S2",
+      "needs": "PR5",
+      "reason": "kept: doctor prints PR5's cleanup lines, a function of a few lines"
+    },
+    {
+      "task": "PR2",
+      "needs": "PR0",
+      "reason": "kept: as PR1"
+    },
+    {
+      "task": "PR2",
+      "needs": "PR5",
+      "reason": "kept: it prints PR5's cleanup lines at the launch"
+    },
+    {
+      "task": "PR4",
+      "needs": "C2",
+      "reason": "the contract's planner and repository-file types"
+    },
+    {
+      "task": "PR4",
+      "needs": "PR0",
+      "reason": "kept: it names a copy with PR0's function"
+    },
+    {
+      "task": "PR6",
+      "needs": "PR0",
+      "reason": "kept: it widens the checks to PR0's grammar"
+    },
+    {
+      "task": "PR1",
+      "needs": "PR6",
+      "reason": "kept, behaviour: a copy must parse before the launcher resolves it"
+    },
+    {
+      "task": "PR2",
+      "needs": "PR6",
+      "reason": "kept, behaviour: the task validation must accept a copy before a launch embeds one"
+    },
+    {
+      "task": "D3",
+      "needs": "M2",
+      "reason": "kept, behaviour: it states what the stage does"
+    },
+    {
+      "task": "D3",
+      "needs": "PR3",
+      "reason": "kept, behaviour: it states the bootstrap refusal"
+    },
+    {
+      "task": "CK3",
+      "needs": "CK2",
+      "reason": "kept: three files, the registration CK2 writes"
+    },
+    {
+      "task": "DK2",
+      "needs": "S2",
+      "reason": "kept: one file, internal/cli/validate.go"
+    },
+    {
+      "task": "RT3",
+      "needs": "C2",
+      "reason": "the contract's planner and repository-file types"
+    },
+    {
+      "task": "RT3",
+      "needs": "RT1",
+      "reason": "kept, behaviour: it names what RT1's rule drops"
+    },
+    {
+      "task": "CK1",
+      "needs": "M2",
+      "reason": "kept, behaviour: Check 910 reads update --plan-only's L8 lines, which M2 defines"
+    },
+    {
+      "task": "RT2",
+      "needs": "PR1",
+      "reason": "kept: one file, internal/cli/budget_preview.go"
+    },
+    {
+      "task": "R-lift-phase",
+      "needs": "I1",
+      "reason": "kept: a change to C1's files comes after every consumer has landed, never beside the contract"
+    },
+    {
+      "task": "R-planner-change",
+      "needs": "I2",
+      "reason": "kept: a change to C2's files comes after every planner has landed, never beside the contract"
+    },
+    {
+      "task": "PR5",
+      "needs": "PR0",
+      "reason": "kept: it reads the store in PR0's lookup order"
+    },
+    {
+      "task": "DK3",
+      "needs": "DK1",
+      "reason": "kept, behaviour: the repository's grades no longer reach a layer"
+    },
+    {
+      "task": "PR7",
+      "needs": "PR2",
+      "reason": "kept, behaviour: the branches are dead only once no launcher writes a repository recipe"
+    },
+    {
+      "task": "XB4",
+      "needs": "DK3",
+      "reason": "kept, behaviour: release B follows the whole of release A"
+    },
+    {
+      "task": "XB4",
+      "needs": "PR7",
+      "reason": "kept, behaviour: release B follows the whole of release A"
+    },
+    {
+      "task": "XB6",
+      "needs": "XB1",
+      "reason": "kept, behaviour: it applies XB1's mode rule"
+    },
+    {
+      "task": "XB6",
+      "needs": "DK2",
+      "reason": "kept: one file, internal/cli/validate.go"
+    },
+    {
+      "task": "RC3",
+      "needs": "RC1",
+      "reason": "kept: it refuses at the ceiling RC1 computes, a function of a few lines"
+    },
+    {
+      "task": "RC4",
+      "needs": "RC1",
+      "reason": "kept: it lowers to the ceiling RC1 computes"
+    },
+    {
+      "task": "RC4",
+      "needs": "C2",
+      "reason": "the contract's planner and repository-file types"
+    },
+    {
+      "task": "M2",
+      "needs": "C2",
+      "reason": "the contract's planner signatures and stage input"
+    },
+    {
+      "task": "I1",
+      "needs": "S0",
+      "reason": "integration: the reader test needs every side of C1"
+    },
+    {
+      "task": "I1",
+      "needs": "S1",
+      "reason": "integration: the reader test needs every side of C1"
+    },
+    {
+      "task": "I1",
+      "needs": "S2",
+      "reason": "integration: the reader test needs every side of C1"
+    },
+    {
+      "task": "I1",
+      "needs": "S4",
+      "reason": "integration: the reader test needs every side of C1"
+    },
+    {
+      "task": "I1",
+      "needs": "S5",
+      "reason": "integration: the reader test needs every side of C1"
+    },
+    {
+      "task": "I1",
+      "needs": "RG3",
+      "reason": "integration: the reader test needs every side of C1"
+    },
+    {
+      "task": "I2",
+      "needs": "M1",
+      "reason": "integration: the stage converges only with every planner registered and the reader wired"
+    },
+    {
+      "task": "I2",
+      "needs": "M2",
+      "reason": "integration: the stage converges only with every planner registered and the reader wired"
+    },
+    {
+      "task": "I2",
+      "needs": "MC1",
+      "reason": "integration: the stage converges only with every planner registered and the reader wired"
+    },
+    {
+      "task": "I2",
+      "needs": "AB3",
+      "reason": "integration: the stage converges only with every planner registered and the reader wired"
+    },
+    {
+      "task": "I2",
+      "needs": "RG2",
+      "reason": "integration: the stage converges only with every planner registered and the reader wired"
+    },
+    {
+      "task": "I2",
+      "needs": "PR4",
+      "reason": "integration: the stage converges only with every planner registered and the reader wired"
+    },
+    {
+      "task": "I2",
+      "needs": "RC4",
+      "reason": "integration: the stage converges only with every planner registered and the reader wired"
+    },
+    {
+      "task": "I2",
+      "needs": "RT3",
+      "reason": "integration: the stage converges only with every planner registered and the reader wired"
+    },
+    {
+      "task": "I3",
+      "needs": "PR1",
+      "reason": "kept, behaviour: the copy must be looked up, embedded and not read from the folder"
+    },
+    {
+      "task": "I3",
+      "needs": "PR2",
+      "reason": "kept, behaviour: the copy must be looked up, embedded and not read from the folder"
+    },
+    {
+      "task": "I3",
+      "needs": "PR3",
+      "reason": "kept, behaviour: the copy must be looked up, embedded and not read from the folder"
+    },
+    {
+      "task": "I3",
+      "needs": "I2",
+      "reason": "kept, behaviour: the end-to-end test publishes the copy through the registered planner"
+    },
+    {
+      "task": "DK1",
+      "needs": "S0",
+      "reason": "kept: one file, internal/config/scope.go"
+    },
+    {
+      "task": "DK1",
+      "needs": "RT1",
+      "reason": "kept: one file, internal/config/resolve.go"
+    },
+    {
+      "task": "DK2",
+      "needs": "DK1",
+      "reason": "kept, behaviour: it removes the readers of the field DK1 removes"
+    },
+    {
+      "task": "DK2",
+      "needs": "S5",
+      "reason": "kept: one file, internal/cli/recipes_skew.go"
+    },
+    {
+      "task": "D1",
+      "needs": "S0",
+      "reason": "kept: one file, docs/project-layer.md"
+    },
+    {
+      "task": "D1",
+      "needs": "RG1",
+      "reason": "kept, behaviour: it states the precedence RG1 implements"
+    },
+    {
+      "task": "D1",
+      "needs": "RT1",
+      "reason": "kept, behaviour: it states the tighten rule RT1 implements"
+    },
+    {
+      "task": "D1",
+      "needs": "PR1",
+      "reason": "kept, behaviour: it states the resolution order PR1 implements"
+    },
+    {
+      "task": "D2",
+      "needs": "S4",
+      "reason": "kept, behaviour: the plugin tests check every command and flag a skill names against the CLI"
+    },
+    {
+      "task": "D2",
+      "needs": "RG3",
+      "reason": "kept, behaviour: as for S4, rigor set --repo"
+    },
+    {
+      "task": "CK2",
+      "needs": "CK1",
+      "reason": "kept: the registration names the scripts CK1 writes"
+    },
+    {
+      "task": "XB4",
+      "needs": "DK2",
+      "reason": "kept: one file, internal/cli/recipes_skew.go"
+    },
+    {
+      "task": "XB4",
+      "needs": "I1",
+      "reason": "kept, behaviour: release B follows the whole of release A"
+    },
+    {
+      "task": "XB4",
+      "needs": "I3",
+      "reason": "kept, behaviour: release B follows the whole of release A"
+    },
+    {
+      "task": "XB1",
+      "needs": "XB4",
+      "reason": "kept, behaviour: a file may be refused only once the gate keeps an older image off it (as MCR X2 on X1)"
+    },
+    {
+      "task": "XB1",
+      "needs": "DK1",
+      "reason": "kept: two files, internal/config/scope.go and resolve.go"
+    },
+    {
+      "task": "XB1",
+      "needs": "D1",
+      "reason": "kept: one file, docs/project-layer.md"
+    },
+    {
+      "task": "XB2",
+      "needs": "XB1",
+      "reason": "kept, behaviour: it calls the refusal XB1 adds"
+    },
+    {
+      "task": "XB2",
+      "needs": "PR2",
+      "reason": "kept: one file, internal/cli/run.go"
+    },
+    {
+      "task": "XB3",
+      "needs": "XB1",
+      "reason": "kept, behaviour: the schemas follow the scope rows XB1 changes"
+    },
+    {
+      "task": "XB5",
+      "needs": "XB1",
+      "reason": "kept, behaviour: it calls the refusal XB1 adds"
+    },
+    {
+      "task": "XB5",
+      "needs": "I2",
+      "reason": "kept: one file, internal/cli/update_lift.go, through M2"
+    },
+    {
+      "task": "I2",
+      "needs": "PR1",
+      "reason": "re-joins PR1's read of the record with M2's write (D3308)"
+    }
+  ],
+  "decoupling": [
+    {
+      "contract": "C1",
+      "was": {
+        "task": "S1",
+        "needs": "S0"
+      },
+      "integration": "I1",
+      "reason": "it needs only which keys are lifted, which the contract lists, not the scope rows S0 marks"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "S2",
+        "needs": "S0"
+      },
+      "integration": "I1",
+      "reason": "it needs only which keys are lifted, which the contract lists, not the scope rows S0 marks"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "S4",
+        "needs": "S0"
+      },
+      "integration": "I1",
+      "reason": "it needs only which keys are lifted, which the contract lists, not the scope rows S0 marks"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "S5",
+        "needs": "S0"
+      },
+      "integration": "I1",
+      "reason": "it needs only which keys are lifted, which the contract lists, not the scope rows S0 marks"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "MC1",
+        "needs": "M1"
+      },
+      "integration": "I2",
+      "reason": "a planner needs the shape of a repository's files, not the provider read that fills it"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "AB3",
+        "needs": "M1"
+      },
+      "integration": "I2",
+      "reason": "a planner needs the shape of a repository's files, not the provider read that fills it"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "RG2",
+        "needs": "M1"
+      },
+      "integration": "I2",
+      "reason": "a planner needs the shape of a repository's files, not the provider read that fills it"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "PR4",
+        "needs": "M1"
+      },
+      "integration": "I2",
+      "reason": "a planner needs the shape of a repository's files, not the provider read that fills it"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "RC4",
+        "needs": "M1"
+      },
+      "integration": "I2",
+      "reason": "a planner needs the shape of a repository's files, not the provider read that fills it"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "RT3",
+        "needs": "M1"
+      },
+      "integration": "I2",
+      "reason": "a planner needs the shape of a repository's files, not the provider read that fills it"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "M2",
+        "needs": "MC1"
+      },
+      "integration": "I2",
+      "reason": "the stage needs the planner's signature and its change type, not what a planner computes"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "M2",
+        "needs": "AB3"
+      },
+      "integration": "I2",
+      "reason": "the stage needs the planner's signature and its change type, not what a planner computes"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "M2",
+        "needs": "RG2"
+      },
+      "integration": "I2",
+      "reason": "the stage needs the planner's signature and its change type, not what a planner computes"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "M2",
+        "needs": "PR4"
+      },
+      "integration": "I2",
+      "reason": "the stage needs the planner's signature and its change type, not what a planner computes"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "M2",
+        "needs": "RC4"
+      },
+      "integration": "I2",
+      "reason": "the stage needs the planner's signature and its change type, not what a planner computes"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "M2",
+        "needs": "RT3"
+      },
+      "integration": "I2",
+      "reason": "the stage needs the planner's signature and its change type, not what a planner computes"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "PR1",
+        "needs": "M2"
+      },
+      "integration": "I2",
+      "reason": "the launcher needs only the migration record's path, which the contract names, not the stage that writes it (D3308)"
+    }
+  ],
+  "contract_changes": [
+    {
+      "change": "R-lift-phase",
+      "contract": "C1",
+      "raised_by": "XB1",
+      "reason": "if release B's refusal needs a per-key phase in the list rather than the scope rows' InRepo bit",
+      "affects": [
+        "S1",
+        "S2",
+        "S4",
+        "S5"
+      ]
+    },
+    {
+      "change": "R-planner-change",
+      "contract": "C2",
+      "raised_by": "PR4",
+      "reason": "if a store write (a recipe object) or a database write (a cap node) needs more than the change type carries",
+      "affects": [
+        "MC1",
+        "AB3",
+        "RG2",
+        "RC4",
+        "M2"
+      ]
+    }
+  ]
+}
