@@ -458,7 +458,9 @@ PY
 
 # step_samples takes up to two runs the day file names and reads each one back
 # with `fugaro diagnose`: the report prints a run's short ID, and diagnose takes
-# the last four or more characters of a run ID.
+# the last four or more characters of one, refusing an ending two runs share —
+# which a busy day reaches, and which is a refusal about the reading, not a
+# finding about the day.
 step_samples() {
   local ids id full out bad="" seen=0
   ids=$(grep -oE '`[0-9a-f]{4,}`' "${SCRATCH}/day.md" 2>/dev/null | tr -d '`' | awk '!seen[$0]++' | head -2 || true)
@@ -474,7 +476,7 @@ step_samples() {
     fi
   done <<<"$ids"
   if [ -n "$bad" ]; then
-    fact samples FAIL "the day file names runs the CLI does not read back: $bad"
+    fact samples UNVERIFIED "the day file names runs $FUGARO diagnose will not read back by their short id: $bad — a short id two runs share is refused by design. Read the day's own run ids with $FUGARO runs ls --json --repo $REPO and diagnose one in full: $FUGARO diagnose <run-id> --json"
   else
     fact samples PASS "$seen run(s) the day file names read back with $FUGARO diagnose --json"
   fi

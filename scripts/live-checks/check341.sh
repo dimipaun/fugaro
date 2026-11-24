@@ -188,6 +188,9 @@ finish() {
   local status=$?
   trap - EXIT
   if [ "$PREFLIGHT" = yes ]; then
+    # Not cleanup(): a preflight puts the schedule nowhere, and takes its own
+    # scratch directory away on every exit — a blocker and a refusal included.
+    if [ -n "$SCRATCH" ]; then rm -rf "$SCRATCH" 2>/dev/null || true; fi
     exit "$status"
   fi
   # The schedule goes back before anything is printed: a check that left the

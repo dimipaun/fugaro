@@ -75,7 +75,11 @@ case "${1:-} ${2:-}" in
   *) cat "$FAKE136_STATE/live.json" ;;
   esac
   ;;
-"diagnose "*) cat "$FAKE136_STATE/diagnose.json" ;;
+"diagnose "*)
+  # A run's short id is refused once two runs share its ending, which is a
+  # refusal the CLI makes by design and the row for it is not a finding.
+  [ -e "$FAKE136_STATE/diagnose.refuse" ] && { echo "fugaro: the run id $2 matches more than one run" >&2; exit 1; }
+  cat "$FAKE136_STATE/diagnose.json" ;;
 *)
   echo "fugaro: unexpected read: $*" >&2
   exit 1
@@ -273,6 +277,15 @@ test_the_whole_check_passes() {
   expect_absent "$out" "not reached" "every row was reached"
 }
 
+test_is_unverified_when_diagnose_refuses_a_short_id() {
+  reset_state
+  : >"$state/diagnose.refuse"
+  run_check
+  expect_status "$status" 3 "a short id the CLI refuses by design is a refusal about the reading, not a finding"
+  expect_contains "$out" "FACT samples: UNVERIFIED" "the row says the run could not be read back"
+  expect_contains "$out" "runs ls --json" "with the read that gives the day's own run ids"
+}
+
 test_fails_on_a_file_outside_the_folder() {
   reset_state
   python3 - "$state" <<'PY'
@@ -428,6 +441,7 @@ t test_refuses_a_coding_agents_session
 t test_refuses_belong
 t test_refuses_another_installation
 t test_the_whole_check_passes
+t test_is_unverified_when_diagnose_refuses_a_short_id
 t test_fails_on_a_file_outside_the_folder
 t test_fails_on_a_missing_due_period
 t test_fails_on_an_address

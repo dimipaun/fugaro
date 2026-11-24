@@ -320,6 +320,14 @@ run_check() { # run_check [args...] -> sets $out $status $err
 
 calls() { cat "$state/calls" 2>/dev/null || true; }
 
+# A preflight leaves the machine as it found it: the scratch directory it makes
+# for its own facts is the one thing it has to take away again.
+expect_no_scratch_left() {
+  local left
+  left=$(find "$work/tmp" -maxdepth 1 -name 'check341-*' 2>/dev/null | head -1)
+  [ -z "$left" ] || fail "$1: left $left behind"
+}
+
 # ---------------------------------------------------------------------- cases
 test_the_help_lists_the_one_command() {
   reset_state
@@ -689,6 +697,7 @@ test_preflight_passes_and_writes_nothing() {
   if grep -qx 'fugaro settings set layer.jobs.reports.paused false --layer project' <<<"$(calls)"; then
     fail "the preflight made the write itself"
   fi
+  expect_no_scratch_left "a passing preflight"
 }
 
 test_preflight_blocks_on_a_missing_job_and_launches_nothing() {
@@ -699,6 +708,7 @@ test_preflight_blocks_on_a_missing_job_and_launches_nothing() {
   expect_contains "$err" "BLOCKED job" "the blocker is printed"
   expect_contains "$err" "fix: fugaro update" "with the fix"
   expect_absent "$(calls)" "fugaro update" "nothing was updated"
+  expect_no_scratch_left "a blocked preflight"
 }
 
 test_preflight_blocks_on_a_schedule_that_is_not_deployed() {
@@ -717,6 +727,7 @@ test_preflight_blocks_on_a_refused_layer_write() {
   expect_status "$status" 1 "a write the CLI would refuse is a blocker"
   expect_contains "$err" "BLOCKED setting" "the blocker is printed"
   expect_absent "$(calls)" "fugaro update" "nothing was updated"
+  expect_no_scratch_left "a preflight blocked on a write"
 }
 
 test_preflight_refuses_a_coding_agents_session() {
@@ -727,6 +738,7 @@ test_preflight_refuses_a_coding_agents_session() {
   expect_status "$status" 2 "a preflight reads the live installation, which is the owner's own"
   expect_contains "$err" "coding agent's session" "the refusal names what it is"
   expect_absent "$(calls)" "settings get" "nothing was read"
+  expect_no_scratch_left "a preflight refused in an agent session"
 }
 
 # ----------------------------------------------------------------------- runner
