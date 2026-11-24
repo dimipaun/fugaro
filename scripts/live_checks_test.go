@@ -24,9 +24,11 @@ import (
 // Check 91, fake `gcloud` and `fugaro` for Checks 27, 111, 146 and 401, fake `gcloud`,
 // `git`, `curl` and `fugaro` for Check 190, fake `gcloud`, `fugaro` and a fake
 // Realtime Database behind a fake `curl` for Checks 191 and 193 (193's fake
-// `gcloud` holds a Cloud Run job of each of two repositories, one of them
-// mounting a model credential when the case says the flip has not reached it,
-// and answers the check's Cloud Logging reads with the credentials service's
+// `gcloud` holds a Cloud Run job of each of two repositories — each running as
+// its own account, one of them mounting a model credential when the case says
+// the flip has not reached it, and the policy its `run services get-iam-policy`
+// read is answered with, whose roles/run.invoker binding is the other half of
+// the per-repository switch — and answers the check's Cloud Logging reads with the credentials service's
 // own `credsvc: audit` lines for the throwaway runs the fake `fugaro` records,
 // so a case can say what served a run, what the run declared and what it was
 // served instead), fake `gcloud`, `fugaro`

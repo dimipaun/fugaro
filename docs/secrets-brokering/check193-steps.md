@@ -52,8 +52,9 @@ deletes. Read those before you start. This file is the commands.
   that repository's jobs were last updated (their own `updateTime`) and to have finished with a pull
   request; a run that started after the re-apply is refused rather than read, because it was launched by
   the template the re-apply wrote and its mount says nothing about U9. The service's own `credsvc: audit`
-  lines for that run are **not** this row's reading: the flip keeps `FUGARO_CREDENTIALS_SERVICE_URL` on
-  the repository (D2072), so a switched run reaches the service before and after it and has lines of its
+  lines for that run are **not** this row's reading: the flip takes the **mounts** (D2072) and not the
+  address, which the launcher writes on each run's own **execution** (no per-repository job template
+  carries it at all), so a switched run reaches the service before and after it and has lines of its
   own either way.
 
 ## The steps
@@ -68,7 +69,9 @@ deletes. Read those before you start. This file is the commands.
 
    What it would do, in order: check that this is the `fugaro-dev` installation and that `fugaro
    version` is not a development build; read `gcloud run jobs list` for the two repositories' jobs and
-   `fugaro project policy show --json` for the budget mode; read each repository's `creds/repoauth`
+   `gcloud run services get-iam-policy fugaro-credentials` for the invoker half of the switch (the other
+   half being that no job of either still mounts a model credential); read `fugaro project policy show
+   --json` for the budget mode; read each repository's `creds/repoauth`
    record out of the installation's own database; launch one throwaway run in each repository (each
    writes one line to `CHK193.md`, commits it and opens a pull request) and poll `fugaro runs ls` for
    its row; then read the service's own `credsvc: audit` lines for those two runs out of Cloud Logging.
@@ -102,9 +105,16 @@ deletes. Read those before you start. This file is the commands.
 
 ## What each row means
 
-- **`switch`** — both repositories' jobs carry `FUGARO_CREDENTIALS_SERVICE_URL`, and the published
-  budget mode is not `off` (D2071: the mode is read at `fugaro update`, and a switched repository whose
-  mode is off has nothing to be served from). A FAIL here **stops the run before any run is launched**.
+- **`switch`** — every job of both repositories is on the credentials-service switch, read per repository
+  off what the apply **changes**: the job mounts **no model credential** (D2072/G17 — the one mount a
+  switched job keeps is a mixed stage account's own token, which the job declares with
+  `FUGARO_STAGE_ACCOUNT_SERVED=1`), and the job's own account is a member of the `roles/run.invoker`
+  binding on the `fugaro-credentials` service's own IAM policy (`gcloud run services get-iam-policy`,
+  D135). And the published budget mode is not `off` (D2071: the mode is read at `fugaro update`, and a
+  switched repository whose mode is off has nothing to be served from). **Not**
+  `FUGARO_CREDENTIALS_SERVICE_URL`: no per-repository job template carries it — the launcher writes the
+  address on each run's **execution** — so it is read only for a shared project job's template, where it
+  is baked (Check 197). A FAIL here **stops the run before any run is launched**.
 - **`record`** — each repository's `creds/repoauth/<slug>` node, read out of the installation's own
   database at the slug its jobs' `fugaro_repo` label carries: one `api-key` and one `oauth`. `cascade` is
   refused by name: such a repository is served the whole cascade, and this check is about a repository
