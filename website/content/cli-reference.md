@@ -6000,11 +6000,15 @@ byte and the key order are kept.
 A role name is the shorthand for agent.models.<role> — coder, reviewer,
 background, vision and diagnose — and a key may be named in full
 (agent.model, agent.recipe, agent.levels.l2.model, agent.levels.l2.effort).
---layer repo, the default, writes the repository's own fugaro.yaml in the
-checkout's working tree for the owner to review and commit; --layer project
-writes this machine's project layer file, where the key is the
-layer.defaults.agent.<same> one and applies to every repository of the
-project. layer.claude_models, the Claude models a project's routes may
+--layer project, the default for a model key, writes this machine's project
+layer file, where the key is the layer.defaults.agent.<same> one and
+applies to every repository of the project — a model is the project's
+choice (D3237), so agent.model, agent.models.* and agent.levels.<l>.model
+are stated there and nowhere else, and a write of one into a repository
+(its name, or --layer repo) is refused. --layer repo writes the
+repository's own fugaro.yaml in the checkout's working tree for the owner
+to review and commit, which is where agent.recipe and a level's effort
+still live. layer.claude_models, the Claude models a project's routes may
 serve, is written as provider=anthropic/<id> at --layer project alone.
 
 A switch is judged the way a launch judges it: a route of the project config
@@ -6026,7 +6030,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for use |
-| `--layer` | string | "" | no | where the write lands: repo (a repository's own fugaro.yaml, the default), project (this machine's project layer file) or local |
+| `--layer` | string | "" | no | where the write lands: project (this machine's project layer file, the default for a model key) or repo (a repository's own fugaro.yaml, for agent.recipe and a level's effort); local is no layer these keys have |
 
 Subcommands:
 
@@ -10165,6 +10169,13 @@ so the smaller value wins — lands in the project layer when the key may be set
 there and in the local project config when it may not, and every other key
 lands in the narrowest layer it may be set in. --layer repo without --repo uses
 the current directory's checkout and refuses when the directory is not one.
+
+A key the project owns is refused here whatever --layer names: the model
+choice (agent.model, agent.models.*, agent.levels.<l>.model), ab.rate, the
+rigor default and areas and a grade's model moved out of a repository's file
+(D3237), and each is refused with the command that states it in its new home —
+`fugaro models use --layer project` for a model, `fugaro rigor set --repo` for the
+rigor level. `fugaro settings unset` still removes one from a repository's file.
 
 A string-list key takes --add V or --remove V instead of a value. A map or an
 object list takes --add-entry and --remove-entry instead: --add-entry carries
