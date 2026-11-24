@@ -109,7 +109,7 @@ import {
 import { NEW_OPS_NOT_AVAILABLE, NEW_OPS_UNREADABLE, SETUP_ANSWER_KEYS } from '../../src/shared/new-ops'
 import type { SettingsEditorOpenRequest, SettingsEditorOutcome } from '../../src/shared/new-ops'
 import { WIZARD_CLASS, WIZARD_QUESTION_CLASS } from '../../src/renderer/wizard/wizard'
-import { GRAPH_DOCUMENT_VERSION, decodeSnapshot } from '../../src/shared/schema'
+import { GRAPH_DOCUMENT_VERSION, PAUSED_STATUS, decodeSnapshot } from '../../src/shared/schema'
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
 import { NO_PLAN_CHECKOUT } from '../../src/source/source'
 import { READING_STILL, READING_STILL_MS, READING_WORDS } from '../../src/renderer/screens/reading'
@@ -412,6 +412,18 @@ function syntheticDocuments(): readonly Readonly<Record<string, unknown>>[] {
   return loadFixture(text, 'test/fixtures/synthetic.ndjson').records
     .filter((record) => 'document' in record)
     .map((record) => ('document' in record ? record.document : {}))
+}
+
+/** pausedFrame is the invented paused feed (`test/fixtures/paused-run.json`),
+ * read as one JSON object rather than through `src/source/fixture.ts` -- that
+ * reader is the header-and-digest one for a **recorded** `.ndjson` feed, and
+ * this document is invented (VS3; `run-paused.test.ts` reads it the same way).
+ * The entry decodes it like any other frame, so what is driven here is the
+ * same document the screen suite draws. */
+function pausedFrame(): Readonly<Record<string, unknown>> {
+  return JSON.parse(
+    readFileSync(join(CONSOLE_ROOT, 'test', 'fixtures', 'paused-run.json'), 'utf8'),
+  ) as Readonly<Record<string, unknown>>
 }
 
 /** snapshotReply is one `live.watch` answer: the envelope `CliBackedHandlers`
@@ -748,6 +760,110 @@ describe('the dashboard the entry mounts', () => {
     await flush()
     expect(calls.filter((call) => call.name === 'diagnoseRun').map((call) => call.args)).toEqual([
       { run: '20261015-120000-aa01' },
+    ])
+  })
+
+  it('opens the run that resumed a pause from the paused row’s own resumer cell', async () => {
+    // A paused row carries two doors (VS3): the row itself opens the paused
+    // run, and the cell beside it opens the run whose resume brought the chain
+    // back. Which run the door asked about is the argument `diagnoseRun`
+    // receives -- the resumer is not a row of this screen, so a listener that
+    // opened the row's own run would still leave the screen looking right.
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(pausedFrame()),
+        diagnoseRun: () => ({ ok: true, data: { document: {} } }),
+        readRunLogs: () => ({ ok: true, data: { document: { entries: [], total: 0, refused: 0 } } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const panel = panelOf(document)
+    const rows = classed(panel, 'live-paused-row')
+    expect(rows.map((row) => classed(row, 'live-paused-run-id')[0]?.textContent)).toEqual([
+      '9a3c',
+      '4e77',
+      '1f22',
+    ])
+    const resumer = classed(rows[0] as FakeNode, 'live-paused-by-id')[0]
+    // The cell draws the ending and keeps the whole id for the door.
+    expect(resumer?.textContent).toBe('77b1')
+    expect(resumer?.getAttribute('data-run-id')).toBe('20261124-113000-77b1')
+
+    // **Its own click opens that run, and the event is stopped**: the row's
+    // listener is bound on the row, and in a window that bubbles it would
+    // otherwise answer the same click with the paused run under it.
+    expect(resumer?.click().propagationStopped).toBe(true)
+    await flush()
+    expect(calls.filter((call) => call.name === 'diagnoseRun').map((call) => call.args)).toEqual([
+      { run: '20261124-113000-77b1' },
+    ])
+  })
+
+  it('opens the paused run from its own row, and draws no door on a pause nobody resumed', async () => {
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(pausedFrame()),
+        diagnoseRun: () => ({ ok: true, data: { document: {} } }),
+        readRunLogs: () => ({ ok: true, data: { document: { entries: [], total: 0, refused: 0 } } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const panel = panelOf(document)
+    const rows = classed(panel, 'live-paused-row')
+    // The fixture's second row is a standing pause: a resume instant and no
+    // resumer. The cell is the console's mark and carries **no** attribute, so
+    // a cell with no door is never mistaken for one that would not open.
+    const none = classed(rows[1] as FakeNode, 'live-paused-by-id')[0] as FakeNode
+    expect(none.textContent).toBe(UNAVAILABLE_MARK)
+    expect(none.getAttribute('data-run-id')).toBeNull()
+
+    ;(rows[1] as FakeNode).click()
+    await flush()
+    expect(calls.filter((call) => call.name === 'diagnoseRun').map((call) => call.args)).toEqual([
+      { run: '20261124-091000-4e77' },
+    ])
+  })
+
+  it('opens the resuming run from the Run screen’s own resumed-by cell', async () => {
+    // VS3's second door. The pause line is drawn from the run's own record
+    // (`fillRunRecord`), which lands after the frame the click drew, so the
+    // binding is made when the record lands (`wireRunPausedBy`) rather than
+    // with the breadcrumb's.
+    const frame = syntheticDocuments()[syntheticDocuments().length - 1] as Readonly<Record<string, unknown>>
+    const opened = '20261015-120000-aa01'
+    const resumer = '20261124-113000-77b1'
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(frame),
+        diagnoseRun: (args) => ({
+          ok: true,
+          data: {
+            document: {
+              row: {
+                run: (args as { readonly run: string }).run,
+                status: PAUSED_STATUS,
+                resume_at: '2026-11-24T11:30:00Z',
+                resumed_by: resumer,
+              },
+            },
+          },
+        }),
+        readRunLogs: () => ({ ok: true, data: { document: { entries: [], total: 0, refused: 0 } } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const panel = panelOf(document)
+    ;(classed(panel, 'live-run')[0] as FakeNode).click()
+    await flush()
+    const by = classed(panel, 'run-paused-by-value')[0]
+    expect(by?.textContent, 'the Run screen drew no resumer to click').toBe('77b1')
+    expect(by?.getAttribute('data-run-id')).toBe(resumer)
+
+    by?.click()
+    await flush()
+    expect(calls.filter((call) => call.name === 'diagnoseRun').map((call) => call.args)).toEqual([
+      { run: opened },
+      { run: resumer },
     ])
   })
 
