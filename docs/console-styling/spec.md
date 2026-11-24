@@ -1902,7 +1902,7 @@ setup may take is not what a read in flight should look like here.
 | `console-wizard-event-state` | a stage's state, a `span` | the stage's own state word, and `undone` where the stage has not happened, muted |
 | `console-wizard-event-after` | the stage waited for, a `span` | the stage this one followed, so a feed out of order is legible, muted and small |
 | `console-wizard-event-text` | a line's document text, a `span` or a `div` | the CLI's own sentence, through the class its event declared in `TEXT_CLASSES` (`putText`): a value the class refuses never reaches the element. It is a `span` on the row of the kind words and a `div` under it where the line carries a command |
-| `console-wizard-command` | the command a `left_for_you` line names, a `code` or a `p` | the argv MG0's `manage/command.ts` assembled, drawn in a block of its own. It is a `code` beside a Copy and a `p` where the builder refused the line and the console therefore offers no Copy — the same words, and the only drawing difference is the control that is not there |
+| `console-wizard-command` | the command a `left_for_you` line names, a `code` or a `p` | the argv MG0's `manage/command.ts` assembled, drawn in a block of its own. It is a `code` beside a Copy and a `p` where the builder refused the line or where the line is the step's own text — a `command` step with no `commands` is itself its one command (`fugaro update`, `fugaro update-skills`, `fugaro orchestrator install`, the CLI's own `PrintedCommands` rule), and that line is drawn once, in this element, with its Copy beside it rather than repeated as a `code` under itself |
 | `console-wizard-copy` | that line's Copy, a `button` | a `type="button"` whose label **is** the joined argv, copying that text through the caller's seam. Mono (§3.7), for the same reason §2.15's `manage-copy` is: its whole value is that a person compares it character by character with the command they are about to run |
 | `console-wizard-copy-refusal` | a command the builder would not assemble, a `p` | the builder's own reason beside the displayed line, muted. The console never repairs a command it will not copy |
 
@@ -1915,6 +1915,12 @@ setup may take is not what a read in flight should look like here.
   beside it — a `left_for_you` line is the CLI telling the operator what is left, so dropping the
   ones this console cannot act on would be dropping the answer. A builder refusal takes the Copy
   away and keeps the line, with the builder's reason under it.
+- **A `command` step with no commands is its own command.** The CLI's `PrintedCommands`
+  (`initflow/stage.go`) answers the step's own text as its one command line, and that is the shape
+  of the steps a first setup leaves constantly (`fugaro update`, `fugaro update-skills`,
+  `fugaro orchestrator install`), so the line above is what gets the Copy. Every other kind's text
+  is a sentence — a step in a web console, a refusal — and keeps the console's own "no command to
+  run" note.
 - **No question carries a secret, and no control opens a prompt.** There is no `password` box, no
   path, no flag and no second window: a question whose answer is a secret is asked by
   `fugaro setup`'s own terminal prompt, which this screen never opens and never imitates.

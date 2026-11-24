@@ -60,11 +60,12 @@ import {
   WIZARD_ATTEMPT_CLASS,
   WIZARD_BUSY_CLASS,
   WIZARD_CLASS,
+  WIZARD_COMMAND_NONE,
   WIZARD_COMMANDS_LEAD,
   WIZARD_COPY_CLASS,
   WIZARD_COPY_REFUSAL_CLASS,
-  WIZARD_CONTROL_ID_PREFIX,
   WIZARD_COPY_WORDS,
+  WIZARD_CONTROL_ID_PREFIX,
   WIZARD_DONE,
   WIZARD_EVENT_ATTRIBUTE,
   WIZARD_EVENT_CLASS,
@@ -74,7 +75,9 @@ import {
   WIZARD_KIND_WORDS,
   WIZARD_LABEL_CLASS,
   WIZARD_LEAD_CLASS,
+  WIZARD_LEFT_COMMAND_KIND,
   WIZARD_NO,
+  WIZARD_NOTE_CLASS,
   WIZARD_OPTION_CLASS,
   WIZARD_PLAN_BUSY,
   WIZARD_QUESTION_ATTRIBUTE,
@@ -489,6 +492,88 @@ describe('the setup wizard’s feed', () => {
     expect(WIZARD_COPY_WORDS).toEqual(['fugaro', 'gcloud'])
     // And the hand-off is drawn: the steps above are the operator's.
     expect(answersOf(root)).toEqual([WIZARD_DONE, WIZARD_HAND_OFF])
+  })
+
+  it('takes a `command` line with no commands as its own command, and copies it', async () => {
+    // The CLI's `PrintedCommands` rule: a `command` step carrying no `commands`
+    // is itself the one line to run. `fugaro update`, `fugaro update-skills` and
+    // `fugaro orchestrator install` are all this shape, so a screen that drew
+    // "no command to run" for them would be at its most useless exactly where a
+    // first setup leaves the operator something to do.
+    const { root, clipboard } = setupHarness(() =>
+      feedOf([
+        { type: 'left_for_you', stage: 'checkout', kind: 'command', text: 'fugaro update', commands: [] },
+        // A step whose text is a sentence, of a kind that is not a command:
+        // displayed, and still given the console's own note.
+        {
+          type: 'left_for_you',
+          stage: 'installation',
+          kind: 'console',
+          text: 'claim the installation in the web console',
+          commands: [],
+        },
+        { type: 'done', exit_code: 1 },
+      ]),
+    )
+    fill(root, ANSWERED)
+    submitOf(root).click()
+    await flush()
+    expect(kindsOf(root)).toEqual(['left_for_you', 'left_for_you', 'done'])
+    const lines = eventLines(root)
+    expect(lines[0]).toContain('fugaro update')
+    const copies = classed(root, WIZARD_COPY_CLASS)
+    expect(copies).toHaveLength(1)
+    expect(copies[0]?.textContent).toBe('fugaro update')
+    copies[0]?.click()
+    expect(clipboard).toEqual(['fugaro update'])
+    // The command is the line above and is not drawn a second time for its Copy,
+    // and no "run this in your terminal:" introduction is drawn for a line that
+    // introduces itself.
+    expect(textOf(classed(root, WIZARD_EVENT_CLASS)[0] as FakeNode)).not.toContain(WIZARD_COMMANDS_LEAD)
+    expect(textOf(classed(root, WIZARD_EVENT_CLASS)[0] as FakeNode)).toContain('fugaro update')
+    // The sentence-only step keeps the console's own "no command to run" note,
+    // and the case reads it back: a note drawn for a command line would be the
+    // same defect the other way round.
+    const notes = classed(root, WIZARD_NOTE_CLASS).map((note) => note.textContent ?? '')
+    expect(notes).toContain(WIZARD_COMMAND_NONE)
+    expect(notes.filter((note) => note === WIZARD_COMMAND_NONE)).toHaveLength(1)
+    expect(WIZARD_LEFT_COMMAND_KIND).toBe('command')
+  })
+
+  it('copies a line that carries a flag, and still refuses a word a shell would read', async () => {
+    const { root, clipboard } = setupHarness(() =>
+      feedOf([
+        {
+          type: 'left_for_you',
+          stage: 'installation',
+          kind: 'command',
+          text: 'name who holds the roles',
+          commands: ['fugaro setup --operator me --admin me'],
+        },
+        {
+          type: 'left_for_you',
+          stage: 'secrets',
+          kind: 'command',
+          text: 'set the key',
+          commands: ['fugaro secrets set a;rm -rf /'],
+        },
+        { type: 'done', exit_code: 1 },
+      ]),
+    )
+    fill(root, ANSWERED)
+    submitOf(root).click()
+    await flush()
+    // A flag is a word the CLI printed, and MG0's `FLAG_PATTERN` admits it: the
+    // value alphabet's leading-dash rule is about a value **choosing** an option
+    // of a command the console writes, which is not what this line is.
+    const copies = classed(root, WIZARD_COPY_CLASS)
+    expect(copies).toHaveLength(1)
+    expect(copies[0]?.textContent).toBe('fugaro setup --operator me --admin me')
+    copies[0]?.click()
+    expect(clipboard).toEqual(['fugaro setup --operator me --admin me'])
+    // And the alphabet is unchanged: `;` is refused whatever kind of word carries
+    // it, with the builder's own reason and no Copy.
+    expect(classed(root, WIZARD_COPY_REFUSAL_CLASS)).toHaveLength(1)
   })
 
   it('shows an `error` line’s sentence with the stage the run stopped at', async () => {

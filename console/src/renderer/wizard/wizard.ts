@@ -58,7 +58,7 @@
 
 import { putText } from '../app'
 import { buildCopyCommand, commandValue, commandWord, copyCommandText } from '../manage/command'
-import type { CopyCommandAnswer } from '../manage/command'
+import type { CommandPart, CopyCommandAnswer } from '../manage/command'
 import { BUSY_BUSY_ATTRIBUTE, renderRetry } from '../section'
 import { NODE_PAINT, STREAM_INTERRUPTED_WORD } from '../stream'
 import type { StreamPaint } from '../stream'
@@ -808,7 +808,17 @@ function drawLeftForYou(
   const body = make(factory, 'div', WIZARD_EVENT_TEXT_CLASS)
   body.append(text(factory, 'p', WIZARD_COMMAND_CLASS, event.text, 'sentence', 'the step left for you'))
   if (event.commands.length === 0) {
-    body.append(literal(make(factory, 'p', WIZARD_NOTE_CLASS), WIZARD_COMMAND_NONE))
+    // A `command` step with no `commands` is its own one command: the CLI's
+    // `PrintedCommands` answers exactly that (`initflow/stage.go`), and it is the
+    // shape of `fugaro update`, `fugaro update-skills` and `fugaro orchestrator
+    // install` -- a line a first setup leaves behind constantly. The line above is
+    // that command, so it is offered as a Copy where the builder admits it and is
+    // **not** drawn a second time beneath itself.
+    if (event.kind !== WIZARD_LEFT_COMMAND_KIND) {
+      body.append(literal(make(factory, 'p', WIZARD_NOTE_CLASS), WIZARD_COMMAND_NONE))
+      return body
+    }
+    appendCopy(factory, body, event.text, copy)
     return body
   }
   body.append(literal(make(factory, 'p', WIZARD_NOTE_CLASS), WIZARD_COMMANDS_LEAD))
@@ -816,27 +826,39 @@ function drawLeftForYou(
     body.append(
       text(factory, 'code', WIZARD_COMMAND_CLASS, command, 'sentence', 'a command left for you'),
     )
-    const admitted = wordCopy(command)
-    if (admitted === null) {
-      // The two words this console may hand a clipboard are `fugaro` and
-      // `gcloud`, and any other opening word is a sentence rather than one of
-      // them: the line is displayed and no Copy is drawn beside it, which is the
-      // whole of "displayed only".
-      continue
-    }
-    if (!admitted.ok) {
-      // A word the builder refused: the line is drawn as text and the Copy is
-      // not, with the builder's own reason beside it -- never a repaired command.
-      body.append(literal(make(factory, 'p', WIZARD_COPY_REFUSAL_CLASS), admitted.reason))
-      continue
-    }
-    const label = copyCommandText(admitted.action)
-    const control = literal(make(factory, 'button', WIZARD_COPY_CLASS), label)
-    control.setAttribute('type', 'button')
-    control.addEventListener('click', () => copy(label))
-    body.append(control)
+    appendCopy(factory, body, command, copy)
   }
   return body
+}
+
+/** appendCopy draws one command's Copy where MG0's builder admits it, the
+ * builder's own reason where it refuses the line, and nothing at all for a line
+ * this console copies nothing from. */
+function appendCopy(
+  factory: WizardFactory,
+  body: WizardElement,
+  command: string,
+  copy: (text: string) => void,
+): void {
+  const admitted = wordCopy(command)
+  if (admitted === null) {
+    // The two words this console may hand a clipboard are `fugaro` and
+    // `gcloud`, and any other opening word is a sentence rather than one of
+    // them: the line is displayed and no Copy is drawn beside it, which is the
+    // whole of "displayed only".
+    return
+  }
+  if (!admitted.ok) {
+    // A word the builder refused: the line is drawn as text and the Copy is
+    // not, with the builder's own reason beside it -- never a repaired command.
+    body.append(literal(make(factory, 'p', WIZARD_COPY_REFUSAL_CLASS), admitted.reason))
+    return
+  }
+  const label = copyCommandText(admitted.action)
+  const control = literal(make(factory, 'button', WIZARD_COPY_CLASS), label)
+  control.setAttribute('type', 'button')
+  control.addEventListener('click', () => copy(label))
+  body.append(control)
 }
 
 /** wordCopy is MG0's builder over one line of the CLI's text: the console's own
@@ -848,8 +870,29 @@ function wordCopy(command: string): CopyCommandAnswer | null {
   const words = command.split(/\s+/).filter((word) => word !== '')
   const first = words[0] ?? ''
   if (first !== WIZARD_COPY_WORDS[0] && first !== WIZARD_COPY_WORDS[1]) return null
-  return buildCopyCommand([commandWord(first), ...words.slice(1).map(commandValue)])
+  return buildCopyCommand([commandWord(first), ...words.slice(1).map(partOf)])
 }
+
+/** partOf classifies one word after the command's own name. A word that opens
+ * with a dash is a **flag**, and a flag is the console's kind of word rather than
+ * a document's value: MG0's `commandWord` holds it to `FLAG_PATTERN`, which is the
+ * value alphabet plus the leading dashes a flag needs and the same `..` rule, so a
+ * word that carries a space or a character a shell would read as syntax is refused
+ * either way. Without this a `left_for_you` line carrying a flag -- `fugaro setup
+ * --operator me --admin me`, and most `gcloud` lines -- was refused by the
+ * builder's value alphabet for opening with a dash, which is the rule that keeps a
+ * document from **choosing** an option of a command this console writes; here the
+ * line is the CLI's own printed command, flag and all, so the console hands back a
+ * line it was given rather than letting a value pick a flag. */
+function partOf(word: string): CommandPart {
+  return word.startsWith('-') ? commandWord(word) : commandValue(word)
+}
+
+/** WIZARD_LEFT_COMMAND_KIND is the CLI's own kind for a step whose text **is** its
+ * one command (`initflow`'s `LeftCommand`). Every other kind's text is a sentence
+ * -- something to do in a web console, a refusal -- and a sentence is drawn with
+ * the console's "no command to run" note instead of a Copy. */
+export const WIZARD_LEFT_COMMAND_KIND = 'command'
 
 /** WIZARD_COPY_WORDS are the two first words a `left_for_you` line may open with
  * and still be offered as a Copy: the CLI itself and the Google Cloud CLI, which
