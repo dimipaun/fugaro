@@ -175,7 +175,12 @@ func TestLauncherAccountsAreThePeopleOfTheList(t *testing.T) {
 //     `workspace user add` defaults to human and neither validatePerson nor
 //     CanonicalAddress refuses the suffix, so a roster carrying one would make
 //     the intake's new revision exit on start, fail the apply that wrote it and
-//     fail every later `fugaro update` of that workspace. The OTHER refusal
+//     fail every later `fugaro update` of that workspace. A machine on a CUSTOM
+//     domain carries no suffix at all (`fugaro workspace user add --kind sa`
+//     takes any canonical address, and Roster.Validate requires nothing of the
+//     kind), so its KIND is the only thing keeping it out of the class list and
+//     out of the grant the module spells from it: the roster below holds one.
+//     The OTHER refusal
 //     NewLaunchers makes — an address past the fold's 512 bytes — is dropped
 //     for the same reason, and the third is the class list's own grammar: an
 //     address whose local part carries a `:` (which is what a `user:` prefix
@@ -199,6 +204,16 @@ func TestRosterPeopleAreNotLaunchersOfTheWorkspaceProject(t *testing.T) {
 		People: []workspace.Person{
 			{Address: "zoe@example.com", Kind: workspace.KindHuman},
 			{Address: "bot@example.iam.gserviceaccount.com", Kind: workspace.KindSA},
+			// A machine on a CUSTOM domain, which is the case the suffix guard
+			// cannot catch: `fugaro workspace user add build@ci.example.com
+			// --kind sa` stores it (any canonical address is taken) and nothing
+			// in Roster.Validate requires a `sa` address to end in Google's
+			// suffix, so the KIND is the only thing keeping it out of the class
+			// list — and out of the invoker grant the module spells from it,
+			// where `user:build@ci.example.com` would admit whoever holds that
+			// email claim to write its own containers. Without the kind clause
+			// this entry reaches `want`.
+			{Address: "build@ci.example.com", Kind: workspace.KindSA},
 			{Address: "ada@example.com", Kind: workspace.KindHuman},
 			{Address: "ada@example.com", Kind: workspace.KindHuman},
 			{Address: "robot@example.iam.gserviceaccount.com", Kind: workspace.KindHuman},
