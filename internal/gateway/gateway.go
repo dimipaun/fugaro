@@ -635,11 +635,13 @@ type Server struct {
 	flight        *topUp         // lease: the top-up in flight, if any
 	stage         *stageState
 	// unreachableSince is when the outage the run is in began, for the service
-	// its calls go to (D2983): the first call that could not reach it, and zero
-	// once any answer arrives from it (noteServiceReached, service.go). The
-	// wait an unreachable call is answered with is measured from here, so a
-	// stage that meets the same outage again waits for that outage to be over
-	// rather than for a bound of its own (noteUnreachable).
+	// its calls go to (D2983): the first call that could not reach it. An
+	// answer of the service's own clears it (noteServiceReached, service.go) —
+	// unless it is the workspace's roster refusal, which puts the clock back
+	// where the answer found it (keepUnreachable, R3). The wait an unreachable
+	// call is answered with is measured from here, so a stage that meets the
+	// same outage again waits for that outage to be over rather than for a
+	// bound of its own (noteUnreachable).
 	unreachableSince time.Time
 	// ended are the reports of the stages this gateway has ended, by the name
 	// each ran under: what a stage limit reads to compare one stage with

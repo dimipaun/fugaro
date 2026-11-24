@@ -525,8 +525,16 @@ func TestEachSlipGoesToItsOwnService(t *testing.T) {
 // sent nothing anywhere would look like: this run's own service is told the
 // member's slip, so the absence above is about the workspace's service and not
 // about a run that dropped every claim.
+//
+// The agent writes a slip of its own on the call, under both pairs of names:
+// this run holds no workspace slip that would displace it, so what keeps an
+// invented one off the wire is the drop of the caller's own headers and nothing
+// else.
 func TestARunWithNoWorkspaceSlipIsUnchanged(t *testing.T) {
 	member, memberClaim := "slip-"+mirrorName(t), "claim-"+mirrorName(t)
+	agent := http.Header{}
+	agent.Set(gateway.WorkspaceSlipHeader, "ws-slip-the-agent-invented")
+	agent.Set(gateway.WorkspaceSlipClaimHeader, "ws-claim-the-agent-invented")
 	r := newWSRun(t, wsOpts{
 		route: func(address string) creds.Route {
 			return creds.Route{Version: creds.RouteVersion, Address: address, Model: creds.HolderWorkspace}
@@ -535,7 +543,7 @@ func TestARunWithNoWorkspaceSlipIsUnchanged(t *testing.T) {
 			up.Service.SlipID, up.Service.SlipClaim = member, memberClaim
 		},
 	})
-	wsServed(t, r, nil)
+	wsServed(t, r, agent)
 
 	seen := r.workspace.Seen()
 	if len(seen) != 1 {
