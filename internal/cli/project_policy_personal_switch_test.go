@@ -82,6 +82,66 @@ func TestTheSwitchIsPublishedByUpdate(t *testing.T) {
 	}
 }
 
+// TestUpdateCarriesTheSwitchToAnExistingPolicyNode is the acceptance's own
+// road, which the test above only partly walks: a member's admin sets the
+// switch with `fugaro settings set`, and their `fugaro update` publishes it.
+// `fugaro project policy publish` is not that road — a project that already
+// holds a node is rewritten by the update's policy stage only where its drift
+// rows (policyConfigDrift → publishPlanFor) find a member the node does not
+// carry, and the row for this switch is the only way a written true reaches a
+// node that already exists. So the installation built here is the one the
+// member is in: a published node at this version, built by a config that never
+// stated the switch, and then the same machine's file saying true. Delete the
+// row and this test fails while the test above still passes: the stage reports
+// nothing to do and the member's own act stays in a file no service reads.
+func TestUpdateCarriesTheSwitchToAnExistingPolicyNode(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if p := publishedPolicy(t, f); p.PersonalWorkspaceTokens != nil {
+		t.Fatalf("PersonalWorkspaceTokens = %v, and the fixture's config never stated the switch", p.PersonalWorkspaceTokens)
+	}
+	before := nodeJSON(t, f, projectpolicy.PathShared())
+
+	rewriteProjectConfig(t, f, "personal_workspace_tokens: true\n")
+	h := newMigrationRig(t, f, &initOptions{})
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("`fugaro update` refused the switch the member's admin set: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "personal_workspace_tokens differs") {
+		t.Errorf("the diff does not name the member the stage carries:\n%s", out)
+	}
+	p := publishedPolicy(t, f)
+	if p.PersonalWorkspaceTokens == nil || !*p.PersonalWorkspaceTokens {
+		t.Fatalf("PersonalWorkspaceTokens = %v, want the written true the config states", p.PersonalWorkspaceTokens)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"personal_workspace_tokens":true`) {
+		t.Errorf("the node does not carry the switch at its top level:\n%s", raw)
+	}
+	// The rest of the node is the node it was: the stage rewrites it from the
+	// file, so a row that carried more than the switch would be a publish the
+	// member's one key was not the reason for.
+	var was map[string]any
+	if err := json.Unmarshal([]byte(before), &was); err != nil {
+		t.Fatal(err)
+	}
+	var now map[string]any
+	if err := json.Unmarshal([]byte(nodeJSON(t, f, projectpolicy.PathShared())), &now); err != nil {
+		t.Fatal(err)
+	}
+	delete(now, "personal_workspace_tokens")
+	if len(now) != len(was) {
+		t.Errorf("the stage carried %d members of the node, want the %d the publish left and the switch alone", len(now), len(was))
+	}
+	for k, v := range was {
+		if got, ok := now[k]; !ok || jsonText(got) != jsonText(v) {
+			t.Errorf("the stage changed %s: %v -> %v", k, v, got)
+		}
+	}
+}
+
 // TestTheFirstPublishKnowsTheSwitchsName: the first publish of a project that
 // has no node yet is reached by the key's presence in the config rather than by
 // its value (the triage switch's rule), and the check that says why is what a
