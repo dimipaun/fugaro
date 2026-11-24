@@ -33,6 +33,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/mobilesession"
 )
 
 const (
@@ -538,12 +540,18 @@ func TestSignRefusesAnAnswerThatIsNotAnEd25519Signature(t *testing.T) {
 // kids it lists and the moment the set stops being valid — and refuses a
 // document that is not one, because a set it cannot read is a set that
 // published nothing.
+//
+// The document built here is C1's envelope with its keys nested under `jwks`,
+// which is the shape A4's command writes: a reader that looked for `keys` at the
+// top of the payload would refuse every set the owner publishes, and the
+// identity service would refuse every assertion with it.
 func TestSignReadsTheServedSetTheOwnerPublished(t *testing.T) {
 	envelope := signJWT(t, rootKey(t), "root-2026", map[string]any{
-		"seq":  7,
-		"iat":  time.Now().Unix(),
-		"exp":  time.Now().Add(180 * 24 * time.Hour).Unix(),
-		"keys": []any{map[string]any{"kty": "OKP", "crv": "Ed25519", "kid": testKeyID}},
+		"format": mobilesession.KeySetFormat,
+		"seq":    7,
+		"iat":    time.Now().Unix(),
+		"exp":    time.Now().Add(180 * 24 * time.Hour).Unix(),
+		"jwks":   map[string]any{"keys": []any{map[string]any{"kty": "OKP", "crv": "Ed25519", "kid": testKeyID}}},
 	})
 	set, err := ParseServedSet([]byte(envelope))
 	if err != nil {
@@ -564,8 +572,8 @@ func TestSignReadsTheServedSetTheOwnerPublished(t *testing.T) {
 	// a signed set either: both are read as a refusal rather than as a set that
 	// happens to be valid forever.
 	for _, claims := range []map[string]any{
-		{"seq": 7, "keys": []any{map[string]any{"kid": testKeyID}}},
-		{"seq": 7, "exp": time.Now().Add(time.Hour).Unix(), "keys": []any{}},
+		{"format": mobilesession.KeySetFormat, "seq": 7, "jwks": map[string]any{"keys": []any{map[string]any{"kid": testKeyID}}}},
+		{"format": mobilesession.KeySetFormat, "seq": 7, "exp": time.Now().Add(time.Hour).Unix(), "jwks": map[string]any{"keys": []any{}}},
 	} {
 		if _, err := ParseServedSet([]byte(signJWT(t, rootKey(t), "root-2026", claims))); err == nil {
 			t.Fatalf("the payload %v was read as a served set", claims)

@@ -238,6 +238,27 @@ type JSONFinished struct {
 	// JSONRun: a reader that follows a run into finished[] must not lose the
 	// node it was joined to either. Absent when the launch record has none.
 	PlanTask string `json:"plan_task,omitempty"`
+	// ResumeAt and ResumedBy are a paused run's own two facts (contract-pause,
+	// R15): the instant its resume is due at, in RFC 3339 UTC as this document
+	// spells every instant, and the run that resumed it.
+	//
+	// Both are `JSONFinished`'s and not `JSONRun`'s, which is the asymmetry
+	// `credential` and `waiting_until` carry on the other side: a run that
+	// suspended itself is over — its registry entry is gone, so it is read from
+	// the runs bucket like every other finished row — and a run still going is
+	// not paused. So a reader that follows a run out of runs[] into finished[]
+	// gains the two there and loses them nowhere.
+	//
+	// Each is absent rather than empty when the reader had nothing to fill it
+	// from, and the two are absent independently: the instant comes from the
+	// credentials service's own node for the pause (which a project whose rules
+	// or service are older may not have) and the resumer from another run's
+	// task, so a pause still standing has the instant alone and a node this
+	// reader could not read leaves the resumer alone. `status: "paused"` is what
+	// says the run suspended itself, and it is present either way: the run's own
+	// record is the one thing a paused row always has.
+	ResumeAt  string `json:"resume_at,omitempty"`
+	ResumedBy string `json:"resumed_by,omitempty"`
 }
 
 // JSONDoc is one watch --json document.
@@ -267,10 +288,14 @@ type JSONDoc struct {
 }
 
 func jsonFinished(slug, repo string, r RunRow) JSONFinished {
-	return JSONFinished{Run: r.Run, Slug: slug, Repo: repo, Title: r.Title, Status: r.Stage, Outcome: r.Outcome,
+	j := JSONFinished{Run: r.Run, Slug: slug, Repo: repo, Title: r.Title, Status: r.Stage, Outcome: r.Outcome,
 		Failed: r.Failed, PRURL: r.PRURL, PRNumber: r.PRNumber, AgeSecs: r.Age.Seconds(),
 		Job: r.Job, Profile: r.Profile, Provider: r.Provider, Account: r.Account,
-		LaunchedBy: r.LaunchedBy, PlanTask: r.PlanTask}
+		LaunchedBy: r.LaunchedBy, PlanTask: r.PlanTask, ResumedBy: r.ResumedBy}
+	if r.ResumeAt > 0 {
+		j.ResumeAt = time.UnixMilli(r.ResumeAt).UTC().Format(time.RFC3339)
+	}
+	return j
 }
 
 // LeasedUSD is the outstanding leased dollars: counted minus spent, floored at

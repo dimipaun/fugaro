@@ -110,7 +110,11 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	platform := execPlatform(o, os.Getenv)
 	// The budget backend (the project's Firebase database): a local run may
 	// point it at a loopback database, a cloud run never.
-	be, beErr := runner.BackendFromEnv(os.LookupEnv, platform.Local())
+	// The hidden --budget-identity-url, which only a loopback address passes
+	// (checkTestHooks), already moves the backend's auth to a fake, so a
+	// loopback database goes with it: a Cloud Run execution of a test rig has
+	// nowhere else to reach one.
+	be, beErr := runner.BackendFromEnv(os.LookupEnv, platform.Local() || loopbackUpstream(o.identityURL))
 	if o.identityURL != "" {
 		be.Tune = func(c *budget.Config) { c.IdentityURL, c.SecureTokenURL = o.identityURL, o.identityURL }
 	}

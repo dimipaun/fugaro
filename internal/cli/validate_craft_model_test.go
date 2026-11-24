@@ -56,9 +56,7 @@ func TestValidateNamesACraftModelProblemAtItsOwnPath(t *testing.T) {
 	// an owner's price, because the price rule reaches them: every run has a
 	// gateway now (AB1b, D3009), so `validate` prices the crafts' models in
 	// every mode, and "no price" would otherwise be a problem this test's
-	// fixture contributed rather than the allow-list rule it is about. The
-	// price is the fixture's own model_prices block; a second one here is a
-	// duplicate key, which the strict parser refuses.
+	// fixture contributed rather than the allow-list rule it is about.
 	craftFixtureWith(t, "budget: { allowed_models: [\"claude-opus-4\"] }\n")
 	testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": validateCraftModelYAML})
 	out, errOut, err := execute(t, "validate", "--offline", "fugaro.yaml")
@@ -105,11 +103,12 @@ func TestValidateNamesACraftModelProblemAtItsOwnPath(t *testing.T) {
 // that judged them would report the coder's at a key of a document its reader
 // may not even have.
 //
-// The world carries the security review model's price — the fixture's own
-// model_prices block — for the sibling test's reason: the price rule reaches
-// the crafts' models in every mode now (AB1b, D3009), so a model with no row in
-// the shipped table would be a problem this fixture contributed rather than the
-// crafts-of-the-installation rule it is about.
+// The world carries the security review model's price for the sibling test's
+// reason: the price rule reaches the crafts' models in every mode now (AB1b,
+// D3009), so a model with no row in the shipped table would be a problem this
+// fixture contributed rather than the crafts-of-the-installation rule it is
+// about. That price is the fixture's own (craftLocalExtra, AB4, D3020), and it
+// is not repeated here: the installation config carries one model_prices block.
 func TestValidateIgnoresTheCraftsNoRunReads(t *testing.T) {
 	craftFixtureWith(t, "budget: { allowed_models: [\"claude-opus-4-1\", \"claude-sonnet-5-5\"] }\n")
 	testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": validateCraftPinnedYAML})

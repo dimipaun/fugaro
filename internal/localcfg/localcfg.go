@@ -286,9 +286,17 @@ type Config struct {
 	// a credential is a spending and data-egress grant (F12, D1628), which is
 	// why a repository may select among them and never add one.
 	Credentials []config.Credential `yaml:"credentials,omitempty"`
-	// Pools are named, ordered lists of those credentials with a strategy
-	// (spec §2). They are created where credentials are, and for the same
-	// reason.
+	// Pools are named, ordered lists of those credentials with a rule: the
+	// `strategy` they were written with, which still means what it means, and
+	// the `rule` that arrived with the routing table, which is served where it
+	// is written and resolved from the strategy where it is not (spec §2, R5,
+	// R21). A pool also names the `principal` it belongs to, which is optional
+	// until the migration writes one (MG2), and a `threshold`, which validation
+	// refuses wherever it is written: no rule set this release ships acts on one,
+	// so the member arrives with the rule that reads it (PL8). An installation
+	// that has not migrated carries neither, and a pool moves only where its
+	// owner wrote a rule (config.Pool.RuleOrDefault). They are created where
+	// credentials are, and for the same reason.
 	Pools []config.Pool `yaml:"pools,omitempty"`
 	// SubscriptionSpread is whether a run may spread across two or more Claude
 	// OAuth subscription credentials at all (D1622, D1636): the D875 switch
@@ -1224,6 +1232,30 @@ func (c *Config) ResolveAccount(name string) (account, alias string) {
 	return config.ResolveAccountAlias(c.ClaudeAccountAliases, name)
 }
 
+// RunsOnDefaultClaudeAccount reports whether any run of this project holds the
+// unsuffixed default Claude account: its default_claude_account key names that
+// account or names nothing, or one of its stage keys does. An installation
+// whose runs are all on a named account answers false, and the bare
+// claude-oauth-token is then a token no run of it holds — the name the secrets
+// stage must not ask for, and the one Readiness must not hold a job back for.
+// Which account a run holds is this key's and the stage keys' answer and
+// nothing else's: neither a repository's file nor the project layer may name
+// one (DefaultClaudeAccount's comment), so the answer is total here.
+func (c *Config) RunsOnDefaultClaudeAccount() bool {
+	if c == nil {
+		return true
+	}
+	if name, _ := c.ResolveAccount(c.DefaultClaudeAccount); name == "" || name == config.DefaultClaudeAccount {
+		return true
+	}
+	for _, choice := range c.ClaudeAccountStages {
+		if name, _ := c.ResolveAccount(choice.ClaudeAccount); name == "" || name == config.DefaultClaudeAccount {
+			return true
+		}
+	}
+	return false
+}
+
 // Mailbox is the mailbox block: what the mailbox consumer needs from the
 // operator's own machine, one entry per pairing.
 type Mailbox struct {
@@ -2121,9 +2153,11 @@ type Repo struct {
 	// GitHubAppID is the repository's GitHub App, for GitHub
 	// repositories. It is not a secret.
 	GitHubAppID string `yaml:"github_app_id,omitempty"`
-	// Vertex records that one of the repository's workflows authenticates
-	// its agent through Vertex AI (agent.auth: vertex), so fugaro update
-	// enables the Vertex AI API. fugaro update sets it.
+	// Vertex records that the repository's runs reach Vertex AI at all —
+	// its file's agent.auth: vertex, or a chain of the project's own
+	// routing table that may serve it naming Vertex — so fugaro update
+	// enables the Vertex AI API. fugaro update sets it, from
+	// infra.RepoSpec.UsesVertex.
 	Vertex bool `yaml:"vertex,omitempty"`
 	// CredentialsServiceReady records that this repository's root has been
 	// applied with the installation's credentials service ON — its bundle
