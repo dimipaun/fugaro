@@ -711,6 +711,15 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// derived object, the mark it leaves is what every later sweep continues on
 	// its own, and failing an upgrade over one is what the HARD RULE forbids.
 	e.reindexRunIndex(ctx)
+	// And the owner's rule of 2026-11-24's: every repository this config lists
+	// has its deployed jobs checked against what its workflows resolve to now,
+	// and moved where they differ (update_jobimages.go). It is here for the
+	// reason the seven above are — the converge has applied everything it had,
+	// so the map and the catalog it reads are the ones this run leaves behind —
+	// and it returns no error either: a repository nobody could read, a job the
+	// API refuses to move, is a line and a step the next update takes again,
+	// never a failed upgrade (the HARD RULE).
+	e.reconcileRepoJobs(ctx)
 	// And T-RU5's, the sixth and last: what this release fixes about the
 	// project's filed issues, which is a step of the run and not of the door
 	// (update_resolved.go) because --json's document carries it and is printed
