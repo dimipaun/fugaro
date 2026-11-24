@@ -3663,6 +3663,16 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// keeps judging it as it always did. The Firebase root is not given this
 		// list here: LM14 wires that root's guard at its level (F32).
 		identity := infra.IdentityAllowDelete(plan, infra.PeopleMinter(plan))
+		// The catalog build identity's per-repository secret accessors leave
+		// with IS8 (D3330): the module declares the resource nowhere any more,
+		// so the plan of an installation whose state still holds the instances
+		// deletes them, and this binary's own removal may not cost the operator
+		// a flag (the hard rule above; infra.BuildIdentityAccessorAllowDelete).
+		// It is named beside the minter rows because it is the same kind of
+		// fact — a removal this binary makes — and reaches the managed gate the
+		// same way, so a managed project's record names it rather than warning
+		// about an unannounced removal.
+		identity = append(identity, infra.BuildIdentityAccessorAllowDelete(plan)...)
 		allowed := append(append(append(slices.Clone(r.o.allowDelete), hardening...), upgrade...), identity...)
 		counts := infra.CountPlan(plan)
 		// The managed gate judges the plan BEFORE the guard and the
