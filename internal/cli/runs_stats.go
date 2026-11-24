@@ -170,9 +170,13 @@ func newRunsStatsCmd() *cobra.Command {
 			"    guessed from the run's task, its record or the account it ran under.\n" +
 			"  - Dollars are never added across currencies: a row is one user and one currency,\n" +
 			"    and a total covers one currency. Every cost recorded today is in USD.\n" +
-			"  - The window is UTC days like the rest of the CLI. A run is counted on the day\n" +
-			"    the bucket's run IDs place its start, so the window and the runs in it agree\n" +
-			"    with runs ls.\n\n" +
+			"  - The window is UTC days like the rest of the CLI. How a run falls in it\n" +
+			"    depends on the read: the run records, and runs ls, count a run on the day\n" +
+			"    the bucket's run IDs place its start, while the run index counts it on the\n" +
+			"    day of its last change -- its record's finish where it has one -- so a run\n" +
+			"    that started before the window and finished inside it is in the index's\n" +
+			"    figures and not in runs ls's. The window agrees with runs ls on the records\n" +
+			"    read alone, and index_complete says which read answered.\n\n" +
 			"The money is model dollars, counted the way the budget screens count them. COUNTED\n" +
 			"$ is the model spend that counts toward the caps: the money part of a run's model\n" +
 			"figure (model_usd minus model_notional_usd, C1.16/P12). NOTIONAL $ is the part of\n" +

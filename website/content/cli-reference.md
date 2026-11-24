@@ -9036,9 +9036,13 @@ Attribution, as the records themselves state it:
     guessed from the run's task, its record or the account it ran under.
   - Dollars are never added across currencies: a row is one user and one currency,
     and a total covers one currency. Every cost recorded today is in USD.
-  - The window is UTC days like the rest of the CLI. A run is counted on the day
-    the bucket's run IDs place its start, so the window and the runs in it agree
-    with runs ls.
+  - The window is UTC days like the rest of the CLI. How a run falls in it
+    depends on the read: the run records, and runs ls, count a run on the day
+    the bucket's run IDs place its start, while the run index counts it on the
+    day of its last change -- its record's finish where it has one -- so a run
+    that started before the window and finished inside it is in the index's
+    figures and not in runs ls's. The window agrees with runs ls on the records
+    read alone, and index_complete says which read answered.
 
 The money is model dollars, counted the way the budget screens count them. COUNTED
 $ is the model spend that counts toward the caps: the money part of a run's model
