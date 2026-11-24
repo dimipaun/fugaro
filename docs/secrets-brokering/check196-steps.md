@@ -20,16 +20,20 @@ start. This file is the three commands and what each row means.
   `project: … (GCP fugaro-dev,` line, or the check stops: it refuses to run against anything else.
   Never `belong`, and no knob can point it anywhere else. `fugaro version` must not print `dev`.
 - `bash`, `mktemp`, `python3`, `gcloud` and `fugaro` on PATH, `gcloud` authenticated as you.
-- An account that can list the project's Cloud Build records, list Cloud Run jobs, list one job's
-  executions, read the service's own IAM policy and read the service's own lines out of Cloud Logging:
-  a project Owner can.
+- An account that can list the installation **region's** Cloud Build records (`gcloud builds list
+  --region=us-east5`: a listing with no `--region` reads the global builds, which hold no catalog build
+  at all), list Cloud Run jobs, list one job's executions, read the service's own IAM policy and read
+  the service's own lines out of Cloud Logging: a project Owner can.
 - **Two sandbox repositories already switched and built**: one **GitHub** (`CHECK196_REPO`) and one
   **Bitbucket** (`CHECK196_BITBUCKET`), both required, each with its **catalog entry's** build submitted
-  from its own checkout — `fugaro image build <entry>` (or `fugaro apply`, which submits the same
-  build); `fugaro image refresh` is refused under D1900 and builds nothing — which is what task B4.8
-  does, and what puts a build in the project's own records
-  for the check to read. A repository with no build in the project's last `CHECK196_BUILDS` (default
-  50) builds is a row the check **could not measure** (exit 2), not a pass.
+  from the checkout of the entry's **source** repository — `fugaro image build <entry>` (or `fugaro
+  apply`, which submits the same build); `fugaro image refresh` is refused under D1900 and builds
+  nothing — which is what task B4.8 does, and what puts a build in the project's own records
+  for the check to read. Each repository has to be named by the project's **effective** `image_map`
+  (**D1906**: this machine's project config when it states a map, the published policy node's
+  otherwise) for the entry that build carries, or — a repository the map does not name — to have a
+  catalog build of its own clone URL. A repository with no such build in the installation region's last
+  `CHECK196_BUILDS` (default 50) builds is a row the check **could not measure** (exit 2), not a pass.
 - **Nothing else**: no token, no secret, no file to prepare. The check **submits no build of its own**
   — it reads the ones you submitted — and it holds no credential beyond the `gcloud` session it reads
   the project's records with.
@@ -85,7 +89,9 @@ start. This file is the three commands and what each row means.
   `status.url`, which is the address every caller mints its ID token for. Not deployed, or no URL, is a
   **FAIL**; a read that failed is a row that could not be measured.
 - **`build-github`**, **`build-bitbucket`** — each repository's newest **catalog entry's** build (the
-  entry its `image_map` names, picked out by the catalog image in its `_IMAGE` substitution) ended
+  entry the project's **effective** `image_map` names for it, picked out by the catalog image in its
+  `_IMAGE` substitution, out of the installation **region's** recent builds; a repository the map does
+  not name is matched by its own `_REPO_URL` clone URL instead) ended
   `SUCCESS` and ran as the installation's **build identity**
   (`fugaro-build-identity@fugaro-dev.iam.gserviceaccount.com`, read off the build's own record, never
   taken on trust), which is the account `gcp.CatalogBuildSpec.check` admits. A repository-level derived
@@ -112,7 +118,10 @@ start. This file is the three commands and what each row means.
   where the mount has been taken away — and its **newest execution** ended completed. A job that already
   carries the address reads **INFO** (the flip has landed; run `--after-flip`), a job that carries it
   *beside* a mount is a shape the installation never plans and a **FAIL**, and a job with neither a
-  mount nor an address holds no credential at all and is a **FAIL**.
+  mount nor an address holds no credential at all and is a **FAIL**. A repository the installation
+  deploys **no** check job for reads **INFO** and not a row that could not be measured: a
+  repository-level image check is disabled with the repository-level images (**D1900**, IS2), so the
+  installation emits none for a repository that has none.
 - **`boundary`** — the service's own IAM policy admits repository build accounts and names **no**
   `allUsers` and **no** `allAuthenticatedUsers`. That, read beside the `served-*` rows — each build
   served its own repository's credential and record — is how the route's boundary is read from the
@@ -142,7 +151,8 @@ start. This file is the three commands and what each row means.
   the check job's `secret_key_ref` mounts and writes the address in the same breath, so the check's own
   clone and its rebuilds read their credentials from the service like the repository's builds. The two
   go together — a job that mounts nothing and names no service holds no credential at all, and reads
-  **FAIL**.
+  **FAIL**. A repository the installation deploys no check job for reads **INFO** here too: the flip
+  had no mount of its own to have taken away (**D1900**, IS2).
 
 ## If it stops before the end
 
@@ -158,8 +168,10 @@ execution that could not be read — reads **FAIL** in the block and ends the ru
   `project: … (GCP fugaro-dev,` line. Run doctor yourself and read its output; the check runs on the
   sandbox installation only.
 - **This shell is tracing** (`-x`) — run it again without it.
-- **The project's builds cannot be read** — `gcloud builds list` failed. Your account needs
-  `cloudbuild.builds.list`, which a project Owner has; the stop prints the command to run by hand.
+- **The installation's region's builds cannot be read** — `gcloud builds list --region=us-east5` failed
+  (a listing with no `--region` reads the global builds, which hold no catalog build at all). Your
+  account needs `cloudbuild.builds.list` in that region, which a project Owner has; the stop prints the
+  command to run by hand.
 - **Cloud Run jobs cannot be read** — `gcloud run jobs list` failed (`run.jobs.list`).
 - **The reader failed** — the check's own reader could not parse a document `gcloud` returned; the
   stop says so with `gcloud`'s own last lines, and this is a defect rather than a reading.
@@ -171,6 +183,7 @@ nothing: the only thing its Restore removes is its own scratch directory, which 
 too, so a Ctrl-C leaves nothing behind. The builds and the check executions it reads are the ones you
 submitted (the sandbox repositories' catalog entries, with `fugaro image build <entry>` or `fugaro
 apply`), and they are the project's own records rather than resources
-this check made — nothing here deletes them, and `gcloud builds list --project=fugaro-dev` shows them.
+this check made — nothing here deletes them, and `gcloud builds list --project=fugaro-dev --region=us-east5`
+shows them.
 `CHECK196_KEEP_SCRATCH` keeps the scratch directory (mode `0700`) when you want to read what the check
 wrote; its row then says it was kept rather than that it was left behind.
