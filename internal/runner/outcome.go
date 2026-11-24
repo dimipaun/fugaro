@@ -426,7 +426,7 @@ func (r *run) levelTolerated(l policy.Level, rs runstore.ReviewSummary) bool {
 	// not carry: a level-2 round a judge deferred whole left the pull request
 	// nothing to be a draft on, and level 3 shipping over it does not change
 	// that (F21).
-	pol := findingsPolicyOf(r.rigorCfg, r.reachedRigor(), rs.Round, scoresOf(sr.Findings), r.stopAt).withDeferred(sr.Deferred)
+	pol := findingsPolicyOf(r.rigorCfg, r.spec.Repo, r.reachedRigor(), rs.Round, scoresOf(sr.Findings), r.stopAt).withDeferred(sr.Deferred)
 	return pol.tolerates(&rs)
 }
 
@@ -735,6 +735,11 @@ func (pol FindingsPolicy) acceptsAtStop(last *runstore.ReviewSummary) bool {
 // section, which is all the run does with it: nothing is written into the
 // repository for it (finalize).
 //
+// repo is the repository the run is for, the one rigor.Config.Configured asks
+// its question of: the opt-in is per repository (D3294), so a project that
+// names one repository in defaults.rigor.repos or in a member area must not
+// bring the mode's table to its other repositories.
+//
 // atStop is the half of the stop rule that ended the run's rounds, "" for a run
 // that stopped for a reason of its own. It is asked last, and only of a round
 // the mode's own rule blocks on: the stop changes what a run *accepts* — the
@@ -754,7 +759,7 @@ func (pol FindingsPolicy) acceptsAtStop(last *runstore.ReviewSummary) bool {
 // stop, so it is a draft at the stop whatever this branch does; a task that
 // named a mode is a run in that mode (rigor.Request.Mode), and the ruling's
 // answer is the mode's.
-func findingsPolicyOf(cfg rigor.Config, mode rigor.Rigor, round int, findings []rigor.Score, atStop string) FindingsPolicy {
+func findingsPolicyOf(cfg rigor.Config, repo string, mode rigor.Rigor, round int, findings []rigor.Score, atStop string) FindingsPolicy {
 	// D9 first, and the mode's own round rule with it: a mode may not let a
 	// finding through where the repository has not asked for the mode, so the
 	// split is taken only where both hold — the repository opted in
@@ -768,7 +773,7 @@ func findingsPolicyOf(cfg rigor.Config, mode rigor.Rigor, round int, findings []
 	// section, which is all the run does with it: nothing is written into the
 	// repository for it (finalize).
 	ordinary := FindingsPolicy{}
-	if cfg.Configured() && rigor.Files(mode).Tolerated {
+	if cfg.Configured(repo) && rigor.Files(mode).Tolerated {
 		blocking, tolerated := rigor.Split(mode, findings)
 		ordinary = FindingsPolicy{Mode: mode, Round: round, Blocking: blocking, Tolerated: tolerated}
 		if len(blocking) == 0 {
@@ -791,7 +796,7 @@ func (r *run) findingsPolicy() FindingsPolicy {
 	// The deciding round's deferrals, read from the round the loop kept and
 	// never from the recorded verdict word: a round a judge deferred whole
 	// records `changes` and is a round the mode does not block on (F21).
-	pol := findingsPolicyOf(r.rigorCfg, r.reachedRigor(), r.lastSenior.Round, scoresOf(r.lastSenior.Findings), r.stopAt).withDeferred(r.lastSenior.Deferred)
+	pol := findingsPolicyOf(r.rigorCfg, r.spec.Repo, r.reachedRigor(), r.lastSenior.Round, scoresOf(r.lastSenior.Findings), r.stopAt).withDeferred(r.lastSenior.Deferred)
 	pol.Raised = r.rigorRaise
 	pol.HeldBack = r.heldBackLevel()
 	pol.StopBlocking = r.stopBlockingLevels()
@@ -806,7 +811,7 @@ func (r *run) findingsPolicy() FindingsPolicy {
 // record only through the acceptance the stop actually made
 // (toleratedRecord, acceptsAtStop).
 func (r *run) ordinaryFindingsPolicy() FindingsPolicy {
-	return findingsPolicyOf(r.rigorCfg, r.reachedRigor(), r.lastSenior.Round, scoresOf(r.lastSenior.Findings), "")
+	return findingsPolicyOf(r.rigorCfg, r.spec.Repo, r.reachedRigor(), r.lastSenior.Round, scoresOf(r.lastSenior.Findings), "")
 }
 
 // unreadFix is the last review round the run's record holds where the commit
@@ -939,7 +944,7 @@ const capDeferredReason = "the run reached its review cap with this finding stil
 // nothing, which is what r.stopAt — the half of the stop rule that ended them
 // (BF1m) — is empty for.
 func (r *run) capDeferrals() []runstore.DeferredFinding {
-	if r.stopAt == "" || !r.rigorCfg.Configured() {
+	if r.stopAt == "" || !r.rigorCfg.Configured(r.spec.Repo) {
 		return nil
 	}
 	mode := r.reachedRigor()

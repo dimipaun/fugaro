@@ -511,6 +511,38 @@ import (
 // calls that all went direct, a routed call nobody reported, an audit line
 // whose forward was denied, a run that never ends and a record that is another
 // run's, and says what the check charged the provider's reported cost against.
+// Checks 628 to 632 are the model-crafts work's owner-run checks (its plan task
+// MC26), and each drives the same two fakes over one small model of a sandbox
+// installation: a fake `fugaro` whose reads and writes come out of the case's
+// own files and whose every call is logged with the directory it was made in,
+// and a fake `gcloud` serving the runs bucket and Cloud Logging. 628's fake
+// `fugaro` answers the config view, the craft list, the published node, the
+// launch and the runs list, and its fake `gcloud` the record and the gateway's
+// own lines, so a case bends a layer that names no model, a craft that resolves
+// another model, an allow-list that admits nothing, a stage that records
+// another model and a gateway refusal that names a stage -- and says what the
+// check made of each. 629 adds the pool's second member: its audit lines carry
+// the credential that answered each call, so a case says which member served
+// the run, whether the first was exhausted rather than skipped, and what the
+// publish wrote to the node. 630 writes NO pool at all -- it asks the write
+// door for one and reads the listing back to be sure it is absent -- and its
+// fake `fugaro update` is the convergence, splitting the crossed pool in the
+// order it listed its members and moving the node's version, so a case bends a
+// refusal that names one member, a validate that is not the second door and a
+// config the update finds already split. 631 is the one whose fake has to hold
+// the value: the fake `fugaro` declares, lists and removes the credentials, its
+// fake `gcloud` serves the record and the service's own audit line, and a pty
+// the case starts (python3's pty.openpty, handed to the check through
+// CHECK631_TTY) is the terminal the two pastes are made at -- with values
+// written into the terminal's own input queue, so the check's hidden prompt
+// reads the first and the command's own hidden prompt the second, and a case
+// says what was echoed, what was written into the config directory and into a
+// shell history, and what a session was refused. 632 holds the run and the
+// update at once: its fake `fugaro` launches a run and answers the runs list,
+// its fake `update` prints the one in-flight line and writes the converged
+// reads, and its fake `gcloud` serves the record and the run's own ledger, so a
+// case bends an update that fails, an update that asks for another command, a
+// run that never ends and a record that is another run's.
 // Checks 570 to 575 are the portal's live checks (P9.4), and each has fakes of
 // its own: Check 570's are a fake `fugaro` and a fake portal behind a fake
 // `curl`, over one installation and the licence it buys, so a case says what the
@@ -736,6 +768,11 @@ var liveCheckScripts = []struct {
 	{"check591.sh", "check591_test.sh"},
 	{"check610.sh", "check610_test.sh"},
 	{"check611.sh", "check611_test.sh"},
+	{"check628.sh", "check628_test.sh"},
+	{"check629.sh", "check629_test.sh"},
+	{"check630.sh", "check630_test.sh"},
+	{"check631.sh", "check631_test.sh"},
+	{"check632.sh", "check632_test.sh"},
 	{"check640.sh", "check640_test.sh"},
 	{"check640-queue-probe.sh", "check640-queue-probe_test.sh"},
 	{"check770.sh", "check770_test.sh"},
@@ -776,6 +813,11 @@ var liveCheckScripts = []struct {
 	{"check-890-data-layout.sh", "check-890-data-layout_test.sh"},
 	{"check-891-update-trace.sh", "check-891-update-trace_test.sh"},
 	{"check-892-iam.sh", "check-892-iam_test.sh"},
+	{"check-390.sh", "check-390_test.sh"},
+	{"check-391.sh", "check-391_test.sh"},
+	{"check-392.sh", "check-392_test.sh"},
+	{"check732.sh", "check732_test.sh"},
+	{"check733.sh", "check733_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
