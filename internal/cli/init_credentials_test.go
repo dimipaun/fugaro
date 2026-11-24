@@ -63,6 +63,17 @@ func credentialsRigAt(t *testing.T, version string) *imagesRig {
 	// the installation's own database and has no default.
 	r.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: "+fpID+", rtdb_url: "+r.db.URL+" }\n")
 	r.db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion)
+	// The Cloud Run SERVICE reads of a run: this fake's Cloud Run speaks jobs
+	// and no service, so the credentials service's own paths are answered by
+	// this file's services skew and every other path by the jobs fake. A skew
+	// with nothing deployed is Cloud Run's 404, which is this rig: the run of
+	// the copy stage that every update with a repository now makes asks the
+	// guard what serves the bundle, and with no service deployed the guard
+	// judges the installation's own pin (its tfvars), which these rigs hold at
+	// this release or the one behind it — both newer than the family's own
+	// release. A test that needs the deployed answer to decide builds its own
+	// skew (the copy's tests in update_keys_test.go).
+	providerKeyEndpoint(t, r.run, newRunServiceSkew(t))
 	return r
 }
 
