@@ -107,7 +107,7 @@
     "generation": 3,
     "applied": true
   },
-  "config_sha256": "634ef2dd96a33c95fff61288adb73cb6cff22389990ca7170bc7c1a13ff05673",
+  "config_sha256": "58ed9682e0d5abc9ad8c1daeb22dbb7adc8791507caac6881f5119eabae9e291",
   "changed_files": {
     "paths": [
       "feature.txt"
