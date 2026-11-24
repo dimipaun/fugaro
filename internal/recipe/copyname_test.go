@@ -1,17 +1,15 @@
-package recipe_test
+package recipe
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/dimipaun/fugaro/internal/recipe"
-	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The copy names here are spelled out rather than derived: they are what a
-// project store holds, and TestCopyNameMatchesTaskSlug is what holds this
-// package's spelling to task.Slug's own.
+// project store holds, and internal/task's TestCopyNameMatchesSlug is what holds
+// this package's spelling to task.Slug's own.
 func TestCopyName(t *testing.T) {
 	for _, tc := range []struct {
 		name, provider, repo, want string
@@ -21,11 +19,11 @@ func TestCopyName(t *testing.T) {
 		{"review", "bitbucket", "acme/app", "review.acme-app-e5c4c0c8"},
 		{"review", "github", "_/_", "review.repo-ceeb753f"},
 	} {
-		got := recipe.CopyName(tc.name, tc.provider, tc.repo)
+		got := CopyName(tc.name, tc.provider, tc.repo)
 		if got != tc.want {
 			t.Errorf("CopyName(%q, %q, %q) = %q, want %q", tc.name, tc.provider, tc.repo, got, tc.want)
 		}
-		if !recipe.IsCopyName(got) {
+		if !IsCopyName(got) {
 			t.Errorf("IsCopyName(%q) = false, want true", got)
 		}
 	}
@@ -34,8 +32,8 @@ func TestCopyName(t *testing.T) {
 // A slug's readable half merges distinct repositories, so the hash half is what
 // keeps their copies apart (D3302's amendment).
 func TestCopyNameKeepsCollidingSlugsApart(t *testing.T) {
-	a := recipe.CopyName("review", "github", "acme/app-web")
-	b := recipe.CopyName("review", "github", "acme-app/web")
+	a := CopyName("review", "github", "acme/app-web")
+	b := CopyName("review", "github", "acme-app/web")
 	if a != "review.acme-app-web-6387380c" || b != "review.acme-app-web-64841666" {
 		t.Fatalf("copies are %q and %q, want the two pinned names", a, b)
 	}
@@ -49,35 +47,39 @@ func TestCopyNameKeepsCollidingSlugsApart(t *testing.T) {
 	if a[len(a)-8:] == b[len(b)-8:] {
 		t.Fatalf("the hash halves do not tell the two repositories apart: %q and %q", a, b)
 	}
-	if !recipe.IsCopyName(a) || !recipe.IsCopyName(b) {
+	if !IsCopyName(a) || !IsCopyName(b) {
 		t.Errorf("IsCopyName refuses a copy this package built: %q, %q", a, b)
 	}
 }
 
 func TestCopyNameAtMost96(t *testing.T) {
-	if recipe.MaxCopyName != 96 {
-		t.Fatalf("MaxCopyName = %d, want 96", recipe.MaxCopyName)
+	if MaxCopyName != 96 {
+		t.Fatalf("MaxCopyName = %d, want 96", MaxCopyName)
 	}
 	// The longest recipe name, the longest readable half (a slug's readable
 	// part is 46), the dot, the hyphen and 8 hex.
-	got := recipe.CopyName(strings.Repeat("n", 40), "github", "a/"+strings.Repeat("b", 44))
-	if len(got) != recipe.MaxCopyName {
-		t.Fatalf("the longest copy is %d characters (%q), want %d", len(got), got, recipe.MaxCopyName)
+	got := CopyName(strings.Repeat("n", 40), "github", "a/"+strings.Repeat("b", 44))
+	if len(got) != MaxCopyName {
+		t.Fatalf("the longest copy is %d characters (%q), want %d", len(got), got, MaxCopyName)
 	}
-	if !recipe.IsCopyName(got) {
+	if !IsCopyName(got) {
 		t.Errorf("IsCopyName(%q) = false, want true", got)
 	}
-	if recipe.IsCopyName(got+"a") || recipe.IsCopyName("n"+got) {
+	if IsCopyName(got+"a") || IsCopyName("n"+got) {
 		t.Errorf("IsCopyName accepts a copy one character over the limit")
 	}
-	if recipe.IsCopyName(strings.Repeat("n", 41) + "." + strings.Repeat("b", 46) + "-0123abcd") {
+	// A recipe name of 41 is over its own limit, however the name is spelled:
+	// the half is built here rather than written out so that this line holds no
+	// bare "." literal, which the CI read map reads as the package's directory.
+	overLongName := fmt.Sprintf("%s.%s-0123abcd", strings.Repeat("n", 41), strings.Repeat("b", 46))
+	if IsCopyName(overLongName) {
 		t.Errorf("IsCopyName accepts a name over the recipe-name limit")
 	}
 }
 
 func TestLookupOrder(t *testing.T) {
 	want := []string{"review.acme-app-dc4d4e59", "review"}
-	if got := recipe.LookupOrder("review", "github", "acme/app"); !slices.Equal(got, want) {
+	if got := LookupOrder("review", "github", "acme/app"); !slices.Equal(got, want) {
 		t.Errorf("LookupOrder(review, github, acme/app) = %q, want %q", got, want)
 	}
 	// A repository no slug can be built from has no copy, and a name that is
@@ -88,7 +90,7 @@ func TestLookupOrder(t *testing.T) {
 		{"review", "", "acme/app"},
 		{"review.acme-app-dc4d4e59", "github", "acme/app"},
 	} {
-		if got := recipe.LookupOrder(tc.name, tc.provider, tc.repo); !slices.Equal(got, []string{tc.name}) {
+		if got := LookupOrder(tc.name, tc.provider, tc.repo); !slices.Equal(got, []string{tc.name}) {
 			t.Errorf("LookupOrder(%q, %q, %q) = %q, want the name alone", tc.name, tc.provider, tc.repo, got)
 		}
 	}
@@ -112,7 +114,7 @@ func TestIsCopyName(t *testing.T) {
 		"review.acme app-dc4d4e59",   // a space
 		"review.acme-app-dc4d4e59.a", // what a copy of a copy would look like
 	} {
-		if recipe.IsCopyName(name) {
+		if IsCopyName(name) {
 			t.Errorf("IsCopyName(%q) = true, want false", name)
 		}
 	}
@@ -121,7 +123,7 @@ func TestIsCopyName(t *testing.T) {
 		"default.a-b-01234567",
 		"review.repo-ceeb753f", // the readable half task.Slug falls back to
 	} {
-		if !recipe.IsCopyName(name) {
+		if !IsCopyName(name) {
 			t.Errorf("IsCopyName(%q) = false, want true", name)
 		}
 	}
@@ -130,12 +132,12 @@ func TestIsCopyName(t *testing.T) {
 // NameRE is the first grammar and still refuses every dot; a copy is a second
 // grammar beside it, never a wider first one.
 func TestNameREStillRefusesADot(t *testing.T) {
-	cp := recipe.CopyName("review", "github", "acme/app")
-	if !recipe.IsCopyName(cp) {
+	cp := CopyName("review", "github", "acme/app")
+	if !IsCopyName(cp) {
 		t.Fatalf("CopyName built %q, which IsCopyName refuses", cp)
 	}
 	for _, name := range []string{cp, "review.acme-app", "review.", ".x"} {
-		if recipe.NameRE.MatchString(name) {
+		if NameRE.MatchString(name) {
 			t.Errorf("NameRE accepts the dotted name %q", name)
 		}
 	}
@@ -147,65 +149,12 @@ func TestNameREStillRefusesADot(t *testing.T) {
 func TestCopyNameIsAlwaysACopyNameOrEmpty(t *testing.T) {
 	for _, name := range []string{"", "Review", "re view", "re/cipe", "review.acme-app-dc4d4e59",
 		"a" + strings.Repeat("b", 40)} {
-		if got := recipe.CopyName(name, "github", "acme/app"); got != "" {
+		if got := CopyName(name, "github", "acme/app"); got != "" {
 			t.Errorf("CopyName(%q, github, acme/app) = %q, want empty", name, got)
 		}
 	}
-	got := recipe.CopyName("review", "github", "acme/app")
-	if got == "" || !recipe.IsCopyName(got) {
+	got := CopyName("review", "github", "acme/app")
+	if got == "" || !IsCopyName(got) {
 		t.Errorf("CopyName(review, github, acme/app) = %q, want a copy name", got)
-	}
-}
-
-// task.Slug and this package's spelling of its halves must not drift: a
-// repository's copy is addressed by the same string its slug keys everything
-// else by. internal/task imports this package, so the derivation is spelled
-// twice and pinned here.
-func TestCopyNameMatchesTaskSlug(t *testing.T) {
-	for _, tc := range []struct{ provider, repo string }{
-		{"github", "acme/app"},
-		{"github", "acme/app-web"},
-		{"github", "acme-app/web"},
-		{"github", "acme/APP.git"},
-		{"bitbucket", "acme/app"},
-		{"fake", "acme/nested/group/app"},
-		{"github", "a/" + strings.Repeat("b", 60)},
-		{"github", "acme/.hidden"},
-		{"github", "a/_b.c"},
-		{"github", "_/_"},
-	} {
-		slug, err := task.Slug(tc.provider, tc.repo)
-		if err != nil {
-			t.Fatalf("task.Slug(%q, %q): %v", tc.provider, tc.repo, err)
-		}
-		readable, hash := slug[:len(slug)-17], slug[len(slug)-16:]
-		want := "review." + readable + "-" + hash[:8]
-		if got := recipe.CopyName("review", tc.provider, tc.repo); got != want {
-			t.Errorf("CopyName(review, %q, %q) = %q, want %q", tc.provider, tc.repo, got, want)
-		}
-		if want := recipe.LookupOrder("review", tc.provider, tc.repo); !slices.Equal(want,
-			[]string{recipe.CopyName("review", tc.provider, tc.repo), "review"}) {
-			t.Errorf("LookupOrder(review, %q, %q) = %q", tc.provider, tc.repo, want)
-		}
-	}
-	for _, tc := range []struct{ provider, repo string }{
-		{"", "acme/app"},
-		{"GitHub", "acme/app"},
-		{"github", ""},
-		{"github", "acme"},
-		{"github", "acme/../app"},
-		{"github", "acme//app"},
-		{"github", "acme/app/"},
-		{"github", "https://github.com/acme/app"},
-	} {
-		if _, err := task.Slug(tc.provider, tc.repo); err == nil {
-			t.Fatalf("task.Slug(%q, %q) is accepted, so this case pins no refusal", tc.provider, tc.repo)
-		}
-		if got := recipe.CopyName("review", tc.provider, tc.repo); got != "" {
-			t.Errorf("CopyName(review, %q, %q) = %q, want empty", tc.provider, tc.repo, got)
-		}
-		if got := recipe.LookupOrder("review", tc.provider, tc.repo); !slices.Equal(got, []string{"review"}) {
-			t.Errorf("LookupOrder(review, %q, %q) = %q, want the name alone", tc.provider, tc.repo, got)
-		}
 	}
 }

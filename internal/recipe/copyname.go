@@ -77,7 +77,7 @@ func LookupOrder(name, provider, repo string) []string {
 // slugCopyParts is the readable half and the first 8 hex of task.Slug(provider,
 // repo)'s hash, and it spells that derivation out rather than calling it:
 // internal/task imports this package for a task's recipe name, so the two
-// spellings are kept together by copyname_test.go's TestCopyNameMatchesTaskSlug.
+// spellings are kept together by internal/task's TestCopyNameMatchesSlug.
 var (
 	copyProviderRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 	copyRepoRE     = regexp.MustCompile(`^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$`)
