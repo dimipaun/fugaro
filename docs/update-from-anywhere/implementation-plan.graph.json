@@ -1,0 +1,429 @@
+{
+ "schema_version": 3,
+ "plan": "docs/update-from-anywhere/implementation-plan.md",
+ "stream": "cli",
+ "nodes": [
+  {
+   "id": "C1",
+   "title": "contract: the per-repository view every stage reads",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/update_repos.go",
+     "internal/cli/update_repos_stub.go",
+     "docs/update-from-anywhere/contract-repos.md"
+    ]
+   },
+   "kind": "contract",
+   "stubs": [
+    "internal/cli/update_repos_stub.go"
+   ]
+  },
+  {
+   "id": "U1",
+   "title": "the reader's extra paths",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/repofiles/reader.go",
+     "internal/repofiles/reader_test.go"
+    ]
+   }
+  },
+  {
+   "id": "U2",
+   "title": "the enrolled list, read once per run, and the hint",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/update_repos_read.go",
+     "internal/cli/update_hint.go",
+     "internal/cli/update_repos_read_test.go"
+    ]
+   }
+  },
+  {
+   "id": "U3",
+   "title": "the secrets stage over every repository",
+   "run": null,
+   "version": null,
+   "tier": "large",
+   "size": 3,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/initsecrets.go",
+     "internal/cli/initsecrets_repos_test.go"
+    ]
+   }
+  },
+  {
+   "id": "U4",
+   "title": "every stale derived image, from its default branch",
+   "run": null,
+   "version": null,
+   "tier": "large",
+   "size": 3,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/init_checkout_upgrade.go",
+     "internal/cli/upgrade_cloud.go",
+     "internal/cli/image_refresh.go",
+     "internal/cli/init_checkout_repos_test.go"
+    ]
+   }
+  },
+  {
+   "id": "U5",
+   "title": "image kinds and the default entry over every repository",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/init_images.go",
+     "internal/cli/init_images_catalog.go",
+     "internal/cli/init_policy_migrate.go",
+     "internal/cli/init_images_repos_test.go"
+    ]
+   }
+  },
+  {
+   "id": "U6",
+   "title": "the pin and budget.mode: off become notices in update and doctor",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/init_plugin_stage.go",
+     "internal/cli/update_budget_off.go",
+     "internal/cli/doctor_repo_notices.go",
+     "internal/cli/doctor.go",
+     "internal/cli/doctor_repo_notices_test.go"
+    ]
+   }
+  },
+  {
+   "id": "U7",
+   "title": "the HARD RULE's pin sentence, the update skill and the docs",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "CLAUDE.md",
+     "plugin/skills/update/SKILL.md",
+     "docs/gcp-live-checklist.md"
+    ]
+   }
+  },
+  {
+   "id": "U8",
+   "title": "the backlog fold from every default branch",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/backlog/files.go",
+     "internal/backlog/files_test.go",
+     "internal/cli/update_backlog.go",
+     "internal/cli/update_backlog_repos_test.go"
+    ]
+   }
+  },
+  {
+   "id": "U9",
+   "title": "the anchor moves to project repos add",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/project_enroll.go",
+     "internal/cli/init_anchor.go",
+     "internal/cli/init_fugaroyaml.go",
+     "internal/cli/init.go",
+     "internal/cli/project_enroll_anchor_test.go"
+    ]
+   }
+  },
+  {
+   "id": "U10",
+   "title": "update --check reads the local list from the code host",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/update_check.go",
+     "internal/cli/init.go",
+     "internal/cli/update_check_repos_test.go"
+    ]
+   }
+  },
+  {
+   "id": "U11",
+   "title": "the repository stage over every repository, and the RC39 facts (after L2)",
+   "run": null,
+   "version": null,
+   "tier": "large",
+   "size": 3,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/init_repo_stage.go",
+     "internal/cli/init_repo_target.go",
+     "internal/cli/init.go",
+     "internal/cli/init_repo_repos_test.go"
+    ]
+   }
+  },
+  {
+   "id": "I1",
+   "title": "integration: the real list in the engine, the repos event member, the end-to-end tests",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/update_repos_stub.go",
+     "internal/cli/update_repos_read.go",
+     "internal/cli/init_stages.go",
+     "internal/cli/setup_events.go",
+     "internal/cli/update_anywhere_test.go",
+     "internal/cli/update_in_flight_test.go"
+    ]
+   },
+   "kind": "integration"
+  },
+  {
+   "id": "K1",
+   "title": "Check 930: Check 891's script from four directories",
+   "run": null,
+   "version": null,
+   "tier": "trivial",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "scripts/live-checks/check-891-update-trace.sh"
+    ]
+   }
+  },
+  {
+   "id": "R-view-files",
+   "title": "amend contract C1: if the refresh needs a repository file the view does not carry",
+   "run": null,
+   "version": null,
+   "tier": "trivial",
+   "size": 0.5,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/update_repos.go",
+     "docs/update-from-anywhere/contract-repos.md"
+    ]
+   },
+   "kind": "contract_change"
+  }
+ ],
+ "edges": [
+  {
+   "task": "U2",
+   "needs": "U1",
+   "reason": "it reads the extra paths through the reader's option"
+  },
+  {
+   "task": "U3",
+   "needs": "C1",
+   "reason": "the view"
+  },
+  {
+   "task": "U4",
+   "needs": "C1",
+   "reason": "the view"
+  },
+  {
+   "task": "U5",
+   "needs": "C1",
+   "reason": "the view"
+  },
+  {
+   "task": "U6",
+   "needs": "C1",
+   "reason": "the view, and its extra files"
+  },
+  {
+   "task": "U8",
+   "needs": "C1",
+   "reason": "the view, and its extra files"
+  },
+  {
+   "task": "U10",
+   "needs": "C1",
+   "reason": "the view"
+  },
+  {
+   "task": "U10",
+   "needs": "U9",
+   "reason": "both write init.go (the flags' help)"
+  },
+  {
+   "task": "U7",
+   "needs": "U6",
+   "reason": "the doctor check's id and line text the docs pin"
+  },
+  {
+   "task": "I1",
+   "needs": "U2",
+   "reason": "integration: the end-to-end test needs every side of C1 and the real list"
+  },
+  {
+   "task": "I1",
+   "needs": "U3",
+   "reason": "integration: the end-to-end test needs every side of C1 and the real list"
+  },
+  {
+   "task": "I1",
+   "needs": "U4",
+   "reason": "integration: the end-to-end test needs every side of C1 and the real list"
+  },
+  {
+   "task": "I1",
+   "needs": "U5",
+   "reason": "integration: the end-to-end test needs every side of C1 and the real list"
+  },
+  {
+   "task": "I1",
+   "needs": "U6",
+   "reason": "integration: the end-to-end test needs every side of C1 and the real list"
+  },
+  {
+   "task": "I1",
+   "needs": "U8",
+   "reason": "integration: the end-to-end test needs every side of C1 and the real list"
+  },
+  {
+   "task": "I1",
+   "needs": "U10",
+   "reason": "integration: the end-to-end test needs every side of C1 and the real list"
+  },
+  {
+   "task": "K1",
+   "needs": "I1",
+   "reason": "the release that carries the integration"
+  },
+  {
+   "task": "R-view-files",
+   "needs": "I1",
+   "reason": "kept: a change to C1's files comes after every consumer has landed, never beside the contract; the consumers that raised it get a follow-up run"
+  },
+  {
+   "task": "U11",
+   "needs": "U2",
+   "reason": "kept, behaviour: it applies each repository's root over the list U2 reads (and it is gated on L2, outside this plan)"
+  },
+  {
+   "task": "U11",
+   "needs": "U10",
+   "reason": "kept: both write internal/cli/init.go"
+  }
+ ],
+ "decoupling": [
+  {
+   "contract": "C1",
+   "was": {
+    "task": "U3",
+    "needs": "U2"
+   },
+   "integration": "I1",
+   "reason": "it needs only the view's shape (the repository, its files or why it was unread), which the contract writes down, not the list U2 reads"
+  },
+  {
+   "contract": "C1",
+   "was": {
+    "task": "U4",
+    "needs": "U2"
+   },
+   "integration": "I1",
+   "reason": "it needs only the view's shape (the repository, its files or why it was unread), which the contract writes down, not the list U2 reads"
+  },
+  {
+   "contract": "C1",
+   "was": {
+    "task": "U5",
+    "needs": "U2"
+   },
+   "integration": "I1",
+   "reason": "it needs only the view's shape (the repository, its files or why it was unread), which the contract writes down, not the list U2 reads"
+  },
+  {
+   "contract": "C1",
+   "was": {
+    "task": "U6",
+    "needs": "U2"
+   },
+   "integration": "I1",
+   "reason": "it needs only the view's shape (the repository, its files or why it was unread), which the contract writes down, not the list U2 reads"
+  },
+  {
+   "contract": "C1",
+   "was": {
+    "task": "U8",
+    "needs": "U2"
+   },
+   "integration": "I1",
+   "reason": "it needs only the view's shape (the repository, its files or why it was unread), which the contract writes down, not the list U2 reads"
+  },
+  {
+   "contract": "C1",
+   "was": {
+    "task": "U10",
+    "needs": "U2"
+   },
+   "integration": "I1",
+   "reason": "it needs only the view's shape (the repository, its files or why it was unread), which the contract writes down, not the list U2 reads"
+  }
+ ],
+ "contract_changes": [
+  {
+   "change": "R-view-files",
+   "contract": "C1",
+   "raised_by": "U4",
+   "reason": "if the refresh needs a repository file the view does not carry (for example a Dockerfile a workflow names)",
+   "affects": [
+    "U2",
+    "U4"
+   ]
+  }
+ ]
+}
