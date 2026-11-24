@@ -1200,15 +1200,18 @@ describe('the person breakdown', () => {
     const model = buildSpendModel(PERSON_REPORT, BUDGET)
     expect(model.persons).toEqual({ enabled: true, withheld: false })
     expect(drawnRows(model).map((row) => row.key)).toEqual(['ada@example.com', 'unknown'])
-    // One sentence, and it is the reason the operator did not ask for this: a
-    // view that is on by default without saying so is a view the operator will
-    // try to turn off and not find.
-    expect(model.notes).toHaveLength(1)
-    expect(model.notes[0]).toContain('on by default')
-    // The switch says so too, in the shape the screen draws: on, and current.
+    // No note in the model's own list: the rows are drawn, so there is nothing
+    // to explain away. The switch beside them is where a default says what it
+    // is -- a view that is on without saying so is a view the operator will try
+    // to turn off and not find.
+    expect(model.notes).toEqual([])
     const entry = model.switches.find((one) => one.dimension === 'person')
-    expect(entry).toMatchObject({ enabled: true, current: true })
-    expect(entry?.note).toContain('on by default')
+    expect(entry).toMatchObject({ enabled: true, current: true, note: null })
+    // The line under the switch is the drawing's, not the model's: it says the
+    // breakdown is on by default and that the switch is this session's alone.
+    const text = drawn(renderSpend(factory, model, 'light'))
+    expect(text).toContain('on by default')
+    expect(text).not.toContain('person breakdown is off')
   })
 
   it('is off when the knob is turned off: the rows are in the document and the screen draws none of them', () => {
@@ -1448,7 +1451,8 @@ describe('the by-mode breakdown', () => {
 // ---------------------------------------------------------------------------
 
 /** peopleOf is one model's by-person view, asserted to be there: the panel
- * exists exactly when the operator's knob is on (design D15). */
+ * exists exactly when the operator's knob is on, which is the default (D3214,
+ * amending design D15). */
 function peopleOf(model: SpendModel): SpendPeople {
   const people = model.people
   if (people === null) throw new Error('this model carries no by-person view')
@@ -1461,11 +1465,11 @@ describe('the by-person view', () => {
     // by-person read that happens whatever the knob says. With the knob off
     // there is no panel at all -- not an empty one -- because there was no read
     // to draw from and nothing the operator asked to see.
-    const off = buildSpendModel(PERSON_REPORT, BUDGET)
+    const off = buildSpendModel(PERSON_REPORT, BUDGET, { persons: false })
     expect(off.people).toBeNull()
     expect(all(renderSpend(factory, off, 'light'), 'spend-people')).toEqual([])
     // The document being handed in does not change that: the knob decides.
-    const handed = buildSpendModel(PERSON_REPORT, BUDGET, { people: statsDocument() })
+    const handed = buildSpendModel(PERSON_REPORT, BUDGET, { persons: false, people: statsDocument() })
     expect(handed.people).toBeNull()
   })
 
