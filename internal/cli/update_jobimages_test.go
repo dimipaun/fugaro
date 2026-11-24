@@ -141,3 +141,30 @@ func useRepoFilesProvider(t *testing.T, repo, yaml string) {
 	}
 	t.Cleanup(func() { openRepoJobFiles = old })
 }
+
+// The same case as TestUpdateMovesARepositoryJobToTheMappedEntry, driven the
+// way the owner met it: one plain `fugaro update`, at a terminal, with no
+// --repo and no second command. The step's own test above says what it does;
+// this one says that a converge reaches it — the tail hook is wired into the
+// loop, the door and the session guards let it through, and the job moves
+// before the command ends.
+func TestAPlainUpdateMovesARepositoryJobToTheMappedEntry(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	installRepoJobImages(t, r, "sandbox-web-gh")
+	slug, label := checkJobOwner(t, "bitbucket", "acme/sandbox")
+	r.run.SetJob(gcp.JobName(slug, "web"), map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelWorkflow: "web"}, oldEntryImage)
+	useRepoFilesProvider(t, "acme/sandbox", repoFilesYAML)
+	fakeTerminal(t)
+
+	out, err := updateRun(t, r, "update")
+	if err != nil {
+		t.Fatalf("a plain update failed: %v\n%s", err, out)
+	}
+	if n := len(r.run.Patches()); n != 1 {
+		t.Fatalf("%d patches, want the job's image moved\n%s", n, out)
+	}
+	if !strings.Contains(out, "acme/sandbox web: job image catalog-sandbox-web:latest -> catalog-sandbox-web-gh:latest") {
+		t.Errorf("the update does not say which job moved and onto what:\n%s", out)
+	}
+}
