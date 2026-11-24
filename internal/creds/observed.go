@@ -51,8 +51,12 @@ type Observation struct {
 // rate-limit headers it carried, copied so the node does not share the caller's
 // slice — the caller usually built it while walking an answer's headers and
 // goes on using it.
+//
+// An answer that named nothing is written as an empty list and not as a null:
+// both say "recorded, and it named none", and a list is what a reader expects of
+// a field called Headers.
 func Observed(names []string) Observation {
-	return Observation{Headers: append([]string(nil), names...)}
+	return Observation{Headers: append(make([]string, 0, len(names)), names...)}
 }
 
 // ObservationStore records what a credential's last answer reported.

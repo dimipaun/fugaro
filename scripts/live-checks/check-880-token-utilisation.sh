@@ -9,7 +9,7 @@
 # The question is what the provider returns on a subscription token, and this
 # script cannot ask it: a model route admits a run's identity only, so the
 # script makes no model call of its own. What it reads instead is the record the
-# service keeps while it serves (creds.Mark.Headers, internal/creds/marks.go,
+# service keeps while it serves (creds.Observation, internal/creds/observed.go,
 # written on the answer path in internal/credsvc): for every source it has
 # served, the NAMES of the rate-limit headers that source's last answer carried,
 # and never one of their values. A name that is a utilisation figure is the
@@ -19,9 +19,9 @@
 # It reads, and only reads:
 #
 #   - the installation's local config (`name`, `budget.rtdb_url`);
-#   - the Realtime Database node `creds/marks`, whose every value is a name, a
-#     state or a time: the record holds the names of rate-limit headers, and
-#     the node is the service's own credential state, not a bundle.
+#   - the Realtime Database node `creds/observed`, whose every value is a list
+#     of header names: the record holds the names of rate-limit headers and
+#     nothing else, and it is the service's own credential state, not a bundle.
 #
 # It prints, for each source under test, the names recorded for it and which of
 # them is a utilisation figure, then one row per source and one verdict row.
@@ -44,8 +44,8 @@
 #                        FAIL too.
 #   INCOMPLETE (exit 2)  the run stopped before it could read
 #   INCOMPLETE (exit 3)  there is no name to judge at all (UNVERIFIED): the
-#                        record holds no source, every source it holds has none
-#                        recorded — nothing has been recorded since this release,
+#                        record holds no source, every source it holds recorded
+#                        no name — nothing has been recorded since this release,
 #                        or the last recorded answer carried no rate-limit header
 #                        at all — or a name you gave is not one the service has
 #                        served. Nothing is concluded and PL8 is not launched.
@@ -106,9 +106,9 @@ Usage:
   bash scripts/live-checks/check-880-token-utilisation.sh <fugaro-project> [source…]
   bash scripts/live-checks/check-880-token-utilisation.sh --help
 
-With no source named, every source in creds/marks is judged. For each it prints
-the rate-limit header names its last answer carried and which of them is a
-utilisation figure. No value of any header is recorded, printed or needed.
+With no source named, every source in creds/observed is judged. For each it
+prints the rate-limit header names its last answer carried and which of them is
+a utilisation figure. No value of any header is recorded, printed or needed.
 
 The question is existential, and so is the verdict: ONE source whose record names
 a utilisation figure answers it yes, whatever the other sources' records hold.
@@ -317,13 +317,13 @@ mint_token || stop "gcloud auth print-access-token did not answer ($(first_line 
 fact token PASS "an access token was written to a 0600 file in this run's 0700 scratch directory, never printed or put on an argv"
 
 # ------------------------------------------------------------------ the record
-say "reading the record of the rate-limit header names (creds/marks)"
-code=$(curl -q -sS --max-time 30 --config "$AUTH_CONF" -o "$SCRATCH/marks.json" -w '%{http_code}' \
-  "$RTDB/creds/marks.json" </dev/null 2>"$SCRATCH/marks.err") || code=000
+say "reading the record of the rate-limit header names (creds/observed)"
+code=$(curl -q -sS --max-time 30 --config "$AUTH_CONF" -o "$SCRATCH/observed.json" -w '%{http_code}' \
+  "$RTDB/creds/observed.json" </dev/null 2>"$SCRATCH/observed.err") || code=000
 [ "$code" = 200 ] ||
-  stop "the record $RTDB/creds/marks could not be read (HTTP $code$([ -s "$SCRATCH/marks.err" ] && printf ': %s' "$(first_line "$SCRATCH/marks.err")")): it is the whole of what this check reads"
+  stop "the record $RTDB/creds/observed could not be read (HTTP $code$([ -s "$SCRATCH/observed.err" ] && printf ': %s' "$(first_line "$SCRATCH/observed.err")")): it is the whole of what this check reads"
 
-python3 - "$SCRATCH/marks.json" "$SCRATCH/sources" ${SOURCES[@]+"${SOURCES[@]}"} >"$SCRATCH/analysis" 2>"$SCRATCH/analysis.err" <<'PY' ||
+python3 - "$SCRATCH/observed.json" "$SCRATCH/sources" ${SOURCES[@]+"${SOURCES[@]}"} >"$SCRATCH/analysis" 2>"$SCRATCH/analysis.err" <<'PY' ||
 import json, sys
 
 path, table_path = sys.argv[1], sys.argv[2]
@@ -355,7 +355,7 @@ else:
 
 if doc is None:
     doc = {}
-    fact("record", "UNVERIFIED", "the record node is absent: no source has an answer recorded on it, so nothing can be judged (run a run on the subscription token and run this again)")
+    fact("record", "UNVERIFIED", "the record node is absent: no answer of any source has been recorded on it, so nothing can be judged (run a run on the subscription token and run this again)")
 elif not isinstance(doc, dict):
     doc = {}
     fact("record", "FAIL", "the record node is not an object of sources%s: it is not the shape the service writes" % (" (%s)" % parse_error if parse_error else ""))
@@ -373,7 +373,7 @@ names = [san(k) for k in sorted(doc)]
 order = list(wanted) if wanted else sorted(doc)
 
 if doc:
-    fact("record", "PASS", "%d source%s recorded in creds/marks" % (len(names), "" if len(names) == 1 else "s"))
+    fact("record", "PASS", "%d source%s recorded in creds/observed" % (len(names), "" if len(names) == 1 else "s"))
 
 # The figures any source recorded, and the sources that recorded rate-limit names
 # without one. The verdict below is read from these two lists and from nothing
@@ -389,19 +389,25 @@ for src in order:
         continue
     m = doc[src]
     if not isinstance(m, dict):
-        fact("source", "FAIL", "%s holds something that is not a mark: it is not the shape the service writes" % shown)
+        fact("source", "FAIL", "%s holds something that is not an observation: it is not the shape the service writes" % shown)
         table.append("  %s  names=-  utilisation=?" % shown)
         continue
-    raw = m.get("headers")
-    if raw is None:
-        fact("source", "UNVERIFIED", "%s has no names recorded: its last recorded answer carried no rate-limit header at all, or none has been recorded since this release. Judge it after a run on it" % shown)
+    if "headers" not in m:
+        fact("source", "UNVERIFIED", "%s holds a node with no names in it: it is not the shape this release's service writes, so nothing can be read from it" % shown)
         table.append("  %s  names=-  utilisation=?" % shown)
         continue
+    raw = m["headers"]
     if not isinstance(raw, list):
         fact("source", "UNVERIFIED", "%s holds a record that is not a list of names: nothing can be read from it" % shown)
         table.append("  %s  names=?  utilisation=?" % shown)
         continue
     got = [san(h, 200) for h in raw]
+    if not got:
+        # An answer that carried no rate-limit header is still an answer that was
+        # recorded: the node says so, and it names nothing to judge.
+        fact("source", "UNVERIFIED", "%s has no names recorded: its last recorded answer carried no rate-limit header at all, so there is nothing to judge for it" % shown)
+        table.append("  %s  names=-  utilisation=?" % shown)
+        continue
     util = [h for h in got if is_utilisation(h)]
     if util:
         with_figure.append(shown)

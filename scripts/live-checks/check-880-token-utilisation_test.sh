@@ -134,9 +134,9 @@ if [ -n "$conf" ] && grep -q "Authorization: Bearer ${FAKE880_TOKEN:?}" "$conf" 
   perm=$(stat -c '%a' "$conf" 2>/dev/null || stat -f '%Lp' "$conf" 2>/dev/null)
   printf 'curl-config-mode %s\n' "$perm" >>"$FAKE880_LOG"
   case "$url" in
-  */creds/marks.json)
-    code=$(cat "$dir/marks-status" 2>/dev/null || printf 200)
-    body=$(cat "$dir/marks.json")
+  */creds/observed.json)
+    code=$(cat "$dir/observed-status" 2>/dev/null || printf 200)
+    body=$(cat "$dir/observed.json")
     ;;
   *) code=404 body=null ;;
   esac
@@ -164,7 +164,7 @@ case_dir() { # case_dir <name>
   CALLS=$cdir/calls
   : >"$CALLS"
   write_config
-  write_marks
+  write_observed
 }
 
 # The installation's own config as `fugaro update` leaves it, in the indented
@@ -188,17 +188,17 @@ write_config() {
 }
 
 # The record as the service writes it: one source, whose last answer carried a
-# utilisation figure and the reset beside it, plus a field holding a value —
-# which is not a shape the service writes, and which the block must not print.
-write_marks() { # write_marks [json]
+# utilisation figure and the reset beside it, plus two members holding values —
+# a time and a marker — which are not a shape the service writes, and which the
+# block must not print.
+write_observed() { # write_observed [json]
   if [ $# -gt 0 ]; then
-    printf '%s' "$1" >"$answers/marks.json"
+    printf '%s' "$1" >"$answers/observed.json"
     return
   fi
-  cat >"$answers/marks.json" <<JSON
-{"tool-alpha":{"state":"exhausted","until":"2026-11-25T04:00:00Z",
- "headers":["Anthropic-Ratelimit-Unified-5h-Utilization","Anthropic-Ratelimit-Unified-5h-Reset"],
- "note":"${RECORD_MARKER}"}}
+  cat >"$answers/observed.json" <<JSON
+{"tool-alpha":{"headers":["Anthropic-Ratelimit-Unified-5h-Utilization","Anthropic-Ratelimit-Unified-5h-Reset"],
+ "until":"2026-11-25T04:00:00Z","note":"${RECORD_MARKER}"}}
 JSON
 }
 
@@ -235,7 +235,7 @@ test_a_utilisation_figure_is_found() {
 
 test_rate_limit_headers_without_a_figure_fail() {
   case_dir no_figure
-  write_marks '{"tool-alpha":{"state":"backed_off","headers":["Retry-After","Anthropic-Ratelimit-Unified-5h-Reset"]}}'
+  write_observed '{"tool-alpha":{"headers":["Retry-After","Anthropic-Ratelimit-Unified-5h-Reset"]}}'
   run880
   expect_status "$status" 1 "rate-limit headers without a figure"
   expect_contains "$out" "CHECK 880 RESULT: FAIL (exit 1)" "rate-limit headers without a figure"
@@ -248,7 +248,7 @@ test_rate_limit_headers_without_a_figure_fail() {
 
 test_no_record_at_all_is_unverified() {
   case_dir absent
-  write_marks null
+  write_observed null
   run880
   expect_status "$status" 3 "an absent record"
   expect_contains "$out" "CHECK 880 RESULT: INCOMPLETE (exit 3)" "an absent record"
@@ -256,25 +256,41 @@ test_no_record_at_all_is_unverified() {
   expect_no_row_state "$out" source FAIL "an absent record judges no source"
 }
 
-test_a_source_with_no_names_is_unverified() {
+# An answer that carried no rate-limit header is recorded as recorded and names
+# nothing, which is not the same as a source no release has recorded: both are
+# UNVERIFIED, and neither is ever a positive.
+test_a_source_whose_answer_named_nothing_is_unverified() {
   case_dir no_names
-  write_marks '{"tool-alpha":{"state":"available"}}'
+  write_observed '{"tool-alpha":{"headers":[]}}'
   run880
-  expect_status "$status" 3 "a source with no names"
-  expect_row "$out" source UNVERIFIED "a source with no names"
+  expect_status "$status" 3 "a source whose answer named nothing"
+  expect_row "$out" record PASS "the source's answer WAS recorded"
+  expect_row "$out" source UNVERIFIED "a source whose answer named nothing"
   expect_contains "$out" "tool-alpha has no names recorded" "the source is named"
   expect_no_row_state "$out" source PASS "no names is never a positive"
 }
 
+# A node with no names member at all is not a shape this release's service
+# writes, and nothing can be read from it.
+test_a_node_with_no_names_member_is_unverified() {
+  case_dir no_member
+  write_observed '{"tool-alpha":{}}'
+  run880
+  expect_status "$status" 3 "a node with no names member"
+  expect_row "$out" source UNVERIFIED "a node with no names member"
+  expect_contains "$out" "tool-alpha holds a node with no names in it" "the row says what was read"
+  expect_no_row_state "$out" source PASS "a node that is not the service's shape is never a positive"
+}
+
 test_only_the_sources_named_are_judged() {
   case_dir named
-  write_marks '{"tool-alpha":{"state":"available","headers":["Anthropic-Ratelimit-Unified-5h-Utilization"]},
-                "tool-beta":{"state":"available","headers":["Retry-After"]}}'
+  write_observed '{"tool-alpha":{"headers":["Anthropic-Ratelimit-Unified-5h-Utilization"]},
+                "tool-beta":{"headers":["Retry-After"]}}'
   run880 tool-beta
   expect_status "$status" 1 "a named source without a figure"
   expect_contains "$out" "tool-beta records Retry-After" "the named source is judged"
   expect_not_contains "$out" "tool-alpha records" "an unnamed source is not judged"
-  expect_contains "$out" "2 sources recorded in creds/marks" "the record's own size is still read"
+  expect_contains "$out" "2 sources recorded in creds/observed" "the record's own size is still read"
 }
 
 test_a_named_source_the_service_never_served_is_unverified() {
@@ -288,8 +304,8 @@ test_a_named_source_the_service_never_served_is_unverified() {
 
 test_one_source_with_a_figure_passes_beside_one_without() {
   case_dir one_of_two
-  write_marks '{"tool-alpha":{"state":"available","headers":["Anthropic-Ratelimit-Unified-5h-Utilization"]},
-                "tool-beta":{"state":"available","headers":["Retry-After"]}}'
+  write_observed '{"tool-alpha":{"headers":["Anthropic-Ratelimit-Unified-5h-Utilization"]},
+                "tool-beta":{"headers":["Retry-After"]}}'
   run880
   expect_status "$status" 0 "one source with a figure beside one without"
   expect_contains "$out" "CHECK 880 RESULT: PASS (exit 0)" "the verdict is existential"
@@ -297,12 +313,12 @@ test_one_source_with_a_figure_passes_beside_one_without() {
   expect_row "$out" source PASS "the source with a figure"
   expect_row "$out" source INFO "the source without one"
   expect_contains "$out" "which does not answer this question" "a key's own rate-limit headers do not withdraw the gate"
-  expect_contains "$out" "2 sources recorded in creds/marks" "both sources are read"
+  expect_contains "$out" "2 sources recorded in creds/observed" "both sources are read"
 }
 
 test_an_empty_record_is_unverified() {
   case_dir empty_record
-  write_marks '{}'
+  write_observed '{}'
   run880
   expect_status "$status" 3 "an empty record"
   expect_contains "$out" "CHECK 880 RESULT: INCOMPLETE (exit 3)" "an empty record"
@@ -314,25 +330,25 @@ test_an_empty_record_is_unverified() {
 
 test_a_record_that_is_not_the_shapes_fails() {
   case_dir malformed
-  write_marks '[1,2,3]'
+  write_observed '[1,2,3]'
   run880
   expect_status "$status" 1 "a record that is not the service's shape"
   expect_row "$out" record FAIL "a record that is not the service's shape"
   expect_no_row_state "$out" record PASS "a malformed record is never a pass"
 }
 
-test_a_source_that_is_not_a_mark_fails() {
-  case_dir not_a_mark
-  write_marks '{"tool-alpha":"exhausted"}'
+test_a_source_that_is_not_an_observation_fails() {
+  case_dir not_an_observation
+  write_observed '{"tool-alpha":"exhausted"}'
   run880
-  expect_status "$status" 1 "a source that is not a mark"
-  expect_row "$out" source FAIL "a source that is not a mark"
-  expect_contains "$out" "tool-alpha holds something that is not a mark" "the source is named"
+  expect_status "$status" 1 "a source that is not an observation"
+  expect_row "$out" source FAIL "a source that is not an observation"
+  expect_contains "$out" "tool-alpha holds something that is not an observation" "the source is named"
 }
 
 test_a_record_that_is_not_a_list_is_unverified() {
   case_dir not_a_list
-  write_marks '{"tool-alpha":{"state":"available","headers":"Retry-After"}}'
+  write_observed '{"tool-alpha":{"headers":"Retry-After"}}'
   run880
   expect_status "$status" 3 "a record that is not a list of names"
   expect_row "$out" source UNVERIFIED "a record that is not a list of names"
@@ -351,7 +367,7 @@ test_a_value_in_the_record_is_never_printed() {
 
 test_a_hostile_source_name_is_sanitized() {
   case_dir hostile
-  write_marks '{"tool\u001b[31mred":{"state":"available","headers":["Retry-After"]}}'
+  write_observed '{"tool\u001b[31mred":{"headers":["Retry-After"]}}'
   run880
   expect_status "$status" 1 "a hostile source name"
   expect_not_contains "$out" "$(printf '\033')" "a control byte reached the block"
@@ -360,7 +376,7 @@ test_a_hostile_source_name_is_sanitized() {
 
 test_an_unreadable_record_is_incomplete() {
   case_dir unreadable
-  printf 403 >"$answers/marks-status"
+  printf 403 >"$answers/observed-status"
   run880
   expect_status "$status" 2 "an unreadable record"
   expect_contains "$out" "CHECK 880 RESULT: INCOMPLETE (exit 2)" "an unreadable record"
@@ -375,7 +391,7 @@ test_only_reads_are_called() {
   while IFS= read -r line; do
     case "$line" in
     "gcloud auth print-access-token --quiet "*) count=$((count + 1)) ;;
-    "curl -q -sS --max-time 30 --config "*" -o "*" -w %{http_code} https://fugaro-fb-default-rtdb.firebaseio.com/creds/marks.json "*) count=$((count + 1)) ;;
+    "curl -q -sS --max-time 30 --config "*" -o "*" -w %{http_code} https://fugaro-fb-default-rtdb.firebaseio.com/creds/observed.json "*) count=$((count + 1)) ;;
     "curl-config-mode 600") ;;
     *) bad="${bad}${line}"$'\n' ;;
     esac
@@ -485,13 +501,14 @@ t() {
 t test_a_utilisation_figure_is_found
 t test_rate_limit_headers_without_a_figure_fail
 t test_no_record_at_all_is_unverified
-t test_a_source_with_no_names_is_unverified
+t test_a_source_whose_answer_named_nothing_is_unverified
+t test_a_node_with_no_names_member_is_unverified
 t test_only_the_sources_named_are_judged
 t test_a_named_source_the_service_never_served_is_unverified
 t test_one_source_with_a_figure_passes_beside_one_without
 t test_an_empty_record_is_unverified
 t test_a_record_that_is_not_the_shapes_fails
-t test_a_source_that_is_not_a_mark_fails
+t test_a_source_that_is_not_an_observation_fails
 t test_a_record_that_is_not_a_list_is_unverified
 t test_a_value_in_the_record_is_never_printed
 t test_a_hostile_source_name_is_sanitized
