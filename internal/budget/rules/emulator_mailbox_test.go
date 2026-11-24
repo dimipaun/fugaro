@@ -207,7 +207,7 @@ func signed(v map[string]any) map[string]any {
 	return v
 }
 
-// TestMailboxTagIsOneOfTwo: J5r's tag against the database (O6, which amends
+// TestEmulatorMailboxTagIsOneOfTwo: J5r's tag against the database (O6, which amends
 // D171) — a message and the heartbeat carry exactly one of `mac` and `sig`, and
 // the two are interchangeable everywhere a tag is required: the message's own
 // validator, the registration's three fields and the heartbeat.
@@ -222,7 +222,7 @@ func signed(v map[string]any) map[string]any {
 // Red step (for the reviewer): under generation 10's document every row below
 // that writes a `sig` is refused, because a `mac` is required of every message
 // and of the heartbeat.
-func TestMailboxTagIsOneOfTwo(t *testing.T) {
+func TestEmulatorMailboxTagIsOneOfTwo(t *testing.T) {
 	h := newHarness(t)
 	alice, consumer := h.phone(mbAlice), h.consumer(mbAlice)
 
@@ -301,7 +301,7 @@ func TestMailboxTagIsOneOfTwo(t *testing.T) {
 	h.mustDeny(alice, "a child of the sig", put(inbox(mbAlice, "s9")+"/sig/x", "y"))
 }
 
-// TestMailboxTypedLaunch: J5r's launch action against the database (O10) — an
+// TestEmulatorMailboxTypedLaunch: J5r's launch action against the database (O10) — an
 // inbox action whose `verb` is `launch` carries a `mode` and needs no
 // `confirmation`, where every other verb still carries one.
 //
@@ -315,7 +315,7 @@ func TestMailboxTagIsOneOfTwo(t *testing.T) {
 // Red step (for the reviewer): under generation 10's document every row below
 // that writes `launch` is refused at the verb enumeration, and the positive
 // control is the case that says so.
-func TestMailboxTypedLaunch(t *testing.T) {
+func TestEmulatorMailboxTypedLaunch(t *testing.T) {
 	h := newHarness(t)
 	alice := h.phone(mbAlice)
 	repo := map[string]any{"repo": "aurora/web"}
