@@ -957,7 +957,7 @@ func AgentProceeded(marker string) string {
 // where the verdict was written instead, because an owner who wants to check
 // afterwards is not trying to get past anything.
 func GateProceeded() string {
-	return "this project is managed and the gate admitted the plan: its verdict is the confirmation, so nothing is typed here"
+	return "this project is managed and the gate admitted the plan: it recorded the verdict, so nothing is typed here"
 }
 
 // GateOrdinary is the sentence for an ordinary step of the same run that the
@@ -1000,7 +1000,7 @@ func OwnerProceeded() string {
 // gate refuses is still refused, before any prompt) — because the one mistake
 // this flag could be read as is "the gate is off for this run".
 func AskRestored() string {
-	return "--ask: on this managed project the confirmations the gate replaces are asked here; the gate still judges and refuses as it did"
+	return "--ask: on this managed project the confirmations the gate replaces are asked here, and the gate is unchanged: still judged, still refused"
 }
 
 // AskUnmanaged is the one line --ask prints where the marks did not answer
