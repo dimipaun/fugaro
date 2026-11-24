@@ -2466,7 +2466,7 @@ test('a start is one plain launch message through the one write path', async () 
   const h = await harness();
   assert.deepEqual(
     await h.client.sendJob(OPERATOR_SESSION, { verb: 'launch', text: 'fix the flaky test' }),
-    { ok: true, id: 'm-1', at: T0 },
+    { ok: true, id: 'm-1', at: T0, text: 'fix the flaky test' },
   );
   assert.deepEqual(h.store.writes().map((entry) => entry.path), [`${INBOX}/m-1`]);
   assertD113WriteSet(h.store, h.paths);
@@ -2486,7 +2486,7 @@ test('a cancel is one action record, and it is never queued', async () => {
   const record = actionRecord(T0);
   assert.deepEqual(
     await h.client.sendJob(OPERATOR_SESSION, { verb: 'cancel', text: 'Cancel run run-42.', record }),
-    { ok: true, id: 'm-1', at: T0 },
+    { ok: true, id: 'm-1', at: T0, text: 'Cancel run run-42.' },
   );
   assert.deepEqual(h.store.writes().map((entry) => entry.path), [`${INBOX}/m-1`]);
   assertD113WriteSet(h.store, h.paths);
