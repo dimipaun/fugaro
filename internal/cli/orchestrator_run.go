@@ -1116,7 +1116,10 @@ func (d *orchestratorDaemon) loop(ctx context.Context) error {
 // finished (orchestrator.Claim.Refresh, and the tick's last step). What the beat
 // adds is the stamp the node carries — the server time its holder last confirmed
 // the item was still its own — kept inside the beat's own cadence rather than
-// left on the day the item was taken.
+// left on the day the item was taken. What it re-stamps is the picture the last
+// cycle read off the daemon's own nodes (orchestrator.Tick.Held) and not a walk
+// of the project's claims node, which grows with every claim the project ever
+// made.
 //
 // A refresh that failed is not the lease's failure, and this does not answer it
 // the way the loop answers a beat that failed: a lease failure has one answer
@@ -1128,10 +1131,10 @@ func (d *orchestratorDaemon) beatAndRefresh(ctx context.Context) error {
 	if err := d.lease.Beat(ctx); err != nil {
 		return err
 	}
-	if d.claims == nil {
+	if d.claims == nil || d.tick == nil {
 		return nil
 	}
-	if err := d.claims.Refresh(ctx, nil); err != nil {
+	if err := d.claims.Refresh(ctx, d.tick.Held()); err != nil {
 		fmt.Fprintf(d.warn, "orchestrator %s: the claims this daemon holds could not be re-stamped, so the node says this daemon confirmed an item it holds as long ago as it took it: %s\n",
 			safetext.Field(d.id), safetext.OneLine(err.Error()))
 	}

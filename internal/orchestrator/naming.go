@@ -196,6 +196,15 @@ func validItem(item string) bool {
 	return idRE.MatchString(item) || task.PlanTaskProblem(item) == ""
 }
 
+// isPlanTask reports whether an item's identity is a plan task rather than a work
+// item id, which is what decides how its claim is keyed (ClaimPath) and what
+// settling that claim on the finish means (claim.go's settleOne). It is one
+// predicate because those two have to agree: a claim keyed as a plan task's and
+// released as a work item's would take a node away that every orchestrator of the
+// project reads, which is the second run of one piece of work the claim exists to
+// prevent.
+func isPlanTask(item string) bool { return task.PlanTaskProblem(item) == "" }
+
 // ClaimPath is the path of one item's claim, under the node of the subtree no
 // orchestrator id can take (`orchestrator/~claims`). The two kinds of item are
 // keyed differently, because their identities are not the same kind of thing:
@@ -225,7 +234,7 @@ func ClaimPath(ref ItemRef) (string, error) {
 	if !validItem(ref.Item) {
 		return "", fmt.Errorf("%w: %q is not a work item id or a plan task, so it names no item to claim", ErrInvalid, safetext.OneLine(ref.Item))
 	}
-	if task.PlanTaskProblem(ref.Item) == "" {
+	if isPlanTask(ref.Item) {
 		return ClaimsRoot + "/" + budget.Key(ref.Item), nil
 	}
 	return ClaimsRoot + "/" + budget.Key(ref.Orchestrator) + "/" + budget.Key(ref.Item), nil

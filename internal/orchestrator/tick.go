@@ -155,7 +155,21 @@ type Tick struct {
 	// writes comes from it, and a cycle that cannot read it refuses rather
 	// than stamping anything with this machine's clock (D1230).
 	Now ServerNow
+	// mine is the claim of every item this daemon's own nodes carried when its
+	// cycle last read them, as the cycle left it (HeldClaims): the work in
+	// flight, which is what the next beat settles from. It is the cycle's own
+	// reading and never a second one, so a beat re-stamps and settles what this
+	// daemon knows it holds rather than walking the project's claims node, which
+	// grows with every claim the project ever made (claim.go's header).
+	mine []Held
 }
+
+// Held is the claim of every item this daemon's own nodes carried when its cycle
+// last read them (Tick.mine, HeldClaims): what the beat between two cycles
+// settles, and nothing else. It is empty until a cycle has run, which is also
+// the first moment a claim of this daemon's can exist — a claim is taken inside
+// a cycle (launch.go).
+func (t *Tick) Held() []Held { return t.mine }
 
 // Report is what one cycle did, for the loop's log and for the tests.
 type Report struct {
@@ -756,23 +770,29 @@ func (c *cycle) run(ctx context.Context) error {
 
 // releaseClaims settles this orchestrator's claim on every item a node of this
 // project has finished, over the nodes as they now stand, and re-stamps the
-// claims it still holds (Claim.Refresh, D3209). Every finished item and not
-// only the ones this cycle moved, so that a settlement that failed, and one a
-// cycle that died after the item's own write had landed never made, are made by
-// the next cycle that reads the node. A claim that cannot be settled fails the
-// cycle: the item is finished and its claim is stale, so the next cycle reads
-// the same nodes and settles it then, and a daemon that swallowed the refusal
-// would leave the item blocked for every other orchestrator of the project with
-// nothing said.
+// claims it still holds (Claim.Refresh, D3209). Every finished item the nodes
+// carry and not only the ones this cycle moved, so that a settlement that
+// failed, and one a cycle that died after the item's own write had landed never
+// made, are made by the next cycle that reads the node. A claim that cannot be
+// settled fails the cycle: the item is finished and its claim is stale, so the
+// next cycle reads the same nodes and settles it then, and a daemon that
+// swallowed the refusal would leave the item blocked for every other
+// orchestrator of the project with nothing said.
+//
+// What it settles is the work in flight and nothing else (HeldClaims): the items
+// this daemon's nodes carry that an attempt was committed for, one claim each.
+// That is the reading the beat settles from between two cycles, so it is kept on
+// the tick as the cycle's own picture of what it holds.
 func (c *cycle) releaseClaims(ctx context.Context) error {
 	if c.tick.Claims == nil {
 		return nil
 	}
-	settled, err := settledClaimPaths(c.states())
+	held, err := HeldClaims(c.states())
 	if err != nil {
 		return err
 	}
-	return c.tick.Claims.Refresh(ctx, settled)
+	c.tick.mine = held
+	return c.tick.Claims.Refresh(ctx, held)
 }
 
 // fold writes what the finished runs mean into the items, and says so once the

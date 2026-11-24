@@ -756,10 +756,30 @@ func claimNode(t *testing.T, db *gcpfake.RTDB, ref orchestrator.ItemRef) (string
 // written: a claim is released by its item finishing and by nothing else (the
 // owner's ruling of 2026-11-23), so a beat that re-stamped a rival's node would
 // be taking an item whose run is still going.
+//
+// What the beat re-stamps is the picture the daemon's own cycle read off its
+// nodes (orchestrator.Tick.Held) and never a walk of the project's claims node:
+// a plan task's claim stands for good once the task is finished (claim.go's
+// header), so that node is a growing record of every claim the project ever made
+// and a beat that walked it would read one node more for each of them, for ever.
+// The cycle below is what puts the item in that picture, which is also the only
+// way a claim of this daemon's can exist: a claim is taken inside a cycle.
 func TestBeatRestampsTheClaimsTheDaemonHolds(t *testing.T) {
 	f := newDaemonFixture(t)
 	d, _ := f.running(t, "")
 	ctx := context.Background()
+
+	// The item the claim is taken on, as the daemon's own node carries it: a
+	// plan task approved and started, so the cycle's reading names it (and
+	// nothing else) as work this daemon holds.
+	f.setState(t, `{"schema_version":1,"rev":1,"agent_id":"aurora","role":"orchestrator",
+		"goal":"keep the work moving","work_items":[{"id":"wi-1","title":"land demo/A","repo":"acme/app",
+		"recipe":"standard","rigor_tier":"medium","brief":"Do the thing.","plan_task":"demo/A",
+		"phase":"running","run_id":"20261109-101500-abcd","attempts":1}],
+		"decisions":[],"facts":{},"archived":[],"intents":[]}`)
+	if _, err := d.tick.Step(ctx); err != nil {
+		t.Fatalf("the cycle that reads the node: %v", err)
+	}
 
 	mine := orchestrator.ItemRef{Orchestrator: d.id, Item: "demo/A"}
 	other := orchestrator.ItemRef{Orchestrator: "aurora~night", Item: "demo/B"}
@@ -777,6 +797,10 @@ func TestBeatRestampsTheClaimsTheDaemonHolds(t *testing.T) {
 		if took, err := c.claims.Take(ctx, c.ref); err != nil || !took {
 			t.Fatalf("the take of %q: took=%v, err=%v", c.ref.Item, took, err)
 		}
+	}
+	held := d.tick.Held()
+	if len(held) != 1 || held[0].Ref != mine {
+		t.Fatalf("the daemon's own picture of what it holds is %+v, and the beat re-stamps what the cycle read off this daemon's nodes", held)
 	}
 	holder, takenAt := claimNode(t, f.db, mine)
 	if holder != d.id {

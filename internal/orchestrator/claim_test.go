@@ -86,18 +86,9 @@ func cg4Path(t *testing.T, agentID string) string {
 	return path
 }
 
-// Keys is the shallow listing the claims are refreshed through: a claim is read
-// and written through a CAS and listed through a Keys — orchestrator.ClaimStore
-// is both — and this double is what a test counts a claim's writes on, so it
-// needs both halves. The listing itself is not counted here: what a refresh is
-// held to is the node it wrote and the ones it left alone.
-func (c *countingCAS) Keys(ctx context.Context, path string) ([]string, error) {
-	return c.inner.Keys(ctx, path)
-}
-
 // cg4Claim is one orchestrator's claims over the fake, with the clock the test
 // set: nothing here reads a real one.
-func cg4Claim(t *testing.T, db orchestrator.ClaimStore, agentID string, now orchestrator.ServerNow) *orchestrator.Claim {
+func cg4Claim(t *testing.T, db orchestrator.CAS, agentID string, now orchestrator.ServerNow) *orchestrator.Claim {
 	t.Helper()
 	claim, err := orchestrator.NewClaim(db, agentID, now)
 	if err != nil {
@@ -304,12 +295,13 @@ func TestLaunchSkipsClaimed(t *testing.T) {
 		t.Errorf("the claim names %q after a daemon skipped it, not the rival", holder)
 	}
 
-	// The rival finishes the item, and the cycle's own read of the node settles
-	// its claim (Refresh): the node is marked finished and stands, so this
-	// daemon — which has no way to learn that the task the rival ran is done —
-	// is refused again rather than starting the second run of it.
-	settled := map[string]bool{cg4PathOf(t, orchestrator.ClaimRef(cg4Rival, item)): true}
-	if err := rival.Refresh(ctx, settled); err != nil {
+	// The rival finishes the item, and the cycle's own read of its nodes names
+	// it finished (HeldClaims), which is what Refresh settles its claim from:
+	// the node is marked finished and stands, so this daemon — which has no way
+	// to learn that the task the rival ran is done — is refused again rather
+	// than starting the second run of it.
+	held := []orchestrator.Held{{Ref: orchestrator.ClaimRef(cg4Rival, item), Finished: true}}
+	if err := rival.Refresh(ctx, held); err != nil {
 		t.Fatalf("the rival's settlement of its own finished item: %v", err)
 	}
 	doc := nodeObject(t, f.Value(cg4Path(t, cg4Rival)), "the claim")
@@ -473,15 +465,15 @@ func TestAClaimSkipLeavesTheCycleItsRoom(t *testing.T) {
 	// the claim that never comes off again: its node is not one this project
 	// updates, so the hold is what this cycle meets every time.
 	rival := cg4Claim(t, rtdbClient(t, f), cg4Rival, clockAt(now))
-	settled := map[string]bool{}
+	held := make([]orchestrator.Held, 0, len(theirs))
 	for _, w := range theirs {
 		ref := orchestrator.ClaimRef(cg4Rival, w)
 		if took, err := rival.Take(ctx, ref); err != nil || !took {
 			t.Fatalf("the rival's take of %q: took=%v, err=%v", w.PlanTask, took, err)
 		}
-		settled[cg4PathOf(t, ref)] = true
+		held = append(held, orchestrator.Held{Ref: ref, Finished: true})
 	}
-	if err := rival.Refresh(ctx, settled); err != nil {
+	if err := rival.Refresh(ctx, held); err != nil {
 		t.Fatalf("the rival's settlement of the tasks it finished: %v", err)
 	}
 
@@ -768,35 +760,27 @@ func TestClaimHeldWhileTheItemIsUnfinished(t *testing.T) {
 	}
 }
 
-// cg4NoStrayKeys refuses the listing of any subtree but the claims root and
-// this orchestrator's own items: what a refresh lists is exactly what it may
-// hold (Refresh), so a walk into a rival's own items fails here rather than
-// reading them.
-type cg4NoStrayKeys struct {
-	*countingCAS
-	own string
-}
-
-func (k cg4NoStrayKeys) Keys(ctx context.Context, path string) ([]string, error) {
-	if path != orchestrator.ClaimsRoot && path != orchestrator.ClaimsRoot+"/"+k.own {
-		return nil, fmt.Errorf("the refresh listed %q, which is not this orchestrator's subtree", path)
-	}
-	return k.countingCAS.Keys(ctx, path)
-}
-
 // TestClaimRefresh is the holder's own half of a claim's life: the node records
 // the server time its holder last confirmed the item was still its own, and the
-// beat is what re-writes that stamp (Refresh with nothing settled).
+// beat is what re-writes that stamp (Refresh over the items this daemon's own
+// nodes carry, Tick.Held).
 //
-// What it re-stamps is only its own. A claim a rival holds is left alone (a
-// refresh is not a takeover), a claim node this release cannot read is left for
-// Take to refuse rather than repaired by a beat, and another orchestrator's own
-// items are not even listed.
+// What it re-stamps is only its own, and what it reads is one claim node per item
+// it holds. A claim a rival holds is left alone (a refresh is not a takeover) and
+// a claim node this release cannot read is left for Take to refuse rather than
+// repaired by a beat — and neither is read at all unless it is one of the items
+// this daemon's own nodes carry.
 //
-// Mutation: re-stamp whatever the listing turns up and the rival's claim below
-// comes back naming this orchestrator — an item taken by a daemon that only
-// meant to keep its own — and walk every key of the claims node and the
-// listing of the rival's subtree is refused here.
+// That last part is the count below, and the reason it is the count: a finished
+// plan task's claim is recorded and stands for good (claim.go's header), so the
+// claims node is not a list but the project's whole claim history — one node per
+// plan task it ever claimed, none of them ever going away. A refresh that walked
+// it would read one node more for every claim the project ever made, on every
+// cycle and every beat, for ever; a refresh that reads what it holds does not.
+//
+// Mutation: list the claims node and read every node under it (the walk this
+// refresh replaced) and the reads below follow the finished claims staged here
+// instead of staying the claims this daemon holds.
 func TestClaimRefresh(t *testing.T) {
 	ctx := context.Background()
 	f := gcpfake.NewRTDB(t)
@@ -811,7 +795,30 @@ func TestClaimRefresh(t *testing.T) {
 	unreadable := cg4PlanItem("wi-4", now.Add(-time.Hour))
 	unreadable.PlanTask = "demo/C"
 
-	rival := cg4Claim(t, rtdbClient(t, f), cg4Rival, clockAt(now))
+	db := &countingCAS{inner: rtdbClient(t, f)}
+	rival := cg4Claim(t, db, cg4Rival, clockAt(now))
+
+	// The project's plan-task history, which is what the claims node accumulates:
+	// tasks a rival claimed and finished, every claim of which stands for good and
+	// not one of which is this daemon's to read.
+	finished := func(from, to int) {
+		t.Helper()
+		held := make([]orchestrator.Held, 0, to-from)
+		for i := from; i < to; i++ {
+			ref := orchestrator.ItemRef{Orchestrator: cg4Rival, Item: fmt.Sprintf("demo/T%02d", i)}
+			if took, err := rival.Take(ctx, ref); err != nil || !took {
+				t.Fatalf("the rival's take of %q: took=%v, err=%v", ref.Item, took, err)
+			}
+			held = append(held, orchestrator.Held{Ref: ref, Finished: true})
+		}
+		if err := rival.Refresh(ctx, held); err != nil {
+			t.Fatalf("the rival's settlement of the tasks it finished: %v", err)
+		}
+	}
+	finished(0, 25)
+
+	// Two claims of the rival's own, one of each shape, neither of which the
+	// refresh below re-stamps.
 	for _, ref := range []orchestrator.ItemRef{
 		orchestrator.ClaimRef(cg4Rival, rivalPlan),
 		orchestrator.ClaimRef(cg4Rival, rivalItem),
@@ -821,7 +828,6 @@ func TestClaimRefresh(t *testing.T) {
 		}
 	}
 
-	db := &cg4NoStrayKeys{countingCAS: &countingCAS{inner: rtdbClient(t, f)}, own: cg4First}
 	claims := cg4Claim(t, db, cg4First, clockAt(now))
 	for _, ref := range []orchestrator.ItemRef{
 		orchestrator.ClaimRef(cg4First, mine),
@@ -831,24 +837,45 @@ func TestClaimRefresh(t *testing.T) {
 			t.Fatalf("the take of %q: took=%v, err=%v", ref.Item, took, err)
 		}
 	}
-
-	// A claim node this release cannot read: the refresh passes over it, and
-	// Take is what refuses it.
+	// A claim node this release cannot read, handed as one of this daemon's own:
+	// the refresh passes over it, and Take is what refuses it.
 	brokenPath := cg4PathOf(t, orchestrator.ClaimRef(cg4First, unreadable))
 	f.Set(brokenPath, "not a claim")
 	broken := f.Value(brokenPath)
 	rivalPlanPath := cg4PathOf(t, orchestrator.ClaimRef(cg4Rival, rivalPlan))
 	rivalItemPath := cg4PathOf(t, orchestrator.ClaimRef(cg4Rival, rivalItem))
 
-	// The refresh runs on a daemon whose clock has moved on, and with nothing
-	// settled: what it writes is the server time of the beat.
+	// What this daemon's own nodes carry: the two items it holds, and the one
+	// node it cannot read.
+	held := []orchestrator.Held{
+		{Ref: orchestrator.ClaimRef(cg4First, mine)},
+		{Ref: orchestrator.ClaimRef(cg4First, myItem)},
+		{Ref: orchestrator.ClaimRef(cg4First, unreadable)},
+	}
+
+	// The refresh runs on a daemon whose clock has moved on: what it writes is
+	// the server time of the beat.
 	beat := cg4Claim(t, db, cg4First, clockAt(later))
-	writes := db.puts
-	if err := beat.Refresh(ctx, nil); err != nil {
+	reads, writes := db.gets, db.puts
+	if err := beat.Refresh(ctx, held); err != nil {
 		t.Fatalf("the refresh of the claims this daemon holds: %v", err)
+	}
+	if got := db.gets - reads; got != len(held) {
+		t.Errorf("the refresh read %d claim node(s) for the %d it holds, and what it reads is the items this daemon's own nodes carry", got, len(held))
 	}
 	if got := db.puts - writes; got != 2 {
 		t.Errorf("the refresh wrote %d claim node(s), and it holds two", got)
+	}
+
+	// And the history grows without the refresh reading a node more: the claims
+	// of the tasks the rival finished are not this daemon's and are not read.
+	finished(25, 50)
+	reads = db.gets
+	if err := beat.Refresh(ctx, held); err != nil {
+		t.Fatalf("the refresh over a longer claim history: %v", err)
+	}
+	if got := db.gets - reads; got != len(held) {
+		t.Errorf("the refresh read %d claim node(s) once the project had finished 50 plan tasks, and the %d it holds did not change: what a refresh reads is bounded by the work in flight, never by the claims the project has ever made", got, len(held))
 	}
 	for _, tc := range []struct {
 		what string
@@ -948,6 +975,9 @@ func TestClaimOnAFinishedItem(t *testing.T) {
 				item.Attempts = 1
 				s := o6Node(t, now, item)
 				s.AgentID = cg4First
+				// An item no attempt was ever committed for: nothing took a
+				// claim on it, so the cycle's own reading does not name it.
+				s.WorkItems = append(s.WorkItems, workItemOf("wi-2"))
 
 				db := &countingCAS{inner: rtdbClient(t, f)}
 				claims := cg4Claim(t, db, cg4First, clockAt(now))
@@ -957,22 +987,34 @@ func TestClaimOnAFinishedItem(t *testing.T) {
 				}
 				path := cg4PathOf(t, ref)
 
-				// What a cycle reads at its own last step: the claim path of
-				// every item its nodes carry finished.
+				// What a cycle reads at its own last step: the claim of every
+				// item its nodes carry that has been started, as the nodes now
+				// read (HeldClaims).
 				settledPhase := phase
 				after := o6Apply(t, s, orchestrator.Op{Op: orchestrator.OpWorkItemUpsert, WorkItem: &orchestrator.WorkItemOp{ID: item.ID, Phase: &settledPhase}}, orchestrator.Actor{Class: orchestrator.Daemon, Now: now})
-				settled := map[string]bool{}
-				for _, w := range after.WorkItems {
-					if !w.Phase.Done() {
-						continue
-					}
-					settled[cg4PathOf(t, orchestrator.ClaimRef(after.AgentID, w))] = true
+				held, err := orchestrator.HeldClaims([]orchestrator.State{after})
+				if err != nil {
+					t.Fatalf("reading the claim of what this node carries: %v", err)
 				}
-				if !settled[path] {
-					t.Fatalf("the node's %s item is claimed at %v, and the cycle's own reading does not name it", phase, settled)
+				got := -1
+				for i, h := range held {
+					if h.Ref == ref {
+						got = i
+					}
+				}
+				if got < 0 {
+					t.Fatalf("the node's %s item is claimed at %v, and the cycle's own reading does not name it", phase, path)
+				}
+				if !held[got].Finished {
+					t.Fatalf("the node's %s item is claimed at %v, and the cycle's own reading does not name it finished", phase, path)
+				}
+				for _, h := range held {
+					if h.Ref.Item == "wi-2" {
+						t.Fatalf("the cycle's reading names %q, an item of this node no attempt was ever committed for: what a refresh reads is the work in flight and never a node's whole history", h.Ref.Item)
+					}
 				}
 
-				if err := claims.Refresh(ctx, settled); err != nil {
+				if err := claims.Refresh(ctx, held); err != nil {
 					t.Fatalf("settling the claims of what finished: %v", err)
 				}
 				v := f.Value(path)
@@ -1011,7 +1053,7 @@ func TestClaimOnAFinishedItem(t *testing.T) {
 				// A second pass over the same finished item writes nothing: the
 				// record is what it is, and the beat does not rewrite it.
 				before := db.puts
-				if err := claims.Refresh(ctx, settled); err != nil {
+				if err := claims.Refresh(ctx, held); err != nil {
 					t.Fatalf("the second pass over the same finished item: %v", err)
 				}
 				if db.puts != before {
@@ -1019,11 +1061,11 @@ func TestClaimOnAFinishedItem(t *testing.T) {
 				}
 
 				if kind.stands {
-					// A path the caller does not name as finished — the item put
-					// back to work, whose node the next reading carries as
-					// unfinished — is re-stamped, so the claim stops reading
-					// finished while the work is going again.
-					if err := claims.Refresh(ctx, map[string]bool{}); err != nil {
+					// An item the caller's reading does not name as finished —
+					// the item put back to work, whose node the next reading
+					// carries as unfinished — is re-stamped, so the claim stops
+					// reading finished while the work is going again.
+					if err := claims.Refresh(ctx, []orchestrator.Held{{Ref: ref}}); err != nil {
 						t.Fatalf("re-stamping the claim of a plan task put back to work: %v", err)
 					}
 					doc := nodeObject(t, f.Value(path), "the claim")
@@ -1040,7 +1082,7 @@ func TestClaimOnAFinishedItem(t *testing.T) {
 				if took, err := claims.Take(ctx, ref); err != nil || !took {
 					t.Fatalf("the take of a finished item: took=%v, err=%v", took, err)
 				}
-				if err := claims.Refresh(ctx, settled); err != nil {
+				if err := claims.Refresh(ctx, held); err != nil {
 					t.Fatalf("the pass over a node whose item had already finished when the cycle read it: %v", err)
 				}
 				if f.Value(path) != nil {

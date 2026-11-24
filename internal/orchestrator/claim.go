@@ -57,6 +57,19 @@
 // it stands — there is nothing left to confirm about it, and the node is the
 // project's only record that the task it names is done.
 //
+// **What a refresh reads is what this orchestrator's own nodes carry, and never
+// the claims node itself.** The node is not a list to walk: it accumulates one
+// standing claim per plan task the project ever claimed, and every one of them
+// outlives the work it stands on, so a walk of it would grow with that history
+// rather than with the daemon's own work — a read per claim ever made, on every
+// cycle and every beat, forever. A refresh is handed the claim of each item the
+// caller's nodes carry that has been started (Held, HeldClaims) and reads that
+// and nothing else, which is what bounds it: by the work in flight, and by the
+// state's own retention. A claim whose item those nodes no longer carry — a plan
+// the holder no longer has imported among them — is left exactly as it stands,
+// neither re-stamped nor released, because nothing the holder reads names it any
+// more: it is one node, and a rival that still carries the plan still skips it.
+//
 // Nothing here reads a clock of its own: the stamp is rtdb.ServerNow's, and a
 // claim with no server time behind it is not made at all (D1230).
 //
@@ -82,7 +95,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
@@ -126,26 +138,25 @@ type ClaimGuard interface {
 	// Take takes the claim of ref for this orchestrator, or answers false when
 	// another orchestrator holds it.
 	Take(ctx context.Context, ref ItemRef) (bool, error)
-	// Refresh re-stamps this orchestrator's own claims, records the finish on
-	// the plan tasks among them and releases the work items whose item the
-	// caller's nodes say has finished.
-	Refresh(ctx context.Context, settled map[string]bool) error
+	// Refresh re-stamps the claims of the items the caller's own nodes carry,
+	// records the finish on the plan tasks among them whose item has finished
+	// and releases the work items among them (Held, HeldClaims).
+	Refresh(ctx context.Context, held []Held) error
 }
 
-// ClaimStore is the store a claim is read, written and re-stamped through: the
-// one-node conditional read and write every fence in this package uses (CAS),
-// and the shallow listing Refresh finds this orchestrator's own claims with
-// (Keys). *rtdb.Client is one.
-type ClaimStore interface {
-	CAS
-	Keys
+// Held is one item of this orchestrator's own nodes as its claim is settled: the
+// reference the item's claim is keyed by (ClaimRef) and whether the item has
+// finished — done or cancelled (ClaimGuard.Refresh, HeldClaims).
+type Held struct {
+	Ref      ItemRef
+	Finished bool
 }
 
 // Claim is one orchestrator's claims, read and written through one store.
 // agentID is the orchestrator that takes them — the id whose state node the
-// items belong to and whose lease decides whether its claims outlive it.
+// items belong to and whose claims an item's own nodes carry.
 type Claim struct {
-	db      ClaimStore
+	db      CAS
 	agentID string
 	now     ServerNow
 }
@@ -156,7 +167,7 @@ var _ ClaimGuard = (*Claim)(nil)
 // NewClaim builds the claims of one orchestrator. The id is held to C-ORCH's
 // rule and not to agentRE, which refuses the `~` of a named orchestrator: a
 // claim is keyed by, and read back through, an orchestrator id.
-func NewClaim(db ClaimStore, agentID string, now ServerNow) (*Claim, error) {
+func NewClaim(db CAS, agentID string, now ServerNow) (*Claim, error) {
 	switch {
 	case db == nil:
 		return nil, errors.New("orchestrator: a claim needs a store to be read and written through")
@@ -214,19 +225,21 @@ func (c *Claim) Take(ctx context.Context, ref ItemRef) (bool, error) {
 	return false, fmt.Errorf("%w: %d claims, each refused by a moved ETag: %w", ErrClaimContention, claimAttempts, last)
 }
 
-// Refresh re-stamps the claims this orchestrator holds with the server's
-// current time, records the finish on the plan tasks whose item has finished and
-// releases the work items among them — a plan task's node stays, marked
-// finished, because deleting it would read to a rival whose own copy of the task
-// is still approved as an item nobody took (this file's header).
+// Refresh settles the claims of the items this orchestrator's own nodes carry:
+// every one is re-stamped with the server's current time, a plan task whose item
+// has finished is marked finished and left standing, and a work item whose item
+// has finished has its node taken off (this file's header).
 //
-// settled is the claim paths whose item is done or cancelled in the nodes the
-// caller last read — a cycle hands what its own nodes say (settledClaimPaths),
-// and the beat hands nil, having read no nodes, so that every claim this
-// orchestrator holds is re-stamped. It is what makes the release part of the
-// refresh: a plan task or a backlog item that finished is work nobody is on, and
-// a release that did not land, or that a cycle died before making, is made by
-// the next cycle reading the same nodes.
+// held is the claim of each item those nodes carry that has been started (Held,
+// HeldClaims), and it is the whole of what is read here: one node per item in
+// flight and no walk of the claims node, which grows with every claim the
+// project ever made (this file's header). What a caller hands is its own nodes'
+// reading, so a claim whose item those nodes no longer carry is left exactly as
+// it stands.
+//
+// It is what makes a release part of the refresh: a plan task or a backlog item
+// that finished is work nobody is on, and a release that did not land, or that a
+// cycle died before making, is made by the next cycle reading the same nodes.
 //
 // It is the beat and not the take, because an item's run outlives its take: a
 // daemon takes a claim once, when it starts the run, and a run of hours is a
@@ -242,81 +255,48 @@ func (c *Claim) Take(ctx context.Context, ref ItemRef) (bool, error) {
 // here, and one that is not there is nothing to re-stamp. A conditional write
 // refused because the node moved under the read is the same answer, so a
 // refresh never fails over a claim that has become somebody else's.
-func (c *Claim) Refresh(ctx context.Context, settled map[string]bool) error {
-	keys, err := c.db.Keys(ctx, ClaimsRoot)
-	if err != nil {
-		return err
-	}
-	for _, key := range keys {
-		path := ClaimsRoot + "/" + key
-		if key == budget.Key(c.agentID) {
-			// This orchestrator's own work items, one node each (ClaimPath):
-			// releasing one is safe, because no other orchestrator mints its id.
-			items, err := c.db.Keys(ctx, path)
-			if err != nil {
-				return err
-			}
-			for _, item := range items {
-				if err := c.holdItem(ctx, path+"/"+item, settled); err != nil {
-					return err
-				}
-			}
-			continue
-		}
-		if ValidOrchestratorID(key) {
-			// Another orchestrator's own items: not this daemon's to walk.
-			continue
-		}
-		// A plan task's claim, which is one node for the whole project: a plan
-		// task's key always carries an escaped `/` and an id never does, so the
-		// two shapes cannot be taken for each other (ClaimPath).
-		if err := c.holdPlanTask(ctx, path, settled); err != nil {
+func (c *Claim) Refresh(ctx context.Context, held []Held) error {
+	for _, h := range held {
+		if err := c.settleOne(ctx, h); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// holdPlanTask settles the claim this orchestrator holds on one plan task, which
-// is one node for the whole project: the finish is recorded on it and the node
-// stands, because a rival whose own copy of the task still reads approved would
-// take a node that is not there as an item nobody has taken and start a second
-// run of it (this file's header). A node already marked finished and whose item
-// is still finished is left exactly as it stands, so a plan task that is done is
-// not rewritten on every beat; the cycle after the item is put back to work
-// re-stamps it, which takes the mark off. A caller that read no nodes (nil
-// settled, the beat) names nothing as finished, so the node's own mark decides
-// there. A node naming another orchestrator, one this release cannot read and one
-// that is not there are all left exactly as they stand.
-func (c *Claim) holdPlanTask(ctx context.Context, path string, settled map[string]bool) error {
+// settleOne settles the claim this orchestrator holds on one of the items its
+// own nodes carry, as held says the item reads. What the finish means is the
+// item's identity (this file's header): a plan task's claim is one node for the
+// whole project, so the finish is recorded on it and the node stands — a rival
+// whose own copy of the task still reads approved would take a node that is not
+// there as an item nobody has taken and start a second run of it — while a work
+// item's id is minted inside one node (D26), so nothing else can be misled by
+// its absence and the node comes off. A node already marked finished and whose
+// item is still finished is left exactly as it stands, so a plan task that is
+// done is not rewritten on every beat; the cycle after the item is put back to
+// work re-stamps it, which takes the mark off.
+//
+// A node naming another orchestrator, one this release cannot read and one that
+// is not there are all left exactly as they stand.
+func (c *Claim) settleOne(ctx context.Context, h Held) error {
+	path, err := ClaimPath(h.Ref)
+	if err != nil {
+		return err
+	}
 	etag, doc, found, err := c.read(ctx, path)
 	if err != nil || !found || doc.Holder != c.agentID {
 		return nil
 	}
-	finished := settled != nil && settled[path]
-	if doc.Finished && (settled == nil || finished) {
-		return nil
+	if !h.Finished {
+		return c.restamp(ctx, path, etag)
 	}
-	if finished {
+	if isPlanTask(h.Ref.Item) {
+		if doc.Finished {
+			return nil
+		}
 		return c.write(ctx, path, etag, claimDoc{Holder: c.agentID, At: doc.At, Finished: true})
 	}
-	return c.restamp(ctx, path, etag)
-}
-
-// holdItem releases the claim this orchestrator holds on one of its own work
-// items or re-stamps it: the item's id is minted inside one node (D26), so
-// nothing else can be misled by the claim's absence and the node comes off when
-// the item is finished. A node naming another orchestrator, one this release
-// cannot read and one that is not there are left exactly as they stand.
-func (c *Claim) holdItem(ctx context.Context, path string, settled map[string]bool) error {
-	etag, doc, found, err := c.read(ctx, path)
-	if err != nil || !found || doc.Holder != c.agentID {
-		return nil
-	}
-	if settled[path] {
-		return c.write(ctx, path, etag, nil)
-	}
-	return c.restamp(ctx, path, etag)
+	return c.write(ctx, path, etag, nil)
 }
 
 // restamp writes one claim node this orchestrator holds with the server's
@@ -400,29 +380,41 @@ func claimKey(agentID string, w WorkItem) string {
 	return path
 }
 
-// settledClaimPaths is the claim of every item the nodes have finished: the
-// claim paths whose item is done or cancelled, keyed the way ClaimPath keys
-// them, which is what a cycle hands Refresh so that a finished plan task is
-// marked and a finished work item's claim comes off, while the rest are
-// re-stamped (D3209).
+// HeldClaims is the claim of every item this orchestrator's nodes carry that has
+// been started: what a cycle hands Refresh, and what the daemon re-stamps on its
+// beat (Tick.Held). One Held per claim and not one per item, because two nodes
+// that carry the same plan task are one claim for the whole project (ClaimRef):
+// they are one reference here, finished when either copy of the item says so.
 //
-// It reads every done item of every node and not only the ones that moved in
-// this cycle, which is the whole of the retry the release gets: a claim whose
-// release failed, and one a cycle died before releasing, are released by the
-// first cycle that reads the node after the item's own write has landed.
-func settledClaimPaths(states []State) (map[string]bool, error) {
-	settled := map[string]bool{}
+// An item no attempt was committed for holds no claim — a claim is taken by the
+// starter, and only a launching action reaches it (launch.go) — so what this
+// reads is the work in flight and never a node's whole history. That is the
+// whole of the bound a refresh has: by the items the nodes carry, and by the
+// state's own retention, and never by every claim the project ever made (this
+// file's header).
+func HeldClaims(states []State) ([]Held, error) {
+	var (
+		held  []Held
+		index = map[string]int{}
+	)
 	for _, s := range states {
 		for _, w := range s.WorkItems {
-			if !w.Phase.Done() {
+			if w.Attempts == 0 && w.RunID == "" {
 				continue
 			}
-			path, err := ClaimPath(ClaimRef(s.AgentID, w))
+			ref := ClaimRef(s.AgentID, w)
+			path, err := ClaimPath(ref)
 			if err != nil {
 				return nil, err
 			}
-			settled[path] = true
+			finished := w.Phase.Done()
+			if i, ok := index[path]; ok {
+				held[i].Finished = held[i].Finished || finished
+				continue
+			}
+			index[path] = len(held)
+			held = append(held, Held{Ref: ref, Finished: finished})
 		}
 	}
-	return settled, nil
+	return held, nil
 }
