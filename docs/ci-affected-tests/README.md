@@ -1,6 +1,6 @@
 # CI selects tests from what changed
 
-**Status: plan only; nothing is implemented; no task approved.** See [docs/status.md](../status.md) for the current table. Spec owner: Dimi Paun (the owner). Date: 2026-11-20. Checked against `origin/main` at `38ce5c0e2`. Three rounds of independent review amended the reconciliation and replaced the contract-first shape of the plan (the round-3 remainder is under Open items of the pull request).
+**Status: implemented. CS1-CS7b, CS6 and CS6b are on `main` and `.github/workflows/ci.yml` carries the selector (CS6's copy-in, 2026-11-22); CS8 is the change that writes this paragraph and CS9 (Check 800, owner-run) is left.** *The status as first written, kept:* **Status: plan only; nothing is implemented; no task approved.** See [docs/status.md](../status.md) for the current table. Spec owner: Dimi Paun (the owner). Date: 2026-11-20. Checked against `origin/main` at `38ce5c0e2`. Three rounds of independent review amended the reconciliation and replaced the contract-first shape of the plan (the round-3 remainder is under Open items of the pull request).
 
 CI runs the whole suite on every dispatch: 27 shards, about 175 runner-minutes, 16 minutes of wall time. This plan makes it run what a change can reach: a selector maps the changed files to the packages that import them and, through a recorded read-map, to the tests that read them by path; the full suite stays as the release gate's requirement and as a nightly run.
 
@@ -15,6 +15,8 @@ CI runs the whole suite on every dispatch: 27 shards, about 175 runner-minutes, 
 
 **Owner answers of 2026-11-20** (given in this session through the structured question at the owner's terminal): D3040-D3043 all as recommended: the release gate requires a full run on the tag's commit; one scheduled nightly full run (a narrow exception to the dispatch-only ruling of 2026-11-07); the selector is a Go program with tests under `scripts/`; a recorded read-map refreshed by the full run.
 
+**The one exception to the 2026-11-07 ruling, and the read-map's refresh.** CI is dispatch-only by the owner's ruling of 2026-11-07 (no run per push, no run per pull request), and D3041's nightly full run is the one exception to it: a `schedule:` trigger is neither a push nor a pull request, so what the ruling protected — a run for every push — stays out, and the nightly is what a selected run measures itself against and weighs its shards with. `ci.yml`'s `run-name` and its selector branch on `github.event_name == 'schedule'`, so the nightly names itself `ci (full)` and takes no input (R11). The committed read-map, `read-map.json`, is refreshed from that run's artifacts by a **normal pull request and never by a push from CI** (R10): download the run's `reads-*` artifacts and merge them in with `go run ./scripts/ci-readmap --from-artifact <dir>`.
+
 **Already landed, and what it taught.** #3301 put the longest shards first and gated the live-script shards on what they read; the next run showed GitHub does not honour the matrix order and the slowest live shard (11m40) set the wall time. That gate is replaced by the selector (R9).
 
-Nothing here is approved. The owner says go by task name; CS6 is copied into `.github/workflows/ci.yml` only by the owner's word.
+Every task starts on the owner's word and not on a document: the owner says go by task name, and CS6 was copied into `.github/workflows/ci.yml` only by that word, given on 2026-11-22. The one task left is CS9, which is owner-run.
