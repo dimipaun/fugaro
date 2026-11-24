@@ -609,8 +609,9 @@ import (
 // nor the scratch directory.
 // Checks 880 to 882 are the model-credentials routing work's owner-run checks.
 // 880 reads, for each source the credentials service has served, the NAMES of
-// the rate-limit headers that source's last answer carried — the record PL7
-// adds to a credential's mark — and says whether one of them is a utilisation
+// the rate-limit headers that source's last answer carried — the node of its own
+// PL7 writes beside a credential's mark, creds/observed/<name>, so the marks
+// stay readable by a release behind — and says whether one of them is a utilisation
 // figure, which is U1 and the gate on PL8. Its fakes are a fake `gcloud` that
 // mints the access token and a fake `curl` that serves the record out of the
 // case's own file and answers no other URL, so a case says what the block

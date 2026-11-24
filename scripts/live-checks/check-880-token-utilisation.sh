@@ -52,13 +52,15 @@
 #
 # Usage:      bash scripts/live-checks/check-880-token-utilisation.sh <fugaro-project> [source…]
 #             source      one credential's name as the service serves it (the
-#                         name `fugaro creds ls` shows). With none named, every
-#                         source in the record is judged.
+#                         account's own name, `default` or a named account,
+#                         which `fugaro accounts ls` lists — NOT the bundle
+#                         document key `fugaro creds ls` prints). With none
+#                         named, every source in the record is judged.
 # Environment CHECK880_CONFIG  the installation's local config, when it is not
 #                         $XDG_CONFIG_HOME/fugaro/projects/<fugaro-project>.yaml
 # Needs:      bash, mktemp, python3, gcloud, curl.
 # Calls:      gcloud auth print-access-token; one curl GET of
-#             <rtdb>/creds/marks.json. Every call runs with stdin closed and the
+#             <rtdb>/creds/observed.json. Every call runs with stdin closed and the
 #             gcloud call with --quiet. Nothing is written.
 # Runs:       by YOU. It refuses to start in a coding agent's session and in a
 #             traced shell. Its test (check-880-token-utilisation_test.sh) drives
@@ -165,7 +167,7 @@ printf '%s' "$PROJECT" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' ||
   stop "'$PROJECT' is not a Fugaro project name"
 for s in ${SOURCES[@]+"${SOURCES[@]}"}; do
   printf '%s' "$s" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$' ||
-    stop "'$s' is not a source name (a credential's name as the service serves it, the name 'fugaro creds ls' shows)"
+    stop "'$s' is not a source name (a credential's name as the service serves it: the account's own name, which 'fugaro accounts ls' lists, and not the bundle key 'fugaro creds ls' prints)"
 done
 
 need mktemp

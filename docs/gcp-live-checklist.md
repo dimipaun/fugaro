@@ -25411,8 +25411,11 @@ prints the names recorded for it and which of them is a utilisation figure.
 bash scripts/live-checks/check-880-token-utilisation.sh <fugaro-project> [source…]
 ```
 
-A source is one credential's name as the service serves it (the name `fugaro creds ls` shows); with none named,
-every source in the record is judged, and naming one narrows the judgement to it. Run it **after a run on a
+A source is one credential's **name** as the service serves it — the account's own name, `default` or one of the
+repository's `claude_accounts`, which `fugaro accounts ls` lists — and **not** the bundle document key `fugaro
+creds ls` prints: `claude-oauth-token` is the entry the `default` account's token is stored under, and naming that
+key here reads **UNVERIFIED** (exit 3) for the one source this check exists to judge. With none named, every source
+in the record is judged, and naming one narrows the judgement to it. Run it **after a run on a
 subscription token**, so the last answer the record holds is that run's. `CHECK880_CONFIG` names the local config
 when it is not `$XDG_CONFIG_HOME/fugaro/projects/<fugaro-project>.yaml`. It needs `bash`, `mktemp`, `python3`,
 `gcloud` and `curl`. It refuses to start in a coding agent's session and in a traced shell. Every call runs with
