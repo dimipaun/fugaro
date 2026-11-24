@@ -32,6 +32,12 @@ workflows:
   app: { commands: { build: sh build.sh, test: sh test.sh } }
 `
 
+// cliPinnedYAML is cliMinimalYAML with the three role models named, for the
+// tests that validate the file with a project config in reach: the price rules
+// hold in every mode now (AB3, D3020), so a file that names no model is refused
+// there before the warning the test is about.
+var cliPinnedYAML = strings.Replace(cliMinimalYAML, "workflows:", "agent:\n"+pinnedAgent+"\nworkflows:", 1)
+
 func writeConfig(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "fugaro.yaml")
@@ -3102,7 +3108,7 @@ func TestReviewFloorUnpublishableWarns(t *testing.T) {
 		}
 		return got
 	}
-	_, errOut, err := execute(t, "validate", writeConfig(t, cliMinimalYAML))
+	_, errOut, err := execute(t, "validate", writeConfig(t, cliPinnedYAML))
 	if err != nil {
 		t.Fatalf("a floor nothing can publish is valid: %v (%q)", err, errOut)
 	}
@@ -3111,7 +3117,7 @@ func TestReviewFloorUnpublishableWarns(t *testing.T) {
 		t.Fatalf("floor warnings = %q (stderr %q)", got, errOut)
 	}
 	// --json carries it as a warning, never a problem.
-	out, _, err := execute(t, "validate", "--json", writeConfig(t, cliMinimalYAML))
+	out, _, err := execute(t, "validate", "--json", writeConfig(t, cliPinnedYAML))
 	if err != nil {
 		t.Fatal(err)
 	}

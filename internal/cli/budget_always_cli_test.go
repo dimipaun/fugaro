@@ -69,7 +69,7 @@ func TestBudgetCommandRefusesTheOldWord(t *testing.T) {
 	}
 }
 
-// TestBudgetModeOffFlagIsRefused: the same word on `fugaro init`'s
+// TestBudgetModeOffFlagIsRefused: the same word on the init command's
 // --budget-mode, refused before the run reads anything — a run refused at its
 // first flag plans and applies nothing.
 func TestBudgetModeOffFlagIsRefused(t *testing.T) {

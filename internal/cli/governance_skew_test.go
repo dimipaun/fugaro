@@ -385,7 +385,7 @@ func TestRunRefusesGovernanceOnACloneWorkflowsOlderBaseImage(t *testing.T) {
 	f := newCloudFixture(t)
 	older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, governanceSince, -1)
 	f.appendConfig(t, "base_images: {base: "+older+"}\n")
-	configSkewCheckout(t, f, configSkewHead+"governance: { review_ratio: 3 }\n"+
+	configSkewCheckout(t, f, configSkewPins(configSkewHead)+"governance: { review_ratio: 3 }\n"+
 		"workflows:\n  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n")
 	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
 	if ExitCode(err) != ExitUserError {
@@ -411,7 +411,7 @@ func TestRunRefusesGovernanceOnACloneWorkflowsOlderBaseImage(t *testing.T) {
 // carries next to the base_ref the skew gate already reads.
 func TestGovernanceOnACoreImageWarns(t *testing.T) {
 	f := newCloudFixture(t)
-	configSkewCheckout(t, f, configSkewHead+"governance: { review_ratio: 3 }\n"+configSkewWorkflow)
+	configSkewCheckout(t, f, configSkewPins(configSkewHead)+"governance: { review_ratio: 3 }\n"+configSkewWorkflow)
 	writeEditionBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseTier, EditionCore)
 	_, errOut, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
 	if err != nil {
@@ -555,7 +555,7 @@ func TestCloneWorkflowOnACoreRecordDoesNotWarn(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	f.appendConfig(t, "base_images: {base: "+releaseTier+"}\n")
-	configSkewCheckout(t, f, configSkewHead+"governance: { review_ratio: 3 }\n"+
+	configSkewCheckout(t, f, configSkewPins(configSkewHead)+"governance: { review_ratio: 3 }\n"+
 		"workflows:\n  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n")
 	writeEditionBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseTier, EditionCore)
 	_, errOut, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
@@ -593,7 +593,7 @@ func TestCloneWorkflowOnACoreRecordDoesNotWarn(t *testing.T) {
 func TestCurrentReleaseImageWithNoEditionDoesNotWarn(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
-	configSkewCheckout(t, f, configSkewHead+"governance: { review_ratio: 3 }\n"+configSkewWorkflow)
+	configSkewCheckout(t, f, configSkewPins(configSkewHead)+"governance: { review_ratio: 3 }\n"+configSkewWorkflow)
 	writeEditionBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseTier, "")
 
 	_, errOut, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
