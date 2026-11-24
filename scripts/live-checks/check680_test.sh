@@ -105,13 +105,13 @@ run_job=$slug-main-review
 
 # Every fact key the run's block must carry, whatever it measured.
 BLOCK_KEYS=(xtrace agent-session project belong checkout config login subject
-  baseline a-config a-decline a-launch a-executions b-config b-tier
+  baseline a-config a-decline a-launch a-executions b-config b-tier b-executions
   c-answer c-run c-cost c-marker c-artifacts c-bundle c-executions restore scratch)
 # The keys that have to hold in the run where everything is right, with no
 # deviation: left-behind and scratch are the two that carry their own verdicts
 # there by design.
 PASS_KEYS=(xtrace agent-session project belong checkout config login subject
-  baseline a-config a-decline a-launch a-executions b-config b-tier
+  baseline a-config a-decline a-launch a-executions b-config b-tier b-executions
   c-answer c-run c-cost c-marker c-artifacts c-bundle c-executions restore scratch)
 
 # --------------------------------------------------------------------- fakes
@@ -243,6 +243,11 @@ def executions(added, job, run_id=None):
 
 
 def evidence(run_id, reason):
+    if flag("b-execution") and reason.startswith("the budget's database could not be read"):
+        # (b)'s own leak: the tier pointed at a project that is not there launched
+        # a job anyway, so one execution of the project's list appears between the
+        # window (a) opened and the read (b) is measured by.
+        executions(1, RUNJOB)
     print(json.dumps({
         "version": 1, "run_id": run_id, "command": "run", "model": "example-model",
         "tier": "evidence", "offline": True,
@@ -367,6 +372,17 @@ def stamp(epoch):
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
 
 
+def project_read_number():
+    """How many project-wide reads this run has made, this one included: the
+    window's own read is the first, (a)'s the second and (b)'s the third, and a
+    case that wants one particular read to fail counts them."""
+    path = os.path.join(D, "reads-project")
+    n = (int(open(path).read().strip() or "0") if os.path.exists(path) else 0) + 1
+    with open(path, "w") as fh:
+        fh.write("%d\n" % n)
+    return n
+
+
 def store_path(path):
     rest = path[len("gs://"):] if path.startswith("gs://") else path
     _bucket, _, sub = rest.partition("/")
@@ -380,6 +396,9 @@ if len(argv) > 9 or False:
 
 if argv[:3] == ["run", "jobs", "executions"]:
     job = flag_value("--job")
+    if not job and flag("executions-fail-b") and project_read_number() == 3:
+        sys.stderr.write("ERROR: (gcloud.run.jobs.executions.list) The request failed\n")
+        sys.exit(1)
     if flag("executions-fail") or (job and flag("executions-fail-job")):
         sys.stderr.write("ERROR: (gcloud.run.jobs.executions.list) The request failed\n")
         sys.exit(1)
@@ -761,14 +780,20 @@ test_the_whole_check_passes() {
   expect_row baseline "how many older executions the project holds never enters any of them" \
     "everything right: the row says what it does not rest on"
   # Every read of the executions is the newest few, newest first — and there are
-  # exactly three of them: the window's own read, (a)'s and (c)'s.
+  # exactly four of them: the window's own read, (a)'s, (b)'s and (c)'s.
   assert_paged_reads "$dir" "everything right"
-  [ "$(executions_calls "$dir" | wc -l | tr -d ' ')" = 3 ] ||
-    fail "everything right: the check read the executions $(executions_calls "$dir" | wc -l | tr -d ' ') time(s), and it reads them three: the window's own read, (a)'s and (c)'s"
-  # (c) narrows its read with --job to the job the run's own record names, which
-  # is the review-only variant a diagnosis is admitted to.
+  [ "$(executions_calls "$dir" | wc -l | tr -d ' ')" = 4 ] ||
+    fail "everything right: the check read the executions $(executions_calls "$dir" | wc -l | tr -d ' ') time(s), and it reads them four: the window's own read, (a)'s, (b)'s and (c)'s"
+  # Only (c) narrows its read with --job, to the job the run's own record names,
+  # which is the review-only variant a diagnosis is admitted to: (a) and (b) read
+  # the whole project, because a leak of theirs is a leak into any job.
   expect_contains "$(executions_calls "$dir")" "--job $run_job" \
     "everything right: (c) narrows its read to the job the record names"
+  [ "$(grep -c -- '--job ' <<<"$(executions_calls "$dir")" || true)" = 1 ] ||
+    fail "everything right: $(grep -c -- '--job ' <<<"$(executions_calls "$dir")" || true) read(s) narrow by --job, and one does: (c)'s. (a)'s and (b)'s read the whole project"
+  # (b): the tier's own reads were made unavailable, and the project's list is
+  # read once more for it — a read of its own, project-wide.
+  expect_row b-executions "created no execution" "everything right: (b) created no execution"
   expect_row c-executions "$run_job" "everything right: the job the record named is in the row"
   # (b): the tier's own project read could not be made, after the image was put back.
   expect_row b-config "fugaro-sandbox-680" "everything right: the config was pointed at an absent project"
@@ -1165,6 +1190,36 @@ test_a_diagnosis_that_created_two_executions_is_a_finding() {
     "a diagnosis that launched twice: a real run of that job going on is named as the other reading of the row"
 }
 
+test_an_unavailable_tier_that_created_an_execution_is_a_finding() {
+  local dir=$work/bleak
+  prepare "$dir"
+  # The tier is pointed at a project that is not there, and it launches a job
+  # anyway: one execution of the real project's list, in the window (a) opened.
+  : >"$dir/b-execution"
+  run_check "$dir"
+  expect_status "$status" 1 "an execution created by the tier pointed at a project that is not there"
+  expect_row b-executions "created 1 execution(s)" "an unavailable tier that launched: the row counts the window"
+  expect_row b-executions "at or after" "an unavailable tier that launched: it was created in the window"
+  expect_row b-executions "$run_job" "an unavailable tier that launched: the job it ran as is named"
+  expect_row b-executions "looks exactly the same" \
+    "an unavailable tier that launched: a real run of the project's jobs going on is named as the other reading"
+}
+
+test_the_read_b_is_measured_by_could_not_be_listed_is_not_measured() {
+  local dir=$work/nob
+  prepare "$dir"
+  # (b)'s own read is the third project-wide one: the window's own, (a)'s, (b)'s.
+  # A read that could not be taken is a row that was not measured, never a row
+  # that passes over it.
+  : >"$dir/executions-fail-b"
+  run_check "$dir"
+  expect_status "$status" 2 "the read (b) is measured by could not be listed"
+  expect_row a-executions "created no execution" \
+    "the read (b) is measured by could not be listed: (a), whose read answered, was measured"
+  expect_row b-executions "answered nothing after the tier was pointed at" \
+    "the read (b) is measured by could not be listed: (b) was not measured rather than passed"
+}
+
 test_the_last_read_could_not_be_listed_is_not_measured() {
   local dir=$work/nofinal
   prepare "$dir"
@@ -1355,6 +1410,8 @@ t test_a_cost_the_record_does_not_hold_is_a_finding
 t test_a_surviving_bundle_is_a_finding
 t test_an_answer_with_no_artifact_is_a_finding
 t test_the_executions_could_not_be_listed_is_not_measured
+t test_an_unavailable_tier_that_created_an_execution_is_a_finding
+t test_the_read_b_is_measured_by_could_not_be_listed_is_not_measured
 t test_the_last_read_could_not_be_listed_is_not_measured
 t test_a_record_that_names_no_execution_is_not_measured
 t test_a_diagnosis_that_created_two_executions_is_a_finding

@@ -50,8 +50,9 @@
 #     for you in …`): the subject the three parts diagnose. The check passes its
 #     ID explicitly and holds the document's own `run_id` to it, so a diagnosis
 #     of another log cannot be read as this one's;
-#   * `gcloud` — what the project's jobs created while each part ran (T-TC10(a):
-#     no execution created), read as a window on creation time — the newest
+#   * `gcloud` — what the project's jobs created while each part ran (T-TC10(a)
+#     and (b): no execution created, and (c): exactly one), read as a window on
+#     creation time — the newest
 #     executions, newest first, of which the check counts the ones created at or
 #     after the moment the window opened — rather than as a total of the
 #     project's executions, which a project that has run for weeks can never be
@@ -396,7 +397,7 @@ finish() {
 # `FAIL — not reached`, and any other recorded key follows in the order the run
 # recorded it.
 BLOCK_KEYS=(xtrace agent-session project belong checkout config login subject
-  baseline a-config a-decline a-launch a-executions b-config b-tier
+  baseline a-config a-decline a-launch a-executions b-config b-tier b-executions
   c-answer c-run c-cost c-marker c-artifacts c-bundle c-executions restore scratch)
 
 print_block() { # print_block FACTS STATUS — always on the owner's own stdout
@@ -1327,6 +1328,22 @@ step_unavailable_tier() {
   esac
 }
 
+step_unavailable_executions() { # the whole of (b), read once at the end of it
+  if ! executions_since "$SCRATCH/executions.after.b" "$SINCE_A" >"$SCRATCH/after.b.txt"; then
+    unmeasured b-executions "gcloud run jobs executions list answered nothing after the tier was pointed at $UNREACHABLE ($(last_lines "$SCRATCH/executions.after.b.err")): this check will not report 'no execution created' from a list it could not read"
+    stop "the executions could not be listed after the unavailable tier"
+  fi
+  local after names rows
+  after=$(field "$SCRATCH/after.b.txt" count)
+  names=$(field "$SCRATCH/after.b.txt" names)
+  rows=$(field "$SCRATCH/after.b.txt" read)
+  if [ "$after" != 0 ]; then
+    fact b-executions FAIL "the tier pointed at $UNREACHABLE created $after execution(s) — $names — in $PROJECT at or after $SINCE_A_STAMP (of the $rows newest execution(s) gcloud answered, which is what this row counts). (b) makes the tier's own reads unavailable and is answered by the pre-flight, which runs before the bundle is uploaded and before any execution exists, so nothing it runs may reach the backend. A real run of this project's jobs going on during the check looks exactly the same: read the names before taking this for a leak, because this part launches nothing either"
+    stop "the unavailable tier created an execution"
+  fi
+  fact b-executions PASS "the tier with its own project unavailable created no execution: gcloud answers no execution of $PROJECT created at or after $SINCE_A_STAMP (gcloud run jobs executions list --project $REAL_PROJECT --region $REGION --sort-by '~metadata.creationTimestamp' --limit $EXECUTIONS_LIMIT, read newest first and counted in the window), so what (b) broke is the tier's read in its own project and not the backend: no job of $PROJECT was launched by it. No total of the project's executions was read, so how many older ones it holds is not part of this row"
+}
+
 step_answer() {
   local status=0
   fg_bounded troubleshoot "$SUBJECT" --json >"$SCRATCH/answer.json" 2>"$SCRATCH/answer.err" || status=$?
@@ -1508,7 +1525,7 @@ step_executions_after() {
     stop "the diagnosis created more than one execution"
     ;;
   esac
-  fact c-executions PASS "the diagnosis created exactly one execution: $RUN_EXEC_NAME, the execution the run's own record names (in $RUN_JOB, the job the record's execution belongs to), is the only execution of that job gcloud answers at or after $SINCE_CHECK_STAMP — the moment the window opened, before any part of this check ran. That is D2407's one execution and no retry, read by time over the newest $EXECUTIONS_LIMIT executions of that job rather than against a total of the project's, and since parts (a) and (b) read no execution created since $SINCE_A_STAMP, it is the only execution any part of this check created"
+  fact c-executions PASS "the diagnosis created exactly one execution: $RUN_EXEC_NAME, the execution the run's own record names (in $RUN_JOB, the job the record's execution belongs to), is the only execution of that job gcloud answers at or after $SINCE_CHECK_STAMP — the moment the window opened, before any part of this check ran. That is D2407's one execution and no retry, read by time over the newest $EXECUTIONS_LIMIT executions of that job rather than against a total of the project's, and since a-executions and b-executions both read no execution of $PROJECT created at or after $SINCE_A_STAMP, it is the only execution any part of this check created"
 }
 
 step_restore() {
@@ -1541,6 +1558,7 @@ plan() {
   say "  [local, WOULD WRITE, PUT BACK] gcp_project (and the budget block's own project and database, where the config records them) pointed at $ABSENT_PROJECT, a project gcloud is asked to confirm does not exist"
   say "  [fugaro, no launch, no cost] troubleshoot <id> --json — (b): tier 4 with the reason, a sentence that is NOT (a)'s, from the pre-flight, which is before the upload and before any execution"
   say "  [local, PUT BACK] the config file restored to the byte the check found, before anything else runs"
+  say "  [gcloud, read-only] run jobs executions list once more, the newest executions counted in the window (a) opened — neither the refused launch nor the unavailable tier created one"
   say "  [fugaro, THE ONE JOB — the recipe's own fifteen-minute timeout and USD 0.25 cap, ${CLOUD_SECONDS}s bound here] troubleshoot <id> --json — (c): a cloud answer with its cost, and the run it names is then read out of the bucket: the record, the stored task's review_class marker, the two answer artifacts, the deleted bundle"
   say "  [gcloud, read-only] run jobs executions list a last time, narrowed with --job to the job the run's own record names — (c): exactly one execution created since the window opened, and it is the execution the record names, no retry"
   say "  [local] the config compared byte for byte with what it was, the sidecar removed, the scratch directory removed"
@@ -1569,6 +1587,7 @@ main() {
   step_unavailable_tier
   config_restore
   PROJECT=$REAL_PROJECT
+  step_unavailable_executions
   step_answer
   step_run_record
   step_executions_after
