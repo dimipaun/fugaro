@@ -225,6 +225,73 @@ func TestAResumedRunKeepsTheChainsRuling(t *testing.T) {
 	}
 }
 
+// TestAResumedRunKeepsTheChainsRulings: a pause can be taken in a run that was
+// itself already carrying a chain — a ruled follow-up that inherited the pair
+// behind it (OwnerRuledEarlier), which is the shape every later run in a chain
+// has (TestASecondRulingKeepsTheAnswerBeforeIt) — and the run that resumes it is
+// the run after it. Carrying the newest pair alone is the loop OD1 exists to
+// close, one run further out: the reviewers, shown an answer with no sign of the
+// question behind it, mark that one needs_owner again, the resume stops on a
+// question the owner settled two rulings ago, and the next ruling drops the
+// older answer in turn. So the whole chain the paused run worked from reaches the
+// resumed run's reviewers and lands on its own record, where the follow-up after
+// it reads it back.
+//
+// The implementer works from the newest ruling alone, as it does for a follow-up
+// (TestASecondRulingKeepsTheAnswerBeforeIt): the rulings behind it are what tells
+// a reviewer which findings are already settled, not a second set of
+// instructions for the work.
+func TestAResumedRunKeepsTheChainsRulings(t *testing.T) {
+	const (
+		ruling  = "The approval flow stays as the product team built it."
+		earlier = "Counsel cleared the MIT text as it stands."
+		dec     = "`internal/approval/flow.go`: the approval flow is a product decision"
+		decE    = "`LICENSE.md`: the licence text needs counsel's clearance"
+	)
+	h := followUpHarness(t, criticalLevelsCfg(t), nil,
+		implement("feature"), review("ship", 0), review("ship", 0), review("ship", 0))
+	seedRuled(t, h, ruling, runstore.OwnerDecision{File: "internal/approval/flow.go", Summary: "the approval flow is a product decision"})
+	seedChain(t, h, runstore.OwnerRuling{Ruling: earlier,
+		Decisions: runstore.NewOwnerDecisions([]runstore.OwnerDecision{{File: "LICENSE.md", Summary: "the licence text needs counsel's clearance"}})})
+	paused(t, h, "implement")
+	h.followUpSpec(t, resumeTask(h, "Carry the change on"))
+	rec, err := h.run(t, implement("resumed"), review("ship", 0), review("ship", 0), review("ship", 0))
+	mustReady(t, rec, err)
+	// The resumed run's record holds the whole chain the paused run worked from:
+	// the newest pair in the fields they have always had, the pair behind it in
+	// the list a later follow-up inherits.
+	if rec.OwnerRuled != ruling || rec.OwnerRuledDecisions == nil {
+		t.Fatalf("the resumed run recorded ruling %q, decisions %+v; want the newest pair the paused run worked from",
+			rec.OwnerRuled, rec.OwnerRuledDecisions)
+	}
+	if len(rec.OwnerRuledEarlier) != 1 {
+		t.Fatalf("the resumed run holds %d rulings behind the newest one, want the one the paused run inherited: %+v",
+			len(rec.OwnerRuledEarlier), rec.OwnerRuledEarlier)
+	}
+	if e := rec.OwnerRuledEarlier[0]; e.Ruling != earlier || e.Decisions == nil ||
+		len(e.Decisions.Decisions) != 1 || !strings.Contains(e.Decisions.Decisions[0].Summary, "counsel") {
+		t.Errorf("the resumed run's earlier ruling is %+v, want the pair behind the newest one", e)
+	}
+	// Every review level reads the whole chain, each ruling with the decision it
+	// answered under it.
+	for i, level := range []string{"the first line", "the senior review", "the adversarial review"} {
+		prompt := h.agent.calls[i+1].Prompt
+		for _, want := range []string{ruling, earlier, dec, decE} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("%s's prompt is not told %q:\n%s", level, want, prompt)
+			}
+		}
+		if n := strings.Count(prompt, "<<<fugaro-owner-ruling-"); n != 2 {
+			t.Errorf("%s reads %d rulings, want both the chain holds:\n%s", level, n, prompt)
+		}
+	}
+	// And the implementer works from the newest ruling only, as it does for a
+	// follow-up: the answers behind it are the reviewers'.
+	if got := h.agent.calls[0].Prompt; !strings.Contains(got, ruling) || strings.Contains(got, earlier) {
+		t.Errorf("the resumed run's brief does not work from the newest ruling alone:\n%s", got)
+	}
+}
+
 // TestAResumeNeverStartsTheStageAfresh is R18 where the AGENT is what refuses
 // the session: Claude Code reports it cannot find the one it was handed, which
 // a follow-up answers by starting a fresh session and carrying on (a follow-up
