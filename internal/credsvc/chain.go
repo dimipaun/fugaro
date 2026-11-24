@@ -418,6 +418,21 @@ func (s *Server) chainFor(ctx context.Context, cl *call, id Identity, canonical 
 	if !published {
 		return nil, false, nil
 	}
+	model, named := callModel(cl.body)
+	if !named {
+		// The model is read from the BODY on every path this decides, the
+		// bridged one included: it is what a source is asked for — and what the
+		// answer's HeaderModel carries, which is the model the gateway prices
+		// the call by (C1) — so a body naming none has nothing to serve and
+		// nothing to price, whichever record the call's sources come from.
+		return nil, true, &chainRefusal{
+			status: StatusRequestRefused,
+			typ:    ErrorRequestRefused,
+			what: requestRefused + "this project publishes a routing table, and the chain a call is served by is " +
+				"resolved against the model a call names in its BODY: this call's body names none, and a model is " +
+				"never read from a header",
+		}
+	}
 	grant := grantOf(binding)
 	if grant != nil && len(grant.Sources) == 0 {
 		// A grant that covers no source of the new kinds: the launcher that
@@ -446,16 +461,7 @@ func (s *Server) chainFor(ctx context.Context, cl *call, id Identity, canonical 
 		// of what the repository's runs go out on, which is what the grant would
 		// have been; nil still excludes the launcher's pool, which no bridged
 		// record holds (grantCovers).
-		return s.planSources(ctx, sources, "", id, canonical, shared, b, binding, nil)
-	}
-	model, named := callModel(cl.body)
-	if !named {
-		return nil, true, &chainRefusal{
-			status: StatusRequestRefused,
-			typ:    ErrorRequestRefused,
-			what: requestRefused + "this project publishes a routing table, and a table is resolved against the model " +
-				"a call names in its BODY: this call's body names none, and a model is never read from a header",
-		}
+		return s.planSources(ctx, sources, model, id, canonical, shared, b, binding, nil)
 	}
 	entry, err := routing.Resolve(table, model)
 	if err != nil {
@@ -746,19 +752,28 @@ func sourceAdmits(src routing.Source, canonical string) bool {
 //
 // It is one function so that the rule is stated once for every member: a later
 // member added under this rule asks SentStage here and nowhere else.
+//
+// The three are written TOGETHER or not at all: the reader takes an answer that
+// carries all three as the source, the flag and the model, one that carries none
+// as the pre-contract shape, and one that carries PART of them as an error it
+// halts the run on (the gateway's chainAnswerHeaders, and serviceAnswer under
+// it). A half-written answer is therefore worse than no answer at all, which is
+// why the members are written in one breath here and a served source with no
+// model — which this release cannot name, so it cannot price the call either —
+// writes nothing rather than two members the caller cannot complete.
 func chainAnswer(hdr http.Header, cl *call, served *chainServed) {
-	if served == nil || !cl.stage {
+	if served == nil || !cl.stage || served.model == "" {
 		return
 	}
-	if v, err := json.Marshal(served.source); err == nil {
-		hdr.Set(HeaderSource, string(v))
+	v, err := json.Marshal(served.source)
+	if err != nil {
+		return
 	}
+	hdr.Set(HeaderSource, string(v))
 	if served.fallback {
 		hdr.Set(HeaderFallback, FallbackYes)
 	} else {
 		hdr.Set(HeaderFallback, FallbackNo)
 	}
-	if served.model != "" {
-		hdr.Set(HeaderModel, served.model)
-	}
+	hdr.Set(HeaderModel, served.model)
 }

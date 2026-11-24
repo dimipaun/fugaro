@@ -629,6 +629,20 @@ func TestAReleaseBehindGatewayMeetsTheOldAnswer(t *testing.T) {
 		t.Errorf("a caller that sent the stage header reads %v, want the source, the fallback flag and the model", hdr)
 	}
 
+	// And a served source the answer cannot name a model for writes NOTHING
+	// rather than the two members it has: the reader takes all three as the
+	// source, the flag and the model, none as the pre-contract shape and PART
+	// of them as an error it halts the run on (the gateway's
+	// chainAnswerHeaders), so half an answer is worse than no answer.
+	hdr = http.Header{}
+	chainAnswer(hdr, stage, &chainServed{source: routing.SourceName{Kind: routing.KindAnthropic}})
+	for _, h := range []string{HeaderSource, HeaderFallback, HeaderModel} {
+		if got := hdr.Get(h); got != "" {
+			t.Errorf("a served source with no model writes %s=%q, want nothing: a caller that can read part of this "+
+				"contract's answer halts the run on it", h, got)
+		}
+	}
+
 	// And end to end: a project that publishes no table is untouched by this
 	// contract, header or no header.
 	noTable := newSvc(t)
@@ -723,6 +737,22 @@ func TestABridgedRecordIsServed(t *testing.T) {
 		if got.Tier != creds.TierB {
 			t.Errorf("the bridged call was served by %q (tier %s), want the repository's own key (tier b)",
 				got.Name, got.Tier)
+		}
+		// The model is read from the body on this path too, so the answer can
+		// name all three of its members: a bridged call with no model in its
+		// plan is a call whose answer carries two of the three, which the
+		// gateway halts the run on rather than reading.
+		if w.plan.model != testModel {
+			t.Errorf("the bridged plan carries the model %q, want %q: the model is read from the call's body whichever "+
+				"record its sources come from", w.plan.model, testModel)
+		}
+		hdr := http.Header{}
+		chainAnswer(hdr, &call{body: []byte(callBody("bridged")), header: http.Header{}, stage: true}, w.served)
+		for _, h := range []string{HeaderSource, HeaderFallback, HeaderModel} {
+			if hdr.Get(h) == "" {
+				t.Errorf("a bridged call's answer carries %s=%q, want all three members: a partial answer is a halt at "+
+					"the gateway", h, hdr.Get(h))
+			}
 		}
 	})
 
