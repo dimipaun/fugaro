@@ -1126,6 +1126,13 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			return
 		}
 
+		// What this source's answer carried is recorded before any arm reads
+		// it: the names of its rate-limit headers, and never a value (U1,
+		// Check 880). It is recorded for every arm — a limit's names are the
+		// answer the record is read for — and a later answer of the same
+		// credential replaces it, so the record is always the LAST answer's.
+		s.recordRateLimitHeaders(ctx, sel, c.Name, ans.resp.Header)
+
 		switch status := ans.resp.StatusCode; {
 		case unauthorizedStatus(status):
 			// D139: a 401 marks the credential broken, and only an operator

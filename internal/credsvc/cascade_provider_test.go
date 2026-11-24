@@ -3,6 +3,7 @@ package credsvc
 import (
 	"context"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -457,7 +458,7 @@ func TestTheOfferingsProviderCredentialIsNotWhatAProbeRunsOn(t *testing.T) {
 	if probe := s.up.Body(0); !strings.Contains(string(probe), `"max_tokens":1`) {
 		t.Errorf("the first call is %s, want the probe: nothing was asked of the shared token, and the credential a probe is due on is the one the model admits", probe)
 	}
-	if got, _ := s.state.mark(provider); got != planted {
+	if got, _ := s.state.mark(provider); !reflect.DeepEqual(got, planted) {
 		t.Errorf("the provider credential's mark is %+v, want the one the exhaustion left (%+v): a probe ran on it, and the probe's body names this call's own model", got, planted)
 	}
 	if m, ok := s.state.mark(config.DefaultClaudeAccount); ok && !m.Available() {

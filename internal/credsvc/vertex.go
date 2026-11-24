@@ -224,6 +224,11 @@ func (s *Server) serveVertex(ctx context.Context, w http.ResponseWriter, id Iden
 			err.Error(), labelRead(readUpstream, err))
 		return true, Tried{}
 	}
+	// What this source's answer carried is recorded before any arm reads it:
+	// the names of its rate-limit headers, and never a value (U1, Check 880).
+	// A Vertex answer carries Google's, and the record says so rather than
+	// keeping the last one a Claude answer left.
+	s.recordRateLimitHeaders(ctx, sel, name, ans.resp.Header)
 	switch status := ans.resp.StatusCode; {
 	case unauthorizedStatus(status):
 		// A 401 marks the source, and the walk moves on or answers exhausted

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -1368,7 +1369,7 @@ func TestARacingUsageLimitKeepsTheResetInTheAnswer(t *testing.T) {
 	if _, err := s.Exhausted(ctx, b1.Name, TierB, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
-	if got := st.mark(b1.Name); got != (Mark{State: StateExhausted, Since: now, Until: reset}) {
+	if got := st.mark(b1.Name); !reflect.DeepEqual(got, Mark{State: StateExhausted, Since: now, Until: reset}) {
 		t.Fatalf("a racing no-reset 429 left %+v; want the reset %s", got, reset)
 	}
 	_, _, err = s.Select(ctx, run, []Credential{b1})

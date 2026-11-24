@@ -23,6 +23,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -907,7 +908,7 @@ func TestNoProbeOnThePaidKeyUnderOAuthOnly(t *testing.T) {
 	if !strings.Contains(auth, fakeCred(t, "default")) {
 		t.Error("the probe did not carry the shared credential the policy admits")
 	}
-	if m, ok := s.state.mark(paidName); !ok || m != paid {
+	if m, ok := s.state.mark(paidName); !ok || !reflect.DeepEqual(m, paid) {
 		t.Errorf("the paid key's mark is %+v, want it untouched (%+v)", m, paid)
 	}
 	line, ok := probeLine(t, auditLog)
@@ -1084,7 +1085,7 @@ func TestNoProbeOnAnUnreadableMark(t *testing.T) {
 		t.Errorf("the upstream saw %d requests for a mark this release does not read", got)
 	}
 	noProbeLine(t, auditLog, "a probe of a mark this release does not read")
-	if m, _ := s.state.mark("default"); m != unknown {
+	if m, _ := s.state.mark("default"); !reflect.DeepEqual(m, unknown) {
 		t.Errorf("the mark is %+v, want the node this release does not read left alone (%+v)", m, unknown)
 	}
 }
@@ -1105,7 +1106,7 @@ func TestProbeFailsClosedWhenItCannotBeAudited(t *testing.T) {
 	if resp.StatusCode != StatusExhaustedUntil {
 		t.Fatalf("the call answered %d %s, want the typed wait", resp.StatusCode, body)
 	}
-	if m, _ := s.state.mark("default"); m != before {
+	if m, _ := s.state.mark("default"); !reflect.DeepEqual(m, before) {
 		t.Errorf("the mark is %+v, want it untouched: the probe's result could not be audited (%+v)", m, before)
 	}
 	if !strings.Contains(s.logs.String(), "could not be audited") {

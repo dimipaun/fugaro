@@ -33,24 +33,66 @@ const (
 // a node that says available, and one whose mark was cleared are the same
 // credential, and no reader has to tell them apart.
 //
-// The four fields are the whole history a selection needs, and keeping it to
-// four is deliberate. Since is when the credential last entered the state it is
-// in — for an exhaustion, when the exhaustion happened — and it is what
+// The four fields a selection reads are the whole history it needs, and keeping
+// it to four is deliberate. Since is when the credential last entered the state
+// it is in — for an exhaustion, when the exhaustion happened — and it is what
 // "least recently exhausted" orders by (D154) and what D142's window is
 // measured from; it does not move when a probe fails (the credential was not
 // exhausted again, it is the same exhaustion still being held) and it does move
 // on a fresh exhaustion. Until is when the hold lapses. Backoff is the wait in
 // force for a backed-off mark, so a failed probe doubles *it* rather than
 // starting over.
+//
+// Headers is the one field here that no selection reads: it is an observation
+// of the last answer the credential gave, kept in the same node because it is
+// the same credential's and because a node of its own would be a second read on
+// the path every call takes. It is written by the service and read by the
+// operator's own scripts (Check 880), never by the selection.
 type Mark struct {
 	State   State         `json:"state,omitempty"`
 	Until   time.Time     `json:"until,omitempty"`
 	Since   time.Time     `json:"since,omitempty"`
 	Backoff time.Duration `json:"backoff,omitempty"`
+	// Headers are the NAMES of the rate-limit headers the last answer for this
+	// credential carried, in a stable order, and never one of their values
+	// (Observed).
+	//
+	// It is what settles U1 — whether a subscription token's answer reports a
+	// utilisation figure at all (D3178) — without the service needing to
+	// understand any of the figures: the names are recorded as they came, and
+	// the operator's Check 880 reads them. A value never belongs here: a
+	// rate-limit header's value can carry an organization id, an account's
+	// usage, a subscription figure and, in a malformed answer, the credential
+	// itself, and this node is read by an operator's command and printed by a
+	// script.
+	Headers []string `json:"headers,omitempty"`
 }
 
 // Available reports a mark that holds nothing.
 func (m Mark) Available() bool { return m.State == "" || m.State == StateAvailable }
+
+// Observed returns prev carrying the names of the rate-limit headers its last
+// answer carried, and it is the only way that field is written.
+//
+// The names are copied rather than kept: the caller's slice is usually the one
+// it built while walking an answer's headers, and a mark that held it would
+// share its backing array with whatever that caller does next. An empty list is
+// written as the empty list — "the last answer carried no rate-limit header" is
+// what Check 880 reads as a fact about the source, and it must not be the same
+// record as "no answer has been seen".
+func Observed(prev Mark, names []string) Mark {
+	prev.Headers = append([]string(nil), names...)
+	return prev
+}
+
+// carrying returns next with the observation prev carried. A transition moves
+// the hold and says nothing about the answer that provoked it, so what the last
+// answer reported must survive it: Check 880 is run after a run, and the run it
+// is run after is exactly the one whose last answer was a limit.
+func carrying(prev, next Mark) Mark {
+	next.Headers = prev.Headers
+	return next
+}
 
 // Broken reports a credential the operator must clear (C1.21).
 func (m Mark) Broken() bool { return m.State == StateBroken }
@@ -293,14 +335,14 @@ func Exhaust(prev Mark, now, reset time.Time, set Settings) Mark {
 		// Since does not move either way: the exhaustion being reported is the
 		// one that opened this hold, not a fresh one.
 		if !reset.IsZero() && reset.After(at) {
-			return Mark{State: StateExhausted, Until: reset, Since: prev.Since}
+			return carrying(prev, Mark{State: StateExhausted, Until: reset, Since: prev.Since})
 		}
 		return prev
 	}
 	if !reset.IsZero() && reset.After(now) {
 		// A reset that is reported is a reset: the upstream named a time, and a
 		// named time is a better answer than any wait this package computes.
-		return Mark{State: StateExhausted, Until: reset, Since: now}
+		return carrying(prev, Mark{State: StateExhausted, Until: reset, Since: now})
 	}
 	m := ProbeFailed(prev, now, set)
 	m.Since = now
@@ -373,7 +415,7 @@ func ProbeFailed(prev Mark, now time.Time, set Settings) Mark {
 	if !prev.Since.IsZero() {
 		m.Since = prev.Since
 	}
-	return m
+	return carrying(prev, m)
 }
 
 // ProbeSucceeded is the mark a successful probe leaves (C1.12), and it is a
@@ -407,10 +449,10 @@ func ProbeSucceeded(prev Mark, now time.Time, set Settings) Mark {
 	set = set.withDefaults()
 	if set.stops() && !prev.Since.IsZero() {
 		if end := prev.Since.Add(set.Window); end.After(now) {
-			return Mark{State: StateExhausted, Until: end, Since: prev.Since}
+			return carrying(prev, Mark{State: StateExhausted, Until: end, Since: prev.Since})
 		}
 	}
-	return Cleared()
+	return carrying(prev, Cleared())
 }
 
 // Cleared is the mark the operator's clear leaves (C1.21): available, with the

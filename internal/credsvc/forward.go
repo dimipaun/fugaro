@@ -1781,6 +1781,10 @@ func (s *Server) providerCall(ctx context.Context, w http.ResponseWriter, r *htt
 			err.Error(), labelRead(readUpstream, err))
 		return
 	}
+	// And what the provider's answer carried is recorded too, by the names of
+	// its rate-limit headers and never a value (U1, Check 880): this route is
+	// one of the sources a chain serves, and the record is read per source.
+	s.recordRateLimitHeaders(ctx, sel, cand.Name, ans.resp.Header)
 	s.answer(ctx, w, id, cl, ans, cand, nil, nil)
 }
 
@@ -1918,6 +1922,54 @@ func (u *usageLimitScanner) scan(chunk []byte) {
 
 // Found reports whether a usage-limit event was seen in the stream.
 func (u *usageLimitScanner) Found() bool { return u.seen }
+
+// rateLimitHeaderNames returns the NAMES — never the values — of the headers of
+// one answer that say anything about a rate limit, sorted so that two answers
+// carrying the same headers record the same thing.
+//
+// The rule is deliberately wider than the headers this service reads a reset
+// from (usageLimitReset): Anthropic's unified rate-limit headers are named
+// `anthropic-ratelimit-*`, an OpenRouter answer's are `x-ratelimit-*`, and a
+// plain `Retry-After` is the HTTP one, so the question "which headers of this
+// answer are about a rate limit" is answered by the name and not by a list this
+// release would have to keep up to date. What the names are FOR is U1's
+// question — whether a subscription token's answer reports a utilisation figure
+// at all (D3178) — and answering it needs no value of any of them.
+func rateLimitHeaderNames(h http.Header) []string {
+	names := make([]string, 0, len(h))
+	for k := range h {
+		ck := http.CanonicalHeaderKey(k)
+		lower := strings.ToLower(ck)
+		if lower == "retry-after" || strings.Contains(lower, "ratelimit") || strings.Contains(lower, "rate-limit") {
+			names = append(names, ck)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+// recordRateLimitHeaders writes the names — and only the names — of the
+// rate-limit headers one answer carried into the credential's mark, where the
+// operator's Check 880 reads them.
+//
+// A record that cannot be written is a line on the service's log and never a
+// refusal: it is an observation about an answer the run has already been given,
+// and the run is not the party that owes this service a record of it. The
+// attempt to write is made whatever the client did with the answer — the
+// answer's headers are a fact about the credential whether or not the caller
+// stayed to read the body (the streamed usage limit's mark is written the same
+// way).
+func (s *Server) recordRateLimitHeaders(ctx context.Context, sel *creds.Selector, name string, h http.Header) {
+	if sel == nil || name == "" {
+		return
+	}
+	names := rateLimitHeaderNames(h)
+	if _, err := sel.Mark(context.WithoutCancel(ctx), name, func(prev creds.Mark, _ bool) (creds.Mark, error) {
+		return creds.Observed(prev, names), nil
+	}); err != nil {
+		s.log.Warn("credsvc: the rate-limit header names of an answer could not be recorded", "error", err)
+	}
+}
 
 // usageLimitReset reads the reset a usage-limit answer named, and the zero time
 // when it named none — which is the backed-off case (C1.9's Exhaust).
