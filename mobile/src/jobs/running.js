@@ -18,15 +18,25 @@
 // therefore running only while two things hold, and it is **stale** when either
 // fails:
 //
-//   * **inside its repository's total timeout** (`timeouts.total`). This is the
-//     **run's** bound and not the project's: one project serves many
-//     repositories, each with its own `timeouts.total`, so a single bound for
-//     the whole reading would mark a long-running repository's run stale before
-//     its time and let a short one read as running past its own. The run's
-//     repository is the `$slug` of the path the phone read its day share from
-//     (`spend/$day/runs/$slug/$run`), and its `fugaro.yaml` is not readable --
-//     no grant covers it -- so the bound arrives with the **run entry**, set by
-//     whoever built the reading.
+//   * **inside its repository's total timeout** (`timeouts.total`), when the
+//     reading carries one. This is the **run's** bound and not the project's:
+//     one project serves many repositories, each with its own `timeouts.total`,
+//     so a single bound for the whole reading would mark a long-running
+//     repository's run stale before its time and let a short one read as running
+//     past its own. The run's repository is the `$slug` of the path the phone
+//     read its day share from (`spend/$day/runs/$slug/$run`), so the bound
+//     arrives with the **run entry**, set by whoever built the reading.
+//
+//     **It is optional, and that is a gap rather than a choice.** No node a
+//     paired device may read carries a repository's `timeouts.total` -- the
+//     rules grant `config/caps/repos/$slug` and `outcomes/$day/$slug/$run`, and
+//     neither has it, and a repository's `fugaro.yaml` is not readable at all --
+//     so a caller with no source for it hands the run entry none, and the
+//     earlier-day bound alone decides that run's staleness. A reading that does
+//     carry one is judged by both. The missing source is written down in the
+//     plan's J2 (the readable-node question) and in this change's own record: a
+//     view that refused the whole list for a bound nobody can read would never
+//     draw, which is why the bound is optional here rather than required.
 //   * **on the day its id names.** `internal/task.NewRunID` mints an id as
 //     `YYYYMMDD-HHMMSS-xxxx` in UTC, so the id the phone holds carries the run's
 //     own start: the **age** of a run is `now - that instant` and the day the
@@ -63,8 +73,8 @@
 //
 // ```
 // { project: '<opaque project id>', reachable: true,
-//   runs: [ { run: '20261124-101530-ab12', timeoutMs: 21600000,
-//             spend: <figure|null>, outcome: null } ] }
+//   runs: [ { run: '20261124-101530-ab12', spend: <figure|null>, outcome: null,
+//             timeoutMs: 21600000 | null } ] }
 // ```
 //
 // `outcome` is the entry at `outcomes/$day/$slug/$run`, or `null` when there is
@@ -84,7 +94,7 @@ export const RUNNING_CODES = Object.freeze({
   BAD_PROJECTS: 'bad-projects',
   /** A project's reading is not one: no project, no `reachable`, or not an object. */
   BAD_PROJECT: 'bad-project',
-  /** A run's repository total timeout is missing, zero or not whole milliseconds. */
+  /** A run's repository total timeout, where the reading carries one, is zero or not whole milliseconds. */
   BAD_TIMEOUT: 'bad-timeout',
   /** A reachable project's runs are not a list of entries. */
   BAD_RUNS: 'bad-runs',
@@ -175,9 +185,13 @@ function projectRows(reading, nowMs, today) {
     if (typeof entry.run !== 'string' || startedAt(entry.run) === null) return refuse(RUNNING_CODES.BAD_RUN, 'run');
     // The bound is the run's own repository's (`timeouts.total`), which is why
     // it is read here and not from the reading: a project serves many
-    // repositories and each sets its own.
+    // repositories and each sets its own. **Optional**: no node a paired device
+    // may read carries it, so a caller with no source hands none and the
+    // earlier-day bound alone decides. A value that is present and unusable is
+    // still refused -- "not known here" is absence, not a zero.
     const timeoutMs = entry.timeoutMs;
-    if (typeof timeoutMs !== 'number' || !Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+    const bounded = timeoutMs !== null && timeoutMs !== undefined;
+    if (bounded && (typeof timeoutMs !== 'number' || !Number.isInteger(timeoutMs) || timeoutMs <= 0)) {
       return refuse(RUNNING_CODES.BAD_TIMEOUT, 'runs[].timeoutMs');
     }
     const outcome = entry.outcome;
@@ -189,7 +203,7 @@ function projectRows(reading, nowMs, today) {
     if (isNode(outcome)) continue;
     const start = startedAt(entry.run);
     const elapsed = nowMs - start;
-    const stale = elapsed > timeoutMs || Math.floor(start / DAY_MS) < today;
+    const stale = (bounded && elapsed > timeoutMs) || Math.floor(start / DAY_MS) < today;
     // A start in the future is a clock difference and not an age: the run is
     // still going, and the row reads `0` rather than a negative duration.
     rows.push(row(stale ? 'stale' : 'running', project, entry.run, Math.max(0, elapsed), spend ?? null));

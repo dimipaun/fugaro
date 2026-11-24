@@ -97,6 +97,25 @@ test('a run with no spend read carries null, never zero', () => {
   assert.equal(unread.spend.state, unavailable().state);
 });
 
+test('a run with no repository timeout is judged by the day alone', () => {
+  // No node a paired device may read carries a repository's `timeouts.total`
+  // (the plan's J2 records the gap), so a caller with no source for it hands
+  // the run entry none, and the earlier-day bound is the one that still
+  // applies. A required bound would mean a view that can never draw.
+  const [running] = rowsOf([project({ runs: [run({ run: runId(NOW - 3_600_000), timeoutMs: null })] })]);
+  assert.equal(running.state, 'running', 'an hour old, today, with no repository bound');
+  // ... and absent is the same as null: a reading that carries neither key is a
+  // reading whose caller knows the day and not the repository's bound.
+  const [absent] = rowsOf([project({ runs: [run({ timeoutMs: undefined })] })]);
+  assert.equal(absent.state, 'running');
+  // ... and yesterday's run is stale on the day bound alone, however young the
+  // clock makes it.
+  const [stale] = rowsOf([
+    project({ runs: [run({ run: runId(Date.parse('2026-11-23T09:00:00Z')), timeoutMs: null })] }),
+  ]);
+  assert.equal(stale.state, 'stale');
+});
+
 test('the bound is the run’s own repository’s, and not the project’s', () => {
   // A project serves many repositories and `timeouts.total` is set in each
   // repository's own `fugaro.yaml`, so one bound for the whole reading would
@@ -212,7 +231,6 @@ test('a reading the app did not build is refused, and the code names what', () =
     ['a reading is not an object', ['p-1'], NOW, RUNNING_CODES.BAD_PROJECT],
     ['the project is not named', [project({ project: '' })], NOW, RUNNING_CODES.BAD_PROJECT],
     ['reachable is not a boolean', [project({ reachable: 'yes' })], NOW, RUNNING_CODES.BAD_PROJECT],
-    ['the run carries no repository timeout', [project({ runs: [run({ timeoutMs: undefined })] })], NOW, RUNNING_CODES.BAD_TIMEOUT],
     ['the repository timeout is zero', [project({ runs: [run({ timeoutMs: 0 })] })], NOW, RUNNING_CODES.BAD_TIMEOUT],
     ['the repository timeout is not whole', [project({ runs: [run({ timeoutMs: 1.5 })] })], NOW, RUNNING_CODES.BAD_TIMEOUT],
     ['the runs are not a list', [project({ runs: 'a run' })], NOW, RUNNING_CODES.BAD_RUNS],
