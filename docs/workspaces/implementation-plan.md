@@ -1,6 +1,6 @@
 # Workspaces: the implementation plan
 
-**Status as of 2026-11-10: in progress, 6/10 merged; see [docs/status.md](../status.md) for the current table.** The sixteen decisions in [reconciliation.md](reconciliation.md) §4 (**D1290–D1305**) are
+**Status as of 2026-11-24: built — this design is implemented, and the last of it landed through the [workspace-service](../workspace-service/implementation-plan.md) plan that finishes the credentials service; see [docs/status.md](../status.md) for the current table.** The sixteen decisions in [reconciliation.md](reconciliation.md) §4 (**D1290–D1305**) are
 **answered**, every one as recommended, so no task below is waiting on a decision any more. **Two of
 them were amended on 2026-11-04, after the design merged and its security review ran** — D1299,
 D1300 and D1301, marked below [reconciliation.md](reconciliation.md) §4 and §8 — and the tasks they
@@ -192,15 +192,15 @@ accounts**, its **Firebase project id**, its **`fp`**, and its **exchange URL**,
 **derived from the Firebase project the verified `iss` names** (finding 6 of the post-merge review),
 so an owner cannot splice member B's accounts onto member A's database, and **the runs bucket is not
 among them either** — O1's answer dropped the bucket grant, and nothing derives it. **The region of
-that database is not among them yet, and no task in this plan carries it**: the verb has no option
-for it and `localcfg.WorkspaceMember` has no field for it, so the credentials node's
-`database_region` has no writer anywhere in the tree — the node's own comment says so
-(`internal/projectpolicy/workspace_credentials.go`:113) and spec.md §5 states it — and a member whose
-Firebase project was adopted with a **regional** database is therefore derived the legacy
-`<firebase_project>-default-rtdb` host until a later task takes the field. **The owner answered that
-on 2026-11-10, as recommended**: the field is taken by the task that gives the node its writer, so
-the verb's option and this plan's own later task are where the region lands
-([reconciliation.md](reconciliation.md) §9, O4). The two commands are the two halves of a membership,
+that database is not among W1's four values either, and W1 is not where it landed**: the owner
+answered on 2026-11-10, as recommended, that the field is taken by the task that gives the
+credentials node its writer ([reconciliation.md](reconciliation.md) §9, O4), and that is WS3's
+`--database-region` and `localcfg.WorkspaceMember`'s own field in
+[workspace-service](../workspace-service/implementation-plan.md), with WS4 publishing it — so a
+member whose Firebase project was adopted with a **regional** database is derived the host its own
+region names
+(`<firebase_project>-default-rtdb.<region>.firebasedatabase.app`) and not the legacy
+`<firebase_project>-default-rtdb` one. The two commands are the two halves of a membership,
 and neither writes the other's file.
 
 **`workspace show` reads files and no cloud node**, and the two halves it can therefore see are not
@@ -472,29 +472,33 @@ declaration, converged by the workspace owner's `fugaro update` (W2's stage writ
 task's service and W3's root of the workspace's own project carry the table) — never read from a
 member's machine and never taken from `workspaces/<name>`, which names the members and carries the cap
 and nothing else (spec.md §2, §5). **The stage that writes this node is not this task's, and no task
-in this plan is it**: nothing in the tree writes `workspace_credentials` today — the node's own
-comment says so (`internal/projectpolicy/workspace_credentials.go`:113), and W1's `workspace member
-add` records no region for it to carry — so what this task ships is the shape a later task's publish
-fills, `database_region` included (spec.md §5 states the same gap). A member the table does not bind
+in this plan is it**: the owner answered on 2026-11-10, as recommended, that the node's writer is the
+task that first gives the per-member table one ([reconciliation.md](reconciliation.md) §9, O3 and
+O4), and that task is WS4 of [workspace-service](../workspace-service/implementation-plan.md): the
+workspace owner's `fugaro update` publishes
+`workspace_credentials/<name>` from the member table and the shared list, with
+`database_region` among the values it carries. What this task ships is the shape that publish fills,
+and it refuses a shape it cannot read rather than dropping a key it does not know. A member the table does not bind
 is refused at this front door, and
 one the comparison cannot read is reported as an alarm by W7's reconciliation: an unbound member is an
 unreadable one.
 
-**What nothing binds, and why it is the owner's call rather than this task's.** The pool's effective
+**What this task leaves to the owner's declaration, and where it was closed.** The pool's effective
 set is the member's own policy, the repository's own admission child and the member's two
-`allow_repos` legs, all asked over the run identity's verified slug (spec.md §4). What is **not**
-compared is that slug against the repository the **calling job account** belongs to — the check the
-installation's own front door makes (`internal/credsvc/server.go`:737) — because a member's row names
-its job accounts and no repository (`WorkspaceCredentialMember`,
-`internal/projectpolicy/workspace_credentials.go`:127, `JobAccounts` at `:161`), so an account bound
-to one of a member's repositories can present a run identity of another of them. The reach is bounded
-by the member's own lists (both legs are asked), and closing it is a **column** beside each job
-account — the pair `credsvc.JobAccount` already carries for the installation's own jobs — which is an
-owner decision rather than a task's: it is spec.md §8's residual risk 7, stated and **not enforced**
-by this task, and W9 is where `SECURITY.md` carries it. **The owner answered that decision on
-2026-11-10, as recommended**: the column is taken by the task that gives the per-member table a
-writer, and this release ships with the pairing stated and not enforced
-([reconciliation.md](reconciliation.md) §9, O3).
+`allow_repos` legs, all asked over the run identity's verified slug (spec.md §4). What W6 itself does
+**not** compare is that slug against the repository the **calling job account** belongs to — the check
+the installation's own front door makes (`internal/credsvc/server.go`:737) — because a member's row
+names its job accounts and no repository, so an account bound to one of a member's repositories could
+present a run identity of another of them. The reach is bounded by the member's own lists (both legs
+are asked), and closing it is a **column** beside each job account — the pair `credsvc.JobAccount`
+already carries for the installation's own jobs. It is spec.md §8's residual risk 7, and it is an
+owner decision rather than this task's because whether the row carries a repository per job account is
+the owner's own declaration. **The owner answered it on 2026-11-10, as recommended**: the column goes
+to the task that gives the per-member table a writer ([reconciliation.md](reconciliation.md) §9, O3),
+and that is WS3 and WS4 of
+[workspace-service](../workspace-service/implementation-plan.md), with WS2 of that plan holding the
+run's verified repository to the account's list — so residual risk 7 is **enforced** in the release
+that carries this design, and W9 is where `SECURITY.md` says so.
 
 **A member's policy and its outcomes are read per member, from the database its own verified `iss`
 names.** `checkLive` (`internal/credsvc/auth.go`:1213) and the outcomes reader it uses
@@ -566,26 +570,30 @@ a run early; it never decides the cap.
 **What this task's files are, and the piece they are not.** The eleven files below are the meter and
 its pins, the reconciliation alarm, the headroom's shape and the member's Terraform binding. **The
 service's own calling path is not among them**: `internal/credsvc/forward.go`, where a call the
-service pays for is made, is not one of the eleven, and nothing in that file reserves before the call,
-settles on the response's usage, refuses a call whose settle failed or writes the headroom header. So
-a release that merged W7 alone would carry the cap's whole machinery and enforce none of it: every
-shared-credential call is served unmetered, no member is told what room is left, and the ceiling
-refuses nothing. **The read grants before anything reads through it**: `workspace_access.tf` binds the
+service pays for is made, is not one of the eleven. So W7 alone would carry the cap's whole machinery
+and enforce none of it: every shared-credential call would be served unmetered, no member would be
+told what room is left, and the ceiling would refuse nothing. **The wiring is the interface stated
+above, no task of this plan owns it** — not W6 (the workspace's second deployment and its identity),
+not W8 (the stop and `fugaro workspace cap`), not W9 (the docs) — **and the task that owns it is
+WS8 of [workspace-service](../workspace-service/implementation-plan.md)**, in the same release as the
+rest of that plan (its §9 says so and the release is where this folder's tasks ship): WS8 reserves in
+`forward.go` before the call, settles on the response's usage, refuses a call whose settle failed and
+writes the headroom header on the answer, so the cap binds. The W7 pull request
+reports the gap rather than half-landing it, because the reservation's worst case per call, the member
+a call resolved to, the settle with the call refused when that write fails, and the header written on
+an answer that is already going out are behavior, which the fix round after a review may not add.
+**The read grants before anything reads through it**: `workspace_access.tf` binds the
 workspace's account to the member's **entire** database (Realtime Database IAM has no path scope), and
 the run that applies it for real at the member's owner's terminal is `fugaro update
 --firebase-project <the member's own Firebase project>` — the Firebase root is the only root that
 carries the module and its stage skips without that flag, so the plain `fugaro update` the join
-handoff prints (`fugaro workspace add`, `internal/cli/workspace.go`) binds nothing, and the wiring
-below has to take that handoff too or every member reads as unreadable to the alarm the day it is
-wired. Its only consumer meanwhile is the reconciliation alarm — whose `budget.ReconcileWorkspace` has
-no non-test caller either, its schedule among the wiring below. The
-wiring is the interface stated above and **no task of this plan owns it** — not
-W6 (the workspace's second deployment and its identity), not W8 (the stop and `fugaro workspace cap`),
-not W9 (the docs) — so it needs **a task of its own** before the cap binds anything, and the W7 pull
-request reports it rather than half-landing it: the reservation's worst case per call, the member a
-call resolved to, the settle on the response's usage with the call refused when that write fails, and
-the header written on an answer that is already going out are behavior, which the fix round after a
-review may not add.
+handoff prints (`fugaro workspace add`, `internal/cli/workspace.go`) binds nothing. **The
+reconciliation alarm still runs nowhere**, and that is the owner's own decision rather than a gap:
+D2991 deferred it, because it needs a ledger record no member writes and it gets a spec of its own
+([workspace-service](../workspace-service/implementation-plan.md) §7), so
+`budget.ReconcileWorkspace` has no non-test caller by design and WS8's `SECURITY.md` says so in the
+same breath as the cap binding. What the release ships is the meter bound and the alarm deferred, each
+stated where a reader finds it.
 
 **The basis is the meter, and the ledger keeps its own cap.** The service's reservation-then-settle
 transaction is what the workspace's cap is measured against, so the figure is taken where the money is
