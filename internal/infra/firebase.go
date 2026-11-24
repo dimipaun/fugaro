@@ -243,6 +243,17 @@ type FirebaseSpec struct {
 	FugaroProject  string        `json:"fugaro_project"`
 	Names          FirebaseNames `json:"names"`
 	ManageAPIs     bool          `json:"manage_apis"`
+	// FirestoreDatabaseExists is whether the FP's Firestore (default) database
+	// is there, as the run reads it before this root is applied
+	// (FirestoreStep.DatabaseExists). The module creates the run index's
+	// composite indexes only when it is true (RI2, the module's
+	// firestore_indexes.tf): an index cannot be created under a database that
+	// does not exist, and `fugaro update` ensures that database LAST (D3027), so
+	// a fresh installation's own apply would be refused and could never
+	// converge. An installation that has its database gets the indexes in the
+	// same update that carries this field; one that has not gets them on the
+	// next update, once the database is there.
+	FirestoreDatabaseExists bool `json:"firestore_database_exists"`
 	// Launchers and Operators mint run tokens and read the database;
 	// Admins (the GCP project's owners and editors) and BudgetAdmins write
 	// it. The history account is the sweeper's, which holds its own roles.
@@ -332,6 +343,13 @@ type FirebaseInputs struct {
 	// the workspace's: the record a workspace publishes names no service
 	// account, so nothing the workspace says can widen its reach here.
 	WorkspaceServiceAccount string
+	// FirestoreDatabaseExists is whether the FP's Firestore (default) database
+	// is there, which the run reads before this root is applied
+	// (FirestoreStep.DatabaseExists) and hands over here: it gates the run
+	// index's composite indexes (FirebaseSpec.FirestoreDatabaseExists, RI2).
+	// It is false wherever no such read was made — --print-vars makes none —
+	// and a plan that carries no index is the one that cannot fail.
+	FirestoreDatabaseExists bool
 	// IssuerAccount is the credentials service's own account, read back from
 	// the installation root's output (CredentialsService.Account), and empty
 	// on an installation whose root created no such account — a fresh
@@ -380,17 +398,18 @@ func Firebase(inst InstallationSpec, in FirebaseInputs) (FirebaseSpec, error) {
 		// them. The region a run in flight has is whatever its installation was
 		// created with, and an installation whose region is under europe-west1
 		// gets europe-west1 here.
-		DatabaseRegion:     place.For(inst.Region).RealtimeDatabase.Where,
-		FugaroProject:      inst.FugaroProject,
-		Names:              FirebaseNames{SignerAccountID: SignerAccountID, MinterRoleID: MinterRoleID, APIKey: APIKeyID},
-		ManageAPIs:         inst.ManageAPIs,
-		Launchers:          members(inst.Launchers, nil),
-		Operators:          members(inst.Operators, nil),
-		Viewers:            members(inst.Viewers, nil),
-		Admins:             sortedUnique(in.Admins),
-		BudgetAdmins:       sortedUnique(in.BudgetAdmins),
-		HistoryAccount:     history,
-		CoordinatorAccount: coordinator,
+		DatabaseRegion:          place.For(inst.Region).RealtimeDatabase.Where,
+		FugaroProject:           inst.FugaroProject,
+		Names:                   FirebaseNames{SignerAccountID: SignerAccountID, MinterRoleID: MinterRoleID, APIKey: APIKeyID},
+		ManageAPIs:              inst.ManageAPIs,
+		FirestoreDatabaseExists: in.FirestoreDatabaseExists,
+		Launchers:               members(inst.Launchers, nil),
+		Operators:               members(inst.Operators, nil),
+		Viewers:                 members(inst.Viewers, nil),
+		Admins:                  sortedUnique(in.Admins),
+		BudgetAdmins:            sortedUnique(in.BudgetAdmins),
+		HistoryAccount:          history,
+		CoordinatorAccount:      coordinator,
 	}
 	// The workspace's account is the member's own pin and needs no rule of
 	// this root's to exist (it is not created here, and it is not on the

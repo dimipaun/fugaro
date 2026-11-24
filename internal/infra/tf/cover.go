@@ -46,11 +46,14 @@ var allowedTypes = map[string]bool{
 	// confirmation covers can carry them. What the compute stage does run
 	// over its own plan is GrantsNotCovered: the grant rules below, the
 	// launchers' Batch Job Editor condition among them.
-	"google_compute_firewall":                 true,
-	"google_compute_router":                   true,
-	"google_compute_router_nat":               true,
-	"google_firebase_database_instance":       true,
-	"google_firebase_project":                 true,
+	"google_compute_firewall":           true,
+	"google_compute_router":             true,
+	"google_compute_router_nat":         true,
+	"google_firebase_database_instance": true,
+	"google_firebase_project":           true,
+	// The run index's composite indexes (RI2, contract-index.md): the plan is
+	// the owner-run Firebase root's, because no job may change an index.
+	"google_firestore_index":                  true,
 	"google_logging_log_view":                 true,
 	"google_logging_log_view_iam_member":      true,
 	"google_logging_project_bucket_config":    true,
@@ -5609,17 +5612,20 @@ var nonDataBearingTypes = map[string]bool{
 	"google_compute_router":                          true,
 	"google_compute_router_nat":                      true,
 	"google_firebase_project":                        true,
-	"google_logging_log_view_iam_member":             true,
-	"google_logging_project_exclusion":               true,
-	"google_logging_project_sink":                    true,
-	"google_monitoring_alert_policy":                 true,
-	"google_monitoring_notification_channel":         true,
-	"google_project_iam_custom_role":                 true,
-	"google_project_iam_member":                      true,
-	"google_project_service":                         true,
-	"google_secret_manager_secret_iam_member":        true,
-	"google_service_account_iam_member":              true,
-	"google_storage_bucket_iam_member":               true,
+	// An index holds no documents: the runs it orders live in the collection,
+	// and deleting the index loses an answer, never a row.
+	"google_firestore_index":                  true,
+	"google_logging_log_view_iam_member":      true,
+	"google_logging_project_exclusion":        true,
+	"google_logging_project_sink":             true,
+	"google_monitoring_alert_policy":          true,
+	"google_monitoring_notification_channel":  true,
+	"google_project_iam_custom_role":          true,
+	"google_project_iam_member":               true,
+	"google_project_service":                  true,
+	"google_secret_manager_secret_iam_member": true,
+	"google_service_account_iam_member":       true,
+	"google_storage_bucket_iam_member":        true,
 }
 
 // DataBearingType classifies a resource type for D1551: whether its objects
