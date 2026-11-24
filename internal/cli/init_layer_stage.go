@@ -83,6 +83,14 @@ type layerStage struct {
 	planned bool
 	p       *layerPlan
 	err     error
+
+	// published is set when this run's write of the project layer object
+	// landed, which is the fact the lift stage's migration records wait for:
+	// a record claims that a repository's lifted values are published, and
+	// what publishes them is this object and nothing else. A run that
+	// re-seeded the file, recorded a generation, or never reached the write
+	// leaves it false, and so does a publish the operator did not confirm.
+	published bool
 }
 
 func newLayerStage(e *initEngine) *layerStage { return &layerStage{e: e} }
@@ -709,6 +717,9 @@ func (s *layerStage) publish(ctx context.Context, env initflow.Env, p *layerPlan
 	if err != nil {
 		return initflow.Outcome{}, err
 	}
+	// The object write has landed: what is left is the fan-out, and a record
+	// claims the document every repository of the project resolves against.
+	s.published = true
 	fmt.Fprintf(w, "published the project layer of %s (generation %d, sha256 %s) from %s\n", p.lc.Name, gen, p.l.SHA256, p.path)
 	if p.adopted {
 		// D854's first-run answer: an installation that records no generation

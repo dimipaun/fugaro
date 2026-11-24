@@ -123,6 +123,13 @@ var cliStages = []cliStage{
 		build: func(e *initEngine) initflow.Stage { return newWorkspaceStage(e) }},
 	{stage: initflow.CredentialsRoute, ctor: "newCredentialsRouteStage(", self: true,
 		build: func(e *initEngine) initflow.Stage { return newCredentialsRouteStage(e) }},
+	// The migration before the layer stage, and SelfConfirming for the layer
+	// stage's reason: its writes are this machine's own layer file, the store
+	// objects and the cap nodes, and each of the three goes through
+	// confirmStageWrite, which is the gate every stage's write passes
+	// (update_lift.go, L8).
+	{stage: initflow.Lift, ctor: "newLiftStage(", self: true,
+		build: func(e *initEngine) initflow.Stage { return newLiftStage(e) }},
 	{stage: initflow.Layer, ctor: "newLayerStage(", self: true,
 		build: func(e *initEngine) initflow.Stage { return newLayerStage(e) }},
 	{stage: initflow.Checkout, ctor: "newCheckoutStage(", self: true,

@@ -958,7 +958,7 @@ func (e *initEngine) writeLiftRecords(ctx context.Context, res *initflow.Result)
 	if s == nil || e.lc == nil || len(s.records) == 0 || res == nil || res.PlanOnly {
 		return
 	}
-	if !layerLanded(res) {
+	if !e.layerLanded(res) {
 		return
 	}
 	url := recordReadURL(e.lc)
@@ -999,14 +999,22 @@ func (e *initEngine) liftRecordWarn(msg string) {
 }
 
 // layerLanded is whether this run published the project layer, which is what
-// the records wait for: the Layer stage's own row, Changed for a publish and
-// Done for a run whose file was already the published object. Every other state
-// — a stage that was blocked behind one before it, a refusal, a skipped stage,
-// or no row at all — is nothing published, and no record.
-func layerLanded(res *initflow.Result) bool {
+// the records wait for. It reads the layer stage's own fact rather than its row
+// (layerStage.published), because Changed is the stage's state for three writes
+// that publish nothing — a re-seed, a generation record and the wizard's rigor
+// answer — and a re-seed in particular replaces the file with the object and
+// DROPS the lifted values the planners just wrote into it. The row is still
+// read, for the failure the fact alone cannot see: a publish whose
+// per-repository fan-out failed is an object this project's repositories have
+// not all been told about, and this run records nothing (the next update
+// migrates the repository again).
+func (e *initEngine) layerLanded(res *initflow.Result) bool {
+	if e.layer == nil || !e.layer.published {
+		return false
+	}
 	for _, r := range res.Stages {
 		if r.Name == initflow.Layer {
-			return r.State == initflow.Changed || r.State == initflow.Done
+			return r.State == initflow.Changed
 		}
 	}
 	return false
