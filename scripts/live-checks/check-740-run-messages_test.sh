@@ -213,18 +213,43 @@ storage)
     ;;
   esac
   ;;
-policy-troubleshooter)
+policy-troubleshoot)
+  # The verb's real name is 'gcloud policy-troubleshoot iam troubleshoot' -- the
+  # `troubleshoot` verb under the `policy-troubleshoot` group, not a
+  # `policy-troubleshooter` group -- and the call must carry --quiet, because
+  # without it gcloud stops at a prompt a session with no terminal cannot answer.
+  # The fake refuses a call that asks the old group or leaves --quiet off, so the
+  # test catches either mistake the way the owner's gcloud did.
+  case " $* " in
+  *" --quiet "*) ;;
+  *)
+    printf 'fake gcloud: policy-troubleshoot without --quiet: This prompt could not be answered because you are not in an interactive session\n' >&2
+    exit 64
+    ;;
+  esac
   # ts.ga.status makes the GA surface answer the way a gcloud that does not know
   # the verb does, so a case can drive the check onto the alpha surface.
   if [ -f "$FAKE740_DIR/ts.ga.status" ]; then
-    printf "ERROR: (gcloud) Invalid choice: 'policy-troubleshooter'.\n" >&2
+    printf "ERROR: (gcloud) Invalid choice: 'policy-troubleshoot'.\n" >&2
     exit "$(cat "$FAKE740_DIR/ts.ga.status")"
   fi
   serve "$FAKE740_DIR/ts.out" "$FAKE740_DIR/ts.status"
   ;;
 alpha)
-  [ "${2:-}" = policy-troubleshooter ] || { printf 'fake gcloud: unexpected alpha %s\n' "${2:-}" >&2; exit 64; }
+  [ "${2:-}" = policy-troubleshoot ] || { printf 'fake gcloud: unexpected alpha %s\n' "${2:-}" >&2; exit 64; }
+  case " $* " in
+  *" --quiet "*) ;;
+  *)
+    printf 'fake gcloud: alpha policy-troubleshoot without --quiet: This prompt could not be answered because you are not in an interactive session\n' >&2
+    exit 64
+    ;;
+  esac
   serve "$FAKE740_DIR/ts.out" "$FAKE740_DIR/ts.status"
+  ;;
+policy-troubleshooter)
+  # Not a command group on any gcloud: the old spelling this check must never ask.
+  printf "ERROR: (gcloud) Invalid choice: 'policy-troubleshooter'. Maybe you meant: gcloud policy-troubleshoot iam\n" >&2
+  exit 64
   ;;
 *)
   printf 'fake gcloud: unexpected %s\n' "${1:-}" >&2
@@ -461,8 +486,11 @@ case_healthy() {
   # D2941 is asked about the REAL job account, and about the shared project
   # job's own account: the two calls name the accounts from the documents, and
   # the resource is an object under tokens/ that really exists.
-  expect_calls "policy-troubleshooter iam troubleshoot --permission=storage.objects.create" \
+  expect_calls "policy-troubleshoot iam troubleshoot --permission=storage.objects.create" \
     "healthy: the Policy Troubleshooter is what answers D2941"
+  expect_calls "--quiet" "healthy: the call carries --quiet, or gcloud stops at a prompt no session can answer"
+  expect_no_calls "policy-troubleshooter " "healthy: the old 'policy-troubleshooter' group is never asked"
+  expect_no_calls "alpha " "healthy: the GA surface answers, so no alpha fallback is made"
   expect_calls "--principal-email=$WORKFLOW_SA" "healthy: the workflow job's OWN account is asked about"
   expect_calls "--principal-email=$PROJECT_SA" "healthy: the shared project job's own account is asked about"
   expect_calls "//storage.googleapis.com/projects/_/buckets/$BUCKET/objects/tokens/acme-widgets/$RUN_ID/messages/0001.msg.json" \
@@ -911,7 +939,23 @@ case_troubleshooter_alpha() {
   run740 --installation "$INSTALLATION" --repo "$REPO"
   expect_status "$status" 0 "ts-alpha"
   expect_fact iam-workflow-job PASS "ts-alpha"
-  expect_calls "alpha policy-troubleshooter iam troubleshoot" "ts-alpha: the alpha surface is asked"
+  expect_calls "alpha policy-troubleshoot iam troubleshoot" "ts-alpha: the alpha surface is asked"
+  expect_calls "--quiet" "ts-alpha: the alpha call carries --quiet too"
+}
+
+case_troubleshooter_silent() {
+  setup_case ts-silent
+  # Neither surface answers -- the GA verb is not known and the alpha surface is
+  # refused too -- so both rows are UNVERIFIED, and the command each hands the
+  # owner to ask by hand is the one that works: the real group name and --quiet.
+  printf '2\n' >"$dir/state/ts.ga.status"
+  printf '5\n' >"$dir/state/ts.status"
+  run740 --installation "$INSTALLATION" --repo "$REPO"
+  expect_status "$status" 3 "ts-silent"
+  expect_fact iam-workflow-job UNVERIFIED "ts-silent"
+  expect_fact iam-project-job UNVERIFIED "ts-silent"
+  expect_contains "$out" "Ask it yourself: gcloud policy-troubleshoot iam troubleshoot" "ts-silent: the row hands over the command that works"
+  expect_contains "$out" "--quiet" "ts-silent: the command it hands over carries --quiet"
 }
 
 case_unknown_argument() {
@@ -1011,6 +1055,7 @@ t case_missing_tools
 t case_no_args
 t case_repo_needs_a_slash
 t case_troubleshooter_alpha
+t case_troubleshooter_silent
 t case_unknown_argument
 t case_dry_run
 t case_help

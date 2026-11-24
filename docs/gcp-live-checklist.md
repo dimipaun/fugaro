@@ -24714,7 +24714,7 @@ dropped rather than refused).
   the installation deploys one, the account of its shared **project job** (`gcloud run jobs list`, matched
   by the `fugaro_profile` label). It asks the **IAM Policy Troubleshooter** whether each of those accounts
   holds `storage.objects.create` on a message object
-  (`gcloud policy-troubleshooter iam troubleshoot --permission=storage.objects.create`), and **denied** is
+  (`gcloud policy-troubleshoot iam troubleshoot --permission=storage.objects.create --quiet`), and **denied** is
   the pass: both accounts hold `roles/storage.objectViewer` on `tokens/`, which carries no write at all. A
   throwaway account given only `objectViewer` would prove nothing — the role cannot write **by definition**
   — which is why the accounts this check asks about are the installation's own. An answer that is neither

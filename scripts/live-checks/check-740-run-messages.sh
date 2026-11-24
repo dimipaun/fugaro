@@ -1257,7 +1257,7 @@ step_workflow_iam() {
   }
   ask_troubleshooter "$WORKFLOW_SA" "$SCRATCH/ts-job"
   if [ -z "$TS_DECISION" ]; then
-    unmeasured iam-workflow-job "the Policy Troubleshooter did not answer for the job's own account ${WORKFLOW_SA} on a message object (${TS_NOTE:-no answer}), so D2941's fence was NOT measured. Ask it yourself: gcloud policy-troubleshooter iam troubleshoot --permission=storage.objects.create --principal-email=${WORKFLOW_SA} --resource=\"//storage.googleapis.com/projects/_/buckets/${BUCKET}/objects/${MESSAGE_KEY}\" --project=${PROJECT} --format=json"
+    unmeasured iam-workflow-job "the Policy Troubleshooter did not answer for the job's own account ${WORKFLOW_SA} on a message object (${TS_NOTE:-no answer}), so D2941's fence was NOT measured. Ask it yourself: gcloud policy-troubleshoot iam troubleshoot --permission=storage.objects.create --principal-email=${WORKFLOW_SA} --resource=\"//storage.googleapis.com/projects/_/buckets/${BUCKET}/objects/${MESSAGE_KEY}\" --project=${PROJECT} --format=json --quiet"
     return 0
   fi
   case "$TS_DECISION" in
@@ -1310,7 +1310,7 @@ step_project_iam() {
   esac
   ask_troubleshooter "$sa" "$SCRATCH/ts-project"
   if [ -z "$TS_DECISION" ]; then
-    unmeasured iam-project-job "the Policy Troubleshooter did not answer for the shared project job's account ${sa} on a message object (${TS_NOTE:-no answer}), so D2941's wider case was NOT measured. Ask it yourself: gcloud policy-troubleshooter iam troubleshoot --permission=storage.objects.create --principal-email=${sa} --resource=\"//storage.googleapis.com/projects/_/buckets/${BUCKET}/objects/${MESSAGE_KEY}\" --project=${PROJECT} --format=json"
+    unmeasured iam-project-job "the Policy Troubleshooter did not answer for the shared project job's account ${sa} on a message object (${TS_NOTE:-no answer}), so D2941's wider case was NOT measured. Ask it yourself: gcloud policy-troubleshoot iam troubleshoot --permission=storage.objects.create --principal-email=${sa} --resource=\"//storage.googleapis.com/projects/_/buckets/${BUCKET}/objects/${MESSAGE_KEY}\" --project=${PROJECT} --format=json --quiet"
     return 0
   fi
   case "$TS_DECISION" in
@@ -1328,11 +1328,16 @@ step_project_iam() {
 
 # ask_troubleshooter PRINCIPAL PREFIX — the one call this check makes that is not
 # a plain read, and it reads only: the IAM Policy Troubleshooter answers whether
-# a principal holds a permission on a resource, and changes nothing. It is tried
-# on gcloud's GA surface first and on its alpha surface after, because the verb
-# has moved between them across gcloud releases: a gcloud that does not know the
-# GA verb says so at once, and an answer that is not a document is reported as
-# the note rather than as a fence that is absent.
+# a principal holds a permission on a resource, and changes nothing. The command
+# group is `policy-troubleshoot` — the `troubleshoot` verb under its own group,
+# `gcloud policy-troubleshoot iam troubleshoot`, never a `policy-troubleshooter`
+# group, which gcloud does not know — and it is tried on gcloud's GA surface
+# first and on its alpha surface after, because the verb has moved between them
+# across gcloud releases: a gcloud that does not know the GA verb says so at
+# once, and an answer that is not a document is reported as the note rather than
+# as a fence that is absent. `--quiet` is passed on both surfaces: without it the
+# call stops at a prompt a session with no terminal cannot answer, which is how
+# every row here came out UNVERIFIED before the flag was added.
 TS_DECISION=""
 TS_NOTE=""
 ask_troubleshooter() { # ask_troubleshooter PRINCIPAL PREFIX
@@ -1342,11 +1347,11 @@ ask_troubleshooter() { # ask_troubleshooter PRINCIPAL PREFIX
   for verb in "" "alpha "; do
     status=0
     run_call "$CALL_SECONDS" "$prefix.out" "$prefix.err" \
-      gcloud ${verb}policy-troubleshooter iam troubleshoot \
+      gcloud ${verb}policy-troubleshoot iam troubleshoot \
       --permission=storage.objects.create \
       --principal-email="$principal" \
       --resource="//storage.googleapis.com/projects/_/buckets/${BUCKET}/objects/${MESSAGE_KEY}" \
-      --project="$PROJECT" --format=json || status=$?
+      --project="$PROJECT" --format=json --quiet || status=$?
     [ "$status" = 0 ] && break
     # A gcloud that does not know the verb at all says so on its own first line;
     # only then is the alpha surface tried, so a real refusal is not retried.
