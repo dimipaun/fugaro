@@ -1,11 +1,12 @@
 #!/bin/bash
 # Mutation-proves the spoken-confirmation machine (mobile plan, Task P6.2).
 #
-# Each mutation below disables exactly ONE guard in index.js, and every one of
-# them must make `npm test` fail. A guard whose mutation survives is a guard no
-# test defends -- and this module is the fence between "the speaker said
-# something that sounded like yes" and a destructive command actually running,
-# so a surviving guard here is the difference between a refusal and an action.
+# Each mutation below disables exactly ONE guard in index.js (or, for the
+# session policy, in policy.js), and every one of them must make `npm test`
+# fail. A guard whose mutation survives is a guard no test defends -- and this
+# module is the fence between "the speaker said something that sounded like yes"
+# and a destructive command actually running, so a surviving guard here is the
+# difference between a refusal and an action.
 #
 #   shared/confirm/mutation-proof.sh
 #
@@ -13,8 +14,8 @@
 # against a machine without an action-id check". It is run first so that the
 # plan's own red step is the first thing proved, not an afterthought.
 #
-# It restores index.js with `git checkout` after each mutation, so it refuses to
-# run against an uncommitted module: `git checkout` on an untracked file fails
+# It restores each module with `git checkout` after every mutation, so it refuses
+# to run against an uncommitted module: `git checkout` on an untracked file fails
 # and the mutations would stack. Run it from a clean tree.
 #
 # Three things keep it from lying, because "killed" is otherwise a claim about a
@@ -37,6 +38,9 @@ set -u
 root=$(cd "$(dirname "$0")/../.." && pwd) || exit 1
 cd "$root" || exit 1
 F=shared/confirm/index.js
+# D2786's policy half: the guards that decide which start is costly and whether
+# the biometric is asked for live here, so the mutations must reach it too.
+P=shared/confirm/policy.js
 
 # runner_works asks the question that matters: not "is node on PATH" but "does
 # it run". A mise shim for a tool whose version was never set sits on PATH and
@@ -66,14 +70,16 @@ if ! runner_works; then
   exit 2
 fi
 
-if ! git ls-files --error-unmatch "$F" >/dev/null 2>&1; then
-  echo "REFUSING: $F is not committed; git checkout could not restore it" >&2
-  exit 2
-fi
-if ! git diff --quiet -- "$F"; then
-  echo "REFUSING: $F has uncommitted changes; commit them first" >&2
-  exit 2
-fi
+for module in "$F" "$P"; do
+  if ! git ls-files --error-unmatch "$module" >/dev/null 2>&1; then
+    echo "REFUSING: $module is not committed; git checkout could not restore it" >&2
+    exit 2
+  fi
+  if ! git diff --quiet -- "$module"; then
+    echo "REFUSING: $module has uncommitted changes; commit them first" >&2
+    exit 2
+  fi
+done
 
 last_outcome=""
 killed=0
@@ -100,10 +106,10 @@ suite() {
 # mutate_test applies one mutation, judges the suite against it, and restores
 # the module. It counts only the guards it was asked to prove; the caller
 # decides what to do with last_outcome.
-mutate_test() { # name, old, [new]
-  local name="$1" old="$2" new="${3-}"
-  git checkout -- "$F"
-  if ! python3 - "$F" "$old" "$new" <<'PY'
+mutate_test() { # name, old, [new], [module]
+  local name="$1" old="$2" new="${3-}" file="${4:-$F}"
+  git checkout -- "$file"
+  if ! python3 - "$file" "$old" "$new" <<'PY'
 import sys
 p, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
 s = open(p).read()
@@ -112,14 +118,14 @@ open(p, 'w').write(s.replace(old, new))
 PY
   then
     echo "APPLY-FAILED  $name"
-    git checkout -- "$F"
+    git checkout -- "$file"
     last_outcome=apply-failed
     unapplied=$((unapplied + 1))
     return
   fi
-  if git diff --quiet -- "$F"; then
+  if git diff --quiet -- "$file"; then
     echo "NO-OP         $name"
-    git checkout -- "$F"
+    git checkout -- "$file"
     last_outcome=no-op
     unapplied=$((unapplied + 1))
     return
@@ -133,13 +139,19 @@ PY
     last_outcome=killed
     killed=$((killed + 1))
   fi
-  git checkout -- "$F"
+  git checkout -- "$file"
 }
 
 # run proves one guard and counts it.
 run() { # name, old, [new]
   guards=$((guards + 1))
   mutate_test "$@"
+}
+
+# run_policy proves one guard in the session policy's own module (D2786).
+run_policy() { # name, old, [new]
+  guards=$((guards + 1))
+  mutate_test "$1" "$2" "${3-}" "$P"
 }
 
 # 1. The positive control: the suite passes on the pristine module, over tests
@@ -192,10 +204,7 @@ run "the record carries the confirmation's own time" \
 run "the read-back is built from the target, never the transcript" \
   "    readBack: readBack(verb, resolved)," "    readBack: \`\${text} \${CONFIRM_CUE}\`,"
 run "a launch is not destructive (D162)" \
-  "  [VERB.MERGE]: Object.freeze([TARGET_KIND.MERGE]),
-});" "  [VERB.MERGE]: Object.freeze([TARGET_KIND.MERGE]),
-  [VERB.LAUNCH]: Object.freeze([TARGET_KIND.RUN]),
-});"
+  "  const isStart = verb === VERB.LAUNCH;" "  const isStart = false;"
 run "a run id P6.3 refuses (a flag, a path) is refused" \
   "    if (!RUN_CHARS.test(runId.value) || !RUN_PATTERN.test(runId.value)) {" "    if (false) {"
 run "an invisible format character is refused in a text" \
@@ -218,13 +227,13 @@ run "a command from a spent utterance is refused" \
   "  if (hasLedgerId(state, LEDGER_KIND.UTTERANCE, utteranceId)) {
     return refuse(REFUSAL.REPLAYED_UTTERANCE, 'utteranceId');
   }
-  if (kinds !== undefined && hasLedgerId(state, LEDGER_KIND.ACTION, actionId)) {" \
+  if (resolved !== null && hasLedgerId(state, LEDGER_KIND.ACTION, actionId)) {" \
   "  if (false) {
     return refuse(REFUSAL.REPLAYED_UTTERANCE, 'utteranceId');
   }
-  if (kinds !== undefined && hasLedgerId(state, LEDGER_KIND.ACTION, actionId)) {"
+  if (resolved !== null && hasLedgerId(state, LEDGER_KIND.ACTION, actionId)) {"
 run "a reused action id is refused" \
-  "  if (kinds !== undefined && hasLedgerId(state, LEDGER_KIND.ACTION, actionId)) {" "  if (false) {"
+  "  if (resolved !== null && hasLedgerId(state, LEDGER_KIND.ACTION, actionId)) {" "  if (false) {"
 run "an abort from a spent utterance is refused" \
   "  if (hasLedgerId(state, LEDGER_KIND.UTTERANCE, utteranceId)) {
     return refuse(REFUSAL.REPLAYED_UTTERANCE, 'utteranceId');
@@ -251,7 +260,9 @@ run "a verb outside the closed set is refused" \
 run "the kill switch, the budget writes and the deletes are refused outright" \
   "  if (REFUSED_VERBS.includes(verb)) {" "  if (false) {"
 run "a destructive verb with no action id is refused" \
-  "  } else if (actionId === undefined) {" "  } else if (false) {"
+  "  } else if (actionId === undefined) {
+    // A destructive verb must carry" "  } else if (false) {
+    // A destructive verb must carry"
 run "an unresolved target is refused, so it can never be read back" \
   "  if (value === undefined || value === null) return refuse(REFUSAL.UNRESOLVED_TARGET, 'target');" \
   "  if (value === undefined) return refuse(REFUSAL.UNRESOLVED_TARGET, 'target');"
@@ -263,6 +274,25 @@ run "the target's kind must be the verb's kind" \
   "  if (!kinds.includes(kindDescriptor.value)) return refuse(REFUSAL.VERB_TARGET_MISMATCH, 'target.kind');" ""
 run "a target with no kind at all is missing a field, not of the wrong kind" \
   "  if (kindDescriptor === undefined) return refuse(REFUSAL.MISSING_FIELD, 'target.kind');" ""
+
+# D2786: a start is read back exactly when the session calls its mode costly, and
+# the policy that decides it is total and fail-closed.
+run "a start in a mode the session does not call costly passes through (D2786)" \
+  "      if (costly.costly) {" "      if (true) {"
+run "a start's mode is read with the same reader every other string gets" \
+  "  let mode;
+  if (values.mode !== undefined) {
+    const readMode = stringField(values.mode, 'mode', MAX_MODE_LENGTH);
+    if (readMode.bad) return readMode.bad;
+    mode = readMode.value;" "  let mode;
+  if (values.mode !== undefined) {
+    const readMode = stringField(values.mode, 'mode', MAX_MODE_LENGTH);
+    mode = readMode.value;"
+run_policy "a costly-mode list that is not a list makes every start costly (fail closed)" \
+  "  if (!Array.isArray(costlyModes)) return true;" "  if (!Array.isArray(costlyModes)) return false;"
+run_policy "the biometric is asked for only when the session's switch asks for it" \
+  "  return Object.freeze({ costly, biometric: costly && biometricOnCostly !== false });" \
+  "  return Object.freeze({ costly, biometric: costly });"
 
 # The ledger and the pending set: bounded, and a refusal rather than an amnesia.
 run "the ledger refuses rather than forgetting (command)" \

@@ -176,7 +176,7 @@ func (r *settingsRead) readPolicyLayer(ctx context.Context) {
 // pointers, so an absent node — nothing published, or a node a hand edit left
 // without a budget block — decodes as mode "", 0 dollars, 0 tokens and no list;
 // and those are exactly the values policy.Merge reads as "this layer writes
-// nothing" (`l.PerRunUSD > 0`, `l.MaxRunTokens > 0`, `ValidMode`,
+// nothing" (`l.PerRunUSD > 0`, `l.MaxRunTokens > 0`, `l.Mode != ""`,
 // `AllowedModels != nil`). A map that carried them would print `VALUE 0` with
 // `WINS policy` for a cap nobody set, put that row under --changed, and give
 // --why a `policy 0` level the node does not carry — while the ceiling a run
@@ -184,8 +184,13 @@ func (r *settingsRead) readPolicyLayer(ctx context.Context) {
 // does not carry what the file says.
 func policyValues(p *projectpolicy.Policy) map[string]string {
 	out := map[string]string{}
-	if policy.ValidMode(p.Budget.Mode) {
-		out["budget.mode"] = p.Budget.Mode
+	// The mode is read through C1 (AB3): a node that still says the old word
+	// acts as observe, and this row shows the mode a run of the project would
+	// get rather than a word that is not a mode any more. The node itself is
+	// named where it is refused, by doctor and at the run (R4), so this view
+	// does not have to carry the word to be honest about it.
+	if m := p.Budget.Mode; m != "" {
+		out["budget.mode"] = policy.Mode(m).Effective()
 	}
 	if p.Budget.PerRunUSD > 0 {
 		out["budget.per_run_usd"] = strconv.FormatFloat(p.Budget.PerRunUSD, 'f', -1, 64)
