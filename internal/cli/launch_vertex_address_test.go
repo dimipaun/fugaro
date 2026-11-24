@@ -22,8 +22,11 @@ var vertexLaunchYAML = strings.Replace(oauthLaunchYAML, "auth: oauth", "auth: ve
 // secrets through it — the one thing the address is for on this auth, because a
 // vertex run reads no model credential of the service's and no git credential
 // of its either (its model calls go out on the job's own Google credentials and
-// its git traffic on the App key its job keeps mounted), so nothing of its
-// moves when the address is set.
+// its git traffic on the credential its job keeps mounted), so its model path
+// does not move when the address is set. The one path the address does move is
+// a proxied Bitbucket node's — proxiedRepo reads the address, not the serves
+// answer — which is a decision reported with this change and not one this
+// launch takes.
 //
 // It is handed on the installation's own block alone, and NOT on the
 // repository's record: localcfg.Repo.CredentialsServiceReady is documented as
@@ -123,9 +126,6 @@ func TestLaunchAddressIsThePlanAddressForVertex(t *testing.T) {
 		got := len(env) == 1 && env[0] == envCredentialsServiceURL+"="+launchCredsURL
 		if got != want {
 			t.Errorf("%s: the launch handed the job %v while infra.CredentialsServiceAddress says %v (installed=%v, auth=%q, mode=%q): the root's tfvars and this launch read one function, so a repository cannot be told about a service its account holds no roles/run.invoker on, nor left to fetch from one its root granted it (D3326)", name, env, want, tc.block, tc.auth, tc.mode)
-		}
-		if got && !tc.block {
-			t.Errorf("%s: the launch handed an address an installation without the service cannot have handed anyone", name)
 		}
 	}
 }

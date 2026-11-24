@@ -427,16 +427,26 @@ func CredentialsServiceServes(installed, ready bool, auth, mode string) bool {
 //
 // The two come apart for exactly one repository, and that is the whole of what
 // this function exists for: a `vertex` one. A vertex repository's runs read no
-// credential of the service's — its model calls go out on the job's own Google
-// credentials through Vertex AI, and the provider key and the App key it
-// pushes with are mounted in its job — so the address cannot move its model
-// path (internal/runner's serviceSwitched, which admits `api-key` and `oauth`
-// alone, F17) and the block carries no drop with it: model_secrets_served stays
-// `none` for it (ModelSecretsServed), and the module's own drop is gated on the
-// serves fact this function's second answer travels beside
+// credential of the service's for their models — the model calls go out on the
+// job's own Google credentials through Vertex AI, and the git credential and
+// the provider key keep their mounts in its job — so the address cannot move
+// its model path (internal/runner's serviceSwitched, which admits `api-key` and
+// `oauth` alone, F17) and the block carries no drop with it: model_secrets_served
+// stays `none` for it (ModelSecretsServed), and the module's own drop is gated
+// on the serves fact this function's second answer travels beside
 // (RepoInstallation.CredentialsServiceServes). What the address IS for is the
 // workflow secrets its runner fetches from the service at bootstrap
 // (internal/runner's fetchWorkflowSecrets, D3326).
+//
+// The one path of a vertex repository's own that the address does move is the
+// Bitbucket proxy: internal/cli's proxiedRepo and internal/runner's
+// proxiedBitbucket both read the address off the execution rather than this
+// function's second answer, so the Bitbucket repository whose published node
+// admits it with `proxy: true` is a proxied launch from here on — its git
+// traffic through the service, with the token its job keeps mounted beside it.
+// An installation whose node proxies none of its vertex repositories is
+// untouched, and which repositories a node proxies is the operator's own
+// publication.
 //
 // It is handed whenever the installation HAS the service — and not only on a
 // record's vouch, which is the switch's second condition — because there is
