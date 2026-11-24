@@ -359,19 +359,24 @@ elif sub == ("builds", "submit"):
         "account-delete-fails-once": "13",
     }
     # The exit code the build's own record carries for its step, per the mode.
-    # The check's step ends with one code per outcome (0 = the service answered
-    # 200 and the token's claim is the account, 11 = 401, 12 = 403, 13 = any
-    # other status, 14 = no token from the metadata server, 15 = the claim is
+    # The check's step ends with one code per outcome (11 = 401, 12 = 403, 13 =
+    # any other status, 14 = no token from the metadata server, 15 = the claim is
     # another identity), and Cloud Build writes that code into the build the step
-    # ran in. `step-exit-missing` is the build whose step never ran at all: its
-    # record has no exit code, which is not the number 0.
+    # ran in. The step's one SUCCESS code, 0, is NOT there: exitCode is a proto3
+    # int64 with no presence, so the API omits the zero and a step that exited 0
+    # prints the very same empty column as a step that never ran — the fake omits
+    # it too, which is the whole trap. `step-exit-missing` is the other side of
+    # it: a build that FAILED with no code at all, because its step never ran.
     if mode in BUILD_FAILS:
         code = BUILD_FAILS[mode]
         state_set("build", "FAILURE\tStep #0: the step exited with non-zero status: %s" % code)
         state_set("buildexit", code)
+    elif mode == "step-exit-missing":
+        state_set("build", "FAILURE\tStep #0: the step never ran: the container could not start")
+        state_set("buildexit", "")
     else:
         state_set("build", "SUCCESS\t")
-        state_set("buildexit", "" if mode == "step-exit-missing" else "0")
+        state_set("buildexit", "")
     # The account the build ran as, recorded the way the real API reports it: the
     # RESOURCE NAME the build was submitted with, "projects/<project>/
     # serviceAccounts/<account>", not the bare address -- and, where the API
@@ -1049,13 +1054,22 @@ test_a_build_read_back_by_its_unique_id_is_a_pass() {
 # whose line never arrives is still a measured call. Code 0 is the pass, and it
 # is only written when the service answered 200 AND the token's email claim is
 # the throwaway account.
+#
+# And code 0 is the code Cloud Build does NOT write: exitCode is a proto3 int64
+# with no presence, so the zero is omitted and a step that exited 0 prints the
+# same empty column as a step that never ran. The fake omits it, as the API does,
+# and the check reads the 0 from the build's own SUCCESS — the row this test
+# asserts is the one that says so. Read the empty column as "no code" and this
+# whole reading — the log-less PASS it exists for — would come back unmeasured.
 test_a_build_whose_step_exited_zero_is_a_pass_without_the_log() {
   local dir=$work/exit0
   prepare "$dir"
   run195 "$dir" FAKE_GCLOUD_MODE=step-exit-0
   expect_status "$status" 0 "exit 0 with no log: the verdict"
   expect_contains "$out" "FACT call: PASS" "exit 0 with no log: the row"
-  expect_contains "$out" "the build's own record says its step exited 0" "exit 0 with no log: the reading is the record's own code"
+  expect_contains "$out" "the build ended SUCCESS with no steps[0].exitCode in its record, and that empty column IS the code 0" "exit 0 with no log: the zero Cloud Build omits is read from the build's own SUCCESS"
+  expect_contains "$out" "Cloud Build omits a zero exit code" "exit 0 with no log: the row names the omission as the reason the column is empty"
+  expect_absent "$out" "the build's own record says its step exited 0" "exit 0 with no log: the row does not claim a code the record does not carry"
   expect_contains "$out" "the token's email claim is fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "exit 0 with no log: what code 0 asserts about the claim"
   expect_contains "$out" "it did not arrive in Cloud Logging within 0 s" "exit 0 with no log: the row says the line was not read"
   # The reading came out of the build's own record: the check asks for the step's
@@ -1173,7 +1187,7 @@ test_a_logwriter_grant_that_does_not_land_is_reported() {
   expect_contains "$out" "bounded at 0 s by CHECK195_LOGWRITER_WAIT_SECONDS" "no logWriter: the wait is bounded and the row says so"
   expect_contains "$out" "FACT build: PASS" "no logWriter: the build still ran"
   expect_contains "$out" "FACT call: PASS" "no logWriter: the call is still measured, out of the exit code"
-  expect_contains "$out" "the build's own record says its step exited 0" "no logWriter: the reading came from the record"
+  expect_contains "$out" "the build ended SUCCESS with no steps[0].exitCode in its record, and that empty column IS the code 0" "no logWriter: the reading came from the record and the build's own SUCCESS"
   expect_contains "$out" "FACT restore: PASS" "no logWriter: everything is still restored"
 }
 
