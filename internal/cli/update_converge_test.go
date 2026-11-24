@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
@@ -27,6 +28,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/workspace"
@@ -836,6 +838,80 @@ func TestUpdateKeepsAHandWrittenModelGrades(t *testing.T) {
 	}
 	if got, want := p.ModelGrades.Of(config.GradeStrongest), (config.Craft{Model: "anthropic/claude-opus-4.6"}); got != want {
 		t.Errorf("after one fugaro update, model_grades.strongest = %+v, want %+v: the run dropped the grade the owner set", got, want)
+	}
+}
+
+// TestUpdateConvergesTheCrashReportSwitch is D738's whole update-side claim at
+// the one door the HARD RULE is about: an installation whose published node is
+// the node a release behind wrote — the mobile block as it states it and no
+// `mobile_crash_reports` key, which is the key this release adds (D731) —
+// reaches it with `fugaro update` alone, and one run is enough.
+//
+// The node is the current version's and not the release behind's, which is the
+// state that makes the key's own fill load-bearing: no migration step runs for
+// it, so `fugaro update`'s policy stage is the only thing that could carry the
+// key, and it does it through the row `policyConfigDrift` has for it
+// (project_policy_test.go's TestMobileCrashReportsDriftNamesTheKey is the same
+// claim at the comparison itself). Without the fill the row would be silent —
+// the node carries no value, so nothing would write one — and the app of every
+// installation at the release behind would send nothing for ever, because the
+// reader answers a key that is not there off
+// (projectpolicy.MobileCrashReportsOn).
+//
+// The published default is `true` and not the reader's fail-safe, which is the
+// other half: the value in the node is what an operator reads and what a hand
+// edit turns off, so it has to be written rather than left to a default a later
+// reader happens to know. The members the project wrote are asserted beside it,
+// because a fill that overwrote one would be the same bug in the other
+// direction.
+func TestUpdateConvergesTheCrashReportSwitch(t *testing.T) {
+	node := currentNode()
+	node["mobile"] = map[string]any{
+		"enabled":             true,
+		"sync":                false,
+		"accepted_providers":  []string{projectpolicy.ProviderGoogle},
+		"max_auth_age":        "6h",
+		"strict_new_device":   true,
+		"costly_modes":        []string{"critical"},
+		"biometric_on_costly": true,
+	}
+	r := newConvergeRig(t, node)
+	// The fixture is the release behind, or the assertions below prove nothing:
+	// the node it carries predates the key, in the node's own bytes.
+	raw, err := json.Marshal(r.db.Value(projectpolicy.PathShared()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte(`"`+projectpolicy.MobileCrashReportsKey+`"`)) {
+		t.Fatalf("the fixture's node already carries %s (%s): it is not an installation whose node predates the key", projectpolicy.MobileCrashReportsKey, raw)
+	}
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	p := convergeNode(t, r)
+	if p.Mobile == nil {
+		t.Fatal("after one fugaro update, the node carries no mobile block: the run dropped the project's own switches")
+	}
+	if p.MobileCrashReports == nil || !*p.MobileCrashReports {
+		t.Errorf("after one fugaro update, the node's %s = %v, want a written true: the key did not reach the node, so the app would send nothing and the operator would have no diff to read", projectpolicy.MobileCrashReportsKey, p.MobileCrashReports)
+	}
+	if !p.MobileCrashReportsOn() {
+		t.Error("after one fugaro update, MobileCrashReportsOn() = false, want true: the reader every phone's session is assembled from is what decides whether a report is sent")
+	}
+	if p.MobileSync() {
+		t.Error("after one fugaro update, sync = true, want the written false: the fill overwrote a member the project chose")
+	}
+	if got := p.MobileAcceptedProviders(); !slices.Equal(got, []string{projectpolicy.ProviderGoogle}) {
+		t.Errorf("after one fugaro update, accepted_providers = %v, want the one the node names: the fill widened a list the project narrowed", got)
+	}
+	if !p.MobileStrictNewDevice() || !p.MobileBiometricOnCostly() {
+		t.Errorf("after one fugaro update, strict_new_device = %v and biometric_on_costly = %v, want both true", p.MobileStrictNewDevice(), p.MobileBiometricOnCostly())
+	}
+	if got := p.MobileMaxAuthAge(); got != 6*time.Hour {
+		t.Errorf("after one fugaro update, max_auth_age = %s, want 6h", got)
+	}
+	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Rigor{rigor.Critical}) {
+		t.Errorf("after one fugaro update, costly_modes = %v, want [critical]", got)
 	}
 }
 
