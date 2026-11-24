@@ -4650,6 +4650,11 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, repo, ref, flag string, ch
 	if c := checkout(); c != nil {
 		cfg = c
 	} else if name == "" && root == "" {
+		// The read's own error is not this call's refusal: the job decision
+		// asks the same question of the same memoized answer and refuses a
+		// document it cannot read in its own words, while the recipe alone
+		// falling back to default leaves the runner the same key to read at
+		// the ref, which is what a launch with no document gets today.
 		if c, err := env.launchConfigWhereTheTreeGivesNone(ctx, &task.Spec{Repo: repo, Ref: ref}); err == nil {
 			cfg = c
 		}
