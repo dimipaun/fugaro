@@ -91,29 +91,30 @@ func TakeFilePins(cfg string, lifted []string) (file, layer string) {
 	return encodeNode(doc), pinsLayer(projectOf(root), gcpProjectOf(root), moved)
 }
 
-// ensureRoles names the three roles a priced run needs when the file's own keys
-// did not: a file that lifted only a craft's model, or only a grade's, still
-// has to name the coder, the reviewer and the background model, and the harness
-// gives it the roles PinsLayerText would have.
+// ensureRoles names the three roles a priced run needs when the file named no
+// model at all: a file that lifted only a craft's model, or only a grade's,
+// still has to name the coder, the reviewer and the background model, and the
+// harness gives it the roles PinsLayerText would have.
+//
+// A file that wrote agent.model or an agent.models block keeps exactly what it
+// wrote, holes included: a test that leaves a role out is a test about a
+// configuration that names no model for it (the pins rule, the allow-list),
+// and filling the hole for it would answer with a configuration its author
+// never wrote.
 func ensureRoles(defaults *yaml.Node) {
 	agent := mapGet(defaults, "agent")
+	if agent != nil && (mapGet(agent, "model") != nil || mapGet(agent, "models") != nil) {
+		return
+	}
 	if agent == nil {
 		agent = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 		setPath(defaults, []string{"agent"}, agent)
 	}
-	if mapGet(agent, "model") != nil {
-		return
-	}
-	models := mapGet(agent, "models")
-	if models == nil {
-		models = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-		mapSet(agent, "models", models)
-	}
+	models := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	for role, model := range roleModels {
-		if mapGet(models, role) == nil {
-			mapSet(models, role, scalar(model))
-		}
+		mapSet(models, role, scalar(model))
 	}
+	mapSet(agent, "models", models)
 }
 
 // takePath removes and returns the value a dotted path names, nil when the tree

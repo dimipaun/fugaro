@@ -22,9 +22,13 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// setMain commits yaml as fugaro.yaml on the remote's default branch.
+// setMain commits yaml as fugaro.yaml on the remote's default branch, anchored
+// to the GCP project a project layer applies by (testutil.AnchorFile) for
+// pushBranch's reason: the harness's own file is anchored, and a file a test
+// writes straight onto a branch is a file no layer applies to.
 func setMain(t *testing.T, h *harness, yaml string) {
 	t.Helper()
+	yaml = testutil.AnchorFile(yaml)
 	commitToRemote(t, h, func(dir string) {
 		testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml})
 	})
@@ -322,11 +326,15 @@ func TestModelOutsideAllowListInfraError(t *testing.T) {
 }
 
 func TestAllowedModelsAllInListRuns(t *testing.T) {
-	h := projectHarness(t, "aurora")
+	// The pins are the layer's, which is where the fixture's own models are
+	// now (S1, D3237): the file the run is seeded with is gwConfig's, so the
+	// layer names a model per role, and the default branch carries the
+	// allow-list that admits every one of them.
+	cfg := gwConfig(t, "") + "budget:\n  allowed_models: [" + sonnet + ", " + haiku + ", " + opus + "]\n"
+	h := newHarness(t, cfg, nil)
+	h.deps.Project = "aurora"
 	h.deps.Spend = ceilingOf(t, runner.AllowedModelsEnv, sonnet+","+haiku)
-	cfg := gwConfig(t, "")
-	setMain(t, h, cfg+"budget:\n  allowed_models: ["+sonnet+", "+haiku+", "+opus+"]\n")
-	pushBranch(t, h, "feature", cfg)
+	pushBranch(t, h, "feature", gwConfig(t, ""))
 	setRef(t, h, task.Spec{Ref: "feature"})
 	if rec, err := h.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v", rec, err)

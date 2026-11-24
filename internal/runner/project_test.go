@@ -39,9 +39,15 @@ func fixtureYAML(t *testing.T) string {
 	return testutil.AnchorFile(testutil.FixtureFiles(t)["fugaro.yaml"])
 }
 
-// pushBranch pushes a branch off main whose fugaro.yaml is yaml.
+// pushBranch pushes a branch off main whose fugaro.yaml is yaml. The file is
+// anchored to the GCP project a project layer applies by (testutil.AnchorFile),
+// as the harness's own file is: a file a test writes straight into a branch
+// would otherwise be a file no layer applies to, and, since S1 (D3237), one
+// that names no model either — a run of it would be refused for the pins
+// nothing resolved.
 func pushBranch(t *testing.T, h *harness, branch, yaml string) {
 	t.Helper()
+	yaml = testutil.AnchorFile(yaml)
 	other := filepath.Join(t.TempDir(), "other")
 	testutil.Git(t, filepath.Dir(other), "clone", "--quiet", h.remote, other)
 	testutil.Git(t, other, "checkout", "--quiet", "-b", branch)
@@ -50,15 +56,21 @@ func pushBranch(t *testing.T, h *harness, branch, yaml string) {
 	testutil.Git(t, other, "push", "--quiet", "origin", "HEAD:refs/heads/"+branch)
 }
 
-// projectHarness is a run whose repository names a project, for the check that
-// refuses one that is not the job's. It is an oauth run on purpose: the file
-// these tests write names another project's name as often as this one's, and a
-// project layer belongs to one project — a run behind a gateway would be
-// refused for that file before the check these tests are about, since a
-// repository's models live in the layer now and a layer for another project
-// does not apply to this file at all (S1, D3237). An oauth run carries no
-// gateway and so names no model to be priced by.
 func projectHarness(t *testing.T, mainYAML string) *harness {
+	t.Helper()
+	h := newHarness(t, withProject(t, fixtureYAML(t), mainYAML), nil)
+	h.deps.Project = "aurora"
+	return h
+}
+
+// projectOauthHarness is projectHarness for a repository whose file names
+// another project's name: a project layer belongs to one project, so the layer
+// this harness's file is priced by is refused outright when the run is read for
+// the job's project — before the check these tests are about (S1, D3237:
+// a repository's file names no model, so the layer is where a run's models are
+// and a layer for another project does not apply to this file at all). An
+// oauth run carries no gateway and so names no model to be priced by.
+func projectOauthHarness(t *testing.T, mainYAML string) *harness {
 	t.Helper()
 	h := newHarness(t, oauthCfg(t, withProject(t, fixtureYAML(t), mainYAML)), nil)
 	oauthEnv(h)
@@ -105,7 +117,7 @@ func TestProjectCheckPasses(t *testing.T) {
 }
 
 func TestProjectCheckReadsBaseNotBranch(t *testing.T) {
-	h := projectHarness(t, "borealis")
+	h := projectOauthHarness(t, "borealis")
 	pushBranch(t, h, "feature", withProject(t, fixtureYAML(t), "aurora"))
 	setRef(t, h, task.Spec{Ref: "feature"})
 	refused(t, h, "project mismatch", "main", "borealis", "aurora")
@@ -167,16 +179,14 @@ func TestProjectCheckSkippedLocally(t *testing.T) {
 }
 
 func TestProjectCheckBeforeLock(t *testing.T) {
-	h := projectHarness(t, "borealis")
+	h := projectOauthHarness(t, "borealis")
 	refused(t, h, "project mismatch")
 }
 
 func TestProjectCheckBaseUnparseable(t *testing.T) {
 	h := projectHarness(t, "aurora")
-	// main now has a field fugaro.yaml doesn't know; the branch is fine — and
-	// an oauth one, like the harness's own file, so that the run the branch
-	// names is not refused for the models a file cannot pin it with (S1).
-	pushBranch(t, h, "feature", oauthCfg(t, withProject(t, fixtureYAML(t), "aurora")))
+	// main now has a field fugaro.yaml doesn't know; the branch is fine.
+	pushBranch(t, h, "feature", withProject(t, fixtureYAML(t), "aurora"))
 	other := filepath.Join(t.TempDir(), "other")
 	testutil.Git(t, filepath.Dir(other), "clone", "--quiet", h.remote, other)
 	testutil.WriteFiles(t, other, map[string]string{"fugaro.yaml": fixtureYAML(t) + "surprise: true\n"})
@@ -192,7 +202,7 @@ func TestProjectCheckBaseUnparseable(t *testing.T) {
 // A branch whose fugaro.yaml names itself as the base must not choose
 // which file decides the project: the repository's default branch does.
 func TestProjectCheckBaseIsTheDefaultBranch(t *testing.T) {
-	h := projectHarness(t, "borealis")
+	h := projectOauthHarness(t, "borealis")
 	own := strings.Replace(withProject(t, fixtureYAML(t), "aurora"), "base_branch: main", "base_branch: feature", 1)
 	if own == withProject(t, fixtureYAML(t), "aurora") {
 		t.Fatal("the fixture has no base_branch: main")
