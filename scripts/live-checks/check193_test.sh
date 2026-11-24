@@ -967,6 +967,23 @@ test_an_oauth_jobs_token_is_the_mount_the_flip_takes_away() {
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "an oauth token mount: no run was launched"
 }
 
+# The job list is the read the whole row stands on, and it is read FIRST because
+# the auth the row judges its exception by comes out of the record row, which is
+# keyed by the jobs themselves. A `gcloud run jobs list` that did not answer is
+# therefore the switch row's own FAIL — a criterion that did not hold, exit 1 —
+# and never one of the rows this check could not measure: a second entry for the
+# switch key would put it among those and report a refused gcloud session (exit
+# 2) as a setup problem of the check.
+test_a_job_list_that_did_not_answer_is_the_switch_rows_own_failure() {
+  local dir=$work/switchjobs
+  prepare "$dir"
+  run193 "$dir" FAKE_GCLOUD_MODE=jobs-list-fails
+  expect_status "$status" 1 "a job list that did not answer: the verdict"
+  expect_contains "$out" "FACT switch: FAIL — gcloud run jobs list exited non-zero" \
+    "a job list that did not answer: the row carries the gcloud failure itself"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "a job list that did not answer: no run was launched"
+}
+
 # A get-iam-policy that did not answer is not a policy without the grant: the
 # half of the switch it carries is unmeasured, the runs wait, and the row names
 # the permission the owner needs to read it themselves.
@@ -1574,6 +1591,7 @@ t test_an_invoker_grant_to_another_account_is_not_this_jobs_grant
 t test_a_job_whose_template_carries_the_url_is_on_the_switch
 t test_a_stage_accounts_own_token_is_not_a_reason_to_call_a_job_off_the_switch
 t test_an_oauth_jobs_token_is_the_mount_the_flip_takes_away
+t test_a_job_list_that_did_not_answer_is_the_switch_rows_own_failure
 t test_an_iam_read_that_failed_leaves_the_switch_unmeasured
 t test_an_iam_answer_that_is_no_policy_leaves_the_switch_unmeasured
 t test_a_policy_that_could_not_be_read_leaves_the_switch_unmeasured

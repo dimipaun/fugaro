@@ -1239,6 +1239,12 @@ repo_auth() { # repo_auth REPO
 # does, so nothing below requires it.
 step_switch() {
   local listed=$SCRATCH/jobs.json got n
+  # The job list itself could not be read (step_jobs wrote this row and stopped
+  # the check): there is nothing to add, and a second entry for the same key
+  # would leave the switch key among the rows this check could not measure —
+  # turning that read's own FAIL into "could not measure" (exit 2) where it is
+  # a criterion that did not hold (exit 1).
+  [ -z "$SWITCH_STOP" ] || return 0
   if [ -z "$API_REPO" ] || [ -z "$OAUTH_REPO" ]; then
     unmeasured switch "this row is read per repository off its jobs' template, ${SVC}'s own IAM policy AND the auth that repository's record names (creds/repoauth/<slug>, the record row): the one model mount a switched job keeps is a mixed stage account's own Claude token, and only an api-key repository's jobs have one (mixedStageAccountJob), so a job still mounting a token cannot be judged without the auth. The records were not assigned (see the record row) and neither run is launched on this row"
     SWITCH_STOP=yes
