@@ -250,7 +250,7 @@ import {
  * the real constant, which is `null`, and nothing here behaves differently. The
  * cases that set it are `the Coordinator's map read, above its version floor`.
  */
-const floor = vi.hoisted(() => ({ value: null as string | null }))
+const floor = vi.hoisted(() => ({ value: null as string | null, merges: null as string | null }))
 
 vi.mock('../../src/shared/version', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../src/shared/version')>()
@@ -258,6 +258,15 @@ vi.mock('../../src/shared/version', async (importOriginal) => {
     ...real,
     orchestratorMapSupported: (version: string, at: string | null = floor.value) =>
       real.orchestratorMapSupported(version, at),
+    // IR4's own floor, mocked the same way and for the same reason:
+    // `PLAN_STATUS_NO_MERGES_CLI_FLOOR` is `null` on this tree -- nothing carries
+    // `plan status --no-merges` yet -- so `planStatusNoMergesSupported` answers
+    // false for every installation and the Graph tab draws its canvas and its
+    // merge state from the single read. The branch a released floor takes -- two
+    // reads, the canvas first -- could not be driven at all without this, and the
+    // cases that set it are `the Graph canvas read before its merge state`.
+    planStatusNoMergesSupported: (version: string, at: string | null = floor.merges) =>
+      real.planStatusNoMergesSupported(version, at),
   }
 })
 
@@ -267,6 +276,13 @@ vi.mock('../../src/shared/version', async (importOriginal) => {
  * comparison, not about a constant's value. */
 const MAP_FLOOR = '1.4.0'
 const MAP_VERSION = '1.4.2'
+
+/** MERGES_FLOOR is the release that first carries `plan status --no-merges`
+ * (IR4's floor) and MERGES_VERSION the installation's own line: one patch above
+ * it, so the tab's two reads are admitted. Spelled rather than imported, on the
+ * two above's terms. */
+const MERGES_FLOOR = '0.33.0'
+const MERGES_VERSION = '0.33.1'
 
 /** COORDINATOR_MAP is the document the map read answers with in the cases that
  * set the floor: two active orchestrators of one project -- the project's own
@@ -297,6 +313,7 @@ const COORDINATOR_MAP = {
 
 afterEach(() => {
   floor.value = null
+  floor.merges = null
 })
 
 /** CONSOLE_ROOT is the package root, which is where the sources, the fixtures
@@ -7928,6 +7945,237 @@ describe('the move the Graph screen wires', () => {
     // A refused move is no move to undo: the way back is offered for what the
     // record applied and nothing else.
     expect(classed(panelOf(document), 'graph-move-undo')).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The Graph canvas read before its merge state (IR4, D3217 as amended).
+//
+// The tab's first paint is the plan **without** merge state -- `plan status
+// --json --all --no-merges`, the read that spawns no `gh` and therefore no
+// pull-request lookup at all -- and the plain `plan status --json --all` follows
+// as the tab's own merge section, decorating the merged nodes in the drawing
+// already on screen (a refusal there is a sentence in the canvas, never a
+// refusal screen: the canvas the first read answered is true). That flag is
+// newer than the oldest CLI this console supports, so it sits behind
+// `PLAN_STATUS_NO_MERGES_CLI_FLOOR`, which is `null` on this tree: below it the
+// tab makes the one read it has always made and its document carries its own
+// merge state. These cases set the floor (see the mock at the top of this file)
+// and drive both branches.
+//
+// **They live here and not in `graph-read.test.ts`, which the implementation
+// plan names.** That file is the §6.22 graph **document decoder**'s suite: it
+// takes documents and answers what the console makes of them, with no console
+// booted, no bridge and no screen, and every claim of IR4 is about the wiring --
+// which argv the tab builds, which read follows which, and what the entry does
+// with a refusal. Proving them there would mean standing up a whole console
+// inside the decoder's suite; the harness for that is this file's (`boot`,
+// `fakeBridge`, `graphBridge`) and the plan's file name is stale.
+// ---------------------------------------------------------------------------
+
+describe('the Graph canvas read before its merge state', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  /** mergesGraphBridge is `graphBridge` for an installation whose CLI is above
+   * the flag's floor, clicked through to a drawn canvas. `replies` are the
+   * plan's own two answers: the canvas read (`--all --no-merges`) first, the
+   * merge read (`--all`) after it. */
+  function mergesGraphBridge(replies: Readonly<Record<string, AReply>>): FakeBridge {
+    floor.merges = MERGES_FLOOR
+    return graphBridge(replies, FakeWorker, { ...anOkCompatibility(), cliVersion: MERGES_VERSION })
+  }
+
+  /** withMergesRead is the fixture with its first task merged: the same graph
+   * the plain read answers with, where `task-one` -- done, with a ready pull
+   * request its run recorded -- is closed and carries no mark. It is the canvas
+   * document's own difference and nothing else, which is what makes it a
+   * decoration rather than a second graph. */
+  function withMergesRead(): unknown {
+    const document = JSON.parse(JSON.stringify(PLAN_STATUS)) as {
+      plans: { nodes: { id: string; mark?: string; closed: boolean }[] }[]
+    }
+    const node = document.plans[0]?.nodes.find((each) => each.id === 'task-one')
+    if (node === undefined) throw new Error('the fixture no longer carries task-one')
+    delete node.mark
+    node.closed = true
+    return document
+  }
+
+  /** mergeMarkOf is the merge mark drawn on one task's card or row: the word
+   * the canvas carries while its merge state is unknown, and nothing once the
+   * plain read has said it. */
+  function mergeMarkOf(document: FakeDocument, task: string): string {
+    const node = nodeForTask(document, task)
+    if (node === undefined) throw new Error(`the graph drew no node for ${task}`)
+    const mark = [...classed(node, 'graph-node-mark'), ...classed(node, 'graph-row-mark')][0]
+    return mark?.textContent ?? ''
+  }
+
+  it('paints the canvas from the read that spawns no gh, and decorates it when the merge read lands', async () => {
+    // **The first paint is the read with no forge lookups behind it** (D3217 as
+    // amended): the canvas is drawn from `--all --no-merges` while the plain read
+    // is still on its way, so a task whose merge state is unknown is on screen --
+    // `done` with the `merge unknown` mark, a picture that is true -- rather than
+    // a screen that waited for up to thirty-two lookups. The plain read then
+    // decorates that drawing: the same task loses its mark in the picture the
+    // operator is already reading.
+    //
+    // The canvas read here is the prewarm's -- the queue that warms this tab at
+    // boot (`startPrewarm`) reads it with the same argv, so the visit itself is
+    // served from the session cache -- which is why the case asserts the shape of
+    // every read rather than the exact sequence of the two.
+    const plain = holding()
+    const { bridge, calls } = mergesGraphBridge({
+      planStatus: (args) =>
+        (args as { noMerges?: boolean }).noMerges === true ? planStatusReply() : plain.reply(),
+    })
+    const document = await openGraph(bridge)
+
+    // Every read of the canvas names the flag -- the tab's own read and the
+    // prewarm's are both this tab's first paint -- and the one read without it
+    // is the merge section, made after a canvas was read. Nothing reads the
+    // canvas with its merges in for a first paint.
+    const reads = calls.filter((call) => call.name === 'planStatus').map((call) => call.args)
+    expect(reads.filter((args) => (args as { noMerges?: boolean }).noMerges === true).length).toBeGreaterThan(0)
+    expect(reads.at(-1)).toEqual({ all: true })
+    expect(reads.slice(0, -1).every((args) => (args as { noMerges?: boolean }).noMerges === true)).toBe(true)
+    // The canvas is up while the merge read is out, with the mark the canvas's
+    // own document carries.
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+    expect(mergeMarkOf(document, 'task-one')).toBe('merge unknown')
+
+    plain.release(planStatusReply(withMergesRead()))
+    await flush()
+    // The decoration landed in the drawing, not as a second one: the canvas is
+    // still the canvas, and the node set is the canvas's own.
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+    expect(classed(panelOf(document), 'graph-scope-notice')).toEqual([])
+    expect(mergeMarkOf(document, 'task-one'), 'the merged state did not reach the drawing').toBe('')
+    expect(nodeForTask(document, 'task-one'), 'the decoration replaced the graph').toBeDefined()
+  })
+
+  it('makes the single read below the floor, whose document carries its own merge state', async () => {
+    // An installation below the flag's floor gets **one** read, the one it has
+    // always had: `plan status --json --all` looks the merges up itself, so the
+    // canvas is painted with them and there is no merge section to wait for --
+    // the tab spawns no second child and the argv never names the flag the
+    // binary would refuse.
+    const { bridge, calls } = graphBridge({ planStatus: () => planStatusReply(withMergesRead()) })
+    const document = await openGraph(bridge)
+
+    expect(calls.filter((call) => call.name === 'planStatus').map((call) => call.args)).toEqual([{ all: true }])
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+    expect(mergeMarkOf(document, 'task-one')).toBe('')
+  })
+
+  it('keeps one merge read for a canvas painted while one was out, and never two at once', async () => {
+    // **The section has one read out at a time, and a claim is not dropped on
+    // the floor.** Refresh while the merge lookups are still running paints the
+    // canvas again -- a canvas with no merge state and nothing coming for it --
+    // so the read the refresh asked for is kept and made when the one in flight
+    // settles. Two at once would be two sets of up to thirty-two forge lookups
+    // against the same graph.
+    const plain = holding()
+    let canvasReads = 0
+    const { bridge, calls } = mergesGraphBridge({
+      planStatus: (args) => {
+        if ((args as { noMerges?: boolean }).noMerges === true) {
+          canvasReads += 1
+          return planStatusReply()
+        }
+        return plain.reply()
+      },
+    })
+    const document = await openGraph(bridge)
+    const painted = canvasReads
+
+    ;(classed(panelOf(document), 'graph-refresh')[0] as FakeNode).click()
+    await flush()
+    // The refresh painted the canvas again -- and the section had a read out, so
+    // it asked for no second one.
+    expect(canvasReads).toBe(painted + 1)
+    expect(calls.filter((call) => call.name === 'planStatus').map((call) => call.args)).toEqual([
+      { all: true, noMerges: true },
+      { all: true },
+      { all: true, noMerges: true },
+    ])
+
+    plain.release(planStatusReply(withMergesRead()))
+    await flush()
+    // The kept read was made the moment the one in flight settled, and its
+    // answer is in the drawing the refresh left.
+    const mergeReads = calls.filter(
+      (call) => call.name === 'planStatus' && (call.args as { noMerges?: boolean }).noMerges !== true,
+    )
+    expect(mergeReads).toHaveLength(2)
+    expect(mergeMarkOf(document, 'task-one')).toBe('')
+  })
+
+  it('re-reads the canvas with its merge state once that state is in hand', async () => {
+    // **A refresh is not a first paint.** The picture on screen already carries
+    // the merge state the tab read a moment ago, and re-reading the canvas
+    // without it would put every merged node back to `done` with the `merge
+    // unknown` mark -- a colour and a size change twice a minute, and a layout
+    // rebuilt for it -- only for the merge section to draw it merged again. So a
+    // read made while the session already holds this installation's merge state
+    // is the plain `--all` read, and the merge section does not follow it: the
+    // two reads are one.
+    const { bridge, calls } = mergesGraphBridge({
+      planStatus: (args) =>
+        (args as { noMerges?: boolean }).noMerges === true ? planStatusReply() : planStatusReply(withMergesRead()),
+    })
+    const document = await openGraph(bridge)
+    expect(mergeMarkOf(document, 'task-one')).toBe('')
+
+    const before = calls.filter((call) => call.name === 'planStatus').length
+    ;(classed(panelOf(document), 'graph-refresh')[0] as FakeNode).click()
+    await flush()
+
+    // The refresh read the canvas with its merge state, and nothing followed it.
+    expect(calls.filter((call) => call.name === 'planStatus').slice(before).map((call) => call.args)).toEqual([
+      { all: true },
+    ])
+    expect(mergeMarkOf(document, 'task-one'), 'the refresh put the unknown mark back').toBe('')
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+  })
+
+  it('keeps the canvas and draws the sentence when the merge read is refused', async () => {
+    // **A refusal of the merge state is a sentence in the drawing and never a
+    // refusal screen**: the canvas on screen is the plan, read without merge
+    // state, and taking it down for a fact about a colour would throw away a
+    // graph the operator can read. The node keeps the mark its own document
+    // carries, which is the honest answer while nothing has read the merge.
+    let plainReads = 0
+    const { bridge } = mergesGraphBridge({
+      planStatus: (args) => {
+        if ((args as { noMerges?: boolean }).noMerges === true) return planStatusReply()
+        plainReads += 1
+        return plainReads === 1
+          ? ({ ok: false, reason: GRAPH_REFUSAL } as const)
+          : planStatusReply(withMergesRead())
+      },
+    })
+    const document = await openGraph(bridge)
+
+    expect(classed(panelOf(document), 'graph-scope-notice').map((each) => each.textContent)).toEqual([GRAPH_REFUSAL])
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+    expect(mergeMarkOf(document, 'task-one')).toBe('merge unknown')
+    expect(operationOf(document), 'a refused merge read is not a refusal screen').toBe(null)
+
+    // **The sentence goes when a read answers**, and on the visit that serves the
+    // canvas from memory it is the merge section's own read that has to take it
+    // down: the cached door draws the sentence the last read was refused with
+    // (`graph.mergeNotice`), so a success here must leave neither the sentence
+    // nor the mark it was about.
+    buttonFor(document, 'live').click()
+    await flush()
+    buttonFor(document, 'graph').click()
+    await flush()
+    expect(plainReads).toBe(2)
+    expect(classed(panelOf(document), 'graph-scope-notice')).toEqual([])
+    expect(mergeMarkOf(document, 'task-one')).toBe('')
   })
 })
 
