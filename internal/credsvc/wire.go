@@ -149,7 +149,7 @@ const BitbucketProxyPrefix = "/v1/bitbucket/proxy/"
 
 // WorkflowSecretsPath is the path a run's own job asks this service for one of
 // its workflow's secrets on (B3.2, G19): a workflow secret the job does not
-// mount is fetched from here at bootstrap, one variable per call, and the value
+// mount is fetched from here at bootstrap, one secret per call, and the value
 // is the answer's own field.
 //
 // The path, the request and the answer are here rather than beside the route
@@ -158,16 +158,17 @@ const BitbucketProxyPrefix = "/v1/bitbucket/proxy/"
 // it spells the model path's — and a contract two packages spell is written
 // down once, in this file, for the reason this file's own header gives. Which
 // workflow a call may be served is decided from the VERIFIED job account and
-// never from anything the call carries (G19): the request names one variable of
-// the caller's own workflow and nothing else, so there is no field in which a
-// caller could name another workflow, another repository or another job's
-// secret.
+// never from anything the call carries (G19): the request names one variable
+// (version 1) or one logical secret (version 2) of the caller's own repository
+// and nothing else, so there is no field in which a caller could name another
+// workflow, another repository or another job's secret.
 const WorkflowSecretsPath = "/v1/workflow-secrets"
 
 // maxWorkflowSecretsRequestBytes bounds a workflow-secrets call's body. The
-// whole request is one small field ({"env":"NAME"}), so the bound is the mint's
-// and small on purpose: a body larger than this is not one of these calls, and
-// it is refused before it is decoded.
+// whole request is one or two small fields ({"env":"NAME"}, or
+// {"name":"secret","version":2}), so the bound is the mint's and small on
+// purpose: a body larger than this is not one of these calls, and it is refused
+// before it is decoded.
 const maxWorkflowSecretsRequestBytes = 4 << 10
 
 // The two versions of this contract, as the request's version field spells
