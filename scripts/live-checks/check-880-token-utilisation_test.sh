@@ -226,6 +226,7 @@ test_a_utilisation_figure_is_found() {
   expect_status "$status" 0 "a utilisation figure"
   expect_contains "$out" "CHECK 880 RESULT: PASS (exit 0)" "a utilisation figure"
   expect_row "$out" source PASS "a utilisation figure"
+  expect_row "$out" utilisation PASS "a utilisation figure"
   expect_row "$out" record PASS "a utilisation figure"
   expect_contains "$out" "tool-alpha records Anthropic-Ratelimit-Unified-5h-Utilization" "the utilisation header is named"
   expect_contains "$out" "a utilisation figure is carried (Anthropic-Ratelimit-Unified-5h-Utilization)" "the figure is named as the answer U1 asks for"
@@ -238,8 +239,10 @@ test_rate_limit_headers_without_a_figure_fail() {
   run880
   expect_status "$status" 1 "rate-limit headers without a figure"
   expect_contains "$out" "CHECK 880 RESULT: FAIL (exit 1)" "rate-limit headers without a figure"
-  expect_row "$out" source FAIL "rate-limit headers without a figure"
-  expect_contains "$out" "none of them is a utilisation figure, so U1 is answered no here" "the finding says what was recorded"
+  expect_row "$out" utilisation FAIL "rate-limit headers without a figure"
+  expect_row "$out" source INFO "the source's own record is information, not a finding about the check"
+  expect_no_row_state "$out" source FAIL "a source without a figure is never a finding of its own"
+  expect_contains "$out" "no source's record names a utilisation figure" "the finding says what was read"
   expect_contains "$out" "Retry-After" "the recorded names are printed"
 }
 
@@ -283,15 +286,30 @@ test_a_named_source_the_service_never_served_is_unverified() {
   expect_not_contains "$out" "tool-alpha records" "a name narrows the judgement, so the record's own source is not judged"
 }
 
-test_one_source_without_a_figure_fails_the_check() {
+test_one_source_with_a_figure_passes_beside_one_without() {
   case_dir one_of_two
   write_marks '{"tool-alpha":{"state":"available","headers":["Anthropic-Ratelimit-Unified-5h-Utilization"]},
                 "tool-beta":{"state":"available","headers":["Retry-After"]}}'
   run880
-  expect_status "$status" 1 "one source without a figure among two"
+  expect_status "$status" 0 "one source with a figure beside one without"
+  expect_contains "$out" "CHECK 880 RESULT: PASS (exit 0)" "the verdict is existential"
+  expect_row "$out" utilisation PASS "the question is answered by one source naming a figure"
   expect_row "$out" source PASS "the source with a figure"
-  expect_row "$out" source FAIL "the source without one"
+  expect_row "$out" source INFO "the source without one"
+  expect_contains "$out" "which does not answer this question" "a key's own rate-limit headers do not withdraw the gate"
   expect_contains "$out" "2 sources recorded in creds/marks" "both sources are read"
+}
+
+test_an_empty_record_is_unverified() {
+  case_dir empty_record
+  write_marks '{}'
+  run880
+  expect_status "$status" 3 "an empty record"
+  expect_contains "$out" "CHECK 880 RESULT: INCOMPLETE (exit 3)" "an empty record"
+  expect_row "$out" record UNVERIFIED "an empty record"
+  expect_row "$out" utilisation UNVERIFIED "an empty record"
+  expect_no_row_state "$out" record PASS "an empty record is never a pass"
+  expect_contains "$out" "the record holds no source at all" "the row says what was read"
 }
 
 test_a_record_that_is_not_the_shapes_fails() {
@@ -470,7 +488,8 @@ t test_no_record_at_all_is_unverified
 t test_a_source_with_no_names_is_unverified
 t test_only_the_sources_named_are_judged
 t test_a_named_source_the_service_never_served_is_unverified
-t test_one_source_without_a_figure_fails_the_check
+t test_one_source_with_a_figure_passes_beside_one_without
+t test_an_empty_record_is_unverified
 t test_a_record_that_is_not_the_shapes_fails
 t test_a_source_that_is_not_a_mark_fails
 t test_a_record_that_is_not_a_list_is_unverified

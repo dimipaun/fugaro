@@ -24,20 +24,31 @@
 #     the node is the service's own credential state, not a bundle.
 #
 # It prints, for each source under test, the names recorded for it and which of
-# them is a utilisation figure, then one row per source.
+# them is a utilisation figure, then one row per source and one verdict row.
+#
+# The question is EXISTENTIAL and the verdict is too: U1 asks whether a
+# subscription token's answer reports a utilisation figure at all, so ONE source
+# whose record names one answers it yes — the subscription token's own run is one
+# answer among the installation's, and a key's record beside it that names rate
+# limits without a figure changes nothing about it. That is also the direction
+# that cannot lose the gate: a source naming no figure is recorded as INFO,
+# never as a finding about the check.
 #
 # Verdicts:
 #   PASS (exit 0)        a source's record names a utilisation figure: U1 is
 #                        answered yes on this evidence, and PL8 may be launched
-#   FAIL (exit 1)        a source's record names rate-limit headers and none of
-#                        them is a utilisation figure: U1 is answered no on this
-#                        evidence, and PL8 is withdrawn (the plan says so)
+#   FAIL (exit 1)        no source's record names a utilisation figure, and at
+#                        least one names rate-limit headers: U1 is answered no on
+#                        this evidence, and PL8 is withdrawn (the plan says so).
+#                        A record that is not the shape the service writes is a
+#                        FAIL too.
 #   INCOMPLETE (exit 2)  the run stopped before it could read
-#   INCOMPLETE (exit 3)  a source has no record to judge (UNVERIFIED): nothing
-#                        has been recorded since this release, the last recorded
-#                        answer carried no rate-limit header at all, or a name
-#                        you gave is not one the service has served. Nothing is
-#                        concluded and PL8 is not launched on it.
+#   INCOMPLETE (exit 3)  there is no name to judge at all (UNVERIFIED): the
+#                        record holds no source, every source it holds has none
+#                        recorded — nothing has been recorded since this release,
+#                        or the last recorded answer carried no rate-limit header
+#                        at all — or a name you gave is not one the service has
+#                        served. Nothing is concluded and PL8 is not launched.
 #
 # Usage:      bash scripts/live-checks/check-880-token-utilisation.sh <fugaro-project> [source…]
 #             source      one credential's name as the service serves it (the
@@ -99,11 +110,14 @@ With no source named, every source in creds/marks is judged. For each it prints
 the rate-limit header names its last answer carried and which of them is a
 utilisation figure. No value of any header is recorded, printed or needed.
 
+The question is existential, and so is the verdict: ONE source whose record names
+a utilisation figure answers it yes, whatever the other sources' records hold.
+
   PASS (exit 0)  a source's record names a utilisation figure
-  FAIL (exit 1)  a source's record names rate-limit headers, none of them a
-                 utilisation figure
+  FAIL (exit 1)  no source's record names one, and at least one names rate-limit
+                 headers (or the record is not the shape the service writes)
   INCOMPLETE (exit 2 stopped before it could read,
-              exit 3 a source it could not judge: UNVERIFIED)
+              exit 3 nothing to judge at all: UNVERIFIED)
 USAGE
 }
 
@@ -341,10 +355,15 @@ else:
 
 if doc is None:
     doc = {}
-    fact("record", "UNVERIFIED", "the record node is absent or empty: no source has an answer recorded on it, so nothing can be judged (run a run on the subscription token and run this again)")
+    fact("record", "UNVERIFIED", "the record node is absent: no source has an answer recorded on it, so nothing can be judged (run a run on the subscription token and run this again)")
 elif not isinstance(doc, dict):
     doc = {}
     fact("record", "FAIL", "the record node is not an object of sources%s: it is not the shape the service writes" % (" (%s)" % parse_error if parse_error else ""))
+elif not doc:
+    # An empty object is the JSON a node with nothing under it answers with,
+    # and it is NOT a pass: no source was judged, so the question U1 asks has
+    # no answer in it.
+    fact("record", "UNVERIFIED", "the record holds no source at all: nothing has been recorded since this release, so nothing can be judged (run a run on the subscription token and run this again)")
 
 table = []
 names = [san(k) for k in sorted(doc)]
@@ -355,6 +374,12 @@ order = list(wanted) if wanted else sorted(doc)
 
 if doc:
     fact("record", "PASS", "%d source%s recorded in creds/marks" % (len(names), "" if len(names) == 1 else "s"))
+
+# The figures any source recorded, and the sources that recorded rate-limit names
+# without one. The verdict below is read from these two lists and from nothing
+# else, so a source with no figure of its own is never a finding about the check.
+with_figure = []
+without = []
 
 for src in order:
     shown = san(src)
@@ -379,10 +404,26 @@ for src in order:
     got = [san(h, 200) for h in raw]
     util = [h for h in got if is_utilisation(h)]
     if util:
+        with_figure.append(shown)
         fact("source", "PASS", "%s records %s — a utilisation figure is carried (%s), so U1 is answered yes here" % (shown, ", ".join(got), ", ".join(util)))
     else:
-        fact("source", "FAIL", "%s records %s — none of them is a utilisation figure, so U1 is answered no here" % (shown, ", ".join(got)))
+        without.append(shown)
+        fact("source", "INFO", "%s records %s — none of them is a utilisation figure. It answers nothing about a subscription token's own answer: this check asks whether ANY source names one" % (shown, ", ".join(got)))
     table.append("  %s  names=%s  utilisation=%s" % (shown, ", ".join(got), ", ".join(util) or "-"))
+
+# The verdict row. It is existential because the question is: one source naming a
+# utilisation figure answers U1 yes, whatever the sources beside it hold, and a
+# gate read the other way round would be withdrawn by a key's own rate-limit
+# headers. When no source names one, the answer is FAIL only if the record really
+# holds names to read — otherwise there is nothing to conclude (UNVERIFIED, exit
+# 3) and PL8 is not launched.
+if with_figure:
+    fact("utilisation", "PASS", "%s: a utilisation figure is recorded%s, so U1 is answered yes and PL8 may be launched" % (
+        ", ".join(with_figure), "" if not without else " (no figure on %s, which does not answer this question)" % ", ".join(without)))
+elif without:
+    fact("utilisation", "FAIL", "no source's record names a utilisation figure: %s recorded rate-limit names and none of them is one, so U1 is answered no on this evidence and PL8 is withdrawn" % ", ".join(without))
+else:
+    fact("utilisation", "UNVERIFIED", "no source recorded a rate-limit header name at all, so there is nothing to judge and PL8 is not launched on it")
 
 with open(table_path, "w") as f:
     f.write("SOURCES\n")
