@@ -123,6 +123,24 @@ func l8CopyNameLaunch(t *testing.T, rel string) (*cloudFixture, error) {
 	return f, checkL8Image(context.Background(), env, appSlug, spec, "base", &bytes.Buffer{})
 }
 
+// l8CopyNameCloneLaunch is the same task on the gate's other branch: a
+// checkout: clone workflow's job is built per launch and so has no build record
+// to judge, which is what checkCloneL8Image is for. Its judge is the
+// installation's own base image (base_images.base), and its fix is the base
+// image's (fugaro update --base base). The trigger is again the copy name, the
+// one that needs no checkout.
+func l8CopyNameCloneLaunch(t *testing.T, rel string) (*cloudFixture, error) {
+	t.Helper()
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	lc := *env.lc
+	lc.BaseImages = map[string]string{config.BaseKind: l8Base(rel)}
+	env.lc = &lc
+	spec := &task.Spec{Version: 1, RunID: "20261124-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+		Recipe: &task.Recipe{Name: l8CopyName(t), Source: string(recipe.SourceProject)}}
+	return f, checkCloneL8Image(context.Background(), env, spec, &bytes.Buffer{})
+}
+
 // l8CopyName is acme/app's copy of the recipe review, the name D3302 spells.
 func l8CopyName(t *testing.T) string {
 	t.Helper()
@@ -215,6 +233,46 @@ func TestL8GateRefusesAnOlderImage(t *testing.T) {
 						t.Errorf("%d executions, want none", n)
 					}
 				})
+			}
+		})
+	}
+}
+
+// TestL8GateRefusesACloneLaunchAnOlderImage is the same gate on the other branch
+// of freshLaunchGates: a checkout: clone workflow's job is built per launch and
+// so carries no build record, so checkCloneL8Image judges the installation's
+// base image and refuses it with the fix that moves it — `fugaro update --base
+// base`, not the checkout's own `fugaro update`. The triggers are one judge
+// (l8LaunchSkew), so this pins the branch and not the four triggers again.
+func TestL8GateRefusesACloneLaunchAnOlderImage(t *testing.T) {
+	for _, tc := range []struct {
+		rel     string
+		refused bool
+	}{
+		{shiftRelease(t, l8Since, -1), true},
+		{l8Since, false},
+		{shiftRelease(t, l8Since, 1), false},
+	} {
+		t.Run(tc.rel, func(t *testing.T) {
+			_, err := l8CopyNameCloneLaunch(t, tc.rel)
+			if !tc.refused {
+				if err != nil {
+					t.Fatalf("release %s: err = %v, want launched", tc.rel, err)
+				}
+				return
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want the launch refused", err)
+			}
+			for _, want := range []string{
+				"a project recipe's copy name",
+				"(fugaro " + l8Since + " or later)",
+				"the checkout: clone job image of acme/app workflow web",
+				"fugaro update --base base",
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%v lacks %q", err, want)
+				}
 			}
 		})
 	}
