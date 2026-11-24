@@ -429,6 +429,9 @@ func appendProjectConfig(t *testing.T, path, yaml string) {
 // the file this follow-up reads sets nothing.
 func TestBaseBranchOnAFollowUp(t *testing.T) {
 	f := newCloudFixture(t)
+	// An image at or after baseBranchSince: one older than it would have the
+	// field dropped (baseBranchSkew), which is the field this test is about.
+	writeBuildRecord(t, f, appSlug, "web", release0160)
 	root := firstRunSpec(rootID)
 	root.Ref, root.BaseBranch = "master", "master"
 	seedSpec(t, f, root, false)
