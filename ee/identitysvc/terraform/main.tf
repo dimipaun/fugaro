@@ -61,6 +61,10 @@ resource "google_project_service" "this" {
     "monitoring.googleapis.com",
     "firebase.googleapis.com",
     "identitytoolkit.googleapis.com",
+    # Realtime Database is a product of its own: linking the project to
+    # Firebase (auth.tf) does not turn this API on, and the paired list's
+    # instance (pairedlist.tf) is the first thing in this project to need it.
+    "firebasedatabase.googleapis.com",
     "iam.googleapis.com",
     "cloudresourcemanager.googleapis.com",
   ]) : toset([])
