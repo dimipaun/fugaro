@@ -576,15 +576,16 @@ write_config() { # dir
 # off it, JOB_PROFILE=yes makes it a shared project job, JOB_SECOND=yes gives the
 # repository a second job of its own (one per workflow, which the check refuses
 # to choose in unless `--workflow` names one, or unless exactly one of the two
-# labels is not a named account's), JOB_SECOND_WORKFLOW is the second job's own
-# workflow label (a named account's is the workflow joined to the account,
-# `<workflow>_<account>`), JOB_SA overrides the account it runs as, and
-# JOB_SECOND_SA the second job's own — so a case can say which of the two a run
-# read.
+# labels is not a named account's), JOB_WORKFLOW is the job's own workflow label
+# and JOB_SECOND_WORKFLOW the second job's (a named account's is the workflow
+# joined to the account, `<workflow>_<account>`), JOB_SA overrides the account it
+# runs as, and JOB_SECOND_SA the second job's own — so a case can say which of
+# the two a run read.
 write_job() { # dir
   local dir=$1
   JOB_URL="${JOB_URL-yes}" JOB_APP_KEY="${JOB_APP_KEY-yes}" JOB_PROFILE="${JOB_PROFILE:-no}" \
     JOB_SECOND="${JOB_SECOND:-no}" JOB_SECOND_SA="${JOB_SECOND_SA:-$JOBSA}" \
+    JOB_WORKFLOW="${JOB_WORKFLOW:-default}" \
     JOB_NAME="${JOB_NAME:-$JOB}" JOB_SA="${JOB_SA:-$JOBSA}" python3 - "$dir/state/job.json" "$dir/state/jobs.json" <<'PY'
 import json, os, sys
 
@@ -592,7 +593,7 @@ env = [{"name": "FUGARO_PROJECT", "value": os.environ["FAKE96_PROJ"]},
        {"name": "FUGARO_GITHUB_APP_ID", "value": os.environ["FAKE96_APPID"]}]
 container = {"env": env}
 spec = {"serviceAccountName": os.environ["JOB_SA"]}
-labels = {"fugaro_repo": os.environ["FAKE96_LABEL"], "fugaro_workflow": "default"}
+labels = {"fugaro_repo": os.environ["FAKE96_LABEL"], "fugaro_workflow": os.environ["JOB_WORKFLOW"]}
 if os.environ["JOB_URL"] == "yes":
     env.append({"name": "FUGARO_CREDENTIALS_SERVICE_URL", "value": os.environ["FAKE96_URL"]})
 if os.environ["JOB_APP_KEY"] == "yes":
@@ -976,6 +977,25 @@ test_a_repository_with_one_job_too_few_stops() {
   expect_contains "$out" "has no job of its own" "no job: the message"
   expect_contains "$out" "no single shared project job" "no job: the fallback is named too"
   expect_contains "$out" "fugaro setup --repo" "no job: the command that makes one"
+}
+
+test_the_only_job_of_a_repository_is_read_whatever_its_label_says() {
+  setup_case onlyjobvariant
+  # The repository has ONE job of its own, and its workflow label names a named
+  # account's (`web_belong`): it is still the only job a run of this repository
+  # could land on, so the check reads it rather than ask which workflow a run
+  # uses — there is nothing to choose between. What keeps the owner's own
+  # account out of this check is the job's ACCOUNT, refused by name in
+  # step_job, and not a label the reader would have to interpret.
+  JOB_WORKFLOW=web_belong write_job "$dir"
+  run96
+  expect_status "$status" 0 "one job of the repository's own, its label a named account's"
+  expect_contains "$out" "FACT job: PASS — " "one job with a named account's label: the row"
+  expect_contains "$out" "$JOB, the job of the workflow web_belong" \
+    "one job with a named account's label: the job it read"
+  expect_absent "$out" "could not be named from the project's job list" \
+    "one job with a named account's label: it is not read as a job that is not there"
+  expect_absent "$out" "Re-run with --workflow" "one job with a named account's label: no question was asked"
 }
 
 test_a_repository_with_several_jobs_of_its_own_is_not_read_as_none() {
@@ -1976,6 +1996,7 @@ t test_a_repository_that_is_not_one_with_state_is_refused
 t test_a_config_that_is_not_fugaro_dev_stops
 t test_another_installation_on_fugaro_dev_stops
 t test_a_repository_with_one_job_too_few_stops
+t test_the_only_job_of_a_repository_is_read_whatever_its_label_says
 t test_a_repository_with_several_jobs_of_its_own_is_not_read_as_none
 t test_a_repository_with_one_workflow_of_its_own_and_one_of_a_named_account
 t test_the_workflow_flag_selects_that_workflows_job

@@ -1889,9 +1889,10 @@ def cmd_jobs(want=""):
             fail("%s is the fugaro_workflow label of %d of this repository's jobs, so this check cannot tell which one a run of it lands on"
                  % (want, len(mine)))
         chosen, how = mine[0], "named"
-    elif len(found) == 1 and not workflows:
-        # One job of the repository's own and no workflow label on it: there is
-        # nothing to choose between.
+    elif len(found) == 1:
+        # One job of the repository's own, whatever its workflow label says --
+        # including a label that names a named account's (the only job a run of
+        # this repository could land on): there is nothing to choose between.
         chosen, how = found[0], "only"
     else:
         plain = sorted(w for w in workflows if "_" not in w)
