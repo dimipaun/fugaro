@@ -142,7 +142,7 @@ variable "bucket_lifecycle" {
 }
 
 variable "enable_vertex" {
-  description = "Whether to enable the Vertex AI API, for workflows with agent.auth: vertex."
+  description = "Whether to enable the Vertex AI API: for workflows with agent.auth: vertex, and for a project whose routing table names Vertex anywhere (the credentials service calls it on its own identity)."
   type        = bool
   default     = false
   nullable    = false

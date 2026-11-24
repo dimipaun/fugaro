@@ -1947,6 +1947,24 @@ var runAccountGrants = setOf(
 	// and the member is the ID this scan already knows from the bundle
 	// container's grant above.
 	`google_project_iam_member | "projects/${var.credentials_service.firebase_project}/roles/fugaroCredentialsDatabase" | project=var.credentials_service.firebase_project | google_service_account.credentials[0].member | for_each= | perms=firebasedatabase.instances.get,firebasedatabase.instances.update`,
+	// Reviewed for CS11 (the chain-serving plan's cloud half, D3174): the
+	// credentials service's own account, on its own one-permission role
+	// aiplatform.endpoints.predict, in the INSTALLATION's project — where the
+	// Vertex API is enabled, and not the Firebase project the row above lives
+	// in. The chain-serving model call goes out as this service (never as a
+	// job), so the account that already holds every model credential of the
+	// installation gains one call: a :rawPredict on one of this project's
+	// endpoints. It is not a custom role chosen loosely — roles/aiplatform.user
+	// would carry the platform's reads, the model registry, the tuning jobs and
+	// the pipelines, and this row is why they are not here. The permission
+	// carries no storage noun, no IAM write, no actAs and no token minting, and
+	// its target is the installation project rather than the runs bucket: no
+	// Vertex call writes an object, so this reaches neither fugaro/managed.json
+	// nor the owner's delete list. The role's whole list is pinned by
+	// internal/infra/tf's RolePermissions and by deploy/terraform's
+	// TestTheServiceVertexRoleIsItsOwn, and the gate (the service deployed AND
+	// the API enabled) is what keeps it off every other installation.
+	`google_project_iam_member | "projects/${var.project}/roles/fugaroCredentialsVertex" | project=var.project | google_service_account.credentials[0].member | for_each= | perms=aiplatform.endpoints.predict`,
 	// Reviewed for P5 (the public mobile service; D2782 as amended by F31, O1,
 	// O8): the second Cloud Run service of the credentials image, running beside
 	// the private one on the same switch, and the three rows that are the whole
