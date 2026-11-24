@@ -1273,7 +1273,7 @@ func runInit(r *initRun) error {
 		r.refreshLocalOptIn(path, publishedOptIn)
 		return r.printResult()
 	}
-	spec, err := installSpec(o, lc, r.warn)
+	spec, err := installSpec(o, lc, r.withheld)
 	if err != nil {
 		return err
 	}
@@ -2527,6 +2527,19 @@ func initErr(err error) error {
 func (r *initRun) warn(msg string) {
 	r.res.Warnings = append(r.res.Warnings, msg)
 	fmt.Fprintln(r.w, r.qs.Warning(msg))
+}
+
+// withheld is a write this run did not make: one line, what happened and what
+// is left for the operator, on the screen and in the result's warnings (the
+// field a reader outside this binary consumes), and the reason whole in the
+// run's log (D1352), which is where a reader who needs the repositories, the
+// workflow or the error the line cut goes — the short view and the whole
+// reason in the log is the converge's own rule (report.Options.Brief). A run
+// whose log could not be opened keeps the reason on the screen beside the line
+// rather than swallowing it (G5).
+func (r *initRun) withheld(line, why string) {
+	r.warn(line)
+	fmt.Fprintln(r.stageDetail(), why)
 }
 
 // printWorkflowWarnings prints what the workflows' deploy-time specs carry
@@ -5252,7 +5265,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// added on a second App — is refused by that function, and the repository
 	// stage is where every later update of such an installation would stop
 	// (installSpec).
-	inst, err := installSpec(o, lc, r.warn)
+	inst, err := installSpec(o, lc, r.withheld)
 	if err != nil {
 		return err
 	}

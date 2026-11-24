@@ -2434,7 +2434,7 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			// first apply's jobs carry the image the run started with. The same
 			// lag, and the same apply to close it, as the scheduled jobs beside
 			// them.
-			next, err := installSpec(e.r.o, e.lc, e.r.warn)
+			next, err := installSpec(e.r.o, e.lc, e.r.withheld)
 			if err != nil {
 				return err
 			}

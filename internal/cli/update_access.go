@@ -489,7 +489,7 @@ func (e *initEngine) migrateAccess(ctx context.Context, node accesslib.Node) (ac
 	// note names the same state as reachable) — and the refusal installOptions
 	// raises there is the two-GitHub-Apps message, whose remedy is the hand edit
 	// of fugaro.yaml this product never asks for (CLAUDE.md's HARD RULE).
-	spec, err := installSpec(e.r.o, e.lc, e.r.warn)
+	spec, err := installSpec(e.r.o, e.lc, e.r.withheld)
 	if err != nil {
 		return accesslib.Node{}, initErr(err)
 	}

@@ -111,16 +111,30 @@ func writtenDefaultEntry(t *testing.T) (config.Entry, bool) {
 }
 
 // withheldEntryLine is the one line this write prints when it writes nothing,
-// "" when it printed none: the reason and the repository it is about are in
-// that line, and an assertion over the whole output cannot tell it from the
+// "" when it printed none: what happened and what is left for the operator are
+// in that line, and an assertion over the whole output cannot tell it from the
 // lines about everything else the update did.
 func withheldEntryLine(out string) string {
 	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, "no default catalog entry was written") {
+		if strings.Contains(line, "no default catalog entry written") {
 			return line
 		}
 	}
 	return ""
+}
+
+// withheldEntryLineMax is the owner's rule of 2026-11-24: the warning a
+// withheld write prints is one line of about this many characters, and what it
+// cuts is in the run's log.
+const withheldEntryLineMax = 140
+
+// withheldEntryLog is the reason a withheld write is whole in: the line the
+// screen reads is short, and the repositories, the workflow and the refusal it
+// cut are here.
+func withheldEntryLog(t *testing.T) string {
+	t.Helper()
+	_, log := onlyLog(t, "update")
+	return log
 }
 
 // TestUpdateWritesTheDefaultEntryOnlyWhenEveryRepoIsAdmitted is S10's red step
@@ -282,6 +296,11 @@ func TestUpdateLeavesTheEntryAndSaysWhyForARepositoryTheProjectDoesNotAdmit(t *t
 // for a project whose list is the checkout's own alone, whatever admission
 // says: the node and the profile this run writes both admit the second
 // repository here, and the entry is still not written.
+//
+// The line the write prints names the repository and says nothing is left for
+// the operator (nothing about that project needs repairing), and the refusal
+// the entry would be the image of is in the run's log with it: the line is one
+// line (the owner's feedback of 2026-11-24).
 func TestUpdateLeavesTheEntryAndSaysWhyForARepositoryItDoesNotHold(t *testing.T) {
 	const sibling = "github/acme/other"
 	node := currentNode()
@@ -298,9 +317,13 @@ func TestUpdateLeavesTheEntryAndSaysWhyForARepositoryItDoesNotHold(t *testing.T)
 	if line == "" {
 		t.Errorf("this update wrote no default entry and says nothing about it, so the operator reads a project on the images it runs and not a project whose write was held back:\n%s", out)
 	}
+	if !strings.Contains(line, sibling) {
+		t.Errorf("the line this update prints about the entry does not name %s, the repository the write waits on:\n%s", sibling, out)
+	}
+	log := withheldEntryLog(t)
 	for _, want := range []string{sibling, "unbuiltOnBaked"} {
-		if !strings.Contains(line, want) {
-			t.Errorf("the line this update prints about the entry does not name %q, which is the repository the write waits on and the refusal the entry would be the image of:\n%s", want, out)
+		if !strings.Contains(log, want) {
+			t.Errorf("the log does not hold %q, which is the repository the write waits on and the refusal the entry would be the image of:\n%s", want, log)
 		}
 	}
 }
@@ -316,10 +339,10 @@ func TestUpdateLeavesTheEntryAndSaysWhyForARepositoryItDoesNotHold(t *testing.T)
 // base image without waiting would stop at the repository stage of this very
 // run, and every later update of that installation with it. What the run does
 // instead is leave the project exactly as it is, say which workflow holds the
-// write back, and converge: the workflows keep the per-repository images their
-// records show, and a later update writes the entry once a workflow names an
-// image of its own (or the repository's job is one the project's default may
-// serve).
+// write back and what to do about it, and converge: the workflows keep the
+// per-repository images their records show, and a later update writes the entry
+// once a workflow names an image of its own (or the repository's job is one the
+// project's default may serve).
 func TestUpdatePreviousVersionWithABakedWorkflowConvergesInOneUpdate(t *testing.T) {
 	r := newConvergeRig(t, staleNode(t))
 	onlyRepos(t, r)
@@ -339,9 +362,80 @@ func TestUpdatePreviousVersionWithABakedWorkflowConvergesInOneUpdate(t *testing.
 	if line == "" {
 		t.Errorf("this update wrote no default entry and says nothing about it, so the person reads a project on the images it runs and not a project whose write was held back:\n%s", out)
 	}
-	for _, want := range []string{"unbuiltOnBaked", "acme/app"} {
+	// The line names the workflow's repository and the remedy the operator
+	// takes (an image of the workflow's own), which is the action this write
+	// leaves them; the refusal behind it is in the log.
+	for _, want := range []string{"acme/app", "dockerfile"} {
 		if !strings.Contains(line, want) {
-			t.Errorf("the line this update prints about the entry does not name %q, which is the reason the write waits and the repository it is about:\n%s", want, out)
+			t.Errorf("the line this update prints about the entry does not name %q, which is the repository the write waits on and what the operator does about it:\n%s", want, out)
 		}
 	}
+	log := withheldEntryLog(t)
+	for _, want := range []string{"unbuiltOnBaked", "acme/app"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("the log does not hold %q, which is the reason the write waits and the repository it is about:\n%s", want, log)
+		}
+	}
+}
+
+// TestTheWithheldEntryWarningIsOneLineAndNamesTheAction is the owner's feedback
+// of 2026-11-24: the warning this write prints when it writes nothing was one
+// sentence of about 600 characters — the repository list, the per-repository
+// job, `checkout: baked`, unbuiltOnBaked, D1191 and the state the project keeps
+// — and "It's sooo LONG my eyes gloss over". What a person reads is one line of
+// at most withheldEntryLineMax characters that says what happened and what, if
+// anything, is left for them, and the facts it cut are in the run's log, which
+// is where the same run's whole reason is kept (D1352).
+//
+// Two states, because the two halves of the rule are not the same sentence: a
+// write that waits on a repository this machine holds no checkout of leaves the
+// operator nothing to do, and one that waits on the checkout's own workflow
+// names the remedy — an image of the workflow's own.
+func TestTheWithheldEntryWarningIsOneLineAndNamesTheAction(t *testing.T) {
+	t.Run("a repository this machine holds no checkout of", func(t *testing.T) {
+		const sibling = "github/acme/other"
+		node := currentNode()
+		node["allow_repos"] = []string{"github/acme/app", sibling}
+		r := ownImageRigNode(t, node)
+		onlyRepos(t, r, "acme/other")
+		out := convergeOn(t, r, []string{"policy-vs-jobs"})
+
+		line := oneWithheldEntryLine(t, out)
+		if !strings.Contains(line, "nothing to do") {
+			t.Errorf("the line leaves the operator with something to do, and a project whose write waits on a repository this checkout does not hold is one nothing about needs repairing: %q", line)
+		}
+		if !strings.Contains(line, sibling) {
+			t.Errorf("the line does not name %s, the repository the write waits on: %q", sibling, line)
+		}
+		if log := withheldEntryLog(t); !strings.Contains(log, sibling) || !strings.Contains(log, "unbuiltOnBaked") {
+			t.Errorf("the log does not hold the repository the line names and the refusal behind it, so the facts the line cut are nowhere:\n%s", log)
+		}
+	})
+	t.Run("a workflow of this checkout that writes no image of its own", func(t *testing.T) {
+		r := newConvergeRig(t, staleNode(t))
+		onlyRepos(t, r)
+		out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+		line := oneWithheldEntryLine(t, out)
+		if !strings.Contains(line, "dockerfile") {
+			t.Errorf("the line does not name what the operator does about the workflow that holds the write back, an image of the workflow's own: %q", line)
+		}
+	})
+}
+
+// oneWithheldEntryLine is the withheld write's one line, with the owner's rule
+// over it: exactly one line, and at most withheldEntryLineMax characters.
+func oneWithheldEntryLine(t *testing.T, out string) string {
+	t.Helper()
+	if n := strings.Count(out, "no default catalog entry written"); n != 1 {
+		t.Errorf("the run printed %d lines about the withheld catalog entry, want one:\n%s", n, out)
+	}
+	line := withheldEntryLine(out)
+	if line == "" {
+		t.Fatalf("the run wrote no default catalog entry and said nothing about it:\n%s", out)
+	}
+	if n := len(line); n > withheldEntryLineMax {
+		t.Errorf("the line is %d characters, want at most %d (the owner's feedback of 2026-11-24): %q", n, withheldEntryLineMax, line)
+	}
+	return line
 }
