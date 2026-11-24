@@ -1017,7 +1017,7 @@ func TestPolicySetsOnlyItsOwnKeys(t *testing.T) {
 	// alone and the node allows haiku and sonnet, so the run the job's own
 	// list would have refused goes through.
 	b = policyRun(t, gwConfig(t, ""), "off", "",
-		`{"version":9,"budget":{"mode":"off","allowed_models":["`+sonnet+`","`+haiku+`"]}}`, capScript(3)...)
+		`{"version":9,"budget":{"mode":"observe","allowed_models":["`+sonnet+`","`+haiku+`"]}}`, capScript(3)...)
 	b.deps.Spend = ceilingOf(t, runner.AllowedModelsEnv, haiku)
 	rec, err = b.run(t, implement("feature"), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded {
