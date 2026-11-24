@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -189,7 +190,100 @@ func TestPlanRigor(t *testing.T) {
 			t.Errorf("LayerEdits = %+v, Records = %v, want none: the map holds all the repositories the layer may", got.LayerEdits, got.Records)
 		}
 		for _, repo := range []string{"acme/empty", "acme/level"} {
-			wantLine(t, got, fmt.Sprintf("%s: the project layer already states the level of %d repositories, the most it may hold", repo, rigor.MaxRepoLevels))
+			wantLine(t, got, fmt.Sprintf("%s: defaults.rigor.repos is full: %d of the %d repositories it may hold", repo, rigor.MaxRepoLevels, rigor.MaxRepoLevels))
+		}
+	})
+
+	t.Run("the bound is spent by the plan's own writes", func(t *testing.T) {
+		// One update moves every repository at once, so a guard that read only
+		// the layer as it stood before the migration would let each repository
+		// pass on its own and the published layer hold more than the loader
+		// accepts. The layer has room for exactly one of the three.
+		var b strings.Builder
+		b.WriteString("defaults:\n  rigor:\n    repos:\n")
+		for i := range rigor.MaxRepoLevels - 1 {
+			fmt.Fprintf(&b, "      acme/r%d: pro\n", i)
+		}
+		got := planRigor(t, Project{Layer: layerTree(t, b.String())}, []Repo{
+			repoWith(t, "acme/a", "rigor: {}\n"),
+			repoWith(t, "acme/b", "rigor: {}\n"),
+			repoWith(t, "acme/c", "rigor: {}\n"),
+		})
+		if n := len(got.LayerEdits); n != 1 {
+			t.Errorf("LayerEdits = %+v, want the one the layer still has room for", got.LayerEdits)
+		}
+		if want := []string{slugOf(t, "acme/a")}; !slices.Equal(got.Records, want) {
+			t.Errorf("Records = %v, want %v: a repository the item wrote nothing for is not migrated (D3305)", got.Records, want)
+		}
+		full := fmt.Sprintf("defaults.rigor.repos is full: %d of the %d repositories it may hold", rigor.MaxRepoLevels, rigor.MaxRepoLevels)
+		wantLine(t, got, "acme/b: "+full)
+		wantLine(t, got, "acme/c: "+full)
+	})
+
+	t.Run("the bound is spent by the plan's own areas", func(t *testing.T) {
+		// The same for the rules: the layer holds one less than MaxAreas, the
+		// first repository's rule fits and the second's does not, and the rule
+		// that does not is the one left out — a published layer with one rule
+		// too many is one no run of the project can read.
+		var b strings.Builder
+		b.WriteString("defaults:\n  rigor:\n    areas:\n")
+		for i := range rigor.MaxAreas - 1 {
+			fmt.Fprintf(&b, "      - name: rule%d\n        match: r%d/**\n        level: pro\n", i, i)
+		}
+		got := planRigor(t, Project{Layer: layerTree(t, b.String())}, []Repo{
+			repoWith(t, "acme/a", "rigor:\n  areas:\n    - name: ui\n      match: ui/**\n      level: poc\n"),
+			repoWith(t, "acme/b", "rigor:\n  areas:\n    - name: api\n      match: api/**\n      level: poc\n"),
+		})
+		if n := len(got.LayerEdits); n != 1 {
+			t.Errorf("LayerEdits = %+v, want the one the layer still has room for", got.LayerEdits)
+		}
+		wantLine(t, got, fmt.Sprintf("acme/b: its 1 areas would leave the project layer with %d, more than the %d it may hold", rigor.MaxAreas+1, rigor.MaxAreas))
+	})
+
+	t.Run("a rule whose match is no path", func(t *testing.T) {
+		// An alternation and a character class are globs the layer accepts and
+		// no path spells, so the glob's own text is no sample of it: asked
+		// about that text, the rule is not in effect and the level change at
+		// the paths it is there for goes unnamed (R5).
+		got := planRigor(t, Project{Layer: layerTree(t, `defaults:
+  rigor:
+    areas:
+      - name: shell
+        members:
+          - repo: acme/app
+            paths: ["{ui,mobile}/**"]
+        level: startup
+      - name: tests
+        members:
+          - repo: acme/app
+            paths: ["[abc]/**"]
+        level: critical
+`)}, []Repo{
+			repoWith(t, "acme/app", "rigor:\n  areas:\n    - name: aliases\n      match: \"{ui,mobile}/**\"\n      level: poc\n    - name: classes\n      match: \"[abc]/**\"\n      level: startup\n"),
+		})
+		wantLine(t, got, "acme/app: {ui,mobile}/** poc -> startup")
+		wantLine(t, got, "acme/app: [abc]/** startup -> critical")
+		// And the invariant every sample rests on, over the shapes a glob
+		// takes: it is a path the glob itself covers, so the matcher the
+		// resolver uses puts the rule in effect for it.
+		for pattern, want := range map[string]string{
+			"ui/**":            "ui/**",
+			"src/{a,b}/*.go":   "src/a/*.go",
+			"{{a,b},c}/**":     "a/**",
+			"{a}/{b,c}/*":      "a/b/*",
+			"[abc]/**":         "a/**",
+			"[a-z]/**":         "a/**",
+			"[!abc]/**":        "d/**",
+			"[!a-z]/**":        "0/**",
+			`\{ui,mobile\}/**`: `{ui,mobile}/**`,
+		} {
+			sample := samplePath(pattern)
+			if sample != want {
+				t.Errorf("samplePath(%q) = %q, want %q", pattern, sample, want)
+			}
+			if ok, err := doublestar.Match(pattern, sample); err != nil || !ok {
+				t.Errorf("samplePath(%q) = %q, which the glob does not cover (%v)", pattern, sample, err)
+			}
 		}
 	})
 

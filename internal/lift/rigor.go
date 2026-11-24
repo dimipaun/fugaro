@@ -71,6 +71,7 @@ func PlanRigor(p Project, repos []Repo) (Change, error) {
 	for _, a := range project.Areas {
 		taken[a.Name] = true
 	}
+	size := layerSize{areas: len(project.Areas), repos: len(project.Repos)}
 	var out Change
 	seen := map[string]bool{}
 	for _, r := range sortedRepos(repos) {
@@ -98,11 +99,11 @@ func PlanRigor(p Project, repos []Repo) (Change, error) {
 			out.Lines = append(out.Lines, stillWritten(r.Repo, r.Config)...)
 			continue
 		}
-		if msg := notMovable(project, mine, r.Repo); msg != "" {
+		if msg := notMovable(project, mine, r.Repo, size); msg != "" {
 			out.Lines = append(out.Lines, leftAlone(r.Repo, fmt.Errorf("%s", msg)))
 			continue
 		}
-		out = moveRepoRigor(out, project, mine, r.Repo, slug, taken)
+		out = moveRepoRigor(out, project, mine, r.Repo, slug, taken, &size)
 	}
 	return out, nil
 }
@@ -208,7 +209,7 @@ func layerValue(tree map[string]any, path ...string) any {
 // block, "" when it can. It answers for the whole block rather than for one
 // key of it: release A drops the block's keys together, so moving the part
 // this item can read would lose the part it cannot.
-func notMovable(project config.LayerRigor, mine repoRigor, repo string) string {
+func notMovable(project config.LayerRigor, mine repoRigor, repo string, size layerSize) string {
 	if mine.def != "" && !rigor.Known(mine.def) {
 		return fmt.Sprintf("rigor.default %q is not one of %s", mine.def, rigor.RigorList())
 	}
@@ -217,7 +218,7 @@ func notMovable(project config.LayerRigor, mine repoRigor, repo string) string {
 			return fmt.Sprintf("rigor.areas[%d]: %s", i, msg)
 		}
 	}
-	if n := len(project.Areas) + len(mine.areas); n > rigor.MaxAreas {
+	if n := size.areas + len(mine.areas); n > rigor.MaxAreas {
 		return fmt.Sprintf("its %d areas would leave the project layer with %d, more than the %d it may hold", len(mine.areas), n, rigor.MaxAreas)
 	}
 	// Both writes below add a defaults.rigor.repos key — the default branch, and
@@ -225,10 +226,22 @@ func notMovable(project config.LayerRigor, mine repoRigor, repo string) string {
 	// has to leave the map room: validateRigorRepos refuses the layer one entry
 	// over the bound, and a published layer every run then fails to load is
 	// worse than a repository this item names and leaves alone.
-	if (mine.def != "" || len(mine.areas) == 0) && !hasRepoLevel(project, repo) && len(project.Repos) >= rigor.MaxRepoLevels {
-		return fmt.Sprintf("the project layer already states the level of %d repositories, the most it may hold", len(project.Repos))
+	if (mine.def != "" || len(mine.areas) == 0) && !hasRepoLevel(project, repo) && size.repos >= rigor.MaxRepoLevels {
+		return fmt.Sprintf("defaults.rigor.repos is full: %d of the %d repositories it may hold, counting the ones this run moves", size.repos, rigor.MaxRepoLevels)
 	}
 	return ""
+}
+
+// layerSize is what the project layer's defaults.rigor holds, as this item
+// spends it: the rules and the repository levels the layer will carry once the
+// writes planned so far have landed. The guards read this and not the layer as
+// it stood before the migration, because one update moves many repositories:
+// the bound is the loader's own (config.validateRigor, validateRigorRepos), and
+// a layer the loader refuses is one every run of the project then fails to
+// read, so the last repository planned must see what the first one wrote.
+type layerSize struct {
+	areas int
+	repos int
 }
 
 // hasRepoLevel reports whether the project layer answers for repo's whole
@@ -241,7 +254,7 @@ func hasRepoLevel(project config.LayerRigor, repo string) bool {
 // moveRepoRigor appends one repository's move to out: the layer writes, the
 // lines a person reads, and — where it wrote anything — the slug the migration
 // record is written under once those writes have landed (D3305).
-func moveRepoRigor(out Change, project config.LayerRigor, mine repoRigor, repo, slug string, taken map[string]bool) Change {
+func moveRepoRigor(out Change, project config.LayerRigor, mine repoRigor, repo, slug string, taken map[string]bool, size *layerSize) Change {
 	before := rigor.Config{
 		Project:      project.Default,
 		ProjectAreas: project.Areas,
@@ -272,6 +285,7 @@ func moveRepoRigor(out Change, project config.LayerRigor, mine repoRigor, repo, 
 		})
 		out.Lines = append(out.Lines, fmt.Sprintf("%s: rigor.default %s -> defaults.rigor.repos.%s", repo, mine.def, repo))
 		after.ProjectRepos[repo] = mine.def
+		size.repos++
 		wrote = true
 	case len(mine.areas) == 0 && hasEntry:
 		out.Lines = append(out.Lines, fmt.Sprintf("%s: an empty rigor: block; the project's defaults.rigor.repos.%s (%s) stands", repo, repo, kept))
@@ -283,6 +297,7 @@ func moveRepoRigor(out Change, project config.LayerRigor, mine repoRigor, repo, 
 		})
 		out.Lines = append(out.Lines, fmt.Sprintf("%s: an empty rigor: block -> defaults.rigor.repos.%s (%s), the level it resolves to today", repo, repo, lvl))
 		after.ProjectRepos[repo] = lvl
+		size.repos++
 		wrote = true
 	}
 	for _, a := range mine.areas {
@@ -308,6 +323,7 @@ func moveRepoRigor(out Change, project config.LayerRigor, mine repoRigor, repo, 
 			Level:   a.Level,
 		})
 		out.Lines = append(out.Lines, areaLine(repo, a, name))
+		size.areas++
 		wrote = true
 	}
 	out.Lines = append(out.Lines, levelChangeLines(repo, before, after, project.Areas, mine.areas)...)
@@ -406,12 +422,11 @@ const probePath = "fugaro-lift-probe"
 // migration is about to do to each of their repositories.
 //
 // The paths compared are the ones that can decide differently, one per rule
-// that can be in effect for this repository: each moved rule's own match (a
-// glob matches itself, so the rule is in effect for it), each path a project
-// area names this repository at, and one probe for the paths no rule covers.
-// Nothing else can move: a project-wide area is read at the same rank before
-// and after, and every rule of the repository's own file is one of the moved
-// ones.
+// that can be in effect for this repository: a path inside each moved rule's
+// match, a path inside each glob a project area names this repository at, and
+// one probe for the paths no rule covers. Nothing else can move: a
+// project-wide area is read at the same rank before and after, and every rule
+// of the repository's own file is one of the moved ones.
 func levelChangeLines(repo string, before, after rigor.Config, projectAreas, moved []rigor.Area) []string {
 	var out []string
 	for _, p := range probePaths(repo, projectAreas, moved) {
@@ -424,13 +439,151 @@ func levelChangeLines(repo string, before, after rigor.Config, projectAreas, mov
 	return out
 }
 
+// samplePath is one path a doublestar glob covers. The glob's own text is one
+// only while no alternation and no character class is in it: the matcher reads
+// `ui/**` as the path "ui/**", but `{ui,mobile}/**` and `[abc]/**` are paths no
+// file has, so a rule carrying one is asked about a path it does not cover and
+// its level change goes unnamed (R5). The first alternative of each group and
+// the first member of each class stand in for them, which expands to a path the
+// glob really does cover.
+func samplePath(pattern string) string {
+	var b strings.Builder
+	for i := 0; i < len(pattern); i++ {
+		switch c := pattern[i]; c {
+		case '\\':
+			// An escape stands for the character after it, which is the
+			// character the path spells.
+			if i+1 < len(pattern) {
+				i++
+				b.WriteByte(pattern[i])
+				continue
+			}
+			b.WriteByte(c)
+		case '{':
+			end := closingBrace(pattern, i)
+			if end < 0 {
+				b.WriteByte(c)
+				continue
+			}
+			b.WriteString(samplePath(firstAlternative(pattern[i+1 : end])))
+			i = end
+		case '[':
+			end := strings.IndexByte(pattern[i+1:], ']')
+			if end < 0 {
+				b.WriteByte(c)
+				continue
+			}
+			end += i + 1
+			member := classSample(pattern[i+1 : end])
+			if member == "" {
+				b.WriteByte(c)
+				continue
+			}
+			b.WriteString(member)
+			i = end
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
+// classCandidate is what a class's sample is picked from — the characters the
+// patterns of a layer name — so a class that covers every one of them has no
+// sample and the caller keeps the pattern's own text.
+const classCandidate = "abcdefghijklmnopqrstuvwxyz0123456789_-.~"
+
+// classSample is one character the character class body covers: its first
+// member, and for a negated class (a leading ! or ^) the first candidate the
+// class leaves out, which is the only kind of member a negated class has. A
+// body naming nothing — the class an unclosed [ leaves, which doublestar's
+// validation refuses before a rule reaches the layer — answers "".
+func classSample(body string) string {
+	if body == "" {
+		return ""
+	}
+	negated := body[0] == '!' || body[0] == '^'
+	if negated {
+		body = body[1:]
+		for i := 0; i < len(classCandidate); i++ {
+			if !classNames(body, classCandidate[i]) {
+				return string(classCandidate[i])
+			}
+		}
+		return ""
+	}
+	return string(body[0])
+}
+
+// classNames reports whether the class body names c, ranges included.
+func classNames(body string, c byte) bool {
+	for i := 0; i < len(body); i++ {
+		switch {
+		case i+2 < len(body) && body[i+1] == '-':
+			if body[i] <= c && c <= body[i+2] {
+				return true
+			}
+			i += 2
+		case body[i] == c:
+			return true
+		}
+	}
+	return false
+}
+
+// closingBrace is the index of the brace closing the group opened at i, or -1
+// when the pattern has none: doublestar's own validation refuses such a glob
+// before a rule reaches the layer, and a literal brace is the safe reading of
+// one that got here anyway.
+func closingBrace(pattern string, i int) int {
+	depth := 0
+	for j := i; j < len(pattern); j++ {
+		switch pattern[j] {
+		case '\\':
+			j++
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return j
+			}
+		}
+	}
+	return -1
+}
+
+// firstAlternative is a group's body up to its first comma at the group's own
+// depth: the first of the paths the group spells, a nested group's commas
+// belonging to it.
+func firstAlternative(body string) string {
+	depth := 0
+	for j := 0; j < len(body); j++ {
+		switch body[j] {
+		case '\\':
+			j++
+		case '{', '[':
+			depth++
+		case '}', ']':
+			depth--
+		case ',':
+			if depth == 0 {
+				return body[:j]
+			}
+		}
+	}
+	return body
+}
+
 type probe struct {
 	label string
 	paths []string
 }
 
 // probePaths is the paths above, deduplicated by label: two rules with one
-// match text decide the same level for it, so one comparison says it.
+// match text decide the same level for it, so one comparison says it. Each is
+// a sample of the glob and not the glob's own text, which the matcher reads as
+// a path only when the glob carries no alternation and no character class.
 func probePaths(repo string, projectAreas, moved []rigor.Area) []probe {
 	seen := map[string]bool{}
 	var out []probe
@@ -442,7 +595,7 @@ func probePaths(repo string, projectAreas, moved []rigor.Area) []probe {
 		out = append(out, probe{label: label, paths: paths})
 	}
 	for _, a := range moved {
-		add(a.Match, []string{a.Match})
+		add(a.Match, []string{samplePath(a.Match)})
 	}
 	for _, a := range projectAreas {
 		for _, m := range a.Members {
@@ -450,7 +603,7 @@ func probePaths(repo string, projectAreas, moved []rigor.Area) []probe {
 				continue
 			}
 			for _, p := range m.Paths {
-				add(p, []string{p})
+				add(p, []string{samplePath(p)})
 			}
 		}
 	}
