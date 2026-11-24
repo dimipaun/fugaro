@@ -285,8 +285,13 @@ func New(t *testing.T, cfg string, spec *task.Spec) *Harness {
 		// stop on that instead of on what the test is about.
 		spec = Task()
 	}
-	if pins != "" && spec.ProjectLayer == nil {
-		spec.ProjectLayer = Layer(pins)
+	if pins != "" {
+		if spec.ProjectLayer == nil {
+			spec.ProjectLayer = Layer(pins)
+		} else {
+			merged := testutil.MergePins(spec.ProjectLayer.YAML, pins)
+			spec.ProjectLayer = &task.ProjectLayer{SHA256: config.LayerSum([]byte(merged)), Generation: spec.ProjectLayer.Generation, YAML: merged}
+		}
 	}
 	store := runstore.Open(bucket, repoSlug, spec.RunID)
 	if err := store.WriteTask(context.Background(), spec); err != nil {

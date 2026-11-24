@@ -115,3 +115,53 @@ agent:
 		}
 	}
 }
+
+// TestTakeFilePinsMovesRigorAndTheGrades: the level, the areas and the grades'
+// models lift with the models (S1, D3237 B11 and L13), the blocks the lift
+// emptied go out with them — a migrated file carries no rigor: line — and what
+// is not lifted stays where the test put it.
+func TestTakeFilePinsMovesRigorAndTheGrades(t *testing.T) {
+	file, layer := TakeFilePins(`version: 1
+project: aurora
+agent:
+  auth: api-key
+rigor:
+  default: startup
+  areas:
+    - { name: payments, match: "internal/payments/**", level: critical }
+model_grades:
+  strong: { model: claude-opus-5, access: work }
+`)
+	if strings.Contains(file, "rigor:") || strings.Contains(file, "claude-opus-5") {
+		t.Errorf("the file still names a lifted key:\n%s", file)
+	}
+	if !strings.Contains(file, "access: work") {
+		t.Errorf("the file lost a key of its own:\n%s", file)
+	}
+	for _, want := range []string{"rigor:", "default: startup", "areas:", "payments", "internal/payments/**",
+		"level: critical", "model_grades:", "strong:", "model: claude-opus-5"} {
+		if !strings.Contains(layer, want) {
+			t.Errorf("the layer does not carry %q:\n%s", want, layer)
+		}
+	}
+	if strings.Contains(layer, "access: work") {
+		t.Errorf("the layer carries a key that did not lift:\n%s", layer)
+	}
+	if !strings.Contains(layer, "coder: claude-sonnet-5-5") {
+		t.Errorf("the layer names no model to price the run with:\n%s", layer)
+	}
+}
+
+// TestTakeFilePinsLeavesAnEmptyRigorBlock: R2's opt-in is a rigor: block a
+// repository writes with nothing in it, and it stays — the lift takes out only
+// the blocks it emptied itself.
+func TestTakeFilePinsLeavesAnEmptyRigorBlock(t *testing.T) {
+	file, _ := TakeFilePins(`version: 1
+project: aurora
+agent: { auth: api-key, model: claude-sonnet-5-5 }
+rigor: {}
+`)
+	if !strings.Contains(file, "rigor: {}") {
+		t.Errorf("the file lost the empty block it wrote:\n%s", file)
+	}
+}

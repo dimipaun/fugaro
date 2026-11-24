@@ -205,6 +205,17 @@ func oauthEnv(h *harness) {
 	h.deps.Env = append(filterEnv(h.deps.Env, "ANTHROPIC_API_KEY"), "CLAUDE_CODE_OAUTH_TOKEN="+oauthToken)
 }
 
+// withPins is the task's project layer with the pins in it: the harness's own
+// when the task carries none, and the test's own layer with the pins merged
+// when it carries one that names no model (testutil.MergePins).
+func withPins(pl *task.ProjectLayer, pins string) *task.ProjectLayer {
+	if pl == nil {
+		return &task.ProjectLayer{SHA256: config.LayerSum([]byte(pins)), Generation: 3, YAML: pins}
+	}
+	merged := testutil.MergePins(pl.YAML, pins)
+	return &task.ProjectLayer{SHA256: config.LayerSum([]byte(merged)), Generation: pl.Generation, YAML: merged}
+}
+
 // newHarnessFiles is newHarness with extra files committed to the remote.
 func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string]string) *harness {
 	t.Helper()
@@ -238,8 +249,8 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 		// would stop on that instead of on what it is about.
 		spec = &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature"}
 	}
-	if pins != "" && spec.ProjectLayer == nil {
-		spec.ProjectLayer = &task.ProjectLayer{SHA256: config.LayerSum([]byte(pins)), Generation: 3, YAML: pins}
+	if pins != "" {
+		spec.ProjectLayer = withPins(spec.ProjectLayer, pins)
 	}
 	store := runstore.Open(bucket, repoSlug, spec.RunID)
 	if err := store.WriteTask(context.Background(), spec); err != nil {
