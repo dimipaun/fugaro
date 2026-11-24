@@ -429,6 +429,7 @@ func appendProjectConfig(t *testing.T, path, yaml string) {
 // the file this follow-up reads sets nothing.
 func TestBaseBranchOnAFollowUp(t *testing.T) {
 	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+baseBranchSince)
 	root := firstRunSpec(rootID)
 	root.Ref, root.BaseBranch = "master", "master"
 	seedSpec(t, f, root, false)

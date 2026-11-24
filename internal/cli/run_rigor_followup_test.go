@@ -154,6 +154,7 @@ func TestStoredFollowUpKeepsAHotfixRequest(t *testing.T) {
 	seedRootRigor(t, f, rootID, rigor.Pro)
 	writeBuildRecord(t, f, appSlug, "web", release0111)
 	fu := followUpSpec(fuID, rootID, rootID, 7)
+	fu.Title = "Follow-up of the fixture's chain"
 	fu.Rigor = rigor.Hotfix
 	seedSpec(t, f, fu, false)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID); err != nil {
@@ -243,6 +244,7 @@ func TestStoredFollowUpKeepsARaise(t *testing.T) {
 	// has to be one whose runner acts on levels (reviewLevelsSince).
 	writeBuildRecord(t, f, appSlug, "web", release0160)
 	fu := followUpSpec(fuID, rootID, rootID, 7)
+	fu.Title = "Follow-up of the fixture's chain"
 	fu.Rigor = rigor.Critical
 	seedSpec(t, f, fu, false)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID); err != nil {
