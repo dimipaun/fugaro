@@ -94,7 +94,7 @@ import type {
  * **There is no `replaceChildren` and no `disabled`.** The entry's wrapper has
  * neither, and a screen that cleared its own tree would own a rewrite of what a
  * section may do to a panel. So an attempt is drawn **beside** the attempt before
- * it rather than over it (`drawAttempt`), and a control is never disabled: the
+ * it rather than over it (`send`), and a control is never disabled: the
  * submit's own rule -- an unanswered required question sends nothing -- is the
  * refusal the operator reads, drawn in the same place wherever it happens.
  */
@@ -152,9 +152,12 @@ function text(
 // ---------------------------------------------------------------------------
 
 /** WIZARD_CLASS is the screen's root, and the four classes under it are its
- * parts: the heading, the lead sentence, the questions and the answers area. */
+ * parts: the lead sentence, the questions and the answers area. There is no
+ * heading among them: **the heading is the caller's**. The onboarding view
+ * already draws one above this screen (`ONBOARDING_COPY`'s title, and the
+ * picker draws the same words), and a wizard that drew its own would be two
+ * headings saying one thing. */
 export const WIZARD_CLASS = 'console-wizard'
-export const WIZARD_TITLE_CLASS = 'console-wizard-title'
 export const WIZARD_LEAD_CLASS = 'console-wizard-lead'
 export const WIZARD_QUESTIONS_CLASS = 'console-wizard-questions'
 
@@ -175,9 +178,11 @@ export const WIZARD_OPTION_CLASS = 'console-wizard-option'
  * keystroke that meant something else. */
 export const WIZARD_SUBMIT_CLASS = 'console-wizard-submit'
 
-/** WIZARD_ANSWER_CLASS is where a sentence about the press goes -- the console's
- * own refusal of an unanswered question, or a gap's sentence -- and it is outside
- * the attempt, because it is about the form rather than about a run. */
+/** WIZARD_ANSWER_CLASS is one sentence about an outcome -- the console's own
+ * refusal of an unanswered question above the attempts, and, inside an attempt,
+ * that press's own outcome -- and it is never a text slot a document's string is
+ * written into raw: a sentence the CLI wrote goes through `putText`'s class
+ * (`text`), and the rest are this file's own words. */
 export const WIZARD_ANSWER_CLASS = 'console-wizard-answer'
 
 /** WIZARD_ATTEMPTS_CLASS is the container every attempt is drawn into, and
@@ -219,12 +224,10 @@ export const WIZARD_COPY_REFUSAL_CLASS = 'console-wizard-copy-refusal'
 /** WIZARD_FOLLOW_CLASS is the press that asks main for the apply's own feed. */
 export const WIZARD_FOLLOW_CLASS = 'console-wizard-follow'
 
-/** WIZARD_TITLE, WIZARD_LEAD and WIZARD_FOLLOW_LEAD are the console's own words
- * for this screen. They are not the CLI's sentences and not the onboarding
- * copy's: `installations.ts`'s `ONBOARDING_COPY` is the picker's too, and the
- * sentence that introduces a command line is not the sentence that introduces a
- * form. */
-export const WIZARD_TITLE = 'Set up your first installation'
+/** WIZARD_LEAD and WIZARD_FOLLOW_LEAD are the console's own words for this
+ * screen. They are not the CLI's sentences and not the onboarding copy's:
+ * `installations.ts`'s `ONBOARDING_COPY` is the picker's too, and the sentence
+ * that introduces a command line is not the sentence that introduces a form. */
 export const WIZARD_LEAD =
   'Answer these five questions and the console runs the setup for you. It asks for no secret and opens no terminal at all: every step that needs a person comes back below as a line for you to run.'
 export const WIZARD_FOLLOW_LEAD =
@@ -459,7 +462,6 @@ export function drawWizard(deps: WizardDeps): WizardElement {
   const paint = deps.paint ?? NODE_PAINT
 
   const root = make(factory, 'section', WIZARD_CLASS)
-  root.append(literal(make(factory, 'h2', WIZARD_TITLE_CLASS), WIZARD_TITLE))
   root.append(literal(make(factory, 'p', WIZARD_LEAD_CLASS), WIZARD_LEAD))
 
   const questions = make(factory, 'div', WIZARD_QUESTIONS_CLASS)

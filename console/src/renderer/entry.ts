@@ -92,7 +92,8 @@ import { putReading, putText, startConsole } from './app'
 import { ONBOARDING_COPY } from './installations'
 import { newOpsFrom } from './new-bridge'
 import { readStream } from './stream'
-import type { StreamWhole } from './stream'
+import type { StreamPaint, StreamWhole } from './stream'
+import { drawWizard } from './wizard/wizard'
 import type { NewOps, NewOpsReply, SettingsEditorOutcome } from '../shared/new-ops'
 import { readGate } from './gating'
 import { disabledWrite } from './writes'
@@ -1887,10 +1888,61 @@ export const ONBOARDING_BODY_CLASS = 'installation-onboarding-body'
 export const ONBOARDING_REASON_CLASS = 'installation-onboarding-reason'
 export const ONBOARDING_COMMAND_CLASS = 'installation-onboarding-command'
 
+/**
+ * clipboardCopy is the clipboard the wizard's Copy buttons hand their text to,
+ * built from the navigator this window was given and never from a global -- a
+ * case drives it, and a window that withheld it is not a crash. A navigator
+ * with no `clipboard.writeText` (a document under plain Node, an Electron window
+ * with the permission off) copies nothing at all: the command is drawn beside
+ * the button either way, so a clipboard nobody has costs the operator a
+ * selection and never the text.
+ *
+ * A write that rejects is swallowed **on purpose**: the console has no place to
+ * report a clipboard failure that would not be noise under a line the operator
+ * can already read, and an unhandled rejection would be a renderer error for a
+ * fact with no consequence.
+ */
+export function clipboardCopy(navigator: unknown): (text: string) => void {
+  const scope = navigator as { clipboard?: { writeText?: unknown } } | null | undefined
+  const clipboard = scope?.clipboard
+  const write = clipboard?.writeText
+  if (clipboard === undefined || typeof write !== 'function') return () => {}
+  const text = write as (value: string) => unknown
+  return (value: string): void => {
+    void Promise.resolve(text.call(clipboard, value)).catch(() => {})
+  }
+}
+
+/** OnboardingDeps is what the first-installation screen needs to draw the
+ * wizard instead of the command line: the console's door to the operations
+ * (`setup.plan` and `setup.apply`, SW3a), the clipboard a `left_for_you` line's
+ * Copy hands its text to, and the clock the feed is drawn on. All three are the
+ * caller's -- this file spawns nothing, copies nothing and owns no timer -- and
+ * a caller with none (a case, a window that never built its bridge) gets the
+ * command line this view has always drawn. */
+export interface OnboardingDeps {
+  readonly ops: NewOps
+  readonly copy: (text: string) => void
+  readonly paint?: StreamPaint
+}
+
 /** drawOnboarding is the main area of a console with no installation: the
  * picker's own words for the screen (`ONBOARDING_COPY`), the resolution's
- * sentence when the CLI is missing, and the one command from the main process. */
-export function drawOnboarding(surface: DomSurface, onboarding: RailOnboarding): SkewElement {
+ * sentence when the CLI is missing, and -- for a machine whose CLI is there and
+ * has no installation -- either the one command from the main process or, when
+ * the caller can drive the operations, the wizard (SW3b, D2904).
+ *
+ * **The wizard takes the place of the body and the command.** The body's own
+ * sentence introduces a command for the operator to run ("Create one with:"),
+ * which is not what happens when the console asks `setup.plan` itself, so the
+ * two go together and the wizard is drawn in their place. The title stays: it is
+ * the heading this screen shares with the picker, and the wizard draws none of
+ * its own. */
+export function drawOnboarding(
+  surface: DomSurface,
+  onboarding: RailOnboarding,
+  deps?: OnboardingDeps,
+): SkewElement {
   const factory = surface.factory
   const copy = ONBOARDING_COPY[onboarding.kind]
   const section = factory.create('section')
@@ -1899,16 +1951,31 @@ export function drawOnboarding(surface: DomSurface, onboarding: RailOnboarding):
   title.setAttribute('class', ONBOARDING_TITLE_CLASS)
   title.textContent = copy.title
   section.append(title)
-  const body = factory.create('p')
-  body.setAttribute('class', ONBOARDING_BODY_CLASS)
-  body.textContent = copy.body
-  section.append(body)
   if (onboarding.reason !== '') {
     const reason = factory.create('p')
     reason.setAttribute('class', ONBOARDING_REASON_CLASS)
     reason.textContent = onboarding.reason
     section.append(reason)
   }
+  if (onboarding.kind === 'first-installation' && deps !== undefined) {
+    const wizard = drawWizard({
+      factory,
+      plan: (request) => deps.ops.planSetup(request),
+      apply: (request) => deps.ops.applySetup(request),
+      copy: deps.copy,
+      ...(deps.paint === undefined ? {} : { paint: deps.paint }),
+    })
+    // The wizard's own factory is this document's, so the element it answers is
+    // one of this section's children -- the two surfaces' `append` are the same
+    // call on the same node, and `WizardElement` says only that this module
+    // touches no more of it than a wizard needs.
+    section.append(wizard as unknown as SkewElement)
+    return section
+  }
+  const body = factory.create('p')
+  body.setAttribute('class', ONBOARDING_BODY_CLASS)
+  body.textContent = copy.body
+  section.append(body)
   const command = factory.create('code')
   command.setAttribute('class', ONBOARDING_COMMAND_CLASS)
   command.textContent = onboarding.command
@@ -7814,11 +7881,18 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   }
 
   /** showOnboarding puts the first-run screen in the main area: no
-   * installation, so nothing to read and no Live refusal in its place. */
+   * installation, so nothing to read and no Live refusal in its place. The
+   * wizard's own two operations and its clipboard are handed in here, where the
+   * console's door to them (`ops`) and the window's navigator are. */
   const showOnboarding = (onboarding: RailOnboarding): void => {
     markCurrent('onboarding')
     rail.view(null)
-    replace(drawOnboarding(surface, onboarding))
+    replace(
+      drawOnboarding(surface, onboarding, {
+        ops,
+        copy: clipboardCopy(navigator),
+      }),
+    )
   }
 
   /** forgetLive drops what the Live screen held for the installation the
