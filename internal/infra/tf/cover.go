@@ -46,28 +46,20 @@ var allowedTypes = map[string]bool{
 	// confirmation covers can carry them. What the compute stage does run
 	// over its own plan is GrantsNotCovered: the grant rules below, the
 	// launchers' Batch Job Editor condition among them.
-	"google_compute_firewall":              true,
-	"google_compute_router":                true,
-	"google_compute_router_nat":            true,
-	"google_firebase_database_instance":    true,
-	"google_firebase_project":              true,
-	"google_logging_log_view":              true,
-	"google_logging_log_view_iam_member":   true,
-	"google_logging_project_bucket_config": true,
-	"google_logging_project_exclusion":     true,
-	"google_logging_project_sink":          true,
-	// The consumer's signing key (mobile-identity-pairing plan task J6; O17):
-	// the ring, the one Ed25519 key in it, and the single grant that lets the
-	// mailbox consumer sign with it through Cloud KMS. mailbox_key.tf declares
-	// all three, the key and the ring behind the pairing front end's or the
-	// resident orchestrator's switch and the grant behind the account's own —
-	// so an installation that has opted into neither plans none of them
-	// (TestMailboxKeyIsTheOptInsAlone). The grant is the type this table has a
-	// row for: mailboxSignerGrant is what closes its cell to this
-	// installation's one key, the signer's role and the consumer's account.
+	"google_compute_firewall":           true,
+	"google_compute_router":             true,
+	"google_compute_router_nat":         true,
+	"google_firebase_database_instance": true,
+	"google_firebase_project":           true,
+	// The consumer's signing key's three types (plan task J6; O17).
 	"google_kms_crypto_key":                   true,
 	"google_kms_crypto_key_iam_member":        true,
 	"google_kms_key_ring":                     true,
+	"google_logging_log_view":                 true,
+	"google_logging_log_view_iam_member":      true,
+	"google_logging_project_bucket_config":    true,
+	"google_logging_project_exclusion":        true,
+	"google_logging_project_sink":             true,
 	"google_monitoring_alert_policy":          true,
 	"google_monitoring_notification_channel":  true,
 	"google_project_iam_custom_role":          true,

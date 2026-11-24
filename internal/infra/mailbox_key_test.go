@@ -16,7 +16,7 @@ import (
 )
 
 // mailbox_key.tf is the module J6 adds (mobile-identity-pairing plan task J6;
-// O17 of docs/mobile-identity-pairing/reconciliation.md), and it is held to the
+// O17 of the pairing reconciliation), and it is held to the
 // design from three ends by this file: its own text (the names, the purpose and
 // the one permission list, which are what internal/mailbox's signer and
 // internal/infra/tf's cover read), a REAL plan of the embedded installation root
