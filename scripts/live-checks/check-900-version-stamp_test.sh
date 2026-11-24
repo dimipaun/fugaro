@@ -525,6 +525,24 @@ test_an_agent_session_is_refused() {
   [ ! -s "$CALLS" ] || fail "an agent session: it called something: $(head -c 400 "$CALLS")"
 }
 
+# A `bash -x` trace of this check would carry the access token it mints, so a
+# shell that arrived tracing is refused before any call — the guard every
+# sibling live check that mints one carries.
+test_a_traced_shell_is_refused() {
+  case_dir xtrace
+  status=0
+  out=$(env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE \
+    -u CURSOR_AGENT -u AI_AGENT \
+    PATH="$fakebin:$PATH" FAKE900_LOG="$CALLS" FAKE900_DIR="$answers" \
+    FAKE900_TOKEN="$TOKEN_MARKER" XDG_CONFIG_HOME="$confighome" \
+    perl -e 'alarm shift; exec @ARGV or die' 60 bash -x "$script" fugaro </dev/null 2>"$work/err") || status=$?
+  err=$(cat "$work/err")
+  expect_status "$status" 2 "bash -x"
+  expect_contains "$err" "this shell is tracing" "bash -x: the guard names what it refuses"
+  [ ! -s "$CALLS" ] || fail "bash -x: it called something before refusing: $(head -c 400 "$CALLS")"
+  expect_not_contains "$err" "$TOKEN_MARKER" "bash -x: the trace carried no token"
+}
+
 test_help() {
   CALLS=
   run900_raw --help </dev/null
@@ -562,6 +580,7 @@ t test_only_reads_are_called
 t test_the_token_is_never_on_argv
 t test_stdin_is_closed
 t test_an_agent_session_is_refused
+t test_a_traced_shell_is_refused
 t test_help
 
 if [ "$failures" -ne 0 ]; then
