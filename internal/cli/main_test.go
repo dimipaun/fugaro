@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/identitywire"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/orchestrator/service"
 	"github.com/dimipaun/fugaro/internal/report"
@@ -229,6 +230,17 @@ func TestMain(m *testing.M) {
 	// (run_slip_test.go).
 	slipGrant = func(context.Context, string, credsvc.SlipGrantRequest) (credsvc.SlipGrantResponse, error) {
 		return credsvc.SlipGrantResponse{}, errSlipRouteAbsent
+	}
+	// A switched-on launch also asks the installation's credentials service for
+	// the run's ticket, at the same URL and through the same dead proxy, and
+	// the answer it can be given here is the same kind of one: a release whose
+	// identity half does not serve the route, which is R7's second bridge and
+	// leaves the launch signing locally exactly as it did before the ticket
+	// existed. A test about the ticket itself replaces this
+	// (launch_identity_test.go), and a test about the resident service's ask
+	// drives the real one (its service URL comes from the shared config).
+	launchAskTicket = func(context.Context, *launchIssuer, identitywire.TicketRequest) (identitywire.TicketResponse, error) {
+		return identitywire.TicketResponse{}, errLaunchTicketNotServed
 	}
 	// The fake gh of the watch tests links to one wrapper, run once here
 	// before any test can fork (testutil.FakeCommand).

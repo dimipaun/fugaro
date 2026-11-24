@@ -123,6 +123,19 @@ var ticketWaits = []time.Duration{5 * time.Second, 10 * time.Second, 15 * time.S
 
 var ticketSleep = sleepFor
 
+// launchAskTicket is the ticket ask itself, from the request's parts to the
+// answer R7's bridge reads, and a package variable for the reason slipGrant is
+// one (run.go): the ask is made on every launch whose installation has a
+// service, and no other test may reach a service or mint an identity token.
+// TestMain answers it for every test that is not about the ticket
+// (main_test.go), with the answer that needs no fixture to change — a service
+// that does not serve the route, which is the version skew and leaves the
+// launch reading exactly the environment it read before the ticket existed. A
+// test about the ticket itself replaces it.
+var launchAskTicket = func(ctx context.Context, i *launchIssuer, req identitywire.TicketRequest) (identitywire.TicketResponse, error) {
+	return i.askRetry(ctx, req)
+}
+
 // launchIdentity is the ID token a launch presents to the installation's
 // credentials service: the launcher's own Google ID token for the service's
 // URL, which is the identity the service's person class verifies (C1, LM3). It
@@ -264,7 +277,7 @@ func (e *cloudEnv) launchTicketFor(ctx context.Context, slug string, spec *task.
 		return launchIdentityAsk{}, err
 	}
 	i := &launchIssuer{service: service, now: now, identity: e.presentedIdentity()}
-	ans, err := i.askRetry(ctx, req)
+	ans, err := launchAskTicket(ctx, i, req)
 	switch {
 	case errors.Is(err, errLaunchTicketNotServed):
 		return launchIdentityAsk{bridge: bridgeNotServed}, nil

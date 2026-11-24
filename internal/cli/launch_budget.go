@@ -1187,7 +1187,11 @@ func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.
 	tok, err := token.Mint(ctx, signer, claims)
 	switch {
 	case errors.Is(err, token.ErrNotMinter):
-		return nil, userErr("%v", err)
+		// %w and not %v, so the refusal the launcher's own caller reads is
+		// still the minter's: a bridged launch tells this one case apart from
+		// every other mint failure and rewraps it (launchMinterRefusal), and
+		// the sentence a person reads is the same either way.
+		return nil, userErr("%w", err)
 	case errors.Is(err, token.ErrUnavailable):
 		return nil, remote(err)
 	case err != nil:
