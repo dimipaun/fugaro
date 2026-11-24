@@ -109,7 +109,6 @@ issue_mine.go	run fugaro update
 launch_budget.go	run fugaro update
 launch_budget.go	then run fugaro update
 launch_budget.go	then the job image from it with fugaro image build
-managed_flag.go	fugaro update that applies it
 pair_invite.go	fugaro update, which writes it
 pair_invite.go	run fugaro update
 pair_invite.go	run.app): run fugaro update
