@@ -182,7 +182,17 @@ func (s *versionStampStage) read(ctx context.Context) (*versionStampPlan, error)
 	var raw json.RawMessage
 	etag, found, err := db.GetETag(ctx, versionstamp.Path, &raw)
 	if err != nil {
-		return nil, dbErr(lc, err, false)
+		// A node this run cannot read is left exactly where it is and the run
+		// goes on (D3264, spec "Read failures fail open"): the stamp is a fence
+		// and not a boundary, and `fugaro update` — the one command that brings
+		// an installation forward — is not stopped by a blip. Nothing is
+		// written either way: the ETag the write is conditional on is the one
+		// this read would have taken, so there is no stamp to raise here. The
+		// door above says the same thing in its own line, and the step stays
+		// owed, because the raise this run could not make is one the next
+		// update still has to. A malformed stamp is the one read that refuses
+		// and it is returned below, as it is.
+		return nil, &versionStampSkip{reason: fmt.Sprintf("the project's required CLI could not be read (%v), so this run leaves it exactly as it is; the next %s raises it", oneLine(err.Error()), selfCommand()+" update"), undone: true}
 	}
 	p := &versionStampPlan{lc: lc, db: db, ver: ver, etag: etag, found: found}
 	if found {

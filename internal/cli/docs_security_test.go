@@ -35,11 +35,16 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 		"followup.trusted",
 		"docs/design/v1.md",
 		"docs/bucket-iam/spec.md",
-		"Budget mode defaults to off.",
+		// The budget's own limit, in the words the always-a-budget work gave
+		// it (AB13, 2026-11-24): there is no `off` to write any more — a mode
+		// left unset means observe, so the gateway is on and the caps record
+		// rather than stop, and the one run it does not reach is the `oauth`
+		// run the credentials service does not serve.
+		"With no `budget:` block the mode is `observe`, so the caps record rather than stop.",
 		"Vertex has no dollar cap, in any mode.",
 		"roles/storage.objectAdmin",
 		"it can read the token from the runner's `/proc`",
-		"With budget off there is no managed file and no routing check at all",
+		"The one run without a gateway — an `oauth` run the credentials service does not serve — has no routing check at all",
 		// The shared-image key's limit, which the design's C6 text repeats: the
 		// integrity rules keep two repositories from sharing an image built
 		// from two different artifacts, and they are not a boundary between
