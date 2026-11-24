@@ -88,6 +88,10 @@ test('a reading the app did not build is refused, one code and one field per way
     ['45000/200000', GAUGE_CODES.BAD_READING, 'reading'],
     [[45_000, 200_000], GAUGE_CODES.BAD_READING, 'reading'],
     [{ used: 1, total: 2, note: 'from /context' }, GAUGE_CODES.UNKNOWN_FIELD, 'reading.note'],
+    // A symbol-keyed member has no name to report, so the reading itself is
+    // what is refused -- and `used`/`total` are readable, so nothing else
+    // catches it.
+    [{ used: 1, total: 2, [Symbol('from /context')]: 9 }, GAUGE_CODES.UNKNOWN_FIELD, 'reading'],
     [{ used: 1 }, GAUGE_CODES.MISSING_FIELD, 'reading.total'],
     [{ total: 2 }, GAUGE_CODES.MISSING_FIELD, 'reading.used'],
     [{ used: -1, total: 2 }, GAUGE_CODES.BAD_USED, 'reading.used'],
@@ -148,6 +152,11 @@ test('gaugeLabel refuses what this module did not build', () => {
     { ...gaugeOf().gauge, reason: 'somewhere-else' },
     { ...gaugeOf().gauge, percent: 0 },
     { ...gauge, [Symbol('extra')]: true },
+    // A named field the shape does not carry, and a gauge that names no
+    // project: `gaugeLabel` prints the percent of whatever it is handed, so a
+    // value that is nearly a gauge must not be one.
+    { ...gauge, extra: true },
+    { ...gauge, project_id: '' },
   ];
   for (const bad of cases) {
     assert.equal(isGauge(bad), false, `${JSON.stringify(bad)} was accepted as a gauge`);
