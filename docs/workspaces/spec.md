@@ -6,7 +6,9 @@ the block this design was renumbered into on 2026-11-04), and **where the two di
 reconciliation wins** — §0 is the record of what was asked, not of what this design proposes.
 **The owner answered all sixteen decisions on 2026-11-04, every one as recommended**, so every
 sentence below is the design the owner answered and not a recommendation awaiting one. That is still
-**not an approval**: no task is approved, the owner approves each task by name, and §8's independent
+**not an approval**: no task is approved by being written down, the owner approves each task by
+name, and the ten tasks of this design's plan were approved by name afterwards and each is merged;
+§8's independent
 SECURITY review gates the merge.
 
 **This file was amended on 2026-11-04, after the design merged.** The design landed as **#1492**,

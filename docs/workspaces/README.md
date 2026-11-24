@@ -232,9 +232,9 @@ notes the one false positive `grep -rhoE 'D[0-9]{3,4}' docs` returns on `main`.
 
 ## What a reader should not take from here
 
-- **Not an approval to implement.** The decisions are answered; **no task is approved**, and the
-  owner approves each task by name. An answered decision is not a merge. The ten tasks were approved
-  by name afterwards, and each is merged.
+- **This folder approves nothing.** The decisions are answered; an answered decision is not a merge,
+  and a task is not approved by being written down: **the owner approves each task by name, and the
+  ten tasks of this plan were approved by name afterwards and each is merged.**
 - **Not a plan to start.** W4, W5, W6 and W7 each add a surface [spec.md](spec.md) §8 describes. That
   section's mandatory independent SECURITY review — which **the coordinator runs** — **has run** on
   the merged design and returned seven findings, all answered on 2026-11-04. What those tasks built

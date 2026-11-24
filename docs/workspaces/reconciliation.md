@@ -496,9 +496,10 @@ options with **the recommended one first**, the cost of the alternative, and **t
 
 **Every one is answered, and every one as recommended.** So no decision here carries a *not the
 recommendation* marker — there is no deviation to record. **An answered decision is still not an
-approval:** no task is approved, the owner approves each task by name, and
-[spec.md](spec.md) §8's independent SECURITY review — which **the coordinator runs** — gates the
-merge.
+approval:** no task is approved by being written down, the owner approves each task by name — and
+the ten tasks of this design's plan were approved by name afterwards and each is merged — so
+[spec.md](spec.md) §8's independent SECURITY review, which **the coordinator runs**, is what gated
+the merge.
 
 **D1290 — Where the workspace's identity lives.** A workspace needs one identity provider its members
 accept. Which Firebase is it?
@@ -961,11 +962,11 @@ member's `database_region` (`internal/projectpolicy/workspace_credentials.go`:24
 derives that member's database host from it (`workspaceDatabase`, `internal/credsvc/workspace.go`),
 because a Firebase project adopted with a **regional** database is named
 `<firebase_project>-default-rtdb.<region>.firebasedatabase.app` and not the legacy default host. No
-command records the value: the four values `workspace member add` writes for this table are the
+command then recorded the value: the four values `workspace member add` writes for this table are the
 member's job accounts, its Firebase project, its `fp` and its exchange URL, with `--repo` beside them
 naming a repository the member contributes
 (`internal/cli/workspace.go`:422-429, `--repo` at `:480`),
-`localcfg.WorkspaceMember` had no field for a region (`internal/localcfg/localcfg.go`:541-567), and
+`localcfg.WorkspaceMember` had no field for a region (`internal/localcfg/localcfg.go`:1023), and
 **the node itself had no writer anywhere in the tree** — its own comment said so
 (`internal/projectpolicy/workspace_credentials.go`, the `UnknownKeys` field) — and the verb has
 taken `--database-region`
