@@ -288,7 +288,7 @@ Two exceptions: a workflow that sets `dockerfile:` drops its profile's `image:` 
 
 ## 5. Where each key may be set
 
-`fugaro settings` is the table below as a command: it prints one row per key with the value a run gets, the layer that decided it, the built-in default and the state of the read, and `fugaro settings set KEY --layer project` writes one into the project layer's own file rather than by hand. A repository key the layer holds under `defaults:` takes either spelling at that layer, and the two are one write: `fugaro settings set agent.max_budget_usd 20 --layer project` and `fugaro settings set layer.defaults.agent.max_budget_usd 20 --layer project` write the same document, because the short spelling — the one the table below names — is mapped to `layer.defaults.<key>` in the one resolver the read and the write both use. A `--layer` the command line omits follows the key's merge rule: a ceiling lands in the project layer where the key has one and in this machine's own config where it does not, since a ceiling written into the repository it bounds is one that repository can lower, while every other merge rule keeps the narrowest layer the key may be set in, which is usually the repository's own file. `--layer` names a layer outright, and a layer the key does not have is refused, naming the layers it does. A key may be set only in the layers listed; the project layer refuses the rest, naming the key:
+`fugaro settings` is the table below as a command: it prints one row per key with the value a run gets, the layer that decided it, the built-in default and the state of the read, and `fugaro settings set KEY --layer project` writes one into the project layer's own file rather than by hand. A repository key the layer holds under `defaults:` takes either spelling at that layer, and the two are one write: `fugaro settings set agent.max_budget_usd 20 --layer project` and `fugaro settings set layer.defaults.agent.max_budget_usd 20 --layer project` write the same document, because the short spelling — the one the table below names — is mapped to `layer.defaults.<key>` in the one resolver the read and the write both use. A `--layer` the command line omits follows the key's merge rule: a ceiling lands in the project layer where the key has one and in this machine's own config where it does not, since a ceiling written into the repository it bounds is one that repository can lower, while every other merge rule keeps the narrowest layer the key may be set in, which is usually the repository's own file. `--layer` names a layer outright, and a layer the key does not have is refused, naming the layers it does. A key may be set only in the layers listed; the project layer refuses the rest, naming the key. The Why column says why a key sits where it does; a row whose Why ends `approved by D3237` is one the repo-override ruling kept in the repository, where a repository may still set it ([repo-override-rulings](repo-override-rulings/README.md)):
 
 <!-- scope-table:start -->
 | Key | May be set in | Why |
@@ -298,12 +298,12 @@ Two exceptions: a workflow that sets `dockerfile:` drops its profile's `image:` 
 | `gcp_project` | repo | it identifies the repository and anchors the project layer |
 | `profile` | repo | it chooses a profile; the project chooses its default with default_profile |
 | `git.provider` | project, repo |  |
-| `git.base_branch` | repo | a project-wide base branch in the launcher-writable project layer would let a bucket writer point image builds at an unreviewed branch; the project's default base branch is the owner's, published to the policy node instead |
-| `git.author` | repo | it is the repository's own |
-| `git.pr.labels` | project, repo |  |
-| `git.pr.reviewers` | repo | reviewers are people of one repository |
-| `git.pr.early_draft` | project, repo |  |
-| `git.pr.checkpoints` | project, repo |  |
+| `git.base_branch` | repo | a project-wide base branch in the launcher-writable project layer would let a bucket writer point image builds at an unreviewed branch; the project's default base branch is the owner's, published to the policy node instead; approved by D3237 |
+| `git.author` | repo | it is the repository's own; approved by D3237 |
+| `git.pr.labels` | project, repo | approved by D3237 |
+| `git.pr.reviewers` | repo | reviewers are people of one repository; approved by D3237 |
+| `git.pr.early_draft` | project, repo | approved by D3237 |
+| `git.pr.checkpoints` | project, repo | approved by D3237 |
 | `agent.auth` | project, repo |  |
 | `agent.model` | project, repo, override |  |
 | `agent.models.coder` | project, repo |  |
@@ -325,50 +325,50 @@ Two exceptions: a workflow that sets `dockerfile:` drops its profile's `image:` 
 | `model_grades.strong.access` | project, repo | it is the model choice the project owns (G3): the project layer states a grade for every repository of the project, and a repository's own entry is dropped and recorded by the merge (a grade is a value, unlike the escalation thresholds, which no shared layer may hold at all), so this is the one layer a grade's credential or pool can be named in |
 | `model_grades.strongest.model` | project, repo | it is the model choice the project owns (G3): the project layer states a grade for every repository of the project, and a repository's own entry is dropped and recorded by the merge (a grade is a value, unlike the escalation thresholds, which no shared layer may hold at all), so this is the one layer a grade's credential or pool can be named in |
 | `model_grades.strongest.access` | project, repo | it is the model choice the project owns (G3): the project layer states a grade for every repository of the project, and a repository's own entry is dropped and recorded by the merge (a grade is a value, unlike the escalation thresholds, which no shared layer may hold at all), so this is the one layer a grade's credential or pool can be named in |
-| `agent.review_rounds` | project, repo, override |  |
-| `agent.max_budget_usd` | project, repo, override |  |
-| `agent.instructions` | repo | it names a file in the repository |
-| `agent.review` | repo | it names a file in the repository |
-| `agent.max_output_tokens.coder` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it |
-| `agent.max_output_tokens.reviewer` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it |
-| `agent.max_run_tokens` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it |
-| `agent.first_line_review` | project, repo |  |
-| `agent.first_line_rounds` | project, repo |  |
+| `agent.review_rounds` | project, repo, override | approved by D3237 |
+| `agent.max_budget_usd` | project, repo, override | approved by D3237 |
+| `agent.instructions` | repo | it names a file in the repository; approved by D3237 |
+| `agent.review` | repo | it names a file in the repository; approved by D3237 |
+| `agent.max_output_tokens.coder` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it; approved by D3237 |
+| `agent.max_output_tokens.reviewer` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it; approved by D3237 |
+| `agent.max_run_tokens` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it; approved by D3237 |
+| `agent.first_line_review` | project, repo | approved by D3237 |
+| `agent.first_line_rounds` | project, repo | approved by D3237 |
 | `agent.levels.l1.model` | project, repo |  |
-| `agent.levels.l1.effort` | project, repo |  |
-| `agent.levels.l1.none` | project, repo |  |
-| `agent.levels.l1.focus` | project, repo |  |
+| `agent.levels.l1.effort` | project, repo | approved by D3237 |
+| `agent.levels.l1.none` | project, repo | approved by D3237 |
+| `agent.levels.l1.focus` | project, repo | approved by D3237 |
 | `agent.levels.l2.model` | project, repo |  |
-| `agent.levels.l2.effort` | project, repo |  |
-| `agent.levels.l2.none` | project, repo |  |
-| `agent.levels.l2.focus` | project, repo |  |
+| `agent.levels.l2.effort` | project, repo | approved by D3237 |
+| `agent.levels.l2.none` | project, repo | approved by D3237 |
+| `agent.levels.l2.focus` | project, repo | approved by D3237 |
 | `agent.levels.l3.model` | project, repo |  |
-| `agent.levels.l3.effort` | project, repo |  |
-| `agent.levels.l3.none` | project, repo |  |
-| `agent.levels.l3.focus` | project, repo |  |
-| `agent.adversarial_rounds` | project, repo |  |
-| `agent.review_stop_fraction` | project, repo |  |
-| `agent.workspace_beat` | project, repo | it is a run's own behaviour and not a bound: a project whose deployment shape says the beat is not needed sets it for every repository of it, a repository replaces it, and a run that sends no beat is slower at a call and never less correct (D2985) |
-| `agent.recipe` | project, repo, override |  |
+| `agent.levels.l3.effort` | project, repo | approved by D3237 |
+| `agent.levels.l3.none` | project, repo | approved by D3237 |
+| `agent.levels.l3.focus` | project, repo | approved by D3237 |
+| `agent.adversarial_rounds` | project, repo | approved by D3237 |
+| `agent.review_stop_fraction` | project, repo | approved by D3237 |
+| `agent.workspace_beat` | project, repo | it is a run's own behaviour and not a bound: a project whose deployment shape says the beat is not needed sets it for every repository of it, a repository replaces it, and a run that sends no beat is slower at a call and never less correct (D2985); approved by D3237 |
+| `agent.recipe` | project, repo, override | approved by D3237 |
 | `agent.oauth_token` | repo, override | it names a credential identity that only the repository's own, PR-reviewed fugaro.yaml may choose among names the local config (never the project layer) allow-lists. On a project job the account is the profile's — an axis of the job's own name, one job per (profile, provider, account) — and the job's container holds that account's token, so an OAuth run is admitted only when the profile lists the account the run's own credential selects and the repository is on that account's `accounts.<n>.allow_repos`; it then runs on that account's job. Anything else is refused before the claim, the budget token and any Cloud Run call: a run selecting an account the profile serves no job for, and a run on a profile that serves no such account at all (`internal/cli`'s `projectJobAccountFor`, `checkProjectJobAccount` and `checkProjectJobAccountCovers`), with the runner re-deciding the same question at run start (`internal/runner`'s `checkProjectJobAccount`). A profile serves an account by listing it in its own `claude_accounts` in the project's local config, and the `default` account rides the profile's no-account job — so a profile that lists no account mounts no token, and an OAuth run on its shared job is refused at launch rather than started with no credential. A **non-OAuth** run never targets an account job, and a repository that keeps a per-repository job of its own (a repository the published policy serves no profile for, which an installation that has published no profiles is, and, until a shared job carries the image a baked workflow declares, a `checkout: baked` workflow) is not affected |
 | `agent.compression` | repo, override | it changes what the model sees on every call; the project layer and a profile are the same launcher-writable bucket object agent.oauth_token already distrusts for the identical reason |
-| `agent.triage` | repo | it turns a review round's own stage off, and a launcher writes the task and the project layer that travels in it; only the repository's own, PR-reviewed fugaro.yaml — read from the base branch — may set it, the reason agent.compression and agent.oauth_token are refused to a layer |
-| `agent.review_against_task` | repo | it turns off the check every review stage makes of a run's own work, and a launcher writes the task and the project layer that travels in it; only the repository's own, PR-reviewed fugaro.yaml — read from the base branch — may set it, the reason agent.triage beside it and agent.compression are refused to a layer |
-| `budget.mode` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it |
-| `budget.per_run_usd` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it |
-| `budget.allowed_models` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it |
-| `budget.per_day_usd` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it |
-| `governance.review_ratio` | project, repo | it is a guardrail Fugaro ships: the project layer sets it for every repository of the project (a top-level key of the layer file, like claude_models) and a repository can only tighten it, because the per-run cap stays the ceiling and a stage budget is a fraction under it (G6); its enforcement is part of Fugaro Subscription Edition, whose `ee/governance/` holds the policy and the tripwires |
-| `governance.review_floor_calls` | project, repo | it is a guardrail Fugaro ships: the project layer sets it for every repository of the project (a top-level key of the layer file, like claude_models) and a repository can only tighten it, because the per-run cap stays the ceiling and a stage budget is a fraction under it (G6); its enforcement is part of Fugaro Subscription Edition, whose `ee/governance/` holds the policy and the tripwires |
-| `governance.max_subagents` | project, repo | it is a guardrail Fugaro ships: the project layer sets it for every repository of the project (a top-level key of the layer file, like claude_models) and a repository can only tighten it, because the per-run cap stays the ceiling and a stage budget is a fraction under it (G6); its enforcement is part of Fugaro Subscription Edition, whose `ee/governance/` holds the policy and the tripwires |
-| `governance.stage_budget` | project, repo | it is a guardrail Fugaro ships: the project layer sets it for every repository of the project (a top-level key of the layer file, like claude_models) and a repository can only tighten it, because the per-run cap stays the ceiling and a stage budget is a fraction under it (G6); its enforcement is part of Fugaro Subscription Edition, whose `ee/governance/` holds the policy and the tripwires |
-| `governance.stage_tokens` | project, repo | it is a guardrail Fugaro ships: the project layer sets it for every repository of the project (a top-level key of the layer file, like claude_models) and a repository can only tighten it, because the per-run cap stays the ceiling and a stage budget is a fraction under it (G6); its enforcement is part of Fugaro Subscription Edition, whose `ee/governance/` holds the policy and the tripwires |
-| `governance.stage_timeout` | project, repo | it is a guardrail Fugaro ships: the project layer sets it for every repository of the project (a top-level key of the layer file, like claude_models) and a repository can only tighten it, because the per-run cap stays the ceiling and a stage budget is a fraction under it (G6); its enforcement is part of Fugaro Subscription Edition, whose `ee/governance/` holds the policy and the tripwires |
-| `governance.tiers` | project, repo | it is a guardrail Fugaro ships: the project layer sets it for every repository of the project (a top-level key of the layer file, like claude_models) and a repository can only tighten it, because the per-run cap stays the ceiling and a stage budget is a fraction under it (G6); its enforcement is part of Fugaro Subscription Edition, whose `ee/governance/` holds the policy and the tripwires |
+| `agent.triage` | repo | it turns a review round's own stage off, and a launcher writes the task and the project layer that travels in it; only the repository's own, PR-reviewed fugaro.yaml — read from the base branch — may set it, the reason agent.compression and agent.oauth_token are refused to a layer; approved by D3237 |
+| `agent.review_against_task` | repo | it turns off the check every review stage makes of a run's own work, and a launcher writes the task and the project layer that travels in it; only the repository's own, PR-reviewed fugaro.yaml — read from the base branch — may set it, the reason agent.triage beside it and agent.compression are refused to a layer; approved by D3237 |
+| `budget.mode` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it; approved by D3237 |
+| `budget.per_run_usd` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it; approved by D3237 |
+| `budget.allowed_models` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it; approved by D3237 |
+| `budget.per_day_usd` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it; approved by D3237 |
+| `governance.review_ratio` | project, repo | it is a guardrail Fugaro ships: the project layer sets it for every repository of the project (a top-level key of the layer file, like claude_models) and a repository can only tighten it, because the per-run cap stays the ceiling and a stage budget is a fraction under it (G6); its enforcement is part of Fugaro Subscription Edition, whose `ee/governance/` holds the policy and the tripwires; approved by D3237 |
+| `governance.review_floor_calls` | project, repo | it is a guardrail Fugaro ships: the project layer sets it for every repository of the project (a top-level key of the layer file, like claude_models) and a repository can only tighten it, because the per-run cap stays the ceiling and a stage budget is a fraction under it (G6); its enforcement is part of Fugaro Subscription Edition, whose `ee/governance/` holds the policy and the tripwires; approved by D3237 |
+| `governance.max_subagents` | project, repo | it is a guardrail Fugaro ships: the project layer sets it for every repository of the project (a top-level key of the layer file, like claude_models) and a repository can only tighten it, because the per-run cap stays the ceiling and a stage budget is a fraction under it (G6); its enforcement is part of Fugaro Subscription Edition, whose `ee/governance/` holds the policy and the tripwires; approved by D3237 |
+| `governance.stage_budget` | project, repo | it is a guardrail Fugaro ships: the project layer sets it for every repository of the project (a top-level key of the layer file, like claude_models) and a repository can only tighten it, because the per-run cap stays the ceiling and a stage budget is a fraction under it (G6); its enforcement is part of Fugaro Subscription Edition, whose `ee/governance/` holds the policy and the tripwires; approved by D3237 |
+| `governance.stage_tokens` | project, repo | it is a guardrail Fugaro ships: the project layer sets it for every repository of the project (a top-level key of the layer file, like claude_models) and a repository can only tighten it, because the per-run cap stays the ceiling and a stage budget is a fraction under it (G6); its enforcement is part of Fugaro Subscription Edition, whose `ee/governance/` holds the policy and the tripwires; approved by D3237 |
+| `governance.stage_timeout` | project, repo | it is a guardrail Fugaro ships: the project layer sets it for every repository of the project (a top-level key of the layer file, like claude_models) and a repository can only tighten it, because the per-run cap stays the ceiling and a stage budget is a fraction under it (G6); its enforcement is part of Fugaro Subscription Edition, whose `ee/governance/` holds the policy and the tripwires; approved by D3237 |
+| `governance.tiers` | project, repo | it is a guardrail Fugaro ships: the project layer sets it for every repository of the project (a top-level key of the layer file, like claude_models) and a repository can only tighten it, because the per-run cap stays the ceiling and a stage budget is a fraction under it (G6); its enforcement is part of Fugaro Subscription Edition, whose `ee/governance/` holds the policy and the tripwires; approved by D3237 |
 | `workflows.*.profile` | repo | it chooses a profile |
-| `workflows.*.job_profile` | repo | it chooses a job profile of the project policy; the policy is the project's, so a repository picks among the profiles it defines and never writes them |
+| `workflows.*.job_profile` | repo | it chooses a job profile of the project policy; the policy is the project's, so a repository picks among the profiles it defines and never writes them; approved by D3237 |
 | `workflows.*.base` | profile, repo |  |
-| `workflows.*.checkout` | profile, repo |  |
+| `workflows.*.checkout` | profile, repo | approved by D3237 |
 | `workflows.*.image.node` | profile, repo |  |
 | `workflows.*.image.jdk` | repo | it is refused on every base |
 | `workflows.*.image.apt` | profile, repo |  |
@@ -377,15 +377,15 @@ Two exceptions: a workflow that sets `dockerfile:` drops its profile's `image:` 
 | `workflows.*.image.tools` | profile, repo |  |
 | `workflows.*.image.key_files` | repo | it names a file in the repository |
 | `workflows.*.dockerfile` | repo | it names a file in the repository |
-| `workflows.*.commands.build` | profile, repo |  |
-| `workflows.*.commands.test` | profile, repo |  |
-| `workflows.*.commands.lint` | profile, repo |  |
-| `workflows.*.commands.fix` | profile, repo |  |
-| `workflows.*.commands.render` | profile, repo |  |
-| `workflows.*.commands.probe` | profile, repo |  |
-| `workflows.*.commands.rerun_failed` | profile, repo |  |
-| `workflows.*.commands.reports` | profile, repo |  |
-| `workflows.*.cache` | profile, repo |  |
+| `workflows.*.commands.build` | profile, repo | approved by D3237 |
+| `workflows.*.commands.test` | profile, repo | approved by D3237 |
+| `workflows.*.commands.lint` | profile, repo | approved by D3237 |
+| `workflows.*.commands.fix` | profile, repo | approved by D3237 |
+| `workflows.*.commands.render` | profile, repo | approved by D3237 |
+| `workflows.*.commands.probe` | profile, repo | approved by D3237 |
+| `workflows.*.commands.rerun_failed` | profile, repo | approved by D3237 |
+| `workflows.*.commands.reports` | profile, repo | approved by D3237 |
+| `workflows.*.cache` | profile, repo | approved by D3237 |
 | `workflows.*.secrets` | repo | secrets belong to one repository's Secret Manager entries |
 | `workflows.*.resources.cpu` | profile, repo |  |
 | `workflows.*.resources.memory` | profile, repo |  |
@@ -399,19 +399,19 @@ Two exceptions: a workflow that sets `dockerfile:` drops its profile's `image:` 
 | `workflows.*.rebuild.lockfiles` | profile, repo |  |
 | `workflows.*.rebuild.base` | profile, repo |  |
 | `workflows.*.rebuild.paths` | profile, repo |  |
-| `workflows.*.inputs.max_files` | profile, repo |  |
-| `workflows.*.inputs.max_bytes` | profile, repo |  |
-| `workflows.*.inputs.max_total_bytes` | profile, repo |  |
-| `workflows.*.needs` | repo | it is a repository's own reference to an entry of the project's image catalog, and the entries themselves are the project's (D1155) |
-| `workflows.*.ab.reviewer_arm` | repo | it asks for a second review of this repository's own runs, and the challengers that review is admitted against are the project's (the top-level ab: block, D556), so the repository's own, PR-reviewed file is where the ask is stated |
+| `workflows.*.inputs.max_files` | profile, repo | approved by D3237 |
+| `workflows.*.inputs.max_bytes` | profile, repo | approved by D3237 |
+| `workflows.*.inputs.max_total_bytes` | profile, repo | approved by D3237 |
+| `workflows.*.needs` | repo | it is a repository's own reference to an entry of the project's image catalog, and the entries themselves are the project's (D1155); approved by D3237 |
+| `workflows.*.ab.reviewer_arm` | repo | it asks for a second review of this repository's own runs, and the challengers that review is admitted against are the project's (the top-level ab: block, D556), so the repository's own, PR-reviewed file is where the ask is stated; approved by D3237 |
 | `ab.rate` | repo | it is the repository's own opt-out of sampling, and every other leaf of the block is the project's (D556) |
-| `followup.trusted` | repo | it decides whose comments steer a run with the repository's credentials |
-| `followup.allow_public` | repo | it decides whose comments steer a run with the repository's credentials |
+| `followup.trusted` | repo | it decides whose comments steer a run with the repository's credentials; approved by D3237 |
+| `followup.allow_public` | repo | it decides whose comments steer a run with the repository's credentials; approved by D3237 |
 | `rigor.default` | project, repo |  |
 | `rigor.areas` | project, repo |  |
 | `rigor.repos` | project | it is the level one repository of the project runs at, which the project layer states for repositories it does not own; a repository's own level is its own `rigor.default` |
-| `planning.decoupling` | project, repo |  |
-| `security.patterns` | project, repo | it is a guardrail: the project layer states the rows every repository of the project treats as security-sensitive and a repository can only add to them — the list in force is the engine's floor, then the project's rows, then the repository's, unioned by row name (D1506) — so neither layer can drop what another said, and `**` is refused in both because that is the layer's `always_level_3`. 0.22.0 decodes and validates both halves, and the readers resolve them: what a run matches a change against, what `fugaro security paths` prints and what `fugaro doctor` counts are that one resolution of the floor, the project's rows and the repository's, each row carrying the layer it came from (SC9). SC10 landed the other half: `always_level_3`, and the per-run request that goes with it, `fugaro run --security` — the task's own `security: true` — turn review level 3 on when the run resolves its levels |
+| `planning.decoupling` | project, repo | approved by D3237 |
+| `security.patterns` | project, repo | it is a guardrail: the project layer states the rows every repository of the project treats as security-sensitive and a repository can only add to them — the list in force is the engine's floor, then the project's rows, then the repository's, unioned by row name (D1506) — so neither layer can drop what another said, and `**` is refused in both because that is the layer's `always_level_3`. 0.22.0 decodes and validates both halves, and the readers resolve them: what a run matches a change against, what `fugaro security paths` prints and what `fugaro doctor` counts are that one resolution of the floor, the project's rows and the repository's, each row carrying the layer it came from (SC9). SC10 landed the other half: `always_level_3`, and the per-run request that goes with it, `fugaro run --security` — the task's own `security: true` — turn review level 3 on when the run resolves its levels; approved by D3237 |
 <!-- scope-table:end -->
 
 `governance` is a top-level key of the layer file (§6) like `claude_models`, and it is the one block the layer may **loosen**: it is the guardrail the project sets for every repository of the project, not a default a repository replaces. Every governance key is a bound whose smaller value is the stricter one — a stage budget as a fraction of the per-run cap, a token ceiling, a stage timeout, the review ratio, the fan-out cap, and each tier of `governance.tiers` with its expected cost, expected duration and own fan-out — so a repository's own `governance:` block can only tighten it, and a looser value is dropped and recorded rather than applied. What the layer cannot do is move the cap itself: the deployed per-run cap stays the ceiling, and a stage budget is a fraction under it, never the cap (G6, D330). A tier is no exception and is the point of the rule: `governance.tiers.<tier>.expected_usd` says what a run of that tier is *expected* to cost, so an expectation above the deployed cap is a figure the run still stops at the cap for, and no tier key raises or replaces one (G6, D330). One key of the block is enforced today: a stage that runs past its `stage_timeout` stops the run, which records a checkpoint report and opens a draft pull request. The rest of the block is what the gateway reads in a later task.

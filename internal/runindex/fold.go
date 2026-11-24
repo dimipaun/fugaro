@@ -81,6 +81,11 @@ type Fold struct {
 	Now func() time.Time
 	// Warn receives what could not be folded; nil discards it.
 	Warn func(string)
+	// StartLimit is the moment a reindex pass may start work until (RI5): a
+	// pass that reaches it stops at the run it is on and leaves its position
+	// behind. Zero is no bound, which is what the sweep -- whose execution is
+	// already bounded by the job's own timeout -- leaves it at.
+	StartLimit time.Time
 }
 
 // FoldReport is what one fold did.
@@ -349,10 +354,12 @@ func (f *Fold) changed(ctx context.Context, through *time.Time) ([]runKey, error
 // is not a failure of the fold: the entry is written from what is there, which
 // is the same answer contract-index.md gives a reader ("a run whose result.json
 // cannot be read carries no record: the entry is still written, because the run
-// exists and its task and launch do"). A read that failed for another reason --
-// the bucket unreachable, the account refused -- is a failure, and the fold
-// stops rather than writing an entry that says a run has no task when nobody
-// could tell.
+// exists and its task and launch do"). An object that is there and unusable is
+// also said in the entry itself (LaunchUnreadable, RecordUnreadable), because a
+// reader of the index reads no object and could not otherwise tell it from one
+// that is absent. A read that failed for another reason -- the bucket
+// unreachable, the account refused -- is a failure, and the fold stops rather
+// than writing an entry that says a run has no task when nobody could tell.
 func (f *Fold) read(ctx context.Context, k runKey) (*Entry, error) {
 	st := runstore.Open(f.Bucket, k.slug, k.run)
 	spec, err := st.ReadTask(ctx)
@@ -364,22 +371,28 @@ func (f *Fold) read(ctx context.Context, k runKey) (*Entry, error) {
 		spec = nil
 	}
 	launch, err := st.ReadLaunch(ctx)
+	launchUnreadable := false
 	if err != nil {
 		if !readable(err) {
 			return nil, err
 		}
 		f.warnUnreadable(k, "launch.json", err)
-		launch = nil
+		launch, launchUnreadable = nil, unreadable(err)
 	}
 	rec, err := st.ReadRecord(ctx)
+	recordUnreadable := false
 	if err != nil {
 		if !readable(err) {
 			return nil, err
 		}
 		f.warnUnreadable(k, "result.json", err)
-		rec = nil
+		rec, recordUnreadable = nil, unreadable(err)
 	}
-	if spec == nil && launch == nil && rec == nil {
+	// An object the bucket holds and the fold could not use is a run that
+	// happened, so it is folded even with nothing else readable: an entry is
+	// the only way a reader that reads no object learns the run existed
+	// (LaunchUnreadable).
+	if spec == nil && launch == nil && rec == nil && !launchUnreadable && !recordUnreadable {
 		f.warnf("%s/%s: no task, launch or record to fold: skipped", k.slug, k.run)
 		return nil, nil
 	}
@@ -399,6 +412,7 @@ func (f *Fold) read(ctx context.Context, k runKey) (*Entry, error) {
 		Status:       statusOf(rec),
 		PlanTask:     row.PlanTask,
 		PR:           row.PR,
+		Branch:       row.Branch,
 		RequestedBy:  row.RequestedBy,
 		LaunchedBy:   row.LaunchedBy,
 		Batch:        row.Batch,
@@ -415,6 +429,9 @@ func (f *Fold) read(ctx context.Context, k runKey) (*Entry, error) {
 		FollowUpOf:   row.FollowUpOf,
 		Launch:       launch,
 		Record:       rec,
+
+		LaunchUnreadable: launchUnreadable,
+		RecordUnreadable: recordUnreadable,
 	}
 	if e.Repo == "" {
 		// A run whose task nothing recorded is still a run of its repository:
@@ -442,6 +459,15 @@ func (f *Fold) warnUnreadable(k runKey, name string, err error) {
 // is not the JSON it claims to be, and one past the size cap.
 func readable(err error) bool {
 	return errors.Is(err, runstore.ErrNotFound) || errors.Is(err, runstore.ErrCorrupt) || errors.Is(err, runstore.ErrTooLarge)
+}
+
+// unreadable reports whether a readable failure is an object the bucket holds
+// and the fold could not use, as opposed to one that is simply not there. It is
+// what an entry's LaunchUnreadable and RecordUnreadable carry, and the two are
+// the whole difference between "the run wrote no such object" and "the run
+// wrote one nobody can read".
+func unreadable(err error) bool {
+	return errors.Is(err, runstore.ErrCorrupt) || errors.Is(err, runstore.ErrTooLarge)
 }
 
 // updatedAt is the entry's sort key: the moment the run last changed, as its

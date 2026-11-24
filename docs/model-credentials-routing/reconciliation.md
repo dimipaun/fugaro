@@ -97,6 +97,17 @@ names one.
   says this layer "already exists and stays", so the repository keeps its model choice, and the
   table then decides the source from the model whoever chose it. The repository still cannot
   choose spend: it can only pick a model the project's table and `budget.allowed_models` allow.
+  **Amended 2026-11-23 (D3237, lift L8 of the repo-coupling audit): the repository does not keep
+  its model choice.** D3237 reverses that half of this finding: the project layer
+  (`defaults.agent.model`, `defaults.agent.models.*`, `defaults.agent.crafts.*.model`) chooses each
+  role's model, and the routing table still decides which source serves it, exactly as A1 reads
+  "the routing table decides". `agent.model`, `agent.models.*` and `agent.crafts.*.model` — and,
+  by D3291, `agent.levels.lN.model` — move to the project: for one release a repository's value is
+  read, dropped and named, and the next release refuses it, with `fugaro models use --layer
+  project` as the fix (D3237 as the spec of [repo-override-rulings](../repo-override-rulings/spec.md)
+  §5.1 applies it, its F6 and R10 name this amendment, task A1 writes it). The repository still
+  cannot choose spend, and `budget.allowed_models` still narrows per repository; `--model` still
+  overrides. The sentences above are kept as what was found on 2026-11-21.
 - **F8 (Gap).** A model no entry matches. → R1 (refused with the fix).
 - **F9 (Gap).** "No repo-level overrides" meets two things that vary by repository inside the
   project's config: the per-repository crafts block credentials-belong-to-models planned (CM2),

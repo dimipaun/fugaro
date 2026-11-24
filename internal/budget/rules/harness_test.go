@@ -413,6 +413,14 @@ func (h *harness) reportsJob(installation string) *rtdb.Client {
 // verifies the value.
 const aMac = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
 
+// aSig is a well-formed tag of the second scheme (J5r, O6): 86 characters of
+// base64url, the unpadded encoding of the 64 bytes an Ed25519 signature is —
+// here the bytes 0..63, which no key ever signed. It is the shape and not a
+// value, for aMac's reason: the rules check length and characters and never the
+// value, and which scheme a device must use, and whether its signature
+// verifies, is its device node's and the launch gate's (J5b).
+const aSig = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-Pw"
+
 // set writes a value with admin rights (which bypass the rules, as IAM does).
 func (h *harness) set(path string, v any) {
 	h.t.Helper()

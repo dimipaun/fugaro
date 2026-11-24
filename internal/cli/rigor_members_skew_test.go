@@ -349,7 +349,7 @@ func TestValidateWarnsWhenTheProjectLayerSetsRigorMembers(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, layerWithRigorMembers("  rigor:\n    areas:\n      - name: ui\n        members:\n          - {repo: acme/other, paths: [\"ui/**\"]}\n        level: pro\n"))
-	layerCheckout(t, f, minimalAnchored)
+	layerCheckout(t, f, pinnedMinimal)
 	_, errOut, err := execute(t, "validate")
 	if err != nil {
 		t.Fatalf("a file that resolves over the layer is valid: %v", err)

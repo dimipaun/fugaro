@@ -17,6 +17,10 @@ import (
 const promoteYAML = `version: 1
 project: aurora
 git: { provider: github }
+agent:
+  auth: api-key
+  model: claude-sonnet-5-5
+  models: { background: claude-haiku-4-5 }
 # the app's image: jq is what the build scripts need
 workflows:
   app:

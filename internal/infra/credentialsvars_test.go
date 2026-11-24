@@ -939,6 +939,166 @@ func TestRefreshCredentialsServiceJobAccountsNeverNarrowsAMachineDerivedRow(t *t
 	}
 }
 
+// credentialsIdentityLC is a project config with a roster that names every
+// member class at once — a person, a service account and a group on each of the
+// two lists the launcher class comes from, and the same on budget_admins, whose
+// `user:` entries are the launch gate's implicit admins. The classes that carry
+// no address are the ones the two lists must be seen to drop.
+const credentialsIdentityLC = `version: 3
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry: us-east5-docker.pkg.dev/proj-1234/fugaro
+build: { service_account: fugaro-build@proj-1234.iam.gserviceaccount.com }
+user: test@example.com
+repos:
+  acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }
+budget: {mode: observe, per_run_usd: 5, firebase_project: aurora-fp, rtdb_url: "https://aurora-fp-default-rtdb.firebaseio.com"}
+terraform:
+  operators: ['user:ops@example.com', 'serviceAccount:fugaro-p-acme-sandbox-0123abcd@proj-1234.iam.gserviceaccount.com', 'group:eng@example.com']
+  admins: ['serviceAccount:fugaro-reports@proj-1234.iam.gserviceaccount.com', 'domain:example.com']
+  budget_admins: ['user:Boss@Example.COM', 'group:eng@example.com', 'user:second@example.com']
+`
+
+// RefreshCredentialsServiceIdentity is the carry's writer of the block's three
+// identity names (LM13 of docs/launcher-does-not-mint; D3121, D3123, F29/R16),
+// and the reason it exists is that the deploy is their only OTHER writer: the
+// run that CREATES the block fills them in (Credentials), every later run
+// carries the block as it is found (CarriedCredentialsService), and the three
+// names are new in this release — so an installation that already has the
+// service carries a block without them and nothing else ever adds them. The
+// service then renders no FUGARO_ROSTER_SERVICE_ACCOUNTS and no
+// FUGARO_IMPLICIT_ADMINS at exactly the installations that have it, which is
+// LM13's acceptance unmet where it counts, and LM14's probe has no signer to
+// read, so the minter grant can never move.
+//
+// The values are asserted against Credentials' own answer for the same config
+// rather than against literals, because the property that matters is that the
+// two writers cannot drift: the block an installation carries after an update
+// has to be the block the deploy would have written.
+//
+// Mutation (verified, run and restored): make writeCarriedCredentials skip the
+// infra.RefreshCredentialsServiceIdentity call, or drop the call from
+// RefreshCredentialsServiceIdentity's own body, and this test fails on all
+// three names — while the CLI-side test beside it (init_credentials_test.go's
+// TestUpdateNamesTheServicesIdentity) fails on the signer the service reads.
+func TestRefreshCredentialsServiceIdentityNamesTheService(t *testing.T) {
+	lc := parseLC(t, credentialsIdentityLC)
+	deployed, err := Credentials(lc, credsVarsImage(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The block a run of an earlier release left: the deploy's own members
+	// without the three names, which is what every installation that has the
+	// service carries into this release.
+	carried := credsVarsSpec()
+	vars, err := SetCredentialsService([]byte(credsVarsDiscovered), carried)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := RefreshCredentialsServiceIdentity(vars, lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		CredentialsService *CredentialsServiceSpec `json:"credentials_service"`
+	}
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatalf("the result is not a tfvars document: %v\n%s", err, got)
+	}
+	if doc.CredentialsService == nil {
+		t.Fatalf("credentials_service was dropped:\n%s", got)
+	}
+	if have := doc.CredentialsService.SignerAccount; have != deployed.SignerAccount {
+		t.Errorf("credentials_service.signer_account = %q, want %q: the signer is the Firebase root's own account, derived from the project the budget block names — the name the service signs a run's identity as, and the one LM14's probe reads", have, deployed.SignerAccount)
+	}
+	if have := doc.CredentialsService.RosterServiceAccounts; !slices.Equal(have, deployed.RosterServiceAccounts) {
+		t.Errorf("credentials_service.roster_service_accounts = %v, want %v: the roster's service accounts as the bare addresses an ID token's email claim carries — the module makes the service's invoker grant for this same list, so the account that may knock and the account that may be served are one value", have, deployed.RosterServiceAccounts)
+	}
+	if have := doc.CredentialsService.ImplicitAdmins; !slices.Equal(have, deployed.ImplicitAdmins) {
+		t.Errorf("credentials_service.implicit_admins = %v, want %v: the gate's own list, so the issuer's scope check gives the gate's answer (F29, R16 arm 1)", have, deployed.ImplicitAdmins)
+	}
+	// The two classes that hold no address are not resolved into either list:
+	// the fixture names a `group:` and a `domain:` on each, and a `group:`
+	// member written through would match no token's email claim while admitting
+	// everyone the group means.
+	for _, list := range [][]string{doc.CredentialsService.RosterServiceAccounts, doc.CredentialsService.ImplicitAdmins} {
+		for _, m := range list {
+			if strings.Contains(m, ":") {
+				t.Errorf("an identity list holds %q: the lists are bare addresses, the spelling a Google ID token's email claim carries", m)
+			}
+		}
+	}
+	if !slices.Contains(doc.CredentialsService.ImplicitAdmins, "Boss@example.com") {
+		t.Errorf("implicit_admins = %v, want the gate's own normalisation (the domain lowered, the local part as written)", doc.CredentialsService.ImplicitAdmins)
+	}
+	// Every other member of the block, and every other key of the document, is
+	// what it was: the image, the URL, the bundle container, the database, the
+	// job tables and the verifier list are the installation's own record.
+	carried.SignerAccount = deployed.SignerAccount
+	carried.RosterServiceAccounts = deployed.RosterServiceAccounts
+	carried.ImplicitAdmins = deployed.ImplicitAdmins
+	if !credsVarsSpecEqual(*doc.CredentialsService, carried) {
+		t.Errorf("credentials_service = %+v, want %+v: the three names are the only members this refresh writes", *doc.CredentialsService, carried)
+	}
+	if wantDoc, have := credsVarsDoc(t, vars), credsVarsDoc(t, got); !mapsEqual(wantDoc, have) {
+		t.Errorf("the document changed beyond the one key:\nwant %v\ngot  %v", wantDoc, have)
+	}
+	// And it converges: a second refresh of the same document is byte for byte
+	// the same file, which is what an installation whose config has not changed
+	// carries into its plan.
+	again, err := RefreshCredentialsServiceIdentity(got, lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != string(got) {
+		t.Errorf("a second refresh changed the document:\nfirst  %s\nsecond %s", got, again)
+	}
+
+	// A name with nothing to carry is DELETED rather than written empty, which
+	// is what the spec's omitempty tags write and what the module's defaults
+	// read as the empty class. This config names no service account on either
+	// launcher list and no implicit admin; the signer is still derived, because
+	// the project is.
+	bare := parseLC(t, credentialsBudgetYAML+`repos:
+  acme/sandbox: { workflows: [web], provider: bitbucket }
+`)
+	got, err = RefreshCredentialsServiceIdentity(vars, bare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bareDoc map[string]any
+	if err := json.Unmarshal(got, &bareDoc); err != nil {
+		t.Fatal(err)
+	}
+	bareSvc, _ := bareDoc["credentials_service"].(map[string]any)
+	if _, ok := bareSvc["roster_service_accounts"]; ok {
+		t.Errorf("roster_service_accounts = %v, want the key absent: a list with nothing in it is what the deploy writes nothing for, and an empty array here is a member a later run would carry for no fact", bareSvc["roster_service_accounts"])
+	}
+	if _, ok := bareSvc["implicit_admins"]; ok {
+		t.Errorf("implicit_admins = %v, want the key absent, for the same reason", bareSvc["implicit_admins"])
+	}
+	if bareSvc["signer_account"] == nil || bareSvc["signer_account"] == "" {
+		t.Errorf("signer_account = %v, want the account the budget block's project names: the signer is not a list and is never empty where the project is known", bareSvc["signer_account"])
+	}
+
+	// A document with no block is refused rather than given one: the three
+	// names are members of a service this run did not deploy.
+	if _, err := RefreshCredentialsServiceIdentity([]byte(credsVarsDiscovered), lc); err == nil {
+		t.Error("RefreshCredentialsServiceIdentity gave a document with no credentials_service the identity names")
+	}
+	if _, err := RefreshCredentialsServiceIdentity([]byte("not json"), lc); err == nil {
+		t.Error("RefreshCredentialsServiceIdentity rewrote a document it could not read")
+	}
+	// A config that cannot name the Firebase project the signer lives in is
+	// refused rather than written around, and the caller keeps the block it
+	// found — the direction the job tables' refresh takes.
+	if _, err := RefreshCredentialsServiceIdentity(vars, parseLC(t, m4LocalConfig+m5Additions)); err == nil || !strings.Contains(err.Error(), "budget.firebase_project") {
+		t.Errorf("a config that names no Firebase project = %v, want the derivation's own refusal naming budget.firebase_project", err)
+	}
+}
+
 // The release an image reference names is read by BOTH sides out of the same
 // string: this program, which decides whether the installation needs the
 // re-pin, and the module's credentials.tf (credentials_image_release), which

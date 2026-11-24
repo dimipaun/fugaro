@@ -90,7 +90,7 @@ expect_absent() {
   esac
 }
 expect_status() { # status want what
-  [ "$1" = "$2" ] || fail "$3: expected exit $2, got $1"
+  [ "$1" = "$2" ] || fail "$3: expected exit $2, got $1; the rows that failed: $(printf '%s\n' "$out" | grep '^FACT [a-z0-9-]*: FAIL' | cut -c1-300 | tr '\n' ' ')${err:+ stderr: $(printf '%s' "$err" | tail -n 5 | tr '\n' ' ')}"
 }
 # expect_row: assert on the ONE row's own text. Every row is a sentence the
 # register quotes, so a case reads the row it is about rather than the block.

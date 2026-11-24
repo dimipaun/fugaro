@@ -46,11 +46,14 @@ var allowedTypes = map[string]bool{
 	// confirmation covers can carry them. What the compute stage does run
 	// over its own plan is GrantsNotCovered: the grant rules below, the
 	// launchers' Batch Job Editor condition among them.
-	"google_compute_firewall":                 true,
-	"google_compute_router":                   true,
-	"google_compute_router_nat":               true,
-	"google_firebase_database_instance":       true,
-	"google_firebase_project":                 true,
+	"google_compute_firewall":           true,
+	"google_compute_router":             true,
+	"google_compute_router_nat":         true,
+	"google_firebase_database_instance": true,
+	"google_firebase_project":           true,
+	// The run index's composite indexes (RI2, contract-index.md): the plan is
+	// the owner-run Firebase root's, because no job may change an index.
+	"google_firestore_index":                  true,
 	"google_logging_log_view":                 true,
 	"google_logging_log_view_iam_member":      true,
 	"google_logging_project_bucket_config":    true,
@@ -331,7 +334,16 @@ var grantRules = map[string]map[string]who{
 		// which reads the target account and reads it in this run's own Firebase
 		// project, so the grant the module writes on the devices' signer is the
 		// only one this cell admits.
-		customKey + "fugaroTokenMinter": toPeople | toOrchestrator | toMobile,
+		//
+		// toCredentials is the issuer's own row (launcher-does-not-mint plan
+		// task LM13; D3121, F7): the credentials service signs a run's identity
+		// as the runs' signer once the people's row goes, and that row is the
+		// ONE grant this design adds. It is here on the row's own terms and not
+		// as a widening: the cell says the account may hold fugaroTokenMinter,
+		// and issuerMinterGrant — the rule beside mobileMinterGrant — is what
+		// holds it to this run's signer and to nothing else, the way the
+		// orchestrator's and the mobile service's bits are held to theirs.
+		customKey + "fugaroTokenMinter": toPeople | toOrchestrator | toMobile | toCredentials,
 		// The operators' actAs on the accounts a build runs as. Two module
 		// sites hold it now: the per-repository build account
 		// (modules/repo/build.tf's operator_build, on google_service_account
@@ -2623,6 +2635,14 @@ func (c Cover) grant(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[str
 	if why == "" && t == "google_service_account_iam_member" && c.isMobileMember(str(rc.Change.After["member"])) {
 		why = c.mobileMinterGrant(rc.Change)
 	}
+	// ... and the credentials service's own row on that same signer (LM13):
+	// the design's one NEW grant, and the only one of the three whose member is
+	// a literal of a DIFFERENT root's apply — isCredentialsMember has already
+	// pinned the member to the installation's credentials account, so what is
+	// left to hold is the account the row is ON.
+	if why == "" && t == "google_service_account_iam_member" && c.isCredentialsMember(str(rc.Change.After["member"])) {
+		why = c.issuerMinterGrant(rc.Change)
+	}
 	if why == "" {
 		why = c.deployerGrant(t, rc.Change, dep.accounts[modulePrefix(rc)])
 	}
@@ -3367,6 +3387,64 @@ func (c Cover) mobileMinterGrant(ch Change) string {
 		}
 	}
 	return fmt.Sprintf("grants fugaroTokenMinter on %s to the public mobile service: its one signJwt is on the devices' signer account of this run's Firebase project (%s), never on the runs' own signer and never on a job account — signJwt signs any claim set for any uid, so the account it is on IS the identity this public service may mint (P5, O1, O8)", id, DeviceSignerAccountID+"@<one of this run's projects>.iam.gserviceaccount.com")
+}
+
+// issuerMinterGrant is orchestratorMinterGrant's rule for the credentials
+// service's own account (launcher-does-not-mint plan task LM13; D3121, F7), and
+// it is the rule that makes the design's one new row a property of a plan
+// rather than of the module's text: the account's signJwt is on the runs'
+// signer of this run's Firebase project and on nothing else.
+//
+// Why the target is the whole of the check here. The role's row already says
+// the account may hold fugaroTokenMinter, and iam.serviceAccounts.signJwt is
+// the widest grant of this tree: its holder signs ANY claim set for ANY uid as
+// the account it is on (orchestrator.tf's own sentence, section 4.3). That is
+// the grant the design moves a run's identity onto — the service becomes the
+// one identity that mints every run's and every launcher's token — so where
+// the orchestrator holds it as the budget backend's own writer, this account
+// holds it as the issuer, and the account it is on has to be the signer the
+// runs are minted through. A plan that pointed it at the devices' signer would
+// leave the runs' identity to the mobile route; one that pointed it at a job
+// account would put every run's identity behind the model credentials'
+// account.
+//
+// The account has to be named: the row is written in modules/firebase/iam.tf
+// with the signer's name and the role spelled out as literals rather than read
+// off the two resources beside it, because a reference reaches a plan as
+// UNKNOWN — a principal and a role nobody can read off the review screen, and
+// the row is one whose whole content is the account it is on. A plan that
+// computes either is refused, as a computed role is. The project is this run's
+// and not a fixed one, for mobileMinterGrant's reason: the Firebase project
+// may be the installation's own or one of its own (D6, D2781).
+//
+// The MEMBER is this account and no other — the LITERAL the root writes
+// (var.issuer_account) rather than a computed one. That half is already settled
+// by the time this function runs: grant() reaches it through
+// isCredentialsMember, which matches the member string byte for byte against
+// the installation's credentials account, so a plan whose member is computed
+// never arrives here: the minter cell carries no plain-account kind, and the
+// grant is refused before this function is reached. What is left is the
+// account the row is on, which is this function's whole subject.
+func (c Cover) issuerMinterGrant(ch Change) string {
+	key, ok := c.roleKey(str(ch.After["role"]))
+	if !ok || key != customKey+"fugaroTokenMinter" {
+		return ""
+	}
+	// The account ID the Firebase root's signer carries (modules/firebase/iam.tf,
+	// FugaroAccounts' own spelling of it).
+	const signerID = "fugaro-token-signer"
+	if unknown(ch, "service_account_id") {
+		return "a fugaroTokenMinter grant to the credentials service whose account is not known: the issuer's row is the budget signer account of this run, written out in the root that creates it (firebase/iam.tf's issuer_minter), and a plan that computes the account is one whose signer nobody can name"
+	}
+	id := str(ch.After["service_account_id"])
+	if m := saName.FindStringSubmatch(id); m != nil {
+		for _, p := range c.Projects {
+			if m[1] == p && m[3] == p && m[2] == signerID {
+				return ""
+			}
+		}
+	}
+	return fmt.Sprintf("grants fugaroTokenMinter on %s to the credentials service: the issuer's one row is the budget signer account of this run (%s), and signJwt on any other account makes the credentials service that account — the devices' signer, which would leave every run's identity to the mobile route, and the job accounts holding the model credentials among them (D3121, F7, section 4.3)", id, signerID+"@<one of this run's projects>.iam.gserviceaccount.com")
 }
 
 // accountClause is one clause of a job or build account's bucket condition,
@@ -5533,17 +5611,20 @@ var nonDataBearingTypes = map[string]bool{
 	"google_compute_router":                          true,
 	"google_compute_router_nat":                      true,
 	"google_firebase_project":                        true,
-	"google_logging_log_view_iam_member":             true,
-	"google_logging_project_exclusion":               true,
-	"google_logging_project_sink":                    true,
-	"google_monitoring_alert_policy":                 true,
-	"google_monitoring_notification_channel":         true,
-	"google_project_iam_custom_role":                 true,
-	"google_project_iam_member":                      true,
-	"google_project_service":                         true,
-	"google_secret_manager_secret_iam_member":        true,
-	"google_service_account_iam_member":              true,
-	"google_storage_bucket_iam_member":               true,
+	// An index holds no documents: the runs it orders live in the collection,
+	// and deleting the index loses an answer, never a row.
+	"google_firestore_index":                  true,
+	"google_logging_log_view_iam_member":      true,
+	"google_logging_project_exclusion":        true,
+	"google_logging_project_sink":             true,
+	"google_monitoring_alert_policy":          true,
+	"google_monitoring_notification_channel":  true,
+	"google_project_iam_custom_role":          true,
+	"google_project_iam_member":               true,
+	"google_project_service":                  true,
+	"google_secret_manager_secret_iam_member": true,
+	"google_service_account_iam_member":       true,
+	"google_storage_bucket_iam_member":        true,
 }
 
 // DataBearingType classifies a resource type for D1551: whether its objects

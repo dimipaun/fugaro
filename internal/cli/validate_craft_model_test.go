@@ -57,8 +57,7 @@ func TestValidateNamesACraftModelProblemAtItsOwnPath(t *testing.T) {
 	// gateway now (AB1b, D3009), so `validate` prices the crafts' models in
 	// every mode, and "no price" would otherwise be a problem this test's
 	// fixture contributed rather than the allow-list rule it is about.
-	craftFixtureWith(t, "budget: { allowed_models: [\"claude-opus-4\"] }\n"+
-		"model_prices:\n  claude-opus-4: { input_per_m: 15, output_per_m: 75 }\n  claude-opus-4-1: { input_per_m: 15, output_per_m: 75 }\n")
+	craftFixtureWith(t, "budget: { allowed_models: [\"claude-opus-4\"] }\n")
 	testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": validateCraftModelYAML})
 	out, errOut, err := execute(t, "validate", "--offline", "fugaro.yaml")
 	if ExitCode(err) != ExitUserError {
@@ -110,8 +109,7 @@ func TestValidateNamesACraftModelProblemAtItsOwnPath(t *testing.T) {
 // fixture contributed rather than the crafts-of-the-installation rule it is
 // about.
 func TestValidateIgnoresTheCraftsNoRunReads(t *testing.T) {
-	craftFixtureWith(t, "budget: { allowed_models: [\"claude-opus-4-1\", \"claude-sonnet-5-5\"] }\n"+
-		"model_prices:\n  claude-opus-4-1: { input_per_m: 15, output_per_m: 75 }\n")
+	craftFixtureWith(t, "budget: { allowed_models: [\"claude-opus-4-1\", \"claude-sonnet-5-5\"] }\n")
 	testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": validateCraftPinnedYAML})
 	out, errOut, err := execute(t, "validate", "--offline", "fugaro.yaml")
 	if ExitCode(err) != ExitOK {

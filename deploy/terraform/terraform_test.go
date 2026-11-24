@@ -1418,15 +1418,53 @@ func TestHistoryNoDatastoreAdmin(t *testing.T) {
 // H8: the Firestore database is an idempotent REST ensure step (a Terraform
 // create of a singleton does not adopt), and the rules are REST too: no
 // Terraform resource for either.
+//
+// The database, not the whole service: `google_firestore_index` IS Terraform
+// (docs/console-fixes/contract-index.md, C-INDEX; plan task RI2), because an
+// index is not a singleton the ensure step adopts — Firestore creates one from
+// its fields, the provider names the resource after them, and the role the
+// history job holds (datastore.user) cannot change one, so the owner-run
+// Firebase root is the only place it can be declared (iam.tf). The type is
+// therefore allowed by name and nothing else of the service is.
 func TestNoFirestoreDatabaseResource(t *testing.T) {
+	// The service's names are held by their PREFIX and not by a list of the
+	// types that were Terraform at the time: a fourth declaration
+	// (google_firestore_backup_schedule, or a name Google adds) is the same
+	// mistake as the database, and an enumeration is what would let it in. The
+	// index is the one name of the service that is Terraform, and where it may
+	// be declared is the loop below. A second one is a decision rather than a
+	// slip — the orchestrator's session TTL policy is the candidate the spec
+	// already names (docs/central-orchestrator/reconciliation.md, D11) — and
+	// this line is where it is made in the open.
+	firestoreType := regexp.MustCompile(`google_firestore_[a-z0-9_]*`)
 	walk(t, func(path string, b []byte) {
 		code := stripComments(string(b))
-		for _, bad := range []string{`"google_firestore_database"`, `"google_firebase_rules_`, `"google_firestore_`} {
-			if strings.Contains(code, bad) {
-				t.Errorf("%s declares %s: the database and its rules are fugaro update's REST steps", path, bad)
+		for _, m := range firestoreType.FindAllString(code, -1) {
+			if m != "google_firestore_index" {
+				t.Errorf("%s names %s: the Firestore database and its rules are fugaro update's REST steps, and the index is the service's only Terraform type here (RI2)", path, m)
+			}
+		}
+		if strings.Contains(code, `"google_firebase_rules_`) {
+			t.Errorf("%s declares a google_firebase_rules_ resource: the rules are fugaro update's REST step", path)
+		}
+	})
+	// A google_firestore_index anywhere but the Firebase module is a second
+	// owner of a read the installation's one Firebase project serves, and the
+	// type's permit above is what the loop below holds to the module: every
+	// declaration of it is in modules/firebase, and none is in a root or
+	// another module.
+	n := 0
+	walk(t, func(path string, b []byte) {
+		for range resourceBlocks(t, path, b, "google_firestore_index") {
+			n++
+			if !strings.HasPrefix(path, "gcp/modules/firebase/") {
+				t.Errorf("%s declares a google_firestore_index: the run index's composite indexes belong to the Firebase module alone (RI2), whose root is the one `fugaro update` applies against the Firebase project", path)
 			}
 		}
 	})
+	if n == 0 {
+		t.Errorf("no google_firestore_index is declared anywhere: the run index's reads need their composite indexes (contract-index.md, RI2)")
+	}
 }
 
 // The history account may read the runs bucket (objectViewer) and nothing
@@ -8459,21 +8497,30 @@ func TestIntakeRefusesAContainerOfAnotherShape(t *testing.T) {
 }
 
 // TestLauncherAccountsReachTheServices pins the class list to the deployment
-// rather than to a literal: FUGARO_LAUNCHER_ACCOUNTS is the launcher class
-// (D1938, F25) — the bare addresses a Google ID token's email claim carries —
-// and the two services that admit a launcher read it from var.launcher_accounts,
-// which internal/infra derives from the same roster list the invoker grants are
-// made from (internal/infra/launchers.go; F31, F36).
+// rather than to a literal: FUGARO_LAUNCHER_ACCOUNTS is the class the process
+// reads — the bare addresses a Google ID token's email claim carries — and the
+// two services that admit a caller by it read it from the installation's
+// launchers, which internal/infra derives from the same roster list the invoker
+// grants are made from (internal/infra/launchers.go; F31, F36).
+//
+// The INTAKE's is the launchers AND the workspace roster's people (WC3, R5,
+// D3143): the module composes var.launcher_accounts with var.intake.people in
+// one expression (local.intake_accounts), which is also what the invoker grant
+// above it is made from, so the class and the grant cannot drift apart. The
+// credentials service's stays the launchers' own: that service's read mint
+// reaches the installing person's whole workspace, which is not what a roster
+// person is given (F10), so it reads no second list and neither does its grant.
 //
 // It is rendered the way every optional class list here is (credentials.tf's
 // FUGARO_PERSON_ACCOUNTS): a dynamic block, so an installation whose roster
 // names no launcher starts with a class that admits nobody rather than
 // refusing to bind a port, and no address is written into the module.
 func TestLauncherAccountsReachTheServices(t *testing.T) {
-	for _, path := range []string{
-		"gcp/modules/installation/credentials.tf",
-		"gcp/modules/installation/intake.tf",
+	for _, tc := range []struct{ path, expr string }{
+		{"gcp/modules/installation/credentials.tf", "jsonencode(var.launcher_accounts)"},
+		{"gcp/modules/installation/intake.tf", "jsonencode(local.intake_accounts)"},
 	} {
+		path := tc.path
 		b, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -8488,8 +8535,8 @@ func TestLauncherAccountsReachTheServices(t *testing.T) {
 			t.Errorf("%s: FUGARO_LAUNCHER_ACCOUNTS is not rendered by a dynamic env block, so an installation whose roster names no launcher gets an empty value rather than no entry (credentialsServiceLaunchers reads an absent entry as an empty class, and an empty string is refused)", path)
 			continue
 		}
-		if !strings.Contains(squash(m[1]), "jsonencode(var.launcher_accounts)") {
-			t.Errorf("%s: the launcher class is not jsonencode(var.launcher_accounts): the value is a JSON array of bare addresses and it is derived from the roster, never written here:\n%s", path, squash(m[1]))
+		if !strings.Contains(squash(m[1]), tc.expr) {
+			t.Errorf("%s: the class is not %s: the value is a JSON array of bare addresses derived from the roster, never written here, and the intake's is the launchers composed with the workspace roster's own people (WC3, R5):\n%s", path, tc.expr, squash(m[1]))
 		}
 	}
 	// The variable is the roster's own people, so the module must not carry a
@@ -8605,6 +8652,53 @@ func TestSharedJobAccountsReachTheCredentialsService(t *testing.T) {
 	}
 	if !strings.Contains(squashed, `alltrue([for x in r.repos : x != ""])`) {
 		t.Error("the module's credentials_service validation does not hold every shared row's repositories to non-empty entries: the process refuses an empty one by name, so the plan would carry a service that will not bind a port")
+	}
+}
+
+// TestTheIntakesPeopleAreHeldToTheLauncherAccountsShape (WC3, R5) pins the one
+// rule the two class lists share to the deployment, because the two are ONE
+// list by the time anything reads them: intake.tf composes var.intake.people
+// with var.launcher_accounts into local.intake_accounts (the class the process
+// reads) and into local.intake_invoker_members (the grant), each entry of the
+// people's half spelled "user:<entry>". An entry the people list took and the
+// launchers list refuses is a class list the module composes from two grammars,
+// and one carrying a colon is the member spelling rather than the bare address a
+// token's email claim holds — a member IAM has no principal for, which is what
+// internal/infra's memberAddress drops the person over (and internal/access's
+// admin list refuses an entry over, for the same reason).
+//
+// The refusal is a plan-time one in EVERY installation, and it is not an update
+// that fails: `fugaro update` renders this list with internal/infra's
+// IntakePeople, which drops the same three shapes the validation refuses
+// (memberAddress, the 512-byte bound and a service account's suffix), so no
+// value a workspace's roster can hold is written here.
+func TestTheIntakesPeopleAreHeldToTheLauncherAccountsShape(t *testing.T) {
+	b, err := os.ReadFile("gcp/modules/installation/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+	body := func(name string) string {
+		m := regexp.MustCompile(`(?m)^\s*variable\s+"` + regexp.QuoteMeta(name) + `"\s*\{`).FindStringIndex(code)
+		if m == nil {
+			t.Fatalf("the installation module declares no %s variable", name)
+		}
+		return code[m[1]:matchBrace(code, m[1]-1)]
+	}
+	shape := func(v string, which string) string {
+		m := regexp.MustCompile(`can\(regex\("([^"]*@[^"]*)"`).FindStringSubmatch(body(v))
+		if m == nil {
+			t.Fatalf("var.%s holds no address shape: the class list is a list of addresses and the module refuses what is not one", which)
+		}
+		return m[1]
+	}
+	launchers := shape("launcher_accounts", "launcher_accounts")
+	people := squash(body("intake"))
+	if !strings.Contains(people, squash(launchers)) {
+		t.Errorf("var.intake.people is not held to var.launcher_accounts' own shape %q: the two merge into ONE class list and ONE invoker set (intake.tf's locals) and each entry of the people's half is spelled \"user:<entry>\" into the grant, so a shape one takes and the other refuses is a class list composed from two grammars — and an entry carrying a colon is the member spelling IAM has no principal for (WC3, R5):\n%s", launchers, people)
+	}
+	if !strings.Contains(people, `endswith(lower(p), ".gserviceaccount.com")`) {
+		t.Errorf("var.intake.people does not refuse a service account's address, folded: that shape is a job's rather than a person's and internal/credsvc's foldLauncherAccounts refuses it outright — the intake's revision exits on start, which fails the apply and every later `fugaro update` of that workspace (WC3):\n%s", people)
 	}
 }
 

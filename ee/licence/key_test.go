@@ -36,8 +36,10 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"go/parser"
@@ -529,6 +531,78 @@ func TestStagingKeyIDIsRefused(t *testing.T) {
 	}
 }
 
+// publishedProductionKeyPath is the file the owner's production public half is
+// published in, relative to this package. The production ring is compiled from
+// these bytes, and the console's suite and the app's read the same file, so one
+// file holds the three verifiers to one key.
+const publishedProductionKeyPath = "keys/production.pub"
+
+// publishedProductionKeyID is the id a production key carries, written out here
+// rather than read from productionKeyID: it is what the licence service mints
+// keys under and what every verifier looks a production key up by, so a change
+// to it is a decision a reviewer reads here and not a rename.
+const publishedProductionKeyID = "fugaro-licence-production"
+
+// TestKeyringMatchesThePublishedKey holds the ring the build compiles in to
+// the file the public half is published in (S2.9): one entry, under the id a
+// production key carries, holding exactly the key that file spells. A ring that
+// drifted from its file -- a second copy of the bytes, a key re-generated under
+// the same id -- is a build that refuses every key the service mints while
+// looking like one that verifies them, which is the failure this test catches
+// before a user does.
+func TestKeyringMatchesThePublishedKey(t *testing.T) {
+	if productionKeyID != publishedProductionKeyID {
+		t.Errorf("the compiled ring is keyed by %q, want %q: a key is looked up by the text its `kid` claim carries", productionKeyID, publishedProductionKeyID)
+	}
+	if len(productionKeyring) != 1 {
+		t.Fatalf("the production keyring holds %d keys, want the one published production key alone: a second entry is a second key a build would trust the day a command reads this ring", len(productionKeyring))
+	}
+
+	published, err := os.ReadFile(publishedProductionKeyPath)
+	if err != nil {
+		t.Fatalf("reading the published production key: %v", err)
+	}
+	if !bytes.Equal(productionPublicPEM, published) {
+		t.Errorf("the bytes this build compiled in are not the ones in %s: the ring has to be built from the published file and not from a copy of it", publishedProductionKeyPath)
+	}
+
+	block, rest := pem.Decode(published)
+	if block == nil || block.Type != "PUBLIC KEY" || len(bytes.TrimSpace(rest)) != 0 {
+		t.Fatalf("%s is not one PEM public key", publishedProductionKeyPath)
+	}
+	parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		t.Fatalf("%s is not a public key this verifier reads: %v", publishedProductionKeyPath, err)
+	}
+	want, ok := parsed.(ed25519.PublicKey)
+	if !ok {
+		t.Fatalf("%s is not an Ed25519 public key: a key the service mints is signed with Ed25519 and no other algorithm", publishedProductionKeyPath)
+	}
+
+	got, held := productionKeyring[publishedProductionKeyID]
+	if !held {
+		t.Fatalf("the production keyring holds no %s entry: the keys the licence service mints name that id", publishedProductionKeyID)
+	}
+	if !got.Equal(want) {
+		t.Errorf("the ring's %s entry is not the key %s publishes", publishedProductionKeyID, publishedProductionKeyPath)
+	}
+}
+
+// TestAKeyUnderTheProductionIDIsRefused is the other half of a trust root: the
+// id a key carries selects the entry that verifies it, and *naming* the
+// production id buys nothing without the production key. A throwaway pair
+// signing a claim set whose `kid` says `fugaro-licence-production` is refused
+// for its signature (S2.9), which is what makes the id a lookup and not a claim
+// about who minted the key.
+func TestAKeyUnderTheProductionIDIsRefused(t *testing.T) {
+	stranger := newFixtureKey(t, publishedProductionKeyID)
+	claims := v1Claims()
+	claims.KID = publishedProductionKeyID
+
+	got, state, err := Verify([]byte(stranger.signClaims(t, claims)), atV1(30), productionKeyring, firebaseProjectV1)
+	refusedAs(t, got, state, err, ErrSignature)
+}
+
 // TestKeyBeyondTheTierLifetimeIsRefused holds the tier's maximum lifetime,
 // which the format keeps as `paid_through - issued_at` plus the thirty-day lead
 // a renewal is minted inside (T26). The ceiling is read from both sides for
@@ -1004,7 +1078,7 @@ func generateVectors(t *testing.T) vectorFile {
 	}
 
 	file := vectorFile{
-		Note:              "The claim sets, states and refusals the Go v1 verifier and the console's are both read against (licence-key-v2 plan K1.1, K1.4; spec sections 3, 4 and 6). Every key here is minted by a throwaway test keypair whose private half was generated in the process that wrote this file and never written down; no build trusts it, and ee/licence/key.go's production keyring holds no id at all until S2.9 publishes the owner's production key. `now` is the clock every vector is read at, `firebase_project_id` is the workspace the verifier is asked with, `state` and `claims` are what an accepted key answers, and `refused` is the part a refused one fails on, named as the two verifiers name it.",
+		Note:              "The claim sets, states and refusals the Go v1 verifier and the console's are both read against (licence-key-v2 plan K1.1, K1.4; spec sections 3, 4 and 6). Every key here is minted by a throwaway test keypair whose private half was generated in the process that wrote this file and never written down; no build trusts it: ee/licence/key.go's production keyring holds the owner's one published production key and no id of these vectors (S2.9 published it). `now` is the clock every vector is read at, `firebase_project_id` is the workspace the verifier is asked with, `state` and `claims` are what an accepted key answers, and `refused` is the part a refused one fails on, named as the two verifiers name it.",
 		Now:               now.Unix(),
 		FirebaseProjectID: "fugaro-test-project",
 		Keyring:           map[string]string{fixture.id: fixture.public()},
@@ -1314,8 +1388,11 @@ func TestLicencePackageImportsNoNetwork(t *testing.T) {
 	allowed := []string{
 		"bytes",           // the claim set is decoded from the payload's own bytes
 		"crypto/ed25519",  // the one algorithm a key is signed with (D308)
+		"crypto/x509",     // the published production key is an SPKI PEM, read as the format spells it (S2.9)
+		"embed",           // the published production half is compiled in from keys/production.pub
 		"encoding/base64", // the key text's two parts
 		"encoding/json",   // the claim set
+		"encoding/pem",    // and the published file is PEM-armoured
 		"errors",          // the refusals
 		"fmt",             // a refusal names the part that failed
 		"io",              // the strict decode reads to the end of the payload
