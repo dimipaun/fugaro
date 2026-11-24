@@ -611,13 +611,13 @@ func wordMacro(m string, depth int) (string, error) {
 	case "KILLS_OFF":
 		return "(root.child('config/kill/global/on').val() != true && root.child('config/kill/repos').child($slug).child('on').val() != true)", nil
 	case "REPODAILY":
-		// The repository's daily cap, unclamped, unlike the per-run comparison
-		// (perRunClamp, spec §5.6 B18): B18's clamp is on the *lease check* --
-		// the lease leaf's per-run comparison -- and this leaf is the day
-		// counter a run's spend moves, over which the global comparison beside
-		// it already holds wherever a global cap is set (spec §5.6, Migration:
-		// "with a global cap set this changes nothing a run meets").
-		return fallback("dailyMicros", "repoDailyMicros"), nil
+		// The repository's own daily cap, which the lease check reads: the lease's
+		// multi-path write raises this day counter as it takes a reservation
+		// (budget/lease.go), so this comparison carries a ceiling like the per-run
+		// one does (spec §5.6, B18 -- the ceiling is "for each of daily and
+		// per-run"). dailyClamp says why the clause it adds decides only where an
+		// admin's write has left the counters apart.
+		return fallback("dailyMicros", "repoDailyMicros") + dailyClamp(), nil
 	case "KINDREQ":
 		// The per-kind *required* half of a message's shape (P6.3's
 		// KIND_REQUIRED): an `answer` must name the prompt it answers, an
@@ -1096,6 +1096,60 @@ func perRunOK(depth int) (string, error) {
 	return tern(hasOwn+" || "+hasDef,
 		repoSide+" && "+tern(hasGlobal, within(perRunGlobalSnap), "true"),
 		tern(hasGlobal, within(perRunGlobalSnap), "false")), nil
+}
+
+// The three cap nodes the day counter's comparison reads: the same three the
+// per-run clamp reads, one cap over. The first two are the nodes REPODAILY's
+// fallback reads, spelled again because the ceiling has to ask each of them
+// whether it exists, which the fallback expression beside it does not answer --
+// and the emulator rows are what hold the two spellings to the same nodes: a
+// ceiling built from a path nothing writes is the node itself, which is a clamp
+// that clamps nothing.
+const (
+	dailyOwnSnap     = "root.child('config/caps/repos').child($slug).child('dailyMicros')"
+	dailyDefaultSnap = "root.child('config/caps/defaults/repoDailyMicros')"
+	dailyGlobalSnap  = "root.child('config/caps/global/dailyMicros')"
+)
+
+// dailyCeiling is the repository's daily node's ceiling (spec §5.6, B18): the
+// project's global daily cap where it is set, else the default repository daily
+// cap, and the node itself where neither is set, which leaves the node
+// standing (the owner's ruling of 2026-10-15, D6, as perRunCeiling gives it).
+// Three arms and not `fallback`, for perRunCeiling's reason: the node is what
+// is being clamped, so it cannot be the first thing read.
+func dailyCeiling() string {
+	return tern(dailyGlobalSnap+".exists()", dailyGlobalSnap+".val()",
+		tern(dailyDefaultSnap+".exists()", dailyDefaultSnap+".val()", dailyOwnSnap+".val()"))
+}
+
+// dailyClamp is the conjunct the day counter's validator adds: the day's new
+// repository total against that ceiling, so a repository node above its ceiling
+// counts as the ceiling (spec §5.6, B18). A conjunct and never an alternative,
+// which is what keeps the ceiling from *loosening* a node below it: a
+// repository whose own daily cap is $30 under a $60 default must not reach $60,
+// and `NEW <= cap || NEW <= ceiling` would hand it the $60.
+//
+// `newData.val()` is written out rather than as the NEW macro for the reason
+// perRunDelta gives: an expansion is never re-scanned.
+//
+// It reads flat -- `OLD || !ENFORCE || NEW <= cap && NEW <= ceiling` -- on
+// purpose: && binds tighter than ||, so the ceiling is a conjunct of the cap
+// comparison and not of the disjunction it sits in, which would measure a
+// release against the ceiling too.
+//
+// Where it can decide is narrow, said here so that nobody reads the clause as
+// text that could never run: every write that grows this counter moves the two
+// counters beside it by the same delta (COUNTERS_FOLLOW, on the run's own
+// share), and under enforce the global counter's check holds the global day
+// total under the global daily cap -- this node's ceiling wherever a global cap
+// is set, and where none is set it reads null and refuses every growing write.
+// So the clause decides only on a state the rules do not produce: a
+// repository's counter left above its ceiling while the global one is under it,
+// which needs a write that bypassed the rules -- an admin's, the case the
+// ceiling is named for (spec §5.6: "an admin's direct database write bypasses
+// rules, so the clamp at read is what holds"). It fails closed.
+func dailyClamp() string {
+	return " && (newData.val() <= " + dailyCeiling() + ")"
 }
 
 // MaxTokenLength bounds a registration's push token (mobile plan task P5.2.2,

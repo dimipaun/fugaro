@@ -2344,6 +2344,12 @@ var perRunClampClause = func() string {
 	return perRunClamp(delta)
 }()
 
+// dailyClampClause is the conjunct RC2 adds to the day counter's validator
+// (spec §5.6, B18: the ceiling is "for each of daily and per-run"): the day's
+// new repository total against the ceiling that repository's own daily cap is
+// read as. Built from dailyClamp, for perRunClampClause's reason.
+var dailyClampClause = dailyClamp()
+
 // namedRuleChanges is the whole of what this document's existing rules may
 // change: each path, and the one clause the change adds to its validator. Every
 // other path stays as it was, and removing the clause from the new string has
@@ -2364,6 +2370,11 @@ var namedRuleChanges = map[string]string{
 	// ceiling, so a cap an admin wrote past `fugaro budget set --repo`'s refusal
 	// grants no larger lease than the ceiling does.
 	"runs/" + slugForPath + "/$run/reserved": perRunClampClause,
+	// The day counter's leaf reads the repository's daily cap clamped to its
+	// ceiling the same way (RC2, spec §5.6, B18): the lease's multi-path write
+	// raises this counter as it takes a reservation, so it is one of the
+	// comparisons the check is made of.
+	"spend/$day/repos/" + slugForPath + "/counted": dailyClampClause,
 }
 
 // TestOutcomeRuleAcceptsEveryRunStatus: the outcome's status validator accepts
