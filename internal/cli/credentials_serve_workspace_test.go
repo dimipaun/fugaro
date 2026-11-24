@@ -311,7 +311,7 @@ func TestServeAssignsTheOldRecordBridgeToAnInstallationOnly(t *testing.T) {
 		for n, v := range workspaceServeEnv(workspace) {
 			t.Setenv(n, v)
 		}
-		db := fakeWorkspaceDatabase(t, workspace)
+		_, db := fakeWorkspaceDatabase(t, workspace)
 		// The record the mutant would answer: the workspace's own database,
 		// holding the same slug, is exactly the reach a member's call must not
 		// be served off (another installation's record, where the workspace
