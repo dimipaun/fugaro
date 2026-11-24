@@ -1555,9 +1555,7 @@ function statusStrip(factory: RunFactory, model: RunModel): ScreenElement {
   // run, drawn only when one of them is true -- a record with no `stages` at all
   // carries no flag and draws no badge, which is the strip it drew before VS1.
   if (model.fallback) {
-    const badge = cell(flags, factory, 'span', 'run-fallback')
-    literal(badge, FALLBACK_BADGE_WORD)
-    badge.setAttribute('data-tone', 'fallback')
+    literal(cell(flags, factory, 'span', 'run-fallback'), FALLBACK_BADGE_WORD)
   }
   return element
 }
@@ -1925,9 +1923,7 @@ function spendStagesPanel(factory: ScreenFactory, model: RunModel): ScreenElemen
       }
     }
     if (stage.fallback) {
-      const badge = cell(row, factory, 'span', 'run-spend-stage-fallback')
-      literal(badge, FALLBACK_BADGE_WORD)
-      badge.setAttribute('data-tone', 'fallback')
+      literal(cell(row, factory, 'span', 'run-spend-stage-fallback'), FALLBACK_BADGE_WORD)
     }
     numberCell(row, factory, 'span', stage.duration, 'seconds', 'run-spend-stage-duration')
     numberCell(row, factory, 'span', stage.calls, 'count', 'run-spend-stage-calls')
@@ -1974,6 +1970,7 @@ function switchesPanel(factory: ScreenFactory, switches: readonly RunSwitch[]): 
     } else {
       textCell(row, factory, 'span', moved.from, 'label', 'switches[].from', 'run-switch-from')
     }
+    literal(cell(row, factory, 'span', 'run-switch-arrow'), '→')
     textCell(row, factory, 'span', moved.to, 'label', 'switches[].to', 'run-switch-to')
     // The reason is one of the service's closed set of words (`credsvc.ValidReason`)
     // and it is drawn in the class the wire map gives the key -- `sentence`, the
@@ -1983,7 +1980,6 @@ function switchesPanel(factory: ScreenFactory, switches: readonly RunSwitch[]): 
   }
   return element
 }
-
 
 /** toleratedPanel is the findings the run's resolved mode let through, under the
  * total the block carries. The total is the document's own figure and is drawn
