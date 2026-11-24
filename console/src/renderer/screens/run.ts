@@ -712,15 +712,16 @@ const TOLERATED_ABSENT =
   'the document carries no tolerated block: a run that tolerated nothing, a record written before this field existed and a run whose record could not be read all look the same here'
 
 /**
- * RUN_SPEND_STAGES_MAX and RUN_TOLERATED_MAX are how many entries of each new
- * panel this screen draws, and they are the CLI's own bounds: `diagnoseStages`
- * (`internal/cli/diagnose.go`) and `runstore.MaxTolerated`. The document is an
- * object a hand can edit, so the length it carries is not a length this screen
- * trusts -- it draws this many entries and counts the rest, rather than
- * building a list nobody bounded.
+ * RUN_SPEND_STAGES_MAX, RUN_TOLERATED_MAX and RUN_SWITCHES_MAX are how many
+ * entries of each new panel this screen draws, and they are the CLI's own
+ * bounds: `diagnoseStages` and `diagnoseSwitches` (`internal/cli/diagnose.go`)
+ * and `runstore.MaxTolerated`. The document is an object a hand can edit, so the
+ * length it carries is not a length this screen trusts -- it draws this many
+ * entries and counts the rest, rather than building a list nobody bounded.
  */
 export const RUN_SPEND_STAGES_MAX = 128
 export const RUN_TOLERATED_MAX = 100
+export const RUN_SWITCHES_MAX = 128
 
 /** FALLBACK_BADGE_WORD is the word both fallback badges carry -- the stage's and
  * the run's -- and it is the console's own vocabulary rather than a document's
