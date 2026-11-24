@@ -248,8 +248,10 @@ func describeLabels(n secretname.Name) map[string]string {
 }
 
 // secretFromAPI renders one container as this package's metadata: what it was
-// made, what it carries as annotations, and the shape facts R12 refuses a
-// container for. Nothing here is a version and nothing here is a payload.
+// made, what it carries as annotations, the labels it was found by — the
+// workflow-secret marker among them (F18, G2) — and the shape facts R12
+// refuses a container for. Nothing here is a version and nothing here is a
+// payload.
 func secretFromAPI(sec *secretmanager.Secret) Secret {
 	created, _ := time.Parse(time.RFC3339Nano, sec.CreateTime)
 	shape := Shape{TTL: sec.Ttl, ExpireTime: sec.ExpireTime}
@@ -262,7 +264,7 @@ func secretFromAPI(sec *secretmanager.Secret) Secret {
 	if sec.Rotation != nil {
 		shape.Rotation = rotationOf(sec.Rotation)
 	}
-	return Secret{ID: lastSegment(sec.Name), Created: created, Annotations: sec.Annotations, Shape: shape}
+	return Secret{ID: lastSegment(sec.Name), Created: created, Annotations: sec.Annotations, Labels: sec.Labels, Shape: shape}
 }
 
 // cmekOf is the customer-managed key a container is bound to. The API can name

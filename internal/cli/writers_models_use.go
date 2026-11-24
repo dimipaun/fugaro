@@ -38,6 +38,13 @@ func init() {
 // rows in this machine's project layer file. The argv names the layer it
 // writes, so the line a refusal prints runs as it stands.
 //
+// The model rows answer `--layer project` even under the repository's own
+// spelling of the key (S4, R15): a model is the project's choice (D3237), so a
+// repository's file states none of them and the line that writes
+// `agent.models.coder` is the project-layer one. What stays at `--layer repo`
+// is the two keys a repository still states — `agent.recipe` and a level's
+// effort — and the write the line prints is the only one the command accepts.
+//
 // A template names the key itself with `<key>`, the only word
 // settings.Writer.ArgvFor fills: the line a refusal prints has to run as it
 // stands, and a `<1>` left for the pattern's varying segment is printed as
@@ -53,8 +60,8 @@ var modelsUseWriters = []struct {
 		pattern: "agent.model",
 		writer: settings.Writer{
 			Command: "fugaro models use",
-			Argv:    []string{"models", "use", settings.KeyPlaceholder, "<value>", "--layer", "repo"},
-			Store:   settings.StoreRepo,
+			Argv:    []string{"models", "use", settings.KeyPlaceholder, "<value>", "--layer", "project"},
+			Store:   settings.StoreProject,
 		},
 	},
 	{
@@ -69,16 +76,16 @@ var modelsUseWriters = []struct {
 		pattern: "agent.models.*",
 		writer: settings.Writer{
 			Command: "fugaro models use",
-			Argv:    []string{"models", "use", settings.KeyPlaceholder, "<value>", "--layer", "repo"},
-			Store:   settings.StoreRepo,
+			Argv:    []string{"models", "use", settings.KeyPlaceholder, "<value>", "--layer", "project"},
+			Store:   settings.StoreProject,
 		},
 	},
 	{
 		pattern: "agent.levels.*.model",
 		writer: settings.Writer{
 			Command: "fugaro models use",
-			Argv:    []string{"models", "use", settings.KeyPlaceholder, "<value>", "--layer", "repo"},
-			Store:   settings.StoreRepo,
+			Argv:    []string{"models", "use", settings.KeyPlaceholder, "<value>", "--layer", "project"},
+			Store:   settings.StoreProject,
 		},
 	},
 	{

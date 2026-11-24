@@ -22,7 +22,7 @@
 // artifact can be re-derived rather than hand-edited.
 
 import { writeFileSync } from 'node:fs';
-import { TOKEN_MAX, canonicalBytes, validateHeartbeat, validateMessage } from './index.js';
+import { MODE_MAX, TOKEN_MAX, canonicalBytes, validateHeartbeat, validateMessage } from './index.js';
 import { macOf } from './mac.js';
 
 const KEY = ['not', 'a', 'secret', 'test', 'key', '0001'].join('-');
@@ -116,6 +116,27 @@ const mergeOne = verified(
   'action: merge a pull request',
   'a merge carries the head SHA read back at confirmation, which the consumer re-checks before it merges',
   message({ kind: 'action', agent: 'orchestrator', text: 'merge the pull request', action: { id: 'a-0002', verb: 'merge', target: { repo: 'dimipaun/fugaro', pr: 532 }, head_sha: 'b'.repeat(40), confirmation: { id: 'c-0002', at: AT } } }),
+);
+
+// O10's typed start, and the one action record whose target is the repository
+// ALONE: a start has no run id yet and no pull request to name, so the field
+// set around it is `mode` beside `target`, not inside it. The mode is inside
+// the tagged bytes like every other field, which is what makes a mode swapped
+// for a cheaper one under a read-back's tag a message that does not verify.
+const launchOne = verified(
+  'action: launch in a costly mode',
+  'O10\'s typed start: the mode is the field the record exists for, and a costly mode\'s read-back carries the confirmation that authorises it (D2786)',
+  message({ kind: 'action', agent: 'orchestrator', text: 'start it in pro', action: { id: 'a-0003', verb: 'launch', mode: 'pro', target: { repo: 'dimipaun/fugaro' }, confirmation: { id: 'c-0003', at: AT } } }),
+);
+
+// The other half of the mode rule, and the reason `confirmation` is conditional
+// on the verb rather than required on every action: a start in a mode the
+// session does not call costly is D162's pass-through, so it carries no
+// confirmation at all — and the bytes omit the field rather than writing null.
+verified(
+  'action: a plain launch',
+  'a start in a mode the session does not call costly needs no read-back, so the record carries no confirmation (D162, D2786)',
+  message({ kind: 'action', agent: 'orchestrator', text: 'start it', action: { id: 'a-0004', verb: 'launch', mode: 'default', target: { repo: 'dimipaun/fugaro' } } }),
 );
 
 // P5.1g's kind, and the one record here whose whole point is what it does NOT
@@ -224,6 +245,9 @@ cases.push(
 cases.push(
   tampered('head SHA swapped', 'the branch moved after the read-back: the head in the record is the state of the world that was confirmed', mergeOne, { ...mergeOne, action: { ...mergeOne.action, head_sha: 'c'.repeat(40) } }),
 );
+cases.push(
+  tampered('mode swapped', 'a costly start relabelled as a cheap one under the tag its read-back produced: the mode is what the session read back, so a swap has to break the tag', launchOne, { ...launchOne, action: { ...launchOne.action, mode: 'default' } }),
+);
 
 const cancelOne = signed(message({ kind: 'action', agent: 'orchestrator', text: 'cancel the run', action: { id: 'a-0001', verb: 'cancel', target: { run: '20261018-125859-d3c8' }, confirmation: { id: 'c-0001', at: AT } } }));
 cases.push(
@@ -283,10 +307,23 @@ refused('short mac', 'a tag is exactly 64 hex characters: 63 is not a tag', 'mes
 refused('long mac', '65 is not a tag either', 'message', message({ mac: 'f'.repeat(65) }));
 refused('uppercase mac', 'hex has one spelling here, so one tag has one string', 'message', message({ mac: 'F'.repeat(64) }));
 refused('null mac', 'absent is omitted, never null', 'message', message({ mac: null }));
-refused('unknown verb', 'the verbs are cancel, merge and confirm, and nothing else', 'message', message({ kind: 'action', action: { ...actionCancel, verb: 'delete' } }));
+refused('unknown verb', 'the verbs are cancel, merge, confirm and launch, and nothing else', 'message', message({ kind: 'action', action: { ...actionCancel, verb: 'delete' } }));
 refused('short head SHA', 'a head SHA is 40 or 64 hex characters: an abbreviation cannot be compared byte for byte', 'message', message({ kind: 'action', action: { ...actionMerge, head_sha: 'a'.repeat(12) } }));
 refused('uppercase head SHA', 'a head SHA is lowercase, as the provider returns it', 'message', message({ kind: 'action', action: { ...actionMerge, head_sha: 'A'.repeat(40) } }));
 refused('merge without head SHA', 'a merge carries the head it was confirmed against', 'message', message({ kind: 'action', action: (({ head_sha, ...rest }) => rest)(actionMerge) }));
+
+// O10's typed start, refused at the schema: the shape the consumer reads before
+// the gate has a policy to read. `mode` is a launch's field and no other verb's,
+// the target is the repository and nothing else, and the mode is a short word.
+const actionLaunch = { id: 'a-0003', verb: 'launch', mode: 'pro', target: { repo: 'dimipaun/fugaro' }, confirmation: { id: 'c-0003', at: AT } };
+refused('a launch without a mode', 'a start names the mode it starts in, and the mode is the field the record exists for (O10)', 'message', message({ kind: 'action', action: (({ mode, ...rest }) => rest)(actionLaunch) }));
+refused('a mode on a cancel', 'mode is a launch\'s field, and a cancel that carried one would be a record the consumer had to guess the meaning of', 'message', message({ kind: 'action', action: { ...actionCancel, mode: 'pro' } }));
+refused('a launch without a target', 'every action names what it acts on, and a start names the repository it starts in', 'message', message({ kind: 'action', action: (({ target, ...rest }) => rest)(actionLaunch) }));
+refused('a launch targeting a run', 'a start starts a repository: a run is what a cancel cancels, and there is no run id before the start', 'message', message({ kind: 'action', action: { ...actionLaunch, target: { run: '20261018-125859-d3c8' } } }));
+refused('a launch whose target carries a pull request', 'a start has no pull request to name, so a repository-and-pr target is a target the verb cannot use', 'message', message({ kind: 'action', action: { ...actionLaunch, target: { repo: 'dimipaun/fugaro', pr: 532 } } }));
+refused('a mode one code unit past its bound', 'a mode is a short word (64 code units), not a body: 65 is the first length that is not one', 'message', message({ kind: 'action', action: { ...actionLaunch, mode: 'x'.repeat(MODE_MAX + 1) } }));
+refused('a mode carrying a space', 'a mode is an identity string, and a space in one is a phrase where the session expects a word', 'message', message({ kind: 'action', action: { ...actionLaunch, mode: 'pro mode' } }));
+refused('a head SHA on a launch', 'the head SHA belongs to a merge: a start has no branch state that was read back', 'message', message({ kind: 'action', action: { ...actionLaunch, head_sha: 'a'.repeat(40) } }));
 refused('too many options', 'a prompt carries at most eight options', 'message', message({ kind: 'prompt', options: Array.from({ length: 9 }, (_, i) => `option ${i}`) }));
 refused('too long text', 'a body is at most 4096 code units', 'message', message({ text: 'x'.repeat(4097) }));
 refused('unknown field', 'a field the schema does not name is refused, so the field set is the version', 'message', message({ expires_at: AT }));

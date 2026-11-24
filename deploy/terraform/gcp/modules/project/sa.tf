@@ -201,7 +201,16 @@ resource "google_cloud_run_v2_service_iam_member" "credentials" {
   member   = google_service_account.job.member
 }
 
-# Only a profile whose runs authenticate through Vertex AI.
+# The shared project job's release-1 Vertex grant (CS11), planned the same way
+# the workflow module's is and for the same reason: var.job.vertex is the
+# project reaching Vertex AND infra.VertexGrantForJob saying the project's
+# budget mode allows a job the permission, so an enforcing project's jobs are
+# planned no aiplatform permission at all — no run in flight can hold one there,
+# because a `vertex` run is refused at bootstrap under `enforce` — while an
+# `observe` project keeps it until release 2 (X8). A review variant of one of
+# these jobs is planned none whatever this says (reviewVariant's own ruling),
+# and the service's own call is its one-permission custom role's
+# (modules/installation/credentials.tf, D3174).
 resource "google_project_iam_member" "vertex" {
   count = var.job.vertex ? 1 : 0
 

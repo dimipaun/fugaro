@@ -340,6 +340,29 @@ type SessionPolicy struct {
 	// offers automatic compaction, in percent, and 0 means the project set no
 	// automatic compaction at all.
 	CompactThresholdPercent int `json:"compact_threshold_percent"`
+
+	// CrashReports is whether the app may send crash reports to the project's
+	// Firebase project (D731, D738): the project's own published switch
+	// (`mobile_crash_reports`, a top-level policy key beside the mobile block),
+	// on by default and opt-out, as the switch the app reads before it collects
+	// anything.
+	//
+	// **It is written whether or not the project's policy carries it, and the
+	// assembly that fills this shape is where that happens.** The member is not
+	// omitempty, so a session this service answers always names it, and the app
+	// never sees a shape whose switch is missing — `shared/mobile-session`'s
+	// port refuses such a value as MISSING_MEMBER, and the plan records the
+	// alternative (letting it through the app as an "update the installation"
+	// screen) as refused.
+	//
+	// A document that does not carry it decodes to false, which is the
+	// fail-safe and not the member's default on: a session assembled by a
+	// release behind is a phone that was told nothing, and nothing is sent
+	// before the switch has been read (D734). The Go reader is
+	// projectpolicy.MobileCrashReportsOn, and this member is filled from Policy's
+	// CrashReports, which is asked by the pairing and refresh routes (P3, P4) and
+	// is the only writer of this member there is.
+	CrashReports bool `json:"crash_reports"`
 }
 
 // SessionResponse is what a pairing or a restore answers with (P3, K2): the
@@ -743,6 +766,24 @@ type Verdict struct {
 // three handlers.
 type Policy interface {
 	Allow(ctx context.Context, project string, claims Claims) (Verdict, error)
+
+	// CrashReports is the project's published crash-report switch, read through
+	// projectpolicy.MobileCrashReportsOn (D731, D738): true only when the
+	// published policy states the key on, and false when it states it off **or
+	// does not carry it at all** — an absent key is the fail-safe off and not
+	// the member's default on, because a phone told nothing must collect nothing
+	// (D734, G7).
+	//
+	// It sits on this interface, beside Allow, because it is what fills
+	// SessionPolicy.CrashReports, and the pairing and refresh routes (P3, P4)
+	// fill their answers from an implementation of this interface: a `Policy`
+	// that did not answer the switch would not compile, so no route can be
+	// written against a policy that has no way to state it. An implementation
+	// that cannot read the published policy answers false with the error, and
+	// the route fills the session with that false rather than refusing the
+	// session — the same fail-safe as a key the node does not carry, which is
+	// the reading D738 records.
+	CrashReports(ctx context.Context, project string) (bool, error)
 }
 
 // InviteStore reads the invitations `fugaro pair` wrote and spends one (P2
@@ -816,6 +857,26 @@ type RefreshStore interface {
 	// it — a replay rule and an admin — may both reach one family.
 	Revoke(ctx context.Context, project, family string) error
 }
+
+// RefreshRoot is where a project keeps its refresh families — one node per
+// device, under config/admin beside the device allowlist, the invites, the
+// member records and the push registrations, where no client token may read or
+// write — and RefreshFamilyPath is one device's node in it.
+//
+// The path is in the contract because two sides write it and neither may spell
+// its own: P4's store creates, rotates and deletes a family at this path, and
+// P7's admin revoke deletes the node with the database admin it holds, with no
+// phone and no service in the loop. A store that kept its families somewhere
+// else would make that revoke delete nothing and report no error, leaving a
+// stolen phone refreshing — the hole D2794 closes (F32) — so the one place a
+// family is looked for is fixed here rather than in either caller.
+const RefreshRoot = "config/admin/refresh"
+
+// RefreshFamilyPath is the node one device's family lives at. The key is the
+// DEVICE's uid, which is the one name both sides already hold: Issue is asked
+// for a family by uid, the device node is keyed by it, and an admin revoke
+// names the family it ends from the uid alone.
+func RefreshFamilyPath(deviceUID string) string { return RefreshRoot + "/" + deviceUID }
 
 // MintRequest is what a session asks the minter for: the uid the device's
 // Firebase token is for, and the role the token reports.

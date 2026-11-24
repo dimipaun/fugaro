@@ -2,11 +2,14 @@
 
 The machine that stands between a spoken destructive command and it actually happening
 (mobile plan, Task **P6.2**; decisions **D169**, **D162**, and the owner's **D128 amendment of
-2026-10-17**). It is pure logic: no clock, no network, no randomness, no filesystem, no
-`Date`, and no dependency outside this package: it imports `lease/`'s timestamp bound,
-`command/`'s confirmation recogniser (P6.1) and `mailbox-schema/`'s target bound (P6.3), each
-of which imports nothing itself. `now` is a number the caller passes in, so every
-timeout below is reproducible in a test and none of it can pass by accident at 3 a.m.
+2026-10-17**), and the same machine for a **start in a costly mode** (mobile identity and
+pairing plan, Task **J3**; decision **D2786**, which amends D162 for costly modes only). It is
+pure logic: no clock, no network, no randomness, no filesystem, no `Date`, and no dependency
+outside this package: it imports `lease/`'s timestamp bound, `command/`'s confirmation
+recogniser (P6.1), `mailbox-schema/`'s target bound (P6.3) and its own `policy.js` (J3) — the
+session policy D2786 reads, which imports nothing at all. `now` is a number the caller passes
+in, so every timeout below is reproducible in a test and none of it can pass by accident at
+3 a.m.
 
 The shape is: a destructive command is **read back** first, and only a separate, later
 utterance carrying the fixed phrase — P6.1's `confirm` app command, **"Fugaro, confirm"** —
@@ -37,6 +40,14 @@ const done = step(asked.state, {
 
 ## The rule, in one paragraph
 
+A **costly start** — a `launch` whose `mode` the session's `costly_modes` name — is read back
+like a cancel, and with `biometric_on_costly` the read-back also asks for the biometric
+(P5.1g's path, which is the phone's, not this module's); every other start passes through,
+which is D162's answer and stays it (D2786). The mode is carried on the command's own `mode`
+field, the resolved target it opens is `{kind: 'mode', mode}`, and the read-back names the
+mode exactly: `Start a run in pro mode. Say "Fugaro, confirm" to confirm.` A confirmation
+must assert the same mode, and the record it authorises binds that mode and nothing else.
+
 A **destructive** command (`cancel`, `merge`, `confirm` — the closed set
 `DESTRUCTIVE_VERBS`, spelled exactly as P6.3's `ACTIONS`; a cancel takes a run, a merge a
 repository, PR and head, a confirm a run or a repository and PR) enters `pending` **only with a resolved target**. An ambiguous or
@@ -47,8 +58,9 @@ D47's Rule says the second, independent pass must hear the thing itself and not 
 that produced it. A confirmation must be a **separate utterance** recognised as the **fixed
 phrase**; it has a **timeout**; **one confirmation authorises exactly one action**, which is
 what the action id it carries and the confirmation id it spends are for; and **the utterance
-that issued a command can never confirm it**. `launch` is **not** confirmed — D162 answered on
-2026-10-17 that "kick off …" goes through, with the caps applying. Every other destructive verb
+that issued a command can never confirm it**. `launch` is **not** confirmed by its verb alone
+— D162 answered on 2026-10-17 that "kick off …" goes through, with the caps applying, and
+D2786 keeps that for every start that is not in a costly mode. Every other destructive verb
 (the kill switch, the budget writes, the deletes) is **refused outright**.
 
 ## The phases
@@ -65,7 +77,44 @@ second one. A `confirm` in `crowded` is always `ambiguous-pending`, whatever it 
 that check runs before the replay ledger, so in `crowded` the `replayed-*` codes are
 unreachable, which the declared table says and the table test checks.
 
+## The session policy (D2786)
+
+A costly start is a function of the session, not of the verb, so the two values that decide it
+ride the **state**: `costlyModes` (C2's `costly_modes`) and `biometricOnCostly` (C2's
+`biometric_on_costly`), beside the timeout and the caps. `initialState` takes them as options
+and defaults them to P6's own
+defaults — `['pro', 'critical']` and off — so a caller with no session to read gets the
+project policy's answer, and a caller with one hands in what the port gave it. Both are held
+to `policy.js` (and, on the Go side, to `internal/mailbox`'s constants) by a test, because two
+spellings of "which modes are costly" is two answers.
+
+`policy.js` is the whole of the ruling:
+
+```js
+import { costlyStart, isCostlyStart, DEFAULT_COSTLY_MODES } from './index.js';
+
+costlyStart('pro', DEFAULT_COSTLY_MODES, false);   // { costly: true,  biometric: false }
+costlyStart('pro', DEFAULT_COSTLY_MODES, true);    // { costly: true,  biometric: true  }
+costlyStart('poc', DEFAULT_COSTLY_MODES, true);    // { costly: false, biometric: false }
+```
+
+The biometric is asked for **only** on a costly start — the switch is named
+`biometric_on_costly` — and it is a demand the *session* adds beside the phrase, never inside
+it: this module says whether to ask, and P5.1g's path is what asks.
+
+**Fail closed, and total.** `policy.js` never throws and imports nothing. A `costlyModes` that
+is not an array at all makes **every** start costly rather than none, and a `biometricOnCostly`
+that is not exactly `false` asks for the biometric. The state reader refuses a malformed list
+or switch before either is ever read, so the lenient reading is only what a caller that
+skipped the reader gets — and it is always the stricter answer.
+
 ## The events, and the whole transition table
+
+A command's fields are `type`, `now`, `utteranceId`, `text`, `verb`, `mode`, `target` and
+`actionId`, and the field set **is** the version: `mode` is the launch's own field (D2786) and
+a target is not a field a launch has at all, while a `mode` on any other verb is
+`verb-target-mismatch`. A state's fields are `phase`, `now`, `timeoutMs`, `maxPending`,
+`maxLedger`, `costlyModes`, `biometricOnCostly`, `pending` and `ledger`.
 
 Three events — `command`, `confirm`, `abort` ("cancel that") — and every phase × event cell is
 declared in `TRANSITIONS`, exhaustively. `next` lists the phases an answer may leave the
@@ -180,6 +229,9 @@ key the caller chose: a message that repeated the input would make the refusal i
 | `DEFAULT_CONFIRM_TIMEOUT_MS` | 60 s (min 1 s, max 5 min) | long enough to answer, short enough that a read-back is still about what the speaker heard |
 | `DEFAULT_MAX_PENDING` | 4 (min 1, max 16) | the app speaks one read-back at a time; the cap is what makes a bounded state |
 | `DEFAULT_MAX_LEDGER` | 1024 (min 1, max 100 000) | replay is permanent, so the ledger is what the machine refuses on rather than truncates |
+| `DEFAULT_COSTLY_MODES` | `['pro', 'critical']` | P6's `mobile.costly_modes` default: the two modes the ruling is about |
+| `DEFAULT_BIOMETRIC_ON_COSTLY` | off | P6's `mobile.biometric_on_costly` default; a project turns it on, the machine never does |
+| `MAX_COSTLY_MODES` / `MAX_MODE_LENGTH` | 32 / 64 | C2's own bounds for the same two values |
 | `MAX_FORWARD_JUMP_MS` | 366 days | see `now-jumped` |
 | `ID_MAX` / `TEXT_MAX` | 100 / 4096 | the ids and transcripts this app produces |
 
@@ -200,11 +252,25 @@ where the plan requires the timeout to be named.
   `confirmed it`, `yes`, `sure`, `yes, merge it` (G10), "Fugaro, confirm it" and anything with
   an invisible format character are **not**. A caller that configures its own wake-word aliases
   in P6.1 must keep this module on the same set (today: the default).
+- **Not the gate, and not the wiring.** D2786's read-back is decided *here*, but nothing carries
+  a costly start into this module yet: no producer hands a launch a `mode` (`shared/command`
+  gains the verb and its `mode` under **J4**), and the app builds its confirm state from D113's
+  `CONFIRM_FIELDS` (`timeoutMs`, `maxPending`, `maxLedger`), so neither the session policy nor a
+  start's mode reaches a phone. Wiring the producer and the policy's plumbing is **J4's**
+  (`shared/command/verbs.js`, `mobile/src/mailbox/client.js`); until it lands, a costly start
+  exists in this module and in the vectors and nowhere else. The mailbox gate that refuses a
+  client which skipped the read-back is **J5a's** (the plan's O10), because a launch is not a
+  mailbox action yet — `internal/mailbox`'s `ConfirmValidateAction` refuses a launch record
+  outright, and J5a types the launch action. Until then the cost caps bound a client that
+  ignores the read-back.
+- **Not the biometric.** It answers *whether* the session asks for it; asking (Face ID,
+  fingerprint) is P5.1g's path in the app.
 - **Not the executor.** A `confirmed` answer carries P6.3's action record —
-  `{ id, verb, target: {run} | {repo, pr}, head_sha (merge only), confirmation: { id, at } }`,
+  `{ id, verb, target: {run} | {repo, pr} | {mode}, head_sha (merge only), confirmation: { id, at } }`,
   built from the target that was **read back**, never from the one the confirmation asserted —
-  and nothing else (a test wraps every record in a message and runs P6.3's `validateMessage`
-  on it); re-validating
+  and nothing else (a test wraps every *destructive* record in a message and runs P6.3's
+  `validateMessage` on it; a costly start's record is a `launch`, which is not one of P6.3's
+  `ACTIONS` yet, so the gate that admits it is J5a's); re-validating
   and executing it — and the MAC that makes it unforgeable — is P6.7's, in Go
   (D169: a merge carries the PR's head SHA, so a merge confirmed against a moved head is
   refused here before it can be executed there).
@@ -215,8 +281,8 @@ where the plan requires the timeout to be named.
 ## Evidence, and how to reproduce it
 
 ```sh
-cd shared && npm test                  # 421 tests, 421 pass, 0 fail (Node 26; on Node 22.14 shared/url's one known failure)
-shared/confirm/mutation-proof.sh       # 70 guards: 70 killed, 0 survived, 0 not applied
+cd shared && npm test                  # 585 tests, 585 pass, 0 fail (Node 22.14; on some Node versions shared/url has one known failure)
+shared/confirm/mutation-proof.sh       # 74 guards: 74 killed, 0 survived, 0 not applied
 ```
 
 The suite includes the task's own list, each as its own test: a **misrecognised "confirm"**
@@ -232,9 +298,24 @@ more than 500 probes).
 `mutation-proof.sh` disables one guard at a time and requires the suite to fail; it starts with
 the plan's named red step — **the replayed confirm against a machine with no confirmation-id
 ledger** — and it refuses to report anything unless the pristine suite passes with tests
-actually run and a `refuse()` that always succeeds is caught first.
+actually run and a `refuse()` that always succeeds is caught first. Four of its guards are
+D2786's: a start is read back exactly when the session calls its mode costly, a start's `mode`
+is read with the same reader every other string gets, `policy.js`'s unreadable list makes
+every start costly rather than none, and its switch is the only thing that asks for the
+biometric.
 
-**The red step of the task itself**, recorded as it happened: with `index.js` absent,
+**J3's red step**, recorded as it happened (2026-11-24): the vectors' costly-start case and
+`policy.test.js` were written against the module *before* D2786, and the machine of the time
+answered a costly start — an event carrying `mode` — with
+
+```
+the machine before D2786: false unknown-field/event
+```
+
+— no `mode` field existed, so a costly start could not be read back at all, let alone
+confirmed. The Go mirror's red step is the same case through `TestConfirmParityWithShared`.
+
+**The red step of the first task**, recorded as it happened: with `index.js` absent,
 `node --test confirm/index.test.js` fails at the import —
 
 ```
@@ -249,7 +330,10 @@ Error [ERR_MODULE_NOT_FOUND]: Cannot find module
 `vectors.json` carries the accept and refuse cases as **data** (`cases: [{ name, events,
 expect }]`) for P6.7's Go parity test, and the JS suite replays it verbatim
 (`the vectors file replays exactly: every accept and every refusal`), so the two readers cannot
-drift without a test failing.
+drift without a test failing. An `expect[i]` may also name `state` — the counts of the pending
+read-backs and of the ledger entries the step produced — which both readers assert beside the
+answer, so a step that answers correctly and leaves the wrong machine behind is a failing case
+rather than a divergence nothing looks at.
 
 ## Honest limits
 
@@ -258,6 +342,15 @@ drift without a test failing.
   deploy" is refused, and the speaker has to say "approve the deploy" (which the tests and the
   vectors use). The alternative — deciding which occurrence of the word is "the command" —
   is exactly the misrecognition this module exists to refuse.
+- **A start that names no mode is a plain start.** The mode is the router's to resolve (P6.1),
+  and a launch handed no mode is a launch the caller did not resolve a costly mode for — so it
+  passes through. That is a real hole for a client that simply omits the mode, and it is
+  J5a's to close at the gate; the state's own answer cannot close it, because the project's
+  default rigor is not a value this machine was handed. D2786's own scope says the same: the
+  read-back is the phone's until the launch action is typed.
+- **The mode is only ever compared, never interpreted.** `hotfix` is costly exactly when the
+  session names it, and a mode no `internal/rigor` knows is plain unless the session names it.
+  Which modes exist is the project's and the runner's, not this module's.
 - **`-0` is defended but not proved.** `isIntegerInRange` refuses `-0`; every field this module
   bounds has a minimum of 1, so removing that clause changes no answer and no mutation can
   kill it. `mutation-proof.sh` says so in place rather than counting it as a guard.
@@ -266,8 +359,10 @@ drift without a test failing.
   the only thing standing between the action and a replay. Both are bounded (`now-jumped`,
   `replayed-confirmation`) and neither is a substitute for an honest clock.
 - **Nothing here is wired to a device or a runner.** No task of the mobile plan is approved,
-  and this module is not evidence that one is; it is logic with tests, and a consumer
-  (P6.7 in Go, and the app's voice path) is still to come.
-- **The Go parity test does not exist yet.** `vectors.json` is written for it (P6.7) and
-  replayed by the JS suite today; until P6.7 lands, nothing proves the two implementations of
-  D169 agree beyond the data being the same data.
+  and this module is not evidence that one is; it is logic with tests, and the app's voice
+  path is still to come.
+- **The Go port is held to this module by the data, and only by the data.** The consumer's
+  mirror (P6.7, `internal/mailbox/action.go`) is replayed against `vectors.json` by
+  `TestConfirmParityWithShared`, and `internal/mailbox`'s own test pins the constants it
+  spells — so the two implementations of D169 and D2786 agree on every case the vectors name,
+  and on nothing the vectors do not.
