@@ -9,9 +9,12 @@ import (
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
+	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/backlog"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/followup"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -90,6 +93,25 @@ type promotePass struct {
 	// deferred list (levels-spec.md §2.1), so its first promote pass works out
 	// what is missing and files that list instead of paying anything down.
 	items []backlog.Item
+	// before is every open item the folder held at the first brief, the whole
+	// folder's and not the area's. The close rule's question is which items
+	// left the open set, and an item of another area that this run closed is a
+	// close the rule does not admit (item 12e) — a snapshot of the area's own
+	// items could never see one.
+	before []backlog.Item
+	// raise is the level the repository's own rigor.areas rule for the area is
+	// asked to be raised to in this pull request, and "" when that rule already
+	// declares the level the run works at: item 12b wants a repo-owned area's
+	// level raised in the pull request, so the brief asks for the edit only
+	// where there is one to make.
+	raise rigor.Rigor
+	// declared is what the branch's own fugaro.yaml declares for the area at
+	// the end of the run — the level asked for when the edit was made, the old
+	// one when it was not — and declaredRead is whether the branch's file could
+	// be read at all. Both are read only where raise is set: a run that asked
+	// for no raise reports nothing about the file.
+	declared     rigor.Rigor
+	declaredRead bool
 	// morning are the notes a run left behind outside the area being promoted
 	// (promoteMorningNotes): the pass's input, read and quoted in the brief,
 	// and never its work — item 12(e) closes only the area's own items.
@@ -126,7 +148,9 @@ func (r *run) promoteRun() *promotePass {
 	}
 	block := r.spec.Promote
 	p := &promotePass{area: block.Area, level: string(r.reachedRigor()), scope: block.Paths}
+	p.raise = promoteRaise(r.cfg, p.area, rigor.Rigor(p.level))
 	if all, err := backlog.LoadDir(r.d.WorkDir); err == nil {
+		p.before = promoteOpenItems(all)
 		p.items = promoteAreaItems(all, p.area)
 		p.morning = promoteMorningNotes(all, p.area)
 		p.audit = promoteAudit(all, p.area)
@@ -140,7 +164,7 @@ func (r *run) promoteRun() *promotePass {
 		p.audit = true
 	}
 	p.pr = r.promotePR()
-	p.brief = promoteBrief(p.area, p.level, r.rec.RunID, p.items, p.morning, p.audit, p.pr, r.redactor(), followup.NewNonce())
+	p.brief = promoteBrief(p.area, p.level, r.rec.RunID, p.raise, p.items, p.morning, p.audit, p.pr, r.redactor(), followup.NewNonce())
 	r.promote = p
 	return p
 }
@@ -168,8 +192,10 @@ func promoteAudit(items []backlog.Item, area string) bool {
 
 // promoteAreaItems are the items of one area: the open ones whose `area` names
 // it, in the folder's own order (by id). It is the list the run's brief
-// carries and the list the finalize reading judges, so an item outside the
-// area is never in either.
+// carries, and the list whose own items the finalize reading reports as closed
+// or left open — the snapshot the reading judges is the whole folder's
+// (promoteOpenItems), because a close the rule does not admit is one of another
+// area's.
 func promoteAreaItems(items []backlog.Item, area string) []backlog.Item {
 	var out []backlog.Item
 	for _, it := range items {
@@ -179,6 +205,48 @@ func promoteAreaItems(items []backlog.Item, area string) []backlog.Item {
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+// promoteOpenItems are every open item of the folder, whichever area it names:
+// the snapshot a promote run's closes are judged against. The rule's question
+// is which items left the open set, and an item of another area that the run
+// closed is exactly the close item 12e forbids — so the snapshot cannot be
+// narrowed to the area before the run's own diff has been read.
+func promoteOpenItems(items []backlog.Item) []backlog.Item {
+	var out []backlog.Item
+	for _, it := range items {
+		if it.Status == "open" {
+			out = append(out, it)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// promoteRaise is the level a promote run asks the repository to write into its
+// own rule for the area: the target, when this repository's fugaro.yaml
+// declares the area at a level below it, and "" when it declares the target
+// already, at a stricter level, or names no such area at all.
+//
+// Only the repository's own rules are read. Item 12b raises a repo-owned area's
+// level in the pull request and leaves a project area to the operator, whose
+// rule lives in the layer and not in any repository's file: a member
+// repository's pull request is not where a layer's rule moves, and an area the
+// project layer declares has no line of this repository's to edit.
+func promoteRaise(cfg *config.Config, area string, target rigor.Rigor) rigor.Rigor {
+	if cfg == nil || !rigor.Known(target) {
+		return ""
+	}
+	for _, a := range cfg.RigorConfig().RepoAreas {
+		if a.Name != area {
+			continue
+		}
+		if a.Level.Rank() < target.Rank() {
+			return target
+		}
+		return ""
+	}
+	return ""
 }
 
 // promoteMorningNotes are the notes a Hotfix run left behind as the promote
@@ -237,13 +305,21 @@ func itemNamesArea(it backlog.Item, area string) bool {
 // the area's items the run closed, which of those the rule does not admit, and
 // which it left open.
 //
-// before is the area's open items as the run's first brief read them, after is
-// the folder as the run's own commits left it (every item in it, the closed
-// ones included), scope is this repository's part of the area (the task's own
-// Promote.Paths), and changed is the diff the close is held against,
-// repository-relative: the pull request's own for a run on one, the run's own
-// changed files otherwise (promoteChanged). An item that was open before and is
-// closed after was closed by this run: it is the only writer on its own branch.
+// before is **every** open item the folder held as the run's first brief read
+// it — the whole folder's, not the area's: the rule's own question is which
+// items left the open set, and an item of another area that the run closed is a
+// close the rule does not admit (item 12e) which a snapshot of the area's items
+// can never see. after is the folder as the run's own commits left it (every
+// item in it, the closed ones included), scope is this repository's part of the
+// area (the task's own Promote.Paths), and changed is the diff the close is
+// held against, repository-relative: the pull request's own for a run on one,
+// the run's own changed files otherwise (promoteChanged). An item that was open
+// before and is closed after was closed by this run: it is the only writer on
+// its own branch.
+//
+// kept is the area's own list — the items the pass was about. An item of
+// another area left open is not the pass's to report, and one the run closed is
+// the stray.
 func promoteVerdict(before, after []backlog.Item, area string, scope, changed []string) (closed, stray, kept []backlog.Item) {
 	allowed := map[string]bool{}
 	for _, it := range promoteCloses(before, area, scope, changed) {
@@ -253,7 +329,9 @@ func promoteVerdict(before, after []backlog.Item, area string, scope, changed []
 		now, ok := itemByID(after, was.ID)
 		switch {
 		case !ok || now.Status == "open":
-			kept = append(kept, was)
+			if itemNamesArea(was, area) {
+				kept = append(kept, was)
+			}
 		case allowed[was.ID]:
 			closed = append(closed, now)
 		default:
@@ -469,7 +547,7 @@ const promoteIndent = "    "
 // reads (LD6). pr is the pull request the run can name in an item's
 // `## Closed by`, 0 when it has none to name yet, and runID is this run, which
 // an item the audit writes records as what filed it.
-func promoteBrief(area, level, runID string, items, morning []backlog.Item, audit bool, pr int, redact func(string) string, nonce string) string {
+func promoteBrief(area, level, runID string, raise rigor.Rigor, items, morning []backlog.Item, audit bool, pr int, redact func(string) string, nonce string) string {
 	if redact == nil {
 		panic("runner: a promote brief needs the run's redactor")
 	}
@@ -500,6 +578,14 @@ func promoteBrief(area, level, runID string, items, morning []backlog.Item, audi
 			"A run that cannot write the folder puts the same list in the hand-back instead, one item per gap with its title and its brief, and reports that it could not write them. Make no fix in this pass: the items are the next promote run's work.\n\n", level, level, area, runID)
 	} else {
 		fmt.Fprintf(&b, "Raise the area's code to the level of %s, and pay down the recorded debt below. %s. Close an item only when %s changed the code it names, inside this area's own paths — the runner reads your branch at the end and names in the pull request's status section every item closed that the rule does not admit — and work on nothing outside this area.\n\n", level, closing, rule)
+	}
+	// Item 12b: the raise is the repository's own rule, edited in this pull
+	// request, or the level lasts only as long as this run — every later run of
+	// the repository resolves the old one from the file. Only a repository's own
+	// area has a line here to edit (promoteRaise: a project layer's area is the
+	// operator's, and its rule lives in the layer).
+	if rigor.Known(raise) {
+		fmt.Fprintf(&b, "RAISE THE RULE TOO: this repository's own `rigor.areas` rule for the %s area declares a level below %s. Set that rule's `level:` to `%s` in `fugaro.yaml`, in this pull request — it is the rule the level is read from, not the area's code — because a level the file does not carry is one the next run of this repository resolves as the old one. The runner reads your branch's `fugaro.yaml` at the end and says in the pull request's status section whether the raise is there.\n\n", area, level, raise)
 	}
 	if len(items) == 0 && len(morning) == 0 {
 		return b.String()
@@ -634,7 +720,54 @@ func (r *run) readPromote(ctx context.Context) {
 		r.d.Log.Warn("reading the backlog folder at finalize failed; what this run closed is not reported", "err", r.redact(err.Error()))
 		return
 	}
-	p.closed, p.stray, p.kept = promoteVerdict(p.items, after, p.area, p.scope, r.promoteChanged(ctx))
+	p.closed, p.stray, p.kept = promoteVerdict(p.before, after, p.area, p.scope, r.promoteChanged(ctx))
+	if p.raise != "" {
+		p.declared, p.declaredRead = r.promoteDeclared(ctx)
+	}
+}
+
+// promoteDeclared is what the branch's own fugaro.yaml declares for the area by
+// the end of the run — the level the brief asked to be raised, the level the
+// rule still declares when the edit was not made or the rule was removed — and
+// whether that could be read at all (no checkout to read, no file at that path,
+// bytes this Fugaro cannot read as a fugaro.yaml).
+//
+// The branch's file is read at HEAD rather than out of the working tree: the
+// raise item 12b asks for is a change to the pull request, so the committed
+// branch — what a reader of the pull request sees — is the thing to judge.
+//
+// The one key is read on its own, through the same decoder the file's own
+// rigor.areas rules go through (rigor.Area.UnmarshalYAML, which refuses a key it
+// does not know): the question is this repository's own rule, and a whole-file
+// resolve would refuse a branch file that needs the project layer to make sense
+// at all.
+func (r *run) promoteDeclared(ctx context.Context) (rigor.Rigor, bool) {
+	p := r.promote
+	if r.repo == nil {
+		r.d.Log.Warn("no checkout to read fugaro.yaml from; whether the branch raised the area's level is not reported")
+		return "", false
+	}
+	data, err := r.repo.ShowFile(ctx, "HEAD", "fugaro.yaml")
+	if err != nil {
+		r.d.Log.Warn("reading the branch's fugaro.yaml failed; whether the branch raised the area's level is not reported", "err", r.redact(err.Error()))
+		return "", false
+	}
+	var doc struct {
+		Rigor *config.Rigor `yaml:"rigor"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		r.d.Log.Warn("the branch's fugaro.yaml could not be read; whether it raised the area's level is not reported", "err", r.redact(err.Error()))
+		return "", false
+	}
+	if doc.Rigor == nil {
+		return "", true
+	}
+	for _, a := range doc.Rigor.Areas {
+		if a.Name == p.area {
+			return a.Level, true
+		}
+	}
+	return "", true
 }
 
 // promoteChanged is the diff a promote run's closes are held against: the pull
@@ -672,7 +805,9 @@ func (r *run) promoteChanged(ctx context.Context) []string {
 // promotePart is the pull request status section a promote run owes its
 // reader: what the pass was (the fix, or the audit of an area with no item),
 // which of the area's items the run closed, which of them left the open set
-// without the rule admitting it, and which it left open. Each item is named by
+// without the rule admitting it, which it left open, and whether the branch
+// raised the repository's own rule for the area (item 12b, promoteRaiseLine).
+// Each item is named by
 // the status its own file holds rather than by the list it is in — the run may
 // only close, and an item it dropped instead of closing is a status the line
 // has to carry rather than be read as a close. The strays are named and not
@@ -689,14 +824,14 @@ func (r *run) promotePart() string {
 	}
 	line := fmt.Sprintf("**Promote: the %s area at %s**\n", inlineText(p.area), inlineText(p.level))
 	if p.audit {
-		return line + "- no item of the area was open, so this pass was the audit: it writes what the area is missing at this level down as the area's items rather than paying anything down (the hand-back section below lists them for a run that could not write the folder)" + promoteNoteLines(p.morning)
+		return line + "- no item of the area was open, so this pass was the audit: it writes what the area is missing at this level down as the area's items rather than paying anything down (the hand-back section below lists them for a run that could not write the folder)" + promoteNoteLines(p) + promoteRaiseLine(p)
 	}
 	if len(p.closed) == 0 && len(p.stray) == 0 && len(p.kept) == 0 {
-		return line + "- the area had no item left to read at the end of the run" + promoteNoteLines(p.morning)
+		return line + "- the area had no item left to read at the end of the run" + promoteNoteLines(p) + promoteRaiseLine(p)
 	}
 	var b strings.Builder
 	b.WriteString(line)
-	b.WriteString(promoteNoteLines(p.morning))
+	b.WriteString(promoteNoteLines(p))
 	for _, it := range p.closed {
 		fmt.Fprintf(&b, "- %s %s: %s\n", inlineText(it.Status), inlineText(it.ID), inlineText(it.Title))
 	}
@@ -712,7 +847,35 @@ func (r *run) promotePart() string {
 	for _, it := range p.kept {
 		fmt.Fprintf(&b, "- left open %s: %s\n", inlineText(it.ID), inlineText(it.Title))
 	}
+	b.WriteString(promoteRaiseLine(p))
 	return b.String()
+}
+
+// promoteRaiseLine is the section's line about the raise item 12b asks for: the
+// rule the level is read from, and whether this pull request moved it. It is ""
+// for every run whose brief asked for no raise — an area the repository already
+// declares at the run's level, and an area of the project layer's, whose level
+// is the operator's to raise on the layer and not this repository's to write.
+//
+// It is a line for the reason the pass's other lines are: an unraised rule is
+// the whole of why a level a pull request paid for lasts one run, and a section
+// that said nothing about it read as a raise nobody had to check.
+func promoteRaiseLine(p *promotePass) string {
+	if p == nil || !rigor.Known(p.raise) {
+		return ""
+	}
+	want := inlineText(string(p.raise))
+	switch {
+	case !p.declaredRead:
+		return fmt.Sprintf("- this run asked for the repository's own `rigor.areas` rule for the area to be raised to %s in this pull request, and the branch's `fugaro.yaml` could not be read to say whether it was (reconciliation §3b item 12b)\n", want)
+	case !rigor.Known(p.declared):
+		return fmt.Sprintf("- the branch's `fugaro.yaml` declares no rule for the area, so the raise to %s is not in this pull request: the level this run worked at lasts this run alone, and the next run of this repository resolves its own (reconciliation §3b item 12b)\n", want)
+	case p.declared.Rank() < p.raise.Rank():
+		return fmt.Sprintf("- the repository's own `rigor.areas` rule for the area still declares %s, not %s: the level this run worked at lasts this run alone, and the next run of this repository resolves %s (reconciliation §3b item 12b)\n",
+			inlineText(string(p.declared)), want, inlineText(string(p.declared)))
+	default:
+		return fmt.Sprintf("- the repository's own `rigor.areas` rule for the area was raised to %s in this pull request\n", want)
+	}
 }
 
 // promoteNoteLines are the morning notes the pass read and closed none of, one
@@ -720,9 +883,15 @@ func (r *run) promotePart() string {
 // closes only items of the area being promoted — so the reader of the pull
 // request sees that the note was read and is still open, rather than nothing
 // about it at all.
-func promoteNoteLines(morning []backlog.Item) string {
+//
+// A note the run closed anyway is not one of them: the finalize reading names
+// it as the stray it is, and the two lines cannot both be true of one item.
+func promoteNoteLines(p *promotePass) string {
 	var b strings.Builder
-	for _, it := range morning {
+	for _, it := range p.morning {
+		if _, closed := itemByID(p.stray, it.ID); closed {
+			continue
+		}
 		fmt.Fprintf(&b, "- read %s, a note a run left behind outside this area, and closed it not: it names %s, and this pass pays down the area's own items (D31)\n", inlineText(it.ID), inlineText(it.Area))
 	}
 	return b.String()

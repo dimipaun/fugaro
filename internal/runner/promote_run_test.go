@@ -115,6 +115,121 @@ func TestPromoteReachesTheAgentTheRecordAndTheReader(t *testing.T) {
 	}
 }
 
+// promoteRuleCfg is promoteAreaCfg with the area's own rule written one level
+// below the one the run is asked for, and spread over three lines so the agent's
+// raise is one substitution: the state the raise item 12b asks for exists in.
+func promoteRuleCfg(t *testing.T) string {
+	t.Helper()
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n",
+		"rigor:\n  default: poc\n  areas:\n    - name: payments\n      match: \"internal/payments/**\"\n      level: poc\nagent:\n", 1)
+	if !strings.Contains(cfg, "level: poc") {
+		t.Fatal("the fixture's config names no agent block to put the area rule above")
+	}
+	return cfg
+}
+
+// TestPromoteRaisesTheRepositorysOwnRule is item 12b's other half end to end: a
+// repository whose own rule sits below the level the run is asked for is
+// told to raise that rule in the same pull request, and the status section says
+// the branch did — read from the branch's own fugaro.yaml at HEAD, which is what
+// a reader of the pull request sees. A level the file does not carry is one the
+// next run of this repository resolves as the old one, so the raise is the whole
+// of whether the level outlives the run.
+//
+// Mutation (drop the promoteDeclared call in readPromote, or read the working
+// tree's file instead of HEAD): the section reports the rule still at poc and
+// the row below fails.
+func TestPromoteRaisesTheRepositorysOwnRule(t *testing.T) {
+	h := newHarnessFiles(t, promoteRuleCfg(t), promoteTask(), map[string]string{
+		"internal/payments/charge.go":          "package payments\n\nfunc Charge() error { return nil }\n",
+		backlog.Dir + "/20261118-01-charge.md": promoteItem("open"),
+	})
+	raise := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if !strings.Contains(req.AppendSystemPrompt, "RAISE THE RULE TOO") ||
+			!strings.Contains(req.AppendSystemPrompt, "Set that rule's `level:` to `startup`") {
+			t.Errorf("the brief does not ask for the repository's own rule to be raised:\n%s", req.AppendSystemPrompt)
+		}
+		shell(t, req, "perl -pi -e 's/^      level: poc$/      level: startup/' fugaro.yaml"+
+			" && echo '// raised' >> internal/payments/charge.go"+
+			" && git add -A && git commit -qm 'Raise the payments rule'")
+		verifyTest(t, ctx, req)
+		pr := filepath.Join(envValue(req.Env, "FUGARO_STATE_DIR"), "pr.md")
+		if err := os.WriteFile(pr, []byte("# Raise the payments area\n\nRaised the rule the level is read from."), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return agent.Result{CostUSD: 1}, nil
+	}
+	rec, err := h.run(t, raise, review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec.Outcome, err)
+	}
+	got := onlyPR(t, h.provider).Body
+	if want := "- the repository's own `rigor.areas` rule for the area was raised to startup in this pull request"; !strings.Contains(got, want) {
+		t.Errorf("the section does not report the raise (%q):\n%s", want, got)
+	}
+}
+
+// promoteForeignItem is one item of another area, in the same shape as
+// promoteItem: the file the folder holds, whose `area` names web.
+func promoteForeignItem(id string) string {
+	return "---\nid: " + id + "\ntitle: a stall in the web console\nlevel: startup\nkind: deferred\n" +
+		"area: web\nstatus: open\nfiled-by: dimipaun\nfiled-in: run:20261117-090000-abcd\ndate: 2026-11-18\n---\n\n" +
+		"## What was left open\n\nThe console polls without a backoff.\n\n## Why\n\nThe poller predates the retry helper.\n"
+}
+
+// TestPromoteReportsAnItemOfAnotherAreaItClosed: the close rule is judged
+// against the whole folder, not the area's own items. An item of another area
+// that this run closed is the close item 12e forbids — and a snapshot narrowed
+// to the area could not see one at all, so the section would report nothing and
+// read as clean. An item of another area the run left open is not the pass's to
+// report either: kept is the area's own list.
+//
+// Mutation (pass promoteAreaItems(all, area) as promoteVerdict's before, which
+// is what promoteRun did): the web item's stray row below fails.
+func TestPromoteReportsAnItemOfAnotherAreaItClosed(t *testing.T) {
+	closedIt := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if !strings.Contains(req.AppendSystemPrompt, "work on nothing outside this area") {
+			t.Errorf("the brief does not keep the agent inside the area:\n%s", req.AppendSystemPrompt)
+		}
+		shell(t, req, "perl -pi -e 's/^status: open$/status: closed/' "+backlog.Dir+"/20261118-02-web.md"+
+			" && printf 'Closed by pull request #1.\\n' >> "+backlog.Dir+"/20261118-02-web.md"+
+			" && git add -A && git commit -qm 'Close the web item'")
+		verifyTest(t, ctx, req)
+		pr := filepath.Join(envValue(req.Env, "FUGARO_STATE_DIR"), "pr.md")
+		if err := os.WriteFile(pr, []byte("# Raise the payments area\n\nClosed an item this pass does not own."), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return agent.Result{CostUSD: 1}, nil
+	}
+	h := newHarnessFiles(t, promoteAreaCfg(t), promoteTask(), map[string]string{
+		"internal/payments/charge.go":          "package payments\n\nfunc Charge() error { return nil }\n",
+		backlog.Dir + "/20261118-01-charge.md": promoteItem("open"),
+		backlog.Dir + "/20261118-02-web.md":    promoteForeignItem("20261118-02"),
+		backlog.Dir + "/20261118-03-web.md":    promoteForeignItem("20261118-03"),
+	})
+	rec, err := h.run(t, closedIt, review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec.Outcome, err)
+	}
+
+	got := onlyPR(t, h.provider).Body
+	if want := "- closed 20261118-02, which this run's diff does not admit: the item's area is web"; !strings.Contains(got, want) {
+		t.Errorf("the section does not report the close of another area's item (%q):\n%s", want, got)
+	}
+	if !strings.Contains(got, "- left open 20261118-01: no retry on the charge call") {
+		t.Errorf("the area's own item left open is not reported:\n%s", got)
+	}
+	// A note the run left open is still the note line, and the note it closed
+	// is not: one item cannot be reported as both read-and-not-closed and as a
+	// close the rule refuses.
+	if !strings.Contains(got, "- read 20261118-03, a note a run left behind outside this area, and closed it not") {
+		t.Errorf("a note of another area left open is not reported as read:\n%s", got)
+	}
+	if strings.Contains(got, "- read 20261118-02,") {
+		t.Errorf("the note this run closed is reported as closed-it-not:\n%s", got)
+	}
+}
+
 // TestPromoteFollowUpClosesWhatTheEarlierRunPaidDown is the second half of the
 // flow the first run's brief describes: the first promote run pays the item
 // down and leaves it open (no pull request to name), and the next promote run

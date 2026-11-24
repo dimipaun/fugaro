@@ -19,15 +19,18 @@ import (
 // raise to, and the runner reads the area's recorded debt and works at the
 // level asked for.
 //
-// **The area is the repository's own rule.** A rule of `rigor.areas` in the
-// repository's fugaro.yaml is written by the repository and matches paths in
-// it, so "one promote run per member repository of the area" (§3b item 12a) is
-// the launch's own repository: the member repo is the one whose file declares
-// the area, and a run of it cannot raise an area of a repository it is not in.
-// A project layer's area names other repositories as its members
-// (`defaults.rigor.areas[].members`), and raising one is the operator's call
-// on the layer rather than a run's — this launch refuses such a name rather
-// than raising a level in a repository whose own file never asked for it.
+// **The area is the repository's own part of the rule.** "One promote run per
+// member repository of the area" (§3b item 12a) is what this launch is: it
+// raises the area **in the repository the run is in**, so a rule of that
+// repository's `rigor.areas` — a glob in its own tree — and a project layer's
+// area alike are promoted one member at a time. A project area is read for
+// this repository's own member entry (`defaults.rigor.areas[].members`), whose
+// paths are the scope the run's closes are held inside; a member with no paths
+// is the whole repository, and an area that names no member of this repository
+// is refused. What a project area does not get is a level written into a
+// repository's file: item 12b raises a repo-owned area's level in the pull
+// request and leaves a project area's to the operator, on the layer, so the run
+// raises the area's code and the layer's rule stays where its writer put it.
 //
 // **The level is compared, not trusted.** A promote run raises: a target below
 // the level the area already resolves to is refused, and equal is allowed
@@ -114,38 +117,84 @@ func promoteTaskText(area string, target rigor.Rigor) string {
 func resolvePromote(ctx context.Context, repo, area, target string) (*task.Promote, error) {
 	cfg := checkoutConfig(ctx, repo)
 	if cfg == nil {
-		return nil, userErr("--promote reads the area out of %s's own fugaro.yaml (rigor.areas), and this launch has no checkout of that repository in the working directory: run it from the repository's own checkout, or name the area of the repository you are in", repo)
+		return nil, userErr("--promote reads the area out of %s's own fugaro.yaml (rigor.areas) and the project layer it resolves over, and this launch has no checkout of that repository in the working directory: run it from the repository's own checkout, or name the area of the repository you are in", repo)
 	}
 	rc := cfg.RigorConfig()
-	names := make([]string, 0, len(rc.RepoAreas))
-	var found *rigor.Area
-	for i := range rc.RepoAreas {
-		names = append(names, rc.RepoAreas[i].Name)
-		if rc.RepoAreas[i].Name == area {
-			found = &rc.RepoAreas[i]
-		}
-	}
-	if found == nil {
-		if len(names) == 0 {
-			return nil, userErr("--promote %s: %s's fugaro.yaml declares no rigor.areas rule at all, so the repository has no area to raise; a project layer's area is the operator's to raise, on the layer (docs/rigor-modes/levels-reconciliation.md §3b item 12a)", area, repo)
-		}
-		return nil, userErr("--promote %s: %s's fugaro.yaml declares no area by that name; it declares %s (rigor.areas). A project layer's area names its own members and is the operator's to raise, on the layer", area, repo, strings.Join(names, ", "))
-	}
-	if strings.TrimSpace(found.Match) == "" {
-		return nil, userErr("--promote %s: the area names no path in this repository, so a run of it has no code to raise (rigor.areas[].match)", area)
-	}
-	paths := []string{found.Match}
 	canon, err := task.CanonicalRepo(repo)
 	if err != nil {
 		return nil, userErr("--promote %s: %v", area, err)
 	}
+	// This repository's part of the area, and the level the rule itself
+	// declares: the rule's own level for a rule of the repository's file, the
+	// project rule's for a project area — and, for the latter, only this
+	// repository's member paths, which is what "one promote run per member
+	// repo" means (§3b item 12a: a project area is promoted one member at a
+	// time, each run in the member repository it raises).
+	names := make([]string, 0, len(rc.RepoAreas)+len(rc.ProjectAreas))
+	for _, a := range rc.RepoAreas {
+		names = append(names, a.Name)
+	}
+	for _, a := range rc.ProjectAreas {
+		names = append(names, a.Name)
+	}
+	// found is this repository's part of the area: the paths the run's closes
+	// are held inside, and the level the rule itself declares.
+	var found bool
+	var declared rigor.Rigor
+	var paths []string
+	for _, a := range rc.RepoAreas {
+		if a.Name != area {
+			continue
+		}
+		if strings.TrimSpace(a.Match) == "" {
+			return nil, userErr("--promote %s: the area names no path in this repository, so a run of it has no code to raise (rigor.areas[].match)", area)
+		}
+		found, declared, paths = true, a.Level, []string{a.Match}
+	}
+	for _, a := range rc.ProjectAreas {
+		if a.Name != area || found {
+			continue
+		}
+		// A project area is promoted one member at a time, from the member
+		// repository the run is in (§3b item 12a): what this launch needs is
+		// this repository's own part of the rule, which is its member entry —
+		// or, for a rule of the older whole-layer shape, the glob that is in
+		// effect in every repository of the project.
+		for _, m := range a.Members {
+			if m.Repo != canon {
+				continue
+			}
+			// A member with no paths is the whole repository: a scope with no
+			// globs in it, inside which every path of the run's diff falls.
+			found, declared, paths = true, a.Level, m.Paths
+			break
+		}
+		if !found && strings.TrimSpace(a.Match) != "" {
+			found, declared, paths = true, a.Level, []string{a.Match}
+		}
+	}
+	if !found {
+		if len(names) == 0 {
+			return nil, userErr("--promote %s: neither %s's fugaro.yaml (rigor.areas) nor the project layer its configuration resolves over declares a rigor.areas rule, so there is no area to raise", area, repo)
+		}
+		return nil, userErr("--promote %s: %s declares no area by that name — neither its own fugaro.yaml (rigor.areas) nor the project layer its configuration resolves over; they declare %s. A project area is promoted from one of its member repositories — the run's own — so this launch needs an area that names this repository as a member (docs/rigor-modes/levels-reconciliation.md §3b item 12a)", area, repo, strings.Join(names, ", "))
+	}
+	// The level this area already resolves to. The rule's own level is read
+	// beside what the resolver answers, because a rule may be written with a
+	// brace pattern (`internal/{payments,ledger}/**`): the resolver is asked
+	// about the paths a run touches, and a glob is not a path — matched against
+	// its own text it decides nothing — so the rule's declaration is the
+	// stronger of the two and the one that has to hold.
 	current := rigor.Resolve(rc, rigor.Request{Repo: canon, Paths: paths}).Level
 	if current == "" {
 		current = rigor.Default
+	}
+	if declared.Rank() > current.Rank() {
+		current = declared
 	}
 	want := rigor.Rigor(target)
 	if want.Rank() < current.Rank() {
 		return nil, userErr("--promote %s --mode %s: the area already resolves to %s, and a promote run raises an area — a target below the area's own level is refused, and a target equal to it is allowed (docs/rigor-modes/levels-spec.md §4)", area, want, current)
 	}
-	return &task.Promote{Area: found.Name, Paths: paths}, nil
+	return &task.Promote{Area: area, Paths: paths}, nil
 }

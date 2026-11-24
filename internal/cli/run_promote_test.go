@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -87,16 +89,109 @@ func TestRunPromoteRaisesAnAreaAndRecordsIt(t *testing.T) {
 // below the level the area already resolves to is refused before anything is
 // launched, and the refusal names the level the area is at (LV7.1's own word:
 // below is refused, equal is allowed).
+//
+// The second case is the rule's own level over a brace pattern. The level is
+// read from what the rule declares as well as from what the resolver answers
+// over the area's paths, because the paths handed to the resolver are the rule's
+// own glob — a glob is not a path, and a brace pattern matched against its own
+// text (`internal/{payments,ledger}/**` against itself) does not match, so the
+// resolver alone reads a brace area as the repository's default and lets a
+// target below the rule through. Mutation (drop the declared.Rank() comparison):
+// the brace row below is launched instead of refused.
 func TestRunPromoteRefusesATargetBelowTheArea(t *testing.T) {
-	areaPromoteFixture(t)
-	for _, mode := range []string{"pro", "startup", "poc"} {
-		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261122-130100-abcd", "--promote", "payments", "--mode", mode)
-		if ExitCode(err) != ExitUserError {
-			t.Fatalf("--promote payments --mode %s: err = %v, want a refusal", mode, err)
+	t.Run("a plain glob", func(t *testing.T) {
+		areaPromoteFixture(t)
+		for _, mode := range []string{"pro", "startup", "poc"} {
+			_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261122-130100-abcd", "--promote", "payments", "--mode", mode)
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("--promote payments --mode %s: err = %v, want a refusal", mode, err)
+			}
+			if !strings.Contains(err.Error(), "already resolves to critical") || !strings.Contains(err.Error(), "equal to it is allowed") {
+				t.Errorf("--promote payments --mode %s: err = %v, want the area's own level named", mode, err)
+			}
 		}
-		if !strings.Contains(err.Error(), "already resolves to critical") || !strings.Contains(err.Error(), "equal to it is allowed") {
-			t.Errorf("--promote payments --mode %s: err = %v, want the area's own level named", mode, err)
+	})
+	t.Run("a brace pattern", func(t *testing.T) {
+		f := newCloudFixture(t)
+		writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+promoteSince)
+		checkoutWorkflows(t, "rigor:\n  default: poc\n  areas:\n"+
+			"    - { name: money, match: \"internal/{payments,ledger}/**\", mode: critical }\n",
+			"  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+		for _, mode := range []string{"pro", "poc"} {
+			_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261122-130101-abcd", "--promote", "money", "--mode", mode)
+			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "already resolves to critical") {
+				t.Fatalf("--promote money --mode %s: err = %v, want the rule's own level named", mode, err)
+			}
 		}
+		spec := launchPromoteArea(t, f, "20261122-130102-abcd", "--promote", "money", "--mode", "critical")
+		if spec.Promote == nil || spec.Promote.Area != "money" {
+			t.Fatalf("the area at its own level is launched, not refused: %+v", spec.Promote)
+		}
+	})
+}
+
+// promoteLayerCheckout makes the working directory a checkout of acme/app whose
+// fugaro.yaml is yaml, the file a launch resolves the layer over: checkoutWorkflows
+// writes a file with the project and no gcp_project, which is anchored for
+// nothing and read beside no layer.
+func promoteLayerCheckout(t *testing.T, yaml string) {
+	t.Helper()
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "https://github.com/acme/app.git")
+	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+}
+
+// TestRunPromoteRaisesAProjectAreaOfThisRepository: an area of the project
+// layer is promoted one member at a time — the run is in one member repository
+// and raises that repository's part of the rule (§3b item 12a, the launch's
+// package doc). The member's own paths are the run's scope, and they are what
+// the launcher stores, so the areas a nested organizational rule declares are
+// launchable from the repositories they name rather than only from a rule the
+// repository's own fugaro.yaml happens to carry.
+//
+// The area's level stays the operator's where the rule is the layer's (item
+// 12b raises a repo-owned area's level in the pull request): this launch reads
+// the layer's rule and refuses a target below it, and asks for no edit to it.
+func TestRunPromoteRaisesAProjectAreaOfThisRepository(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+promoteSince)
+	// The checkout is anchored (project and gcp_project), which is what makes
+	// the project layer apply to it at all: a file without gcp_project is read
+	// beside no layer (anchorOf), and this test is about the layer's areas.
+	promoteLayerCheckout(t, "version: 1\nproject: aurora\ngcp_project: proj-1234\n"+
+		"git: { provider: github, base_branch: main }\nagent: { auth: api-key }\n"+
+		"workflows:\n  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+	publishedLayer(t, f, layerWithRigorMembers("  rigor:\n    areas:\n"+
+		"      - name: db\n        members:\n          - {repo: acme/app, paths: [\"internal/db/**\"]}\n        level: pro\n"+
+		"      - name: mobile\n        members:\n          - {repo: acme/other, paths: [\"app/**\"]}\n        level: pro\n"))
+
+	spec := launchPromoteArea(t, f, "20261122-130300-abcd", "--promote", "db", "--mode", "critical")
+	if spec.Promote == nil || spec.Promote.Area != "db" {
+		t.Fatalf("the layer's area of this repository is not launched: %+v", spec)
+	}
+	want := []string{"internal/db/**"}
+	if len(spec.Promote.Paths) != 1 || spec.Promote.Paths[0] != want[0] {
+		t.Errorf("promote paths = %v, want this repository's member paths %v", spec.Promote.Paths, want)
+	}
+	if len(spec.Paths) != 1 || spec.Paths[0] != want[0] {
+		t.Errorf("declared paths = %v, want the member's own %v", spec.Paths, want)
+	}
+	// Below the layer's rule is refused for a project area too: the member's
+	// paths resolve to the rule's own level.
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261122-130301-abcd", "--promote", "db", "--mode", "poc")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "already resolves to pro") {
+		t.Fatalf("err = %v, want the layer's own level named", err)
+	}
+	// An area that names only another repository is not this repository's to
+	// raise: there is no code of it here.
+	_, _, err = execute(t, "run", "--repo", "acme/app", "--run-id", "20261122-130302-abcd", "--promote", "mobile", "--mode", "critical")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "declares no area by that name") {
+		t.Fatalf("err = %v, want an area of another repository refused", err)
 	}
 }
 

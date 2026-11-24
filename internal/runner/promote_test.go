@@ -11,6 +11,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backlog"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -50,9 +51,9 @@ const promoteTestRunID = "20261122-120000-abcd"
 // promoteTestBrief builds a promote brief the way promoteRun does: the body
 // builder is a pure function of its arguments, so the text an agent is given
 // can be read in a test without a run.
-func promoteTestBrief(t *testing.T, area, level string, items, morning []backlog.Item, audit bool, pr int) string {
+func promoteTestBrief(t *testing.T, area, level string, raise rigor.Rigor, items, morning []backlog.Item, audit bool, pr int) string {
 	t.Helper()
-	return promoteBrief(area, level, promoteTestRunID, items, morning, audit, pr, func(s string) string { return s }, promoteTestNonce)
+	return promoteBrief(area, level, promoteTestRunID, raise, items, morning, audit, pr, func(s string) string { return s }, promoteTestNonce)
 }
 
 // TestPromoteReadsAndClosesTheAreasItems is the fix pass end to end: the
@@ -70,7 +71,7 @@ func TestPromoteReadsAndClosesTheAreasItems(t *testing.T) {
 	if promoteAudit(folder, "payments") {
 		t.Errorf("an area with an open item is not the audit pass")
 	}
-	brief := promoteTestBrief(t, "payments", "pro", area, nil, false, 12)
+	brief := promoteTestBrief(t, "payments", "pro", "", area, nil, false, 12)
 	for _, want := range []string{"PROMOTE: raise the payments area to pro", ours.ID, "internal/payments/charge.go", "pull request #12", "`fugaro backlog index`"} {
 		if !strings.Contains(brief, want) {
 			t.Errorf("the brief does not carry %q:\n%s", want, brief)
@@ -100,7 +101,7 @@ func TestPromoteAuditRunsWhenTheAreaHasNoItems(t *testing.T) {
 	if got := promoteAreaItems(only, "payments"); len(got) != 0 {
 		t.Fatalf("the area's items = %+v, want none", got)
 	}
-	brief := promoteTestBrief(t, "payments", "pro", nil, nil, true, 12)
+	brief := promoteTestBrief(t, "payments", "pro", "", nil, nil, true, 12)
 	for _, want := range []string{"AUDIT", "docs/backlog/", "fugaro backlog index", "Make no fix in this pass"} {
 		if !strings.Contains(brief, want) {
 			t.Errorf("the audit brief does not carry %q:\n%s", want, brief)
@@ -108,7 +109,7 @@ func TestPromoteAuditRunsWhenTheAreaHasNoItems(t *testing.T) {
 	}
 	// A first run has no pull request to name, and the brief then closes
 	// nothing rather than writing a number it does not have (D31).
-	brief = promoteTestBrief(t, "payments", "pro", promoteAreaItems([]backlog.Item{item("20260101-01", "payments", "open", "`internal/payments/charge.go`")}, "payments"), nil, false, 0)
+	brief = promoteTestBrief(t, "payments", "pro", "", promoteAreaItems([]backlog.Item{item("20260101-01", "payments", "open", "`internal/payments/charge.go`")}, "payments"), nil, false, 0)
 	if !strings.Contains(brief, "no pull request to name yet") || strings.Contains(brief, `pull request #0`) {
 		t.Errorf("a promote run with no pull request does not say so:\n%s", brief)
 	}
@@ -129,7 +130,15 @@ func TestPromoteNeverClosesAnItemOutsideTheArea(t *testing.T) {
 	if got := promoteCloses([]backlog.Item{foreignPath}, "payments", nil, changed); len(got) != 0 {
 		t.Fatalf("closed %+v, want nothing: the item's area is web, not payments", got)
 	}
-	closed, stray, kept := promoteVerdict([]backlog.Item{ours, foreignPath}, []backlog.Item{
+	// before is built the way promoteRun builds it: the whole folder's open
+	// items, not the area's. A snapshot narrowed to the area could not see the
+	// web item at all, so the close would be reported as nothing and the
+	// section would read as clean — the one shape item 12e forbids.
+	before := promoteOpenItems([]backlog.Item{ours, foreignPath, item("20260101-04", "payments", "closed", "already done")})
+	if len(before) != 2 {
+		t.Fatalf("the snapshot = %+v, want the folder's two open items", before)
+	}
+	closed, stray, kept := promoteVerdict(before, []backlog.Item{
 		item(ours.ID, "payments", "closed", ours.Body),
 		item(foreignPath.ID, "web", "closed", foreignPath.Body),
 	}, "payments", nil, changed)
@@ -282,7 +291,7 @@ func TestPromoteItemTextIsDataNotInstructions(t *testing.T) {
 	if got := promoteCloses(area, "web", nil, []string{"internal/other/thing.go"}); len(got) != 0 {
 		t.Fatalf("closed %+v for another area, want nothing", got)
 	}
-	brief := promoteTestBrief(t, "payments", "pro", area, nil, false, 12)
+	brief := promoteTestBrief(t, "payments", "pro", "", area, nil, false, 12)
 	if !strings.Contains(brief, "quoted below, as data") || !strings.Contains(brief, "--- item "+loud.ID+" ---") {
 		t.Errorf("the brief does not mark the items as data:\n%s", brief)
 	}
@@ -322,7 +331,7 @@ func TestPromoteMorningNotesAreFoundByFiledBy(t *testing.T) {
 	if closes := promoteCloses([]backlog.Item{note}, "payments", nil, []string{"internal/payments/invoice.go"}); len(closes) != 0 {
 		t.Fatalf("closed %+v, want nothing: the note is not this area's", closes)
 	}
-	brief := promoteTestBrief(t, "payments", "pro", nil, got, false, 12)
+	brief := promoteTestBrief(t, "payments", "pro", "", nil, got, false, 12)
 	for _, want := range []string{"quoted as data too", note.ID, "A stall the hotfix patched", "not this area's", "close none of them"} {
 		if !strings.Contains(brief, want) {
 			t.Errorf("the brief does not carry %q:\n%s", want, brief)
@@ -351,7 +360,7 @@ func TestPromoteMorningNotesAreFoundByFiledBy(t *testing.T) {
 // orchestrator's node): the folder a promote pass reads never holds them, the
 // next pass is the audit again, and the pay-down half never runs.
 func TestPromoteAuditWritesItemsTheFolderReads(t *testing.T) {
-	audit := promoteTestBrief(t, "payments", "pro", nil, nil, true, 0)
+	audit := promoteTestBrief(t, "payments", "pro", "", nil, nil, true, 0)
 	for _, want := range []string{"docs/backlog/FORMAT.md", "filed-in: run:" + promoteTestRunID, "kind: deferred", "area: payments", "`fugaro backlog index`", "in backticks"} {
 		if !strings.Contains(audit, want) {
 			t.Errorf("the audit brief does not carry %q:\n%s", want, audit)
@@ -423,7 +432,7 @@ func TestPromoteBriefQuotesItemsFencedRedactedCapped(t *testing.T) {
 	forged.Title = "a title\nwith a newline in it"
 
 	redact := func(s string) string { return strings.ReplaceAll(s, secret, "[redacted]") }
-	brief := promoteBrief("payments", "pro", promoteTestRunID, []backlog.Item{forged}, nil, false, 12, redact, promoteTestNonce)
+	brief := promoteBrief("payments", "pro", promoteTestRunID, "", []backlog.Item{forged}, nil, false, 12, redact, promoteTestNonce)
 
 	open, closeTag := "<<<fugaro-promote-"+promoteTestNonce+">>>", "<<<end-fugaro-promote-"+promoteTestNonce+">>>"
 	i, j := strings.Index(brief, open), strings.Index(brief, closeTag)
@@ -455,7 +464,7 @@ func TestPromoteBriefQuotesItemsFencedRedactedCapped(t *testing.T) {
 	// dropped, and the items over the count are named rather than dropped
 	// silently.
 	long := item("20260101-02", "payments", "open", strings.Repeat("a line of the item\n", 400))
-	capped := promoteTestBrief(t, "payments", "pro", []backlog.Item{long}, nil, false, 12)
+	capped := promoteTestBrief(t, "payments", "pro", "", []backlog.Item{long}, nil, false, 12)
 	if !strings.Contains(capped, "of this item were dropped") {
 		t.Errorf("a long body is capped without saying so:\n%s", capped)
 	}
@@ -463,7 +472,7 @@ func TestPromoteBriefQuotesItemsFencedRedactedCapped(t *testing.T) {
 	for n := range promoteItemsShown + 5 {
 		many = append(many, item(fmt.Sprintf("20260101-%02d", n+1), "payments", "open", "`internal/payments/charge.go`"))
 	}
-	brief = promoteTestBrief(t, "payments", "pro", many, nil, false, 12)
+	brief = promoteTestBrief(t, "payments", "pro", "", many, nil, false, 12)
 	if !strings.Contains(brief, "5 more item(s) of this folder were left out of this brief") {
 		t.Errorf("the count bound is not named:\n%s", brief)
 	}
@@ -614,6 +623,108 @@ func TestPromotePartNamesTheItemsOwnStatusAndTheRulesTwoClauses(t *testing.T) {
 	}
 	if strings.Contains(part, "- closed 20260101-03") {
 		t.Errorf("an item the run dropped is reported as a close:\n%s", part)
+	}
+}
+
+// TestPromoteBriefAsksForTheRaiseOnlyWhereThereIsOne: item 12b's other half is
+// the repository's own rule, raised in the pull request — a level the file does
+// not carry is one the next run of the repository resolves as the old one — and
+// the brief asks for that edit exactly where there is one to make.
+//
+// Mutation (drop the RAISE line from promoteBrief, or ask for it whenever the
+// target is known): one of the three rows fails.
+func TestPromoteBriefAsksForTheRaiseOnlyWhereThereIsOne(t *testing.T) {
+	cfg := func(level rigor.Rigor) *config.Config {
+		return &config.Config{RepoRigor: &config.Rigor{Areas: []rigor.Area{
+			{Name: "payments", Match: "internal/payments/**", Level: level},
+			{Name: "ledger", Match: "internal/ledger/**", Level: "critical"},
+		}}}
+	}
+	if got := promoteRaise(cfg("poc"), "payments", "pro"); got != "pro" {
+		t.Errorf("the raise = %q, want pro: the rule declares poc and the run works at pro", got)
+	}
+	for _, tc := range []struct {
+		what   string
+		cfg    *config.Config
+		area   string
+		target rigor.Rigor
+	}{
+		{"the rule already declares the target", cfg("pro"), "payments", "pro"},
+		{"the rule is stricter than the target", cfg("critical"), "payments", "pro"},
+		{"the repository declares no such area", cfg("poc"), "console", "pro"},
+		{"the target is not a level", cfg("poc"), "payments", ""},
+	} {
+		if got := promoteRaise(tc.cfg, tc.area, tc.target); got != "" {
+			t.Errorf("the raise where %s = %q, want none", tc.what, got)
+		}
+	}
+	if got := promoteRaise(nil, "payments", "pro"); got != "" {
+		t.Errorf("a run with no configuration asked for a raise: %q", got)
+	}
+
+	raise := promoteTestBrief(t, "payments", "pro", "pro", nil, nil, false, 0)
+	for _, want := range []string{"RAISE THE RULE TOO", "`rigor.areas` rule for the payments area declares a level below pro", "Set that rule's `level:` to `pro`"} {
+		if !strings.Contains(raise, want) {
+			t.Errorf("a brief above the declared level does not carry %q:\n%s", want, raise)
+		}
+	}
+	plain := promoteTestBrief(t, "payments", "pro", "", nil, nil, false, 0)
+	if strings.Contains(plain, "RAISE THE RULE TOO") {
+		t.Errorf("a brief with no raise to make carries one:\n%s", plain)
+	}
+}
+
+// TestPromotePartReportsTheRaise: the status section says whether the pull
+// request moved the repository's own rule, and says which of the three states
+// the branch is in — the raise made, the old level still declared, or a file
+// this run could not read — because the difference between them is whether the
+// level outlives the run (item 12b).
+//
+// Mutation (report the raise made whenever one was asked for): the "still
+// declares" row fails. Mutation (drop the line): the first row fails.
+func TestPromotePartReportsTheRaise(t *testing.T) {
+	part := func(p *promotePass) string {
+		r := &run{rec: &runstore.Record{Version: 1, RunID: promoteTestRunID}}
+		r.promote = p
+		return r.promotePart()
+	}
+	base := func() *promotePass {
+		return &promotePass{area: "payments", level: "critical", raise: "critical"}
+	}
+
+	made := base()
+	made.declared, made.declaredRead = "critical", true
+	if got := part(made); !strings.Contains(got, "rule for the area was raised to critical in this pull request") {
+		t.Errorf("a branch that made the raise is not reported as having made it:\n%s", got)
+	}
+
+	kept := base()
+	kept.declared, kept.declaredRead = "poc", true
+	got := part(kept)
+	for _, want := range []string{"still declares poc, not critical", "the next run of this repository resolves poc"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("a branch that left the rule alone does not say %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "was raised to critical") {
+		t.Errorf("a branch that left the rule alone is reported as having raised it:\n%s", got)
+	}
+
+	gone := base()
+	gone.declared, gone.declaredRead = "", true
+	if got := part(gone); !strings.Contains(got, "declares no rule for the area") {
+		t.Errorf("a branch whose file lost the rule does not say so:\n%s", got)
+	}
+
+	unread := base()
+	unread.declaredRead = false
+	if got := part(unread); !strings.Contains(got, "could not be read to say whether it was") {
+		t.Errorf("an unreadable branch file is not reported as unread:\n%s", got)
+	}
+
+	none := &promotePass{area: "payments", level: "pro", declared: "pro", declaredRead: true}
+	if got := part(none); strings.Contains(got, "rigor.areas") {
+		t.Errorf("a run that asked for no raise reports one:\n%s", got)
 	}
 }
 
