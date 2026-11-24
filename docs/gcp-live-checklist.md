@@ -23596,7 +23596,10 @@ on a failed assertion or a Ctrl-C. It costs one sandbox run and what its task sp
 **OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
 `scripts/live-checks/check631_test.sh`, which drives every step of it against fake tools — a fake `gcloud`, a
 fake `fugaro` and a real pty for the two pastes, no cloud, no installation and no run — and is run by
-`go test ./scripts`.
+`go test ./scripts`. That fake refuses a flag the command it stands in for does not declare, in the CLI's own
+words and with its status: `accounts add` is a write and takes no `--project` — the project is the checkout's
+own `fugaro.yaml`, which is the directory every call is made in — so a step that handed it one would fail
+here rather than in a live run, and the refusal this check exists to measure would not be reached.
 
 ## Check 632: convergence and the run in flight, on a real installation — one `fugaro update` over all four halves, and the run it does not disturb (a sandbox installation, project and repository, never `belong`; run by you; NOT RUN)
 
