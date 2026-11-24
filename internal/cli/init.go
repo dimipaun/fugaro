@@ -1160,7 +1160,8 @@ func (r *initRun) lockWorkdirs(project string) (func(), error) {
 // markTheUpdateReads makes this run's every read of a checkout's fugaro.yaml
 // the read of the file this run's own removal offer leaves behind: the word
 // that was a budget mode taken out of the bytes before anything judges them
-// (fugaroYAMLWithoutRemovedMode, AB8b, F22).
+// (fugaroYAMLWithoutRemovedMode, AB8b, F22). The published node's own read is
+// the converge's, marked by policyMemo rather than here.
 //
 // It is marked once, at the door, and not at each read, because the readers of
 // a checkout's file along an update's way are many — the repository and
@@ -1174,9 +1175,32 @@ func (r *initRun) lockWorkdirs(project string) (func(), error) {
 // other door reads the bytes as they are and refuses a file that still says
 // the word (D3022).
 func (r *initRun) markTheUpdateReads() {
-	if r.o.doorName() == updateDoor.name {
-		r.cmd.SetContext(theUpdateLeavesTheRemoval(r.cmd.Context()))
+	if r.o.doorName() != updateDoor.name {
+		return
 	}
+	r.cmd.SetContext(theUpdateLeavesTheRemoval(r.cmd.Context()))
+}
+
+// policyMemo is the converge's read of the published policy node, and the one
+// way a run that converges reaches the memo: the node is read as the policy
+// stage of this same run is about to write it (policyReadOnce.carry), because
+// that stage is what rewrites a node the release behind published — a
+// predecessor's version, or the word the budget mode's vocabulary dropped
+// (projectpolicy.Migrate, AB8a, D3025).
+//
+// Read strictly, a stage that asks the node a question — where a secret is
+// stored for the repository, what the spec's bitbucket_proxied fact is, whether
+// the project published at all (Readiness's D11 gate) — answers "no policy" over
+// the node the operator does hold, and the run stops on it: the second command
+// CLAUDE.md's HARD RULE forbids.
+//
+// Every reader of this memo inside the converge goes through here, so a launch's
+// strict read (cloudEnv.policy, read directly) and this one are never confused:
+// `git grep -n 'r\.policy\.\|&r\.policy\|&e\.r\.policy'` inside internal/cli
+// finds the converge's reads, and each one names this function.
+func (r *initRun) policyMemo() *policyReadOnce {
+	r.policy.carry = true
+	return &r.policy
 }
 
 func runInit(r *initRun) error {
@@ -3989,7 +4013,7 @@ func nameFromOutputs(lc *localcfg.Config, outs infra.InstallationOutputs) (*loca
 // replaces the owner's published list, permanently, with the installation's
 // own account, and does it in the run that reports success.
 func (r *initRun) effectiveVerifiers(ctx context.Context, lc *localcfg.Config) ([]string, error) {
-	p, _, err := r.policy.read(ctx, lc)
+	p, _, err := r.policyMemo().read(ctx, lc)
 	if err != nil {
 		if !olderPolicyNode(err) {
 			return nil, fmt.Errorf("the verifier accounts this installation's document must carry could not be read: %w", policyReadErr(err))
@@ -5638,7 +5662,7 @@ func (r *initRun) appPreCheck(ctx context.Context, lc *localcfg.Config, spec inf
 	}
 	keyID := spec.Secrets[config.GitHubAppKeySecret]
 	if r.o.checkApp {
-		id, err := gitSecretID(ctx, lc, spec, nodePolicy(ctx, &r.policy, lc), "the GitHub App pre-check of "+spec.Name)
+		id, err := gitSecretID(ctx, lc, spec, nodePolicy(ctx, r.policyMemo(), lc), "the GitHub App pre-check of "+spec.Name)
 		if err != nil {
 			// One line, and for a drift the short form of it: oneLineCLI
 			// prints through pluginwire.Printable, which would cut the
@@ -6210,7 +6234,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	// Whether the project has published a policy decides whether the jobs
 	// must be able to read one (D11): the database is read with the
 	// operator's own credentials, which only this side holds.
-	if ex.PolicyExists, err = r.policy.exists(ctx, lc); err != nil {
+	if ex.PolicyExists, err = r.policyMemo().exists(ctx, lc); err != nil {
 		return infra.RepoSpec{}, nil, initErr(err)
 	}
 	if first {
