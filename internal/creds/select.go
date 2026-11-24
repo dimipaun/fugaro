@@ -645,7 +645,7 @@ func (s *Selector) Probed(ctx context.Context, name string, tier Tier) (Mark, er
 // no-op on anything but a backed-off mark (ProbeSucceeded), so a probe's success
 // cannot clear a 401.
 func (s *Selector) Cleared(ctx context.Context, name string) (Mark, error) {
-	return s.Mark(ctx, name, func(prev Mark, _ bool) (Mark, error) { return carrying(prev, Cleared()), nil })
+	return s.Mark(ctx, name, func(Mark, bool) (Mark, error) { return Cleared(), nil })
 }
 
 // Broken records a 401 on one credential (D139). It is the one mark this
@@ -654,7 +654,7 @@ func (s *Selector) Cleared(ctx context.Context, name string) (Mark, error) {
 // refuses one that arrives anyway.
 func (s *Selector) Broken(ctx context.Context, name string) (Mark, error) {
 	now := s.now()
-	return s.Mark(ctx, name, func(prev Mark, _ bool) (Mark, error) { return carrying(prev, Break(now)), nil })
+	return s.Mark(ctx, name, func(Mark, bool) (Mark, error) { return Break(now), nil })
 }
 
 // take records a decision: the run's current credential, which is D154's

@@ -1131,9 +1131,9 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 		// rate-limit headers and never a value (U1, Check 880). This arm writes
 		// nothing for itself, and the record is written where the credential is
 		// judged because an answer about the REQUEST says nothing about it: a
-		// relayed 529 or 500 leaves the mark alone (the published pool's own
-		// rule, "an answer about the request moves nothing"), and so leaves the
-		// record alone.
+		// relayed 529 or 500 says nothing about the credential (the published
+		// pool's own rule, "an answer about the request moves nothing"), so it
+		// leaves the mark alone and the observation with it.
 		switch status := ans.resp.StatusCode; {
 		case unauthorizedStatus(status):
 			// D139: a 401 marks the credential broken, and only an operator
@@ -1151,8 +1151,9 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			// credential's mark is not written, because the call is over either
 			// way and an unrecorded cost is the thing an operator has to act on.
 			// A 401 is an answer about the credential, so what it carried is
-			// recorded (U1, Check 880) — before the hold is written, because
-			// the transition rebuilds the mark and the record is the answer's.
+			// recorded (U1, Check 880). The observation is a node of its own
+			// and the hold below is the mark's, so the order between them
+			// decides nothing.
 			s.recordRateLimitHeaders(ctx, sel, c.Name, ans.resp.Header)
 			ans.resp.Body.Close()
 			if fail := s.settleCall(ctx, cl, unchargedUsage()); fail != nil {
@@ -1173,9 +1174,8 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			// A usage limit. Nothing has been streamed, so the call may be
 			// retried — on another credential, never on this one.
 			// The answer Check 880 is really read after: a usage limit's names
-			// are the record's whole point, so they are written before the hold
-			// (U1, D3178). A later answer of this credential replaces them, so
-			// the node holds the LAST answer's names.
+			// are the record's whole point (U1, D3178), and a later answer of
+			// this credential replaces them, so the node holds the LAST one's.
 			s.recordRateLimitHeaders(ctx, sel, c.Name, ans.resp.Header)
 			reset := usageLimitReset(ans.resp.Header, s.now())
 			// The attempt's reservation is settled as the 401 arm's is, and for

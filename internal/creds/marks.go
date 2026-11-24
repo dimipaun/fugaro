@@ -43,61 +43,20 @@ const (
 // force for a backed-off mark, so a failed probe doubles *it* rather than
 // starting over.
 //
-// Headers is the one field here that no selection reads: it is an observation
-// of the last answer the credential gave, kept in the same node because it is
-// the same credential's and because a node of its own would be a second read on
-// the path every call takes. It is written by the service and read by the
-// operator's own scripts (Check 880), never by the selection.
+// It is exactly these four on the wire, and a member beside them would be read
+// by no selection while it stopped every release behind this one: the marks are
+// decoded strictly, so a reader that does not model a member refuses the whole
+// node it is in (readNameTree, decodeStrict). What a credential's last answer
+// reported is therefore recorded in a node of its own (Observation), not here.
 type Mark struct {
 	State   State         `json:"state,omitempty"`
 	Until   time.Time     `json:"until,omitempty"`
 	Since   time.Time     `json:"since,omitempty"`
 	Backoff time.Duration `json:"backoff,omitempty"`
-	// Headers are the NAMES of the rate-limit headers the last answer for this
-	// credential carried, in a stable order, and never one of their values
-	// (Observed).
-	//
-	// It is what settles U1 — whether a subscription token's answer reports a
-	// utilisation figure at all (D3178) — without the service needing to
-	// understand any of the figures: the names are recorded as they came, and
-	// the operator's Check 880 reads them. A value never belongs here: a
-	// rate-limit header's value can carry an organization id, an account's
-	// usage, a subscription figure and, in a malformed answer, the credential
-	// itself, and this node is read by an operator's command and printed by a
-	// script.
-	Headers []string `json:"headers,omitempty"`
 }
 
 // Available reports a mark that holds nothing.
 func (m Mark) Available() bool { return m.State == "" || m.State == StateAvailable }
-
-// Observed returns prev carrying the names of the rate-limit headers its last
-// answer carried, and it is the only way that field is written.
-//
-// The names are copied rather than kept: the caller's slice is usually the one
-// it built while walking an answer's headers, and a mark that held it would
-// share its backing array with whatever that caller does next.
-//
-// An observation that found no rate-limit header writes no field at all
-// (omitempty), so a node with no "headers" reads as "this credential's last
-// recorded answer named no rate-limit header, or none has been recorded since
-// this release" — one reading of two, and the reason the field is optional: the
-// four members a selection reads keep their exact set on the wire
-// (TestModelCredentialMarksUnchanged), and Check 880 treats a source with no
-// record as a source it cannot yet answer for, never as a positive.
-func Observed(prev Mark, names []string) Mark {
-	prev.Headers = append([]string(nil), names...)
-	return prev
-}
-
-// carrying returns next with the observation prev carried. A transition moves
-// the hold and says nothing about the answer that provoked it, so what the last
-// answer reported must survive it: Check 880 is run after a run, and the run it
-// is run after is exactly the one whose last answer was a limit.
-func carrying(prev, next Mark) Mark {
-	next.Headers = prev.Headers
-	return next
-}
 
 // Broken reports a credential the operator must clear (C1.21).
 func (m Mark) Broken() bool { return m.State == StateBroken }
@@ -340,14 +299,14 @@ func Exhaust(prev Mark, now, reset time.Time, set Settings) Mark {
 		// Since does not move either way: the exhaustion being reported is the
 		// one that opened this hold, not a fresh one.
 		if !reset.IsZero() && reset.After(at) {
-			return carrying(prev, Mark{State: StateExhausted, Until: reset, Since: prev.Since})
+			return Mark{State: StateExhausted, Until: reset, Since: prev.Since}
 		}
 		return prev
 	}
 	if !reset.IsZero() && reset.After(now) {
 		// A reset that is reported is a reset: the upstream named a time, and a
 		// named time is a better answer than any wait this package computes.
-		return carrying(prev, Mark{State: StateExhausted, Until: reset, Since: now})
+		return Mark{State: StateExhausted, Until: reset, Since: now}
 	}
 	m := ProbeFailed(prev, now, set)
 	m.Since = now
@@ -420,7 +379,7 @@ func ProbeFailed(prev Mark, now time.Time, set Settings) Mark {
 	if !prev.Since.IsZero() {
 		m.Since = prev.Since
 	}
-	return carrying(prev, m)
+	return m
 }
 
 // ProbeSucceeded is the mark a successful probe leaves (C1.12), and it is a
@@ -454,10 +413,10 @@ func ProbeSucceeded(prev Mark, now time.Time, set Settings) Mark {
 	set = set.withDefaults()
 	if set.stops() && !prev.Since.IsZero() {
 		if end := prev.Since.Add(set.Window); end.After(now) {
-			return carrying(prev, Mark{State: StateExhausted, Until: end, Since: prev.Since})
+			return Mark{State: StateExhausted, Until: end, Since: prev.Since}
 		}
 	}
-	return carrying(prev, Cleared())
+	return Cleared()
 }
 
 // Cleared is the mark the operator's clear leaves (C1.21): available, with the

@@ -235,8 +235,8 @@ func (s *Server) serveVertex(ctx context.Context, w http.ResponseWriter, id Iden
 		// with what the state says. Only an operator clears a broken mark
 		// (C1.21), and the attempt is settled at the zero a 401 is worth: an
 		// unbilled attempt must not eat the workspace's month. What the 401
-		// carried is recorded first, and before the hold, because the transition
-		// rebuilds the mark the observation lives in (U1, Check 880).
+		// carried is recorded here (U1, Check 880): the observation is a node of
+		// its own, so the order against the hold below decides nothing.
 		s.recordRateLimitHeaders(ctx, sel, name, ans.resp.Header)
 		ans.resp.Body.Close()
 		if fail := s.settleCall(ctx, cl, unchargedUsage()); fail != nil {
@@ -254,7 +254,7 @@ func (s *Server) serveVertex(ctx context.Context, w http.ResponseWriter, id Iden
 		// 429 is a limit on the key. Nothing has been streamed, so the walk may
 		// move to its next source, and the mark carries whatever reset the
 		// answer named. The names the limit carried are the answer Check 880 is
-		// read after, so they are recorded before the hold (U1, D3178).
+		// read after, so they are recorded here (U1, D3178).
 		s.recordRateLimitHeaders(ctx, sel, name, ans.resp.Header)
 		reset := usageLimitReset(ans.resp.Header, s.now())
 		ans.resp.Body.Close()

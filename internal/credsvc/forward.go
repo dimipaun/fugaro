@@ -1785,7 +1785,8 @@ func (s *Server) providerCall(ctx context.Context, w http.ResponseWriter, r *htt
 	// routed call attaches a key and answers with what the provider said, and it
 	// writes no mark at all (TestARoutedCallLeavesTheRunsPlacementAlone). Check
 	// 880's record belongs to the sources whose state this service holds — the
-	// chain's — and a provider key's rate-limit headers are none of them.
+	// chain's — and a provider key's rate-limit headers are none of them, so the
+	// routed path writes no observation either.
 	s.answer(ctx, w, id, cl, ans, cand, nil, nil)
 }
 
@@ -1950,8 +1951,8 @@ func rateLimitHeaderNames(h http.Header) []string {
 }
 
 // recordRateLimitHeaders writes the names — and only the names — of the
-// rate-limit headers one answer carried into the credential's mark, where the
-// operator's Check 880 reads them.
+// rate-limit headers one answer carried into the credential's own observation
+// node (creds/observed/<name>), where the operator's Check 880 reads them.
 //
 // A record that cannot be written is a line on the service's log and never a
 // refusal: it is an observation about an answer the run has already been given,
@@ -1970,17 +1971,30 @@ func rateLimitHeaderNames(h http.Header) []string {
 // does: the text of a state-write failure can carry the node's own content, and
 // this log is not a place a credential's value may reach.
 //
-// An observation that found no rate-limit header writes no field, and a
-// credential with no hold and no record is written as an empty node rather than
-// left alone: the write is the cheapest way to say "this answer reported none",
-// and the neighbours on this path already treat one extra mark node as nothing.
+// The observation goes to a node of its own and not into the credential's mark,
+// so an answer this service serves writes no mark where it previously wrote one
+// and the mark's wire shape is untouched (creds.Observation). The write is made
+// for an answer that carried no rate-limit header at all, which is not nothing:
+// the node then says that answer was recorded, which is how Check 880 tells a
+// credential whose answers name nothing apart from one no release has recorded.
+//
+// A store that cannot record one — the state a scope answers is a
+// creds.CascadeState, and recording is a capability a store has or has not
+// (creds.ObservationStore) — leaves the answer unrecorded, and Check 880 reads
+// that source as one it cannot answer for. That is the fail-safe direction and
+// it is not a failure of the call: the record is the check's, and nothing about
+// serving the run depends on it.
 func (s *Server) recordRateLimitHeaders(ctx context.Context, sel *creds.Selector, name string, h http.Header) {
 	if sel == nil || name == "" {
 		return
 	}
+	store, ok := sel.Store.(creds.ObservationStore)
+	if !ok {
+		return
+	}
 	names := rateLimitHeaderNames(h)
-	if _, err := sel.Mark(context.WithoutCancel(ctx), name, func(prev creds.Mark, _ bool) (creds.Mark, error) {
-		return creds.Observed(prev, names), nil
+	if _, err := store.UpdateObservation(context.WithoutCancel(ctx), name, func(creds.Observation, bool) (creds.Observation, error) {
+		return creds.Observed(names), nil
 	}); err != nil {
 		s.log.Warn("credsvc: the rate-limit header names of an answer could not be recorded", "error_class", errorClass(err))
 	}
