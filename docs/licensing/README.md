@@ -160,7 +160,8 @@ the accepted limits stated beside it -- of which the old note's "no revocation" 
 text are gone. The rules the amended decisions keep are carried: the raw bytes before the claims, the
 offline check at `ee/register`, the read-only lapse, the overlap, the tier's maximum lifetime, the
 staging key's refusal and where each product keeps the key. **Nothing is built**: the note is still a
-design, the production keyring is empty, and K1.1's verifier is the first thing that reads a v1 key.
+design, the production keyring holds the owner's one published key and nothing is issued from it, and
+K1.1's verifier is the first thing that reads a v1 key.
 
 Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `origin/main` at
 `e924481cd` the same day.

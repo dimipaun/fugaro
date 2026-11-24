@@ -135,7 +135,7 @@ func TestUpdateWarnsOnceAboutAnEntryThatMountsASecret(t *testing.T) {
 	}
 
 	got := out.String()
-	if n := strings.Count(got, "warning: "); n != 1 {
+	if n := strings.Count(got, "Warning: "); n != 1 {
 		t.Fatalf("the update warned %d times, want once:\n%s", n, got)
 	}
 	for _, want := range []string{"the catalog entry go", "line 3", "the clone step supplies the checkout",

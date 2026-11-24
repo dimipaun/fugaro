@@ -753,6 +753,15 @@ function scrubRun(
     // own budget switch.
     mode: oneOf(VOCAB.rigorMode),
     from: oneOf(VOCAB.rigorFrom),
+    // model-credentials-routing CS9: what the run's running stage goes out on,
+    // as the project's routing table answered it (`budget.AgentEntry.Source`,
+    // internal/watch/build.go's `dash(e.Source)`). The kind is a word of the
+    // routing table's own vocabulary, but the name after the colon is the
+    // installation's own pool or provider, so the value is replaced rather than
+    // kept -- and `-`, the row's "nothing recorded" (a run the table does not
+    // serve, and a run under rules that predate the member), is kept, as
+    // `models` above keeps its own dash.
+    source: (v, p) => (v === '-' ? '-' : typeof v === 'string' ? 'pool:example-pool' : refuse(p, 'not a string')),
     notional: bool,
     spent_usd: (v, p) => (v === null ? null : typeof v === 'number' ? INVENTED_SPEND[i % INVENTED_SPEND.length] : refuse(p, 'not a number')),
     // AgeSecs is *float64 in JSONRun: a queued row the registry has not

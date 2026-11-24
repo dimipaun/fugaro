@@ -221,6 +221,68 @@ func TestVectorsRoundTrip(t *testing.T) {
 	roundTripKeySet(t, v)
 }
 
+// TestSessionPolicyCarriesCrashReports: the project's crash-report switch
+// (D731, D738) travels to the phone as the session policy's `crash_reports`
+// member, in both answers that carry a policy — a pairing (`session_response`)
+// and a restore-or-refresh (`refresh_response`) — because a phone that read it
+// once and never again would keep a switch the owner had since turned off.
+//
+// The member is asserted to be *written* in the answer and not left to a
+// default: it is not omitempty, so a service that assembled the policy from a
+// project whose block predates the member still names it, and
+// shared/mobile-session's port refuses a document without it (MISSING_MEMBER)
+// rather than reading a missing switch as on.
+func TestSessionPolicyCarriesCrashReports(t *testing.T) {
+	v := loadVectors(t)
+	for _, name := range []string{"session_response", "refresh_response"} {
+		var doc struct {
+			Policy map[string]json.RawMessage `json:"policy"`
+		}
+		if err := json.Unmarshal(v.Wire[name], &doc); err != nil {
+			t.Fatalf("decoding the %s vector: %v", name, err)
+		}
+		raw, ok := doc.Policy["crash_reports"]
+		if !ok {
+			t.Errorf("the vectors' %s carries no policy.crash_reports: the switch the app reads before it collects anything is a member of the policy the phone is answered with", name)
+			continue
+		}
+		if string(raw) != "true" && string(raw) != "false" {
+			t.Errorf("the vectors' %s spells policy.crash_reports as %s, want a JSON boolean", name, raw)
+		}
+	}
+}
+
+// TestSessionPolicyAbsentCrashReportsAnswersOff is the fail-safe, and it is the
+// one member where an absent value is not the project's default: the member's
+// default in a written block is on (D731), and a document that does not carry
+// the member decodes to false. Nothing is sent before the switch has been read
+// (D734), so a session assembled by a release behind — the skew the plan
+// records — is a phone that was told nothing, and it must collect nothing.
+//
+// The alternative the plan refused is recorded here as the assertion: an
+// absent member must NOT answer the default on, which is what a *bool member
+// read through the block's own defaults would do.
+func TestSessionPolicyAbsentCrashReportsAnswersOff(t *testing.T) {
+	const doc = `{"project_id":"fugaro-example","policy":{"costly_modes":["pro"],"biometric_on_costly":false,"compact_threshold_percent":40}}`
+	var resp SessionResponse
+	if err := json.Unmarshal([]byte(doc), &resp); err != nil {
+		t.Fatalf("decoding a session response whose policy predates the member: %v", err)
+	}
+	if resp.Policy.CrashReports {
+		t.Error("a policy with no crash_reports reads as true, want false: an absent member is off, and a phone that was told nothing sends nothing (D734)")
+	}
+	// And the member is written back the moment the shape is marshalled, which
+	// is what keeps the app from ever seeing it missing: the pure-Go round trip
+	// here is the Go half of the port's MISSING_MEMBER refusal.
+	back, err := json.Marshal(resp.Policy)
+	if err != nil {
+		t.Fatalf("marshalling the policy back: %v", err)
+	}
+	if !strings.Contains(string(back), `"crash_reports":false`) {
+		t.Errorf("the marshalled policy is %s, want it to name crash_reports: the member is not omitempty, so a session this service answers always carries the switch", back)
+	}
+}
+
 // keychainName is the alphabet expo-secure-store accepts in a key: letters,
 // digits, "." and "-" and "_". A key outside it makes the platform throw rather
 // than report a miss, so a name composed outside it is a session the phone

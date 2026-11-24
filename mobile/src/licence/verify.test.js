@@ -44,10 +44,12 @@
 // app spawns no child and keeps no such variable: the key arrives at S2.8's
 // settings screen as a paste, so what is held here is the shape that rests on
 // -- the verifier reads **no environment at all**. The production keyring's
-// *contents* are S2.9's, once the owner has created the keys (S3.8) -- so what
-// is held here is the rule that survives that task: no test id is in it, and
-// every entry it does hold is a public key. And one set of vectors for all
-// three verifiers is S2.6's.
+// contents are S2.9's: it holds the owner's published production public half,
+// held here to the one file that carries it (`TestKeyringMatchesThePublishedKey`,
+// which is the app's half of the Go verifier's case of that name), kept to the
+// shape a ring entry has, and proved to buy nothing for a stranger who signs a
+// key under the production id. And one set of vectors for all three verifiers is
+// S2.6's.
 //
 // **Why Node's Ed25519 is handed in, and not the app's own.** The app's suite
 // runs in a fresh clone with no `node_modules` (`mobile/README.md`, "Running
@@ -278,13 +280,51 @@ test('TestKeyIDIsNotInTheProductionKeyring: the ring holds no test id, and every
   const test_ = signer('test-2026');
 
   assert.equal(Object.hasOwn(PRODUCTION_KEYRING, test_.id), false);
-  // S2.9 adds the owner's published production key here; what must survive that
-  // task is the shape of every entry: a base64url 32-byte public key.
+  // The ring holds the owner's published key since S2.9; what this case keeps
+  // is the shape of every entry: a base64url 32-byte public key.
   for (const [id, encoded] of Object.entries(PRODUCTION_KEYRING)) {
     const decoded = Buffer.from(encoded, 'base64url');
     assert.equal(decoded.length, 32, `${id} is not an Ed25519 public key`);
     assert.equal(decoded.toString('base64url'), encoded, `${id} is not spelled canonically`);
   }
+});
+
+test('TestKeyringMatchesThePublishedKey: the ring holds the published production key and nothing else', () => {
+  // The one file the owner's production public half is published as, read here
+  // as it is written: a PEM SPKI key, whose last 32 DER bytes are the raw key
+  // every ring in this repository spells -- the Go verifier's pair of rings, the
+  // console's, and this one's. Reading the file rather than repeating its bytes
+  // is what makes a second copy of the key a failing test instead of a ring that
+  // quietly verifies nothing a minted key carries.
+  const pem = readFileSync(join(HERE, '..', '..', '..', 'ee', 'licence', 'keys', 'production.pub'), 'utf8');
+  const der = createPublicKey(pem).export({ type: 'spki', format: 'der' });
+  const published = der.subarray(der.length - 32).toString('base64url');
+
+  assert.deepEqual(PRODUCTION_KEYRING, { 'fugaro-licence-production': published });
+  assert.equal(
+    Object.hasOwn(PRODUCTION_KEYRING, 'staging-2026'),
+    false,
+    'a staging id in the production ring would verify a staging key in a released app',
+  );
+});
+
+test('TestAKeyUnderTheProductionIDIsRefused: naming the production id buys nothing without the production key', () => {
+  // A throwaway keypair, minting a key spelled under the production id: the id
+  // is the one part nothing decodes, so a ring that held it would be a ring a
+  // stranger signs under. The refusal is the signature's, which is what says the
+  // id was found and the key behind it was not the one that signed.
+  const stranger = signer('fugaro-licence-production');
+  const key = mint(stranger, claimsFor());
+
+  assert.deepEqual(verifier(PRODUCTION_KEYRING).verify(key, at(ISSUED)), {
+    ok: false,
+    code: LICENCE_CODES.SIGNATURE,
+    field: 'signature',
+  });
+
+  // The same key verifies under the ring its own keypair is in, so the refusal
+  // is the published key's and not the key text's.
+  assert.equal(stateAt(key, ISSUED, stranger.keyring), 'valid');
 });
 
 test('GraceIsThirtyDays: valid to expires, grace for 30 days after it, expired past that', () => {
