@@ -151,6 +151,19 @@ repo_of() { # repo_of ARGS... — the repository, positional in add and rm
   local r
   r=$(argval --repo "$@")
   [ -n "$r" ] || r=$4
+  case "${3:-}" in
+  status | rm)
+    # The real command refuses a name without its provider; the check has to
+    # spell it canonically (github/owner/name) or it reads a refusal as an answer.
+    case "$r" in
+    github/*/*) r=${r#github/} ;;
+    *)
+      printf 'fugaro: "%s" is not a canonical repository name: spell it with its git provider, as in "github/acme/app"\n' "$r" >&2
+      exit 1
+      ;;
+    esac
+    ;;
+  esac
   printf '%s' "$r"
 }
 filled() { [ -f "$state/filled" ]; }
@@ -268,7 +281,8 @@ status_cmd() { # status_cmd ARGS...
 }
 
 rm_cmd() { # rm_cmd ARGS...
-  local r=$4
+  local r
+  r=$(repo_of "$@")
   warning "$r"
   leaves
   keeps
@@ -736,7 +750,7 @@ test_happy_path() {
   local calls
   calls=$(cat "$dir/state/logs/fugaro.calls")
   expect_contains "$calls" "run /" "the runs were launched"
-  expect_contains "$calls" "project repos rm $repo" "the removal was run"
+  expect_contains "$calls" "project repos rm github/$repo" "the removal was run"
   expect_absent "$calls" "belong" "belong is never named"
 }
 

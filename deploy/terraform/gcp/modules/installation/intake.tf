@@ -71,7 +71,39 @@ locals {
   # before any process could refuse it). A group or a domain member is left
   # out for the reason the class lists are: no ID token carries one as its
   # email claim, so the grant would be a door no class could open.
+  #
+  # This list is the CREDENTIALS SERVICE's invoker set as well (iam.tf), so it
+  # stays the launchers' own and the intake's extra people are added to a
+  # second list below (F10, WC3): a roster person admitted here would be
+  # admitted to the workspace project's credentials service and to its grant
+  # route, which this task does not widen.
   launcher_invoker_members = toset([for m in var.launchers : m if startswith(m, "user:")])
+
+  # The intake's SECOND class list (WC3, R5, D3143): the people of the
+  # workspace's roster, as the bare addresses a Google ID token's email claim
+  # holds, and the one variable of the intake's own that nothing else reads
+  # (var.intake.people). It is empty for every installation that is not a
+  # workspace's project, and `fugaro update` renders it from the roster on the
+  # workspace owner's own run.
+  #
+  # The list is read through var.intake and never as a variable of its own at
+  # the root, because the root passes the intake's block whole (roots/installation/
+  # main.tf) and one block that turns a service on is the shape the other three
+  # opt-in services have; what matters is that no OTHER thing reads it, which
+  # F10 is about.
+  intake_people = var.intake == null ? [] : var.intake.people
+
+  # ... and the two lists as ONE, which is the whole of R5: the intake's
+  # invoker set and the class its process reads are the installation's
+  # launchers and this list, and neither is a member the other leaves out. One
+  # expression and not two, so the grant and the class can never drift (the
+  # dynamic_secret_names_condition's own rule for the fence above).
+  intake_invoker_members = setunion(local.launcher_invoker_members, toset([for e in local.intake_people : "user:${e}"]))
+  # Sorted, so a roster that gained a person is a class with one more address
+  # and not a class in another order: the value goes into the revision's
+  # environment, and an order that depended on which list an address came from
+  # would put a new revision up every run.
+  intake_accounts = sort(distinct(concat(var.launcher_accounts, local.intake_people)))
 }
 
 # The intake's own account. It holds no key, no bundle and no database role:
@@ -292,12 +324,19 @@ resource "google_cloud_run_v2_service" "intake" {
         name  = "FUGARO_RUNS_BUCKET"
         value = var.runs_bucket
       }
-      # The launcher class (D1938, F25), the same list the invoker grant above
-      # is made from: rendered only when the roster names somebody, so an
-      # installation whose roster names no launcher starts with a class that
-      # admits nobody (fail closed) instead of refusing to bind a port.
+      # The launcher class (D1938, F25) AND the intake's second list (WC3,
+      # R5): the installation's launchers and the workspace roster's people as
+      # one class, which is what the invoker grant above is made from too
+      # (local.intake_accounts, one expression). The name is the launcher
+      # class's own and stays so — it is the class the process reads, and a
+      # second environment name would be a second list the two halves could
+      # drift apart in (R5 asks for a variable of its own on the Terraform
+      # side, where the invoker grant is, not for a second name here). Rendered
+      # only when somebody is in it, so an installation whose roster names
+      # nobody starts with a class that admits nobody (fail closed) instead of
+      # refusing to bind a port.
       dynamic "env" {
-        for_each = length(var.launcher_accounts) == 0 ? [] : [jsonencode(var.launcher_accounts)]
+        for_each = length(local.intake_accounts) == 0 ? [] : [jsonencode(local.intake_accounts)]
         content {
           name  = "FUGARO_LAUNCHER_ACCOUNTS"
           value = env.value
@@ -316,12 +355,13 @@ resource "google_cloud_run_v2_service" "intake" {
   }
 }
 
-# The invoker grant, one per launcher: the front end admits them, and the
-# process's own class check decides who is served (F36 — Cloud Run's invoker is
-# per service and there is nothing narrower). On the service name from the
+# The invoker grant, one per launcher AND one per person on the workspace's
+# roster (local.intake_invoker_members, WC3/R5): the front end admits them, and
+# the process's own class check decides who is served (F36 — Cloud Run's invoker
+# is per service and there is nothing narrower). On the service name from the
 # variable rather than the resource, so the grant is readable in a plan.
 resource "google_cloud_run_v2_service_iam_member" "intake_invoker" {
-  for_each = local.intake_on ? local.launcher_invoker_members : toset([])
+  for_each = local.intake_on ? local.intake_invoker_members : toset([])
 
   project  = var.project
   location = var.region

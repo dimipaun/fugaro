@@ -107,6 +107,24 @@ func TestUpdateStartsReindexWithRunInFlight(t *testing.T) {
 	run.laterWrites(t, r)
 }
 
+// TestUpdateReindexWithoutAReportedName is the same step when the platform
+// started the execution but its operation reported no readable name
+// (gcp.ErrStartedUnnamed): the mark landed and the walk is going, so the line
+// says so without a name rather than printing "reindexing now as" and stopping.
+func TestUpdateReindexWithoutAReportedName(t *testing.T) {
+	r, _ := reindexConvergeRig(t)
+	r.run.BadRunMetadata = true
+
+	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	if !strings.Contains(out, "run index: marked incomplete and reindexing now (the platform started the execution but did not report its name), so `fugaro runs ls` is short") {
+		t.Fatalf("the update's reindex line does not name the start without an execution name:\n%s", out)
+	}
+	if strings.Contains(out, "no reindex execution was started") {
+		t.Fatalf("a started reindex was reported as one that never started:\n%s", out)
+	}
+}
+
 // TestUpdateDoesNotReindexACompleteIndex is the first reindex and not one per
 // upgrade (RI5): the walk reads every run in the bucket, and an installation
 // whose index is complete with no unfinished walk has nothing for it to
@@ -171,6 +189,40 @@ func TestUpdateReindexesAnIncompleteIndex(t *testing.T) {
 	}
 	if started != 1 {
 		t.Fatalf("the history job was started %d times, want one", started)
+	}
+}
+
+// TestUpdateStandsWhenTheReindexJobStartIsRefused is O7's other caller: the
+// update's step writes the mark first and only then attempts the start, and
+// only the installation's scheduler account holds run.invoker on the history
+// job, so a caller without it is refused by the platform. The refusal must not
+// fail the update: the mark already landed, the walk is owed, and the step says
+// so in a warning rather than insisting on the start it may not make.
+func TestUpdateStandsWhenTheReindexJobStartIsRefused(t *testing.T) {
+	r, fs := reindexConvergeRig(t)
+	r.run.FailRunWith = 403
+
+	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	if !strings.Contains(out, "but no reindex execution was started") || !strings.Contains(out, "The walk is owed all the same") {
+		t.Fatalf("the update does not report the refused start and the mark that stands:\n%s", out)
+	}
+	// The mark landed before the start was tried, which is what makes the
+	// refusal harmless: the summary is incomplete and the lease names a holder
+	// with no cursor, so the next sweep of the history job walks the index.
+	sum, ok := fs.Value(runindex.SummaryCollection, runindex.SummaryDocument)
+	if !ok {
+		t.Fatal("the step left no summary, so no sweep would walk")
+	}
+	if done, ok := sum["complete"].(bool); !ok || done {
+		t.Fatalf("summary = %v", sum)
+	}
+	l, ok := r.db.Value(runindex.PathLease).(map[string]any)
+	if !ok {
+		t.Fatalf("the step left no lease node: %#v", r.db.Value(runindex.PathLease))
+	}
+	if c, ok := l["cursor"]; ok && c != nil && c != "" {
+		t.Fatalf("the step left a cursor behind: %#v", l)
 	}
 }
 

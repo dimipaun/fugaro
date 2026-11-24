@@ -255,10 +255,17 @@ func (p *pushSender) Sweep(ctx context.Context) (pushReport, error) {
 	// they are facts about the installation, and a paired account is one of its
 	// operators. The per-account events (a prompt, a consumer gone quiet) are
 	// derived inside the loop.
+	// What the installation's reads answered, beside the errors the ones that
+	// failed left: a kill switch that could be read is a fact about the
+	// installation whether or not the caps could be, so the events go to every
+	// account either way — and whether they are the WHOLE of this sweep's events
+	// goes with them, because a key missing from a derivation that failed says
+	// the read failed and not that the state change is over.
 	shared, errs := p.installationEvents(ctx)
+	whole := len(errs) == 0
 	sort.Strings(uids)
 	for _, uid := range uids {
-		errs = append(errs, p.account(ctx, uid, shared, &rep))
+		errs = append(errs, p.account(ctx, uid, shared, whole, &rep))
 	}
 	return rep, errors.Join(errs...)
 }
@@ -271,7 +278,7 @@ func (p *pushSender) Sweep(ctx context.Context) (pushReport, error) {
 // records a state change, and a state change is over only when the event it
 // names is no longer derived (§3.7 — the key is the transition, and a transition
 // that has not happened again is still the one notification).
-func (p *pushSender) account(ctx context.Context, uid string, shared []pushEvent, rep *pushReport) error {
+func (p *pushSender) account(ctx context.Context, uid string, shared []pushEvent, whole bool, rep *pushReport) error {
 	paired, err := p.paired(ctx, uid)
 	if err != nil {
 		return err
@@ -332,8 +339,11 @@ func (p *pushSender) account(ctx context.Context, uid string, shared []pushEvent
 	// not crowded out by the events of the same sweep — and a retry that reaps
 	// the token ends the account's turn exactly as a fresh send does: the
 	// registration is gone, so the events this sweep derived must not be offered
-	// to a provider that has just said the token is dead.
-	stop, err := p.retry(ctx, uid, &node, rep)
+	// to a provider that has just said the token is dead. `live` goes with it:
+	// an intent is worth retrying only while the state change it names is still
+	// in force — and `whole` says whether `live` is the whole of this sweep's
+	// events or only what the installation's reads could answer with.
+	stop, err := p.retry(ctx, uid, &node, live, whole, rep)
 	if err != nil || stop {
 		return err
 	}
@@ -462,11 +472,29 @@ func (p *pushSender) consider(ctx context.Context, uid string, node *pushNode, e
 // still dedupes and this filter never sees it again — and deletes it once the
 // state change is over.
 //
+// An intent whose state change has ENDED is dropped here rather than sent,
+// however fresh it is: the retry window is how long a buzz is worth repeating,
+// and the state change is what it would be about. A cap that is no longer
+// reached, a prompt the owner has answered, a switch that was turned off — the
+// app resolves a buzz against what it can read (§3.2), and one about a state
+// that is over is a lock-screen lie however fresh the intent is. The row is
+// deleted because there is nothing left for it to dedupe: a state change that
+// happens again is a new transition, and `consider` derives it with no row in
+// the way.
+//
+// That is knowable only from a derivation that answered WHOLE (`whole`): the
+// installation's events come back beside the errors the reads that failed left
+// (installationEvents, Sweep), and a key missing from a partial one says the
+// read failed and not that the state change is over. Such an intent is retried
+// — what §6 promises a pending one — rather than dropped with the dedupe and the
+// hourly cap's slot it holds: a transient cap or kill read is not an account
+// that has stopped being at its cap.
+//
 // It answers what deliver answers — whether the account's turn is over because
 // the provider reported the token unregistered — so a retry that reaps the
 // registration stops the sweep's own events from following it to a token the
 // provider has just called dead.
-func (p *pushSender) retry(ctx context.Context, uid string, node *pushNode, rep *pushReport) (bool, error) {
+func (p *pushSender) retry(ctx context.Context, uid string, node *pushNode, live map[string]bool, whole bool, rep *pushReport) (bool, error) {
 	now := p.now().UnixMilli()
 	keys := make([]string, 0, len(node.Ledger))
 	for key := range node.Ledger {
@@ -479,6 +507,20 @@ func (p *pushSender) retry(ctx context.Context, uid string, node *pushNode, rep 
 		// read here rather than only where the prune applies it, and the prune
 		// has already marked a live row past it givenup.
 		if row.State != pushStatePending || now-row.At >= pushRetryWindow.Milliseconds() {
+			continue
+		}
+		if whole && !live[key] {
+			// The state change this intent names is over. Deleting the row is the
+			// sender's own write to its own state and never a marker, and the
+			// intent is dropped rather than left pending: nothing would ever send
+			// it, and a pending row counts against the hourly cap
+			// (pushSentInWindow), so keeping it would spend a buzz on a
+			// notification the account will never get.
+			if err := p.deleteRow(ctx, uid, key); err != nil {
+				return false, err
+			}
+			delete(node.Ledger, key)
+			rep.Suppressed++
 			continue
 		}
 		if !pushEnabled(node, row.Category) {
@@ -742,16 +784,17 @@ func (p *pushSender) capReachedEvents(ctx context.Context) ([]pushEvent, error) 
 // record of — and the quantity compared is the run's own lifetime spend
 // (AgentEntry.Spent), the same one Evaluate's per-run side compares. A run whose
 // entry is gone is not near a cap; it has ended.
+//
+// The cap it compares against is budget.Caps.PerRun() — the same figure
+// cap_reached compares against, read through the same pushCaps — because the
+// category is about the ceiling that will STOP the run and not about one of the
+// three nodes it can come from: a project whose only per-run cap is the global
+// one binds every run in it, and a comparison against the repository's own node
+// and the defaults alone would never see it and would never send this category.
 func (p *pushSender) capNearEvents(ctx context.Context) ([]pushEvent, error) {
 	var tree map[string]map[string]json.RawMessage
 	if _, err := p.db.Get(ctx, "agents", &tree); err != nil {
 		return nil, fmt.Errorf("reading the registry: %w", err)
-	}
-	var defaults *budget.DefaultCaps
-	if found, err := p.db.Get(ctx, budget.PathCapsDefaults, &defaults); err != nil {
-		return nil, fmt.Errorf("reading %s: %w", budget.PathCapsDefaults, err)
-	} else if !found {
-		defaults = nil
 	}
 	slugs := make([]string, 0, len(tree))
 	for key := range tree {
@@ -764,13 +807,11 @@ func (p *pushSender) capNearEvents(ctx context.Context) ([]pushEvent, error) {
 		if err != nil || slug == "" {
 			continue
 		}
-		var repo *budget.RepoCaps
-		if found, err := p.db.Get(ctx, budget.PathCapsRepo(slug), &repo); err != nil {
-			return nil, fmt.Errorf("reading %s: %w", budget.PathCapsRepo(slug), err)
-		} else if !found {
-			repo = nil
+		caps, err := p.pushCaps(ctx, slug)
+		if err != nil {
+			return nil, err
 		}
-		perRun, hasCap := pushPerRunCap(repo, defaults)
+		perRun, hasCap := caps.PerRun()
 		runs := make([]string, 0, len(tree[slugKey]))
 		for key := range tree[slugKey] {
 			runs = append(runs, key)
@@ -817,20 +858,6 @@ func (p *pushSender) pushCaps(ctx context.Context, slug string) (budget.Caps, er
 		caps.Repo = nil
 	}
 	return caps, nil
-}
-
-// pushPerRunCap is a repository's per-run cap: its own node, else the default.
-// It is cap-near's comparison (capNearEvents); the cap that BINDS a run —
-// budget.Caps.PerRun(), the smallest of the three sides — is read by pushCaps,
-// because cap_reached is about the cap that really stops the run.
-func pushPerRunCap(repo *budget.RepoCaps, defaults *budget.DefaultCaps) (budget.Micros, bool) {
-	if repo != nil && repo.PerRunMicros != nil {
-		return *repo.PerRunMicros, true
-	}
-	if defaults != nil && defaults.RepoPerRunMicros != nil {
-		return *defaults.RepoPerRunMicros, true
-	}
-	return 0, false
 }
 
 // accountEvents derives the events that are facts about one paired account: a
