@@ -212,6 +212,86 @@ func TestUserRevokeMobileReachesTheRecordOfASpelledAddress(t *testing.T) {
 	}
 }
 
+// TestUserRevokeMobileKeepsTheDevicesOfAnotherSpelling: the roster keeps the
+// local part's case (access.Member), so user:Alice@example.com and
+// user:alice@example.com are two members — and the mobile side, which folds the
+// whole address, reads one address for them. Revoking one spelling while the
+// other still holds a grant must therefore leave the phone alone: the removal is
+// the last grant's act, and folding the last-grant question onto the same form as
+// the removal is what stops a revoke from deleting the devices of somebody the
+// roster still holds.
+func TestUserRevokeMobileKeepsTheDevicesOfAnotherSpelling(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	userRevokeMobileAs(t)
+	const (
+		upper = "Alice@example.com"
+		lower = "alice@example.com"
+	)
+	f.pairSeedGrants(t,
+		pairGrant(t, pairMe, accesslib.RoleAdmin, "project"),
+		pairGrant(t, upper, accesslib.RoleOperator, "project"),
+		pairGrant(t, lower, accesslib.RoleOperator, "project"),
+	)
+	f.pairSeedDeviceFor(pairDevC, "phone-c", lower, "operator")
+	f.pairSeedItem(t, pairDevC)
+	f.db.Set(mobilesession.RefreshFamilyPath(pairDevC), map[string]any{"token": pairRefreshTokenC})
+	key := pairAddressKey(t, lower)
+	f.db.Set(pairMemberRoot+"/"+key, map[string]any{"v": pairMemberVersion, "email": lower})
+
+	out, _, err := userRevokeMobileRun(t, "user:"+upper, "operator", "project")
+	if err != nil {
+		t.Fatalf("revoking one of two spellings: %v\n%s", err, out)
+	}
+	for _, path := range []string{
+		rules.PathDevices + "/" + pairDevC,
+		mobilesession.RefreshFamilyPath(pairDevC),
+		pairMemberRoot + "/" + key,
+	} {
+		if v := f.db.Value(path); v == nil {
+			t.Errorf("%s was deleted by the revoke of another spelling of the address, and the roster still holds %s: O14 makes the removal the last grant's act, and a grant that folds to this address is a person the roster holds\n%s", path, lower, out)
+		}
+	}
+	if strings.Contains(out, "mobile access") {
+		t.Errorf("the command reported a mobile removal it must not make:\n%s", out)
+	}
+	want := []string{"user:" + pairMe + " (admin) at project", "user:" + lower + " (operator) at project"}
+	got := userNodeLines(t, f.db)
+	if len(got) != len(want) {
+		t.Fatalf("the grants node holds %v, want %v", got, want)
+	}
+	for _, w := range want {
+		if !containsLine(got, w) {
+			t.Errorf("the grants node = %v, want it to hold %q", got, w)
+		}
+	}
+}
+
+// TestUserRevokeMobileSaysNothingOfAnAddressTheMobileSideRefuses: the roster
+// accepts addresses the mobile side refuses (a dot-atom rule, a bare domain),
+// and such an address can hold no device node and no member record. The revoke
+// has landed, so the command reports the revoke and nothing else: a refusal here
+// would tell a script that a change which succeeded had failed.
+func TestUserRevokeMobileSaysNothingOfAnAddressTheMobileSideRefuses(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	userRevokeMobileAs(t)
+	const refused = "a..b@example.com"
+	f.pairSeedGrants(t,
+		pairGrant(t, pairMe, accesslib.RoleAdmin, "project"),
+		pairGrant(t, refused, accesslib.RoleOperator, "project"),
+	)
+
+	out, _, err := userRevokeMobileRun(t, "user:"+refused, "operator", "project")
+	if err != nil {
+		t.Fatalf("revoking the last pair of an address the mobile side refuses: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "no longer holds operator at project") {
+		t.Errorf("the command does not report the revoke that landed:\n%s", out)
+	}
+	if strings.Contains(out, "mobile access") {
+		t.Errorf("the command reports a removal for an address that can hold no mobile footprint:\n%s", out)
+	}
+}
+
 // containsLine reports whether lines holds want, for the grants node's own
 // order not to matter.
 func containsLine(lines []string, want string) bool {

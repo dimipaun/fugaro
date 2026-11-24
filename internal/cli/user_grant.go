@@ -762,25 +762,27 @@ func userPairDone(out io.Writer, lc *localcfg.Config, member string, role access
 // was left behind and that it is theirs to delete, which is the sentence P7's
 // error carries.
 func userMobileRemoval(ctx context.Context, out io.Writer, lc *localcfg.Config, db *rtdb.Client, member string, next []accesslib.Grant) error {
-	if len(userGrantsOf(next, member)) > 0 {
-		return nil
-	}
-	address, ok := strings.CutPrefix(member, "user:")
+	canonical, ok := userMobileAddress(member)
 	if !ok {
+		// The mobile side refuses the address, so it can hold no device node and no
+		// member record: the roster's revoke has landed and there is nothing left
+		// behind for the operator to delete.
 		return nil
 	}
-	// The roster's own member form folds the domain alone (access.Member), while
-	// the invitation keys the record — and the device nodes — on the address with
-	// its local part folded too (pairAdministeredEmail). The removal takes the
-	// address as the invitation named it, and a Patch of a key that is not there
-	// succeeds, so the roster's spelling would leave the record in place and still
-	// read as deleted: the address goes through the invitation's own normalisation.
-	canonical, err := mobileauth.NormalizeEmail(strings.ToLower(strings.TrimSpace(address)))
-	var removal pairMemberRemoval
-	if err == nil {
-		removal, err = pairRemoveMember(ctx, lc, db, canonical)
+	// The last-grant question is asked on the same folded form as the removal, not
+	// on the roster's spelling: the roster keeps the local part's case, so
+	// user:Alice@example.com and user:alice@example.com are two members and either
+	// of them may hold a phone — which the mobile side, folding the whole address,
+	// reads as the one address's. A grant that folds to this address is a person
+	// the roster still holds, and their devices are not this revoke's to delete.
+	for _, g := range next {
+		if other, ok := userMobileAddress(g.User); ok && other == canonical {
+			return nil
+		}
 	}
+	removal, err := pairRemoveMember(ctx, lc, db, canonical)
 	if err != nil {
+		address, _ := strings.CutPrefix(member, "user:")
 		return userErr("the pair is revoked and %s is off the roster, but their mobile access could not be removed: %v; delete what is left by hand", safetext.Field(address), err)
 	}
 	if len(removal.Devices) == 0 {
@@ -790,6 +792,27 @@ func userMobileRemoval(ctx context.Context, out io.Writer, lc *localcfg.Config, 
 	fmt.Fprintf(out, "that was the address's last pair, so its mobile access went with it: deleted the member record %s and %d paired device(s) (%s) with their refresh families\n",
 		safetext.Field(removal.Member), len(removal.Devices), safetext.FieldListLine(removal.Devices))
 	return nil
+}
+
+// userMobileAddress is a roster member's address in the form the mobile side
+// writes and reads one. The roster's own member form folds the domain alone
+// (access.Member), while the invitation keys the member record — and a pairing's
+// device nodes — on the whole address folded (pairAdministeredEmail): the removal
+// takes the address as the invitation named it, and a Patch of a key that is not
+// there succeeds, so the roster's spelling would leave the record in place and
+// still read as deleted. The second answer is false for a member that is not an
+// address at all and for one the mobile side refuses, neither of which has
+// anything there.
+func userMobileAddress(member string) (string, bool) {
+	address, ok := strings.CutPrefix(member, "user:")
+	if !ok {
+		return "", false
+	}
+	folded, err := mobileauth.NormalizeEmail(strings.ToLower(strings.TrimSpace(address)))
+	if err != nil {
+		return "", false
+	}
+	return folded, true
 }
 
 // userPairDenied is the refusal the database's own IAM gives an explicit
