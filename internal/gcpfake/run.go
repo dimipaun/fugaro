@@ -95,6 +95,10 @@ type Run struct {
 	// who may start each job, which is the grant surface doctor reads
 	// (plan task 3.5 step 1). A job with no entry serves an empty policy.
 	policies map[string][]Binding
+	// defaultEnv, when set, is the container environment every job this fake
+	// creates is given (SetDefaultJobEnv): the environment of the jobs of one
+	// installation, whose deploy wrote the budget database into each of them.
+	defaultEnv map[string]string
 }
 
 // projectJobTriple is the (profile, provider, account) a shared project
@@ -224,11 +228,26 @@ func (f *Run) SetJobPolicy(name string, bindings ...Binding) {
 	f.policies[name] = cloneBindings(bindings)
 }
 
+// SetDefaultJobEnv makes every job this fake creates from now on carry env as
+// its container's environment. A caller whose jobs all belong to one
+// installation says here what that installation's deploy writes into each of
+// them (internal/infra's budgetEnv), so that a test about a launch does not
+// have to repeat it at every AddJob: a launch reads a deployed job's
+// environment back (a job that carries no database address is one that
+// predates the database), and a job created without this is exactly that state.
+// A job created before this call, and one SetJobJSON replaces, keep what they
+// have.
+func (f *Run) SetDefaultJobEnv(env map[string]string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.defaultEnv = maps.Clone(env)
+}
+
 // AddJob creates a job with the given CPU and memory limits.
 func (f *Run) AddJob(name string, cpu, memory string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.jobs[name] = &runJob{cpu: cpu, memory: memory}
+	f.jobs[name] = &runJob{cpu: cpu, memory: memory, env: maps.Clone(f.defaultEnv)}
 }
 
 // AddProjectJob registers the shared project job of (profile, provider,
@@ -249,7 +268,7 @@ func (f *Run) AddProjectJob(name, profile, provider, account, cpu, memory string
 		f.projectJobs = map[string]projectJobTriple{}
 	}
 	f.projectJobs[name] = projectJobTriple{profile: profile, provider: provider, account: account}
-	f.jobs[name] = &runJob{cpu: cpu, memory: memory}
+	f.jobs[name] = &runJob{cpu: cpu, memory: memory, env: maps.Clone(f.defaultEnv)}
 }
 
 // ProjectJobOf reports the (profile, provider, account) name was registered
