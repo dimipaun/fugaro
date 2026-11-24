@@ -2112,15 +2112,18 @@ var runAccountGrants = setOf(
 	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.reader" | repository=google_artifact_registry_repository.base.repository_id | google_service_account.build_identity[0].member | for_each= | perms=`,
 	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.reader" | repository=google_artifact_registry_repository.ghcr.repository_id | google_service_account.build_identity[0].member | for_each= | perms=`,
 	// Reviewed for B6's review (a catalog build's own steps): the identity's
-	// reach inside the runs bucket and inside Secret Manager, which is what a
-	// build that ran as the per-repository build account had there and lost
-	// when the build moved onto this one account — the definition its pin step
-	// describes, the record its record step writes back and the provider
-	// credential its clone step resolves through Cloud Build's
-	// AvailableSecrets. Without them every catalog build, the operator's and
-	// the nightly check's alike, fails on the first of the three it reaches.
+	// reach inside the runs bucket, which is what a build that ran as the
+	// per-repository build account had there and lost when the build moved
+	// onto this one account — the definition its pin step describes and the
+	// record its record step writes back. Without them every catalog build,
+	// the operator's and the nightly check's alike, fails on the first of the
+	// two it reaches. The third thing that account held, the provider
+	// credential its clone step resolved through Cloud Build's
+	// AvailableSecrets, is gone from this identity entirely (IS8, D3330): a
+	// catalog build asks the credentials service for it, so there is no
+	// secretAccessor row below and no secret for the identity to reach.
 	//
-	// None of the three is a write path to the marker. The definitions read is
+	// Neither of the two is a write path to the marker. The definitions read is
 	// objectViewer, and its condition is the input's own byte for byte —
 	// builds/catalog/ of the runs bucket and nothing else (gcp.CatalogReadCondition),
 	// which does not contain fugaro/managed.json; objectViewer grants no write
@@ -2132,15 +2135,9 @@ var runAccountGrants = setOf(
 	// slugs is the catalog check's own input rather than a second list. Neither
 	// role carries a permission to grant a role, to act as another account or
 	// to mint a token, and the runs bucket is not a storage write of the
-	// managed configuration's own object path. The secretAccessor is on a
-	// secret_id and not on the project: it reads the VALUE of one repository's
-	// provider credential, which is the reach the repository's own build
-	// account held (modules/repo/build.tf's build row, whose key above reads
-	// the same way), and the for_each set is exactly the repositories of
-	// var.catalog_check that name one.
+	// managed configuration's own object path.
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | google_service_account.build_identity[0].member | for_each= | perms=`,
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=google_storage_bucket.runs.name | google_service_account.build_identity[0].member | for_each=local.credentials_service_on && var.catalog_check != null ? { for r in var.catalog_check.repositories : r.slug => r } : {} [local.credentials_service_on=var.credentials_service != null] | perms=`,
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=each.value | google_service_account.build_identity[0].member | for_each=local.credentials_service_on && var.catalog_check != null ? merge( { for r in var.catalog_check.repositories : r.slug => r.git_secret_id if try(r.git_secret_id, "") != "" }, { for r in var.catalog_check.repositories : "${r.slug}/own" => r.own_git_secret_id if r.own_git_secret_id != null && r.own_git_secret_id != "" }, ) : {} [local.credentials_service_on=var.credentials_service != null] | perms=`,
 	// Reviewed for B6's other half: the project's catalog check job may act as
 	// that identity, which is what makes every build it submits run as the
 	// project's one build account rather than a repository's. actAs on ONE
