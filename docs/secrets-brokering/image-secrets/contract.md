@@ -57,9 +57,13 @@ one of the two.
   and reading them back into a sentence is how an operator's log becomes a place a name leaks from.
 - **One verified refusal is one audit line**, written before the value is handed over: an act the
   service cannot record is not made.
-- **A refusal is typed and is the end of that secret's fetch.** The caller relays the contract's own
-  code and prints its own sentence for it; it never displays the service's message, which is written
-  for the operator's log.
+- **A refusal is typed, and one code of the six does not end that secret's fetch.** The caller relays
+  the contract's own code and prints its own sentence for it; it never displays the service's message,
+  which is written for the operator's log. The exception is `workflow_secret_not_allowed` — the answer
+  that the name is not in the record — which a runner meets by asking version 1 once for that secret's
+  own variable before it gives up, so a repository already served by version 1 keeps working while its
+  name is being copied into the record (IS2). Every other refusal is final, and the fallback itself
+  goes when version 1 does.
 - **Version 1's behaviour is untouched.** A caller of it is served exactly what it was served before
   this contract gained a version, and a mounted value still wins over any fetch (the flip is a no-op
   for a job that still mounts its secrets).
