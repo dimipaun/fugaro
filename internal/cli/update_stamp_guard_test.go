@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/updatecheck"
 	"github.com/dimipaun/fugaro/internal/versionstamp"
 )
@@ -241,6 +243,51 @@ func TestUpdateRefusesAMalformedStamp(t *testing.T) {
 				t.Errorf("the refusal does not name the node and its fix (%s):\n%s", tc.fix, said)
 			}
 		})
+	}
+}
+
+// `update --repo PATH` acts on the checkout at PATH, so the fence reads *that*
+// checkout's installation and not the working directory's: a run started from
+// inside another project's checkout is still the downgrade of the installation
+// it is about to write to, and a fence that resolved the working directory would
+// let it through (or refuse a project the run never touches).
+func TestUpdateRepoBelowTheStampRefuses(t *testing.T) {
+	r, db := stampGuardRig(t)
+	stampNode(db, "0.9.9")
+	// The installation's file where a checkout's `project:` finds it: the rig
+	// keeps its project config beside the test and $FUGARO_CONFIG is the other
+	// spelling of the same thing, so the checkout decides here as it does on a
+	// real machine.
+	path, err := localcfg.ProjectPath(os.Getenv, "aurora")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(readWhole(t, r.cfg)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FUGARO_CONFIG", "")
+	dir := t.TempDir()
+	app := checkoutsAt(t, filepath.Join(dir, "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web: { commands: { build: sh build.sh, test: sh test.sh } }\n",
+		"https://github.com/acme/app.git")
+	// The working directory is another project's checkout, and it is not the
+	// one this run is about.
+	t.Chdir(checkoutsAt(t, filepath.Join(dir, "other"), "version: 1\nproject: beta\n", "https://github.com/acme/other.git"))
+	out, errOut, err := executeStdin(t, "", "update", "--repo", app)
+	if err == nil {
+		t.Fatalf("update --repo %s exited 0 below the stamp:\n%s%s", app, out, errOut)
+	}
+	var be *versionstamp.BelowError
+	if !errors.As(err, &be) {
+		t.Fatalf("update --repo %s did not refuse with the installation's own stamp: %v\n%s%s", app, err, out, errOut)
+	}
+	if be.Stamp.Min != "0.9.9" || be.Version != Version {
+		t.Errorf("the refusal says %s requires %s and this is %s, want 0.9.9 and %s", app, be.Stamp.Min, be.Version, Version)
+	}
+	if calls := r.calls(t); len(calls) != 0 {
+		t.Errorf("fugaro update --repo ran terraform below the stamp: %q", calls)
 	}
 }
 
