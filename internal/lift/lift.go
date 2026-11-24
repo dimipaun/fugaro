@@ -88,8 +88,8 @@ type Caps struct {
 // planner does happens anywhere but here: update prints every line of every
 // change before it applies any write, and writes nothing else.
 type Change struct {
-	// LayerEdits are writes into the layer file's tree, by dotted path from
-	// its root (defaults.agent.model, defaults.rigor.repos.acme/app).
+	// LayerEdits are writes into the layer file's tree, by key path from its
+	// root, one segment per key (defaults, agent, model).
 	LayerEdits []LayerEdit
 	// StoreWrites are objects the runs bucket gains, by key
 	// (recipe.ObjectKey).
@@ -105,9 +105,14 @@ type Change struct {
 	Lines []string
 }
 
-// LayerEdit is one write into the layer file's tree.
+// LayerEdit is one write into the layer file's tree. Path is the key path from
+// the tree's root, one segment per key, which is the shape the layer file's own
+// editor takes (yamledit) and the only one that can name a repository: AB3's
+// ab.repos.<repo> and RG2's defaults.rigor.repos.<repo> key on owner/name, and a
+// repository name may hold a dot, so a dotted spelling would split it into two
+// keys and write a node the layer's strict decode refuses.
 type LayerEdit struct {
-	Path  string
+	Path  []string
 	Value any
 }
 

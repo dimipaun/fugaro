@@ -36,7 +36,7 @@ reader, no store and no command lives in the contract.
 | `lift.Project` | what the project holds before the migration: `Layer` (the local layer file's tree), `Recipes` (the store's names and sums), `Caps`, `Prices` and `Migrated` |
 | `lift.Caps` | the budget database's cap nodes: `Global`, `Defaults`, and `Repos` — each repository's own `config/caps/repos/<slug>` node, by slug |
 | `lift.Change` | one item's whole effect: `LayerEdits`, `StoreWrites`, `DBWrites`, `Records` and `Lines`; `Change.Empty()` says it carries nothing |
-| `lift.LayerEdit` | one write into the layer file's tree: `Path` (dotted from the layer's root) and `Value` |
+| `lift.LayerEdit` | one write into the layer file's tree: `Path` (the key path from the layer's root, one segment per key, so a repository name holding a dot stays one key) and `Value` |
 | `lift.StoreWrite` | one object the runs bucket gains: `Key` (`recipe.ObjectKey`) and `Data` |
 | `lift.DBWrite` | one budget database node: `Path` (`budget.PathCapsRepo`) and `Value` |
 | `lift.Planner` | `func(Project, []Repo) (Change, error)` |
