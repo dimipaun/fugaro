@@ -90,7 +90,7 @@ func TestNoCompressionWhenConfigUnreadable(t *testing.T) {
 		t.Helper()
 		f := newCloudFixture(t)
 		t.Chdir(t.TempDir())
-		writeBuildRecord(t, f, appSlug, "web", release060)
+		writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 		return f
 	}
 	// refuse runs a launch that must be refused for the unreadable
@@ -270,7 +270,7 @@ func TestCompressionImageGateNotTriggeredWithoutCompression(t *testing.T) {
 	f := newCloudFixture(t)
 	appRepoCheckout(t, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\n" +
 		"workflows:\n  web: { commands: { build: sh build.sh, test: sh test.sh } }\n"})
-	writeBuildRecord(t, f, appSlug, "web", release060)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	runID := wallRunID(t, time.Minute, "c2a1")
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", runID, "--no-compression", "A task"); err != nil {
 		t.Fatal(err)
