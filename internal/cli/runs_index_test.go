@@ -322,6 +322,45 @@ func TestRunsLsDefaultNewestPlusActive(t *testing.T) {
 	}
 }
 
+// TestRunsLsLimitBoundsTheIndexRead: an explicit --limit bounds the first
+// question a listing asks the index, and --limit 0 -- the flag's own default,
+// and the one value that names no count -- keeps the page's bound instead of
+// asking the index for every match. The first question is the one that must
+// stay bounded: the runs an unbounded answer names are read one by one, with no
+// run cache, so a listing of a long history would read every run's objects,
+// which is the read the index path exists to remove (readIndex; the active-runs
+// question is unlimited on purpose, and what bounds it is how few runs are
+// going).
+//
+// Mutation caught: handing an explicit --limit to the index as it stands
+// (--limit 0 then asks for every match, and the sixty runs seeded here are all
+// named, read and printed where the default page reads lsIndexPage of them).
+func TestRunsLsLimitBoundsTheIndexRead(t *testing.T) {
+	f := newCloudFixture(t)
+	idx := &indexFake{}
+	lsIndex(t, idx)
+	for i := range 60 {
+		lsIndexRun(t, f, idx, time.Duration(i+1)*24*time.Hour, runstore.StatusSucceeded, fmt.Sprintf("%04x", i))
+	}
+
+	_, got := lsIndexDoc(t, "--all", "--limit", "0")
+	if rows := len(got.Runs); rows != lsIndexPage {
+		t.Errorf("runs ls --limit 0 listed %d rows, want the page's %d: 0 names no count, and every row of this listing is the page the reader was asked for", rows, lsIndexPage)
+	}
+	if ask := idx.asked(); len(ask) == 0 || ask[0].Limit != lsIndexPage {
+		t.Fatalf("the reader was asked %+v, want a first question bounded to %d: --limit 0 is not a reason to read every run of the installation", ask, lsIndexPage)
+	}
+
+	asked := len(idx.asked())
+	_, got = lsIndexDoc(t, "--all", "--limit", "5")
+	if rows := len(got.Runs); rows != 5 {
+		t.Errorf("runs ls --limit 5 listed %d rows, want 5", rows)
+	}
+	if ask := idx.asked()[asked:]; len(ask) == 0 || ask[0].Limit != 5 {
+		t.Errorf("the reader was asked %+v, want a first question bounded to 5", ask)
+	}
+}
+
 // TestRunsLsAfterRunID: --after stays a run id, which is what the console's
 // allow-list checks, and the reader resolves it to that run's own sort key: the
 // listing starts after the run, and the figure beside the page does not move

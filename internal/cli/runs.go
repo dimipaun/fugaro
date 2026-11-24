@@ -1112,11 +1112,18 @@ func readIndex(ctx context.Context, env *cloudEnv, idx runindex.Reader, f lsFilt
 		// index's sort key, whatever its age (D3203), so it asks for no window:
 		// the default --since is the window a listing that reads the bucket is
 		// bounded by (lsDefaultWindow), and it is not this read's bound. An
-		// explicit --limit is the number of rows instead; --limit 0 is every
-		// run, which is what the flag says.
+		// explicit --limit that names a count is that many rows instead.
+		//
+		// --limit 0 names none, and it keeps the page's bound rather than
+		// dropping it: every row of this listing is the reader's own page, and
+		// a limit of none is not a reason to ask the index for every match --
+		// that would read every run's objects over all history, one run at a
+		// time and with no run cache, which is the read this path exists to
+		// remove and which the bucket path never does either (a limit cuts the
+		// rows it printed, and the window still bounded the read).
 		filter.Since = time.Time{}
 		filter.Limit = lsIndexPage
-		if limitSet {
+		if limitSet && o.limit > 0 {
 			filter.Limit = o.limit
 		}
 	}
