@@ -257,11 +257,10 @@ type routingModel struct {
 // agent those last two are read from is the launch's own resolution —
 // config.Resolve, this checkout's file over the layer's defaults.agent, the
 // pass craftLsServes reads a craft's model verdict with — never the checkout's
-// block alone: a project layer pinning defaults.agent.model, defaults.agent.
-// models.<role> or defaults.agent.levels.<level>.model names a model every
-// repository of the project runs on, and the table a write is refused over has
-// to carry it. Where this directory is no checkout the block reads as it does
-// for `fugaro craft ls`, empty.
+// block alone: a project layer pinning a model, a role or a review level names
+// a model every repository of the project runs on, and the table a write is
+// refused over has to carry it. Where this directory is no checkout the block
+// reads as it does for `fugaro craft ls`, empty.
 //
 // One list for the whole family: `ls` renders it and `set`/`rm` hand it to the
 // checks (routing.Checks.Models), so the table a person reads about and the
