@@ -273,7 +273,7 @@ func New(t *testing.T, cfg string, spec *task.Spec) *Harness {
 	if cfg != "" {
 		files["fugaro.yaml"] = cfg
 	}
-	file, pins := testutil.FixturePins(files["fugaro.yaml"])
+	file, pins := testutil.FixturePins(files["fugaro.yaml"], config.LiftedKeyPaths())
 	files["fugaro.yaml"] = file
 	remote := testutil.NewRemote(t, files)
 	bucket := memblob.OpenBucket(nil)

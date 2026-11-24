@@ -6,6 +6,24 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// LiftedKeyPaths is the path of every lifted key, in LiftedKeys' own order.
+//
+// It is what a reader that only has to recognise a lifted path holds rather
+// than the rows themselves: a test's fixture moves the keys its file wrote
+// into the project layer by this list, so a key added to the contract moves in
+// every fixture without a second edit. It lives here, beside the drop, because
+// it and the drop are one list read twice — and because internal/testutil,
+// which is a fixture helper every package's tests import, may not import
+// internal/config: a package of config's own that imported the helper back
+// would be a cycle in its test binary. The path is handed in instead.
+func LiftedKeyPaths() []string {
+	out := make([]string, 0, len(LiftedKeys))
+	for _, k := range LiftedKeys {
+		out = append(out, k.Key)
+	}
+	return out
+}
+
 // dropLiftedKeys is tree with every lifted key a repository's file writes
 // removed, and the note of each (config.LiftedKeys, R2 of
 // docs/repo-override-rulings/reconciliation.md, D3237). It is the one drop:

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -23,7 +24,7 @@ workflows:
   app:
     commands: { test: sh test.sh }
 `
-	file, layer := FixturePins(cfg)
+	file, layer := FixturePins(cfg, config.LiftedKeyPaths())
 	if strings.Contains(file, "model: claude-sonnet-5-5") || strings.Contains(file, "models:") {
 		t.Errorf("the file still names the pins:\n%s", file)
 	}
@@ -44,7 +45,7 @@ workflows:
 // TestFixturePinsGivesTheBareFixtureItsRoles: a file that names no model is
 // priced by the harness's own three roles, in the layer.
 func TestFixturePinsGivesTheBareFixtureItsRoles(t *testing.T) {
-	file, layer := FixturePins(FixtureFiles(t)["fugaro.yaml"])
+	file, layer := FixturePins(FixtureFiles(t)["fugaro.yaml"], config.LiftedKeyPaths())
 	if strings.Contains(file, "models:") {
 		t.Errorf("the file names pins of its own:\n%s", file)
 	}
@@ -72,7 +73,7 @@ func TestFixturePinsLeavesTheFilesThatAskForNoPins(t *testing.T) {
 		"not a config": "project: [\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			file, layer := FixturePins(cfg)
+			file, layer := FixturePins(cfg, config.LiftedKeyPaths())
 			if layer != "" {
 				t.Errorf("a layer was installed over %q:\n%s", name, layer)
 			}
@@ -95,7 +96,7 @@ agent:
     coder: { model: claude-sonnet-5-5, access: work }
   levels:
     l2: { model: claude-opus-5, effort: high, focus: security }
-`)
+`, config.LiftedKeyPaths())
 	var doc map[string]any
 	if err := yaml.Unmarshal([]byte(file), &doc); err != nil {
 		t.Fatal(err)
@@ -131,7 +132,7 @@ rigor:
     - { name: payments, match: "internal/payments/**", level: critical }
 model_grades:
   strong: { model: claude-opus-5, access: work }
-`)
+`, config.LiftedKeyPaths())
 	if strings.Contains(file, "rigor:") || strings.Contains(file, "claude-opus-5") {
 		t.Errorf("the file still names a lifted key:\n%s", file)
 	}
@@ -160,7 +161,7 @@ func TestTakeFilePinsLeavesAnEmptyRigorBlock(t *testing.T) {
 project: aurora
 agent: { auth: api-key, model: claude-sonnet-5-5 }
 rigor: {}
-`)
+`, config.LiftedKeyPaths())
 	if !strings.Contains(file, "rigor: {}") {
 		t.Errorf("the file lost the empty block it wrote:\n%s", file)
 	}

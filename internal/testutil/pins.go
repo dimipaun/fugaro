@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"strings"
 
-	"github.com/dimipaun/fugaro/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -27,10 +26,11 @@ var roleModels = map[string]string{
 // repository's own file at all.
 //
 // It exists because a repository's file may no longer decide any of them (S1,
-// lift L8, D3237): config.LiftedKeys is the list — the model a role, a craft or
-// a review level runs as, the escalation grades' models, the rigor default and
-// its areas, and ab.rate — and config.Resolve drops every one of them before
-// the merge, so a fixture that seeds them in the file would otherwise run a
+// lift L8, D3237): lifted is that list (config.LiftedKeyPaths, the paths
+// config.LiftedKeys names) — the model a role, a craft or a review level runs
+// as, the escalation grades' models, the rigor default and its areas, and
+// ab.rate — and config.Resolve drops every one of them before the merge, so a
+// fixture that seeds them in the file would otherwise run a
 // configuration without them: no model to price the run with, no level of its
 // own. A real installation's values arrive from the project layer
 // (config.ProjectLayer), and this puts a fixture's there, in the file's own
@@ -45,7 +45,10 @@ var roleModels = map[string]string{
 // top-level ab: block (AB1, D3237 B9) rather than a key under defaults:, and no
 // fixture prices a run from it — a repository's file may only write it as the
 // opt-out, which the layer states as ab.repos.<owner/name>: 0.
-func TakeFilePins(cfg string) (file, layer string) {
+//
+// The list is handed in rather than imported: this package is a fixture helper
+// config's own tests import, so it may not import config back.
+func TakeFilePins(cfg string, lifted []string) (file, layer string) {
 	doc, ok := parseDoc(cfg)
 	if !ok {
 		return cfg, ""
@@ -63,8 +66,8 @@ func TakeFilePins(cfg string) (file, layer string) {
 	}
 	moved := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	blocks := map[string]bool{}
-	for _, k := range config.LiftedKeys {
-		parts := strings.Split(k.Key, ".")
+	for _, k := range lifted {
+		parts := strings.Split(k, ".")
 		if parts[0] == "ab" {
 			continue
 		}
@@ -178,9 +181,10 @@ func pinsLayer(project, gcpProject string, defaults *yaml.Node) string {
 // none of them gets the harness's own three roles (PinsLayerText); and the file
 // is anchored to the GCP project its layer names (AnchorFile), since a layer
 // applies to a file only when the two agree — the fixture's own file names
-// none, as a repository's file need not.
-func FixturePins(cfg string) (file, layer string) {
-	file, layer = TakeFilePins(cfg)
+// none, as a repository's file need not. lifted is the contract's list, which
+// the caller hands in (config.LiftedKeyPaths).
+func FixturePins(cfg string, lifted []string) (file, layer string) {
+	file, layer = TakeFilePins(cfg, lifted)
 	if layer == "" {
 		layer = PinsLayerText(file)
 	}

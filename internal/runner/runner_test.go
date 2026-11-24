@@ -249,7 +249,7 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 	// project layer, where an installation's arrive from (config.ProjectLayer);
 	// a repository's own file may no longer name one (S1, D3237), and the file
 	// is anchored to the project and GCP project that layer applies by.
-	pinned, pins := testutil.FixturePins(files["fugaro.yaml"])
+	pinned, pins := testutil.FixturePins(files["fugaro.yaml"], config.LiftedKeyPaths())
 	files["fugaro.yaml"] = pinned
 	for k, v := range extra {
 		files[k] = v

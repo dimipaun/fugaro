@@ -437,7 +437,7 @@ func raisedBase(t *testing.T, block string) (remote, layer string) {
 	testutil.IsolateGit(t)
 	const head = "version: 1\nproject: aurora\ngit: { provider: github }\n"
 	const tail = "workflows:\n  server: { commands: { build: make, test: make test } }\n"
-	file, layer := testutil.FixturePins(head + block + tail)
+	file, layer := testutil.FixturePins(head+block+tail, config.LiftedKeyPaths())
 	return testutil.NewRemote(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": file}), layer
 }
 
