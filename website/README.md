@@ -1333,7 +1333,7 @@ added or removed without this sentence moving fails there:
     The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
     definition does not describe, and this gate says nothing about how much a page's first
     section should say.
-  - **Words per page:** 2275 words. Every word a reader sees inside `main` — command blocks
+  - **Words per page:** 2317 words. Every word a reader sees inside `main` — command blocks
     and code spans included, since the ceiling is a claim about the page rather than about
     its prose — counted by `budget.mjs`'s own reader, which reads a page the way
     `test/lib/html.mjs`'s `textOf` does (a script or style body is not text, an image's
@@ -1369,8 +1369,8 @@ added or removed without this sentence moving fails there:
     **The number is no longer D188's own, and it is derived rather than picked.** The
     privacy statement is the page the App Store and Play listings link as a privacy policy,
     so it carries the software as well as the site and is the one page that is not the
-    site's pitch; the number is that page's own count on the gates' own build — **1820
-    words** — plus 25 %, rounded up, which is **2275**. The count moved fourteen times since
+    site's pitch; the number is that page's own count on the gates' own build — **1853
+    words** — plus 25 %, rounded up, which is **2317**. The count moved fifteen times since
     G2.3: the campaign section took the page 988 → 1030, the owner's ruling of 2026-10-29 on
     the banner's wording — one question, worded for everything the site may load, with the
     refusal's reach stated in the consent card — took it 1030 → 1144, G2.4's sentence
@@ -1397,7 +1397,9 @@ added or removed without this sentence moving fails there:
     request page's three forms — the key is asked for in the portal now — and rewrote the
     statement's card to point at it, took it 1740 → 1549, and the push-notification card (the
     mobile plan's Task P5.2.10), which states the relay the publisher holds, the category-only
-    payload the app resolves against its own mailbox and the retention, took it 1549 → 1820.
+    payload the app resolves against its own mailbox and the retention, took it 1549 → 1820, and
+    the review of that card, which made the receipt's half honest — Android's alert stated as
+    Android's and iOS's as the system's own drawing — took it 1820 → 1853.
     `budget.mjs`'s
     `wordsCeilingFailures` holds the derivation to the built page the way the same file
     holds the byte budgets to theirs, so a sentence added there re-derives this line in the
