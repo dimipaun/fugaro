@@ -126,6 +126,30 @@ func TestSetupAdoptsRefusesAProjectThatHoldsSomethingOfFugaros(t *testing.T) {
 		}
 	})
 
+	t.Run("the origin label with a value fugaro setup never writes", func(t *testing.T) {
+		r := newProjectRig(t)
+		r.foreign(true)
+		// Anyone who may update the project can set the label, so its value
+		// can be one this program never writes. The key alone still says the
+		// project is Fugaro's, so it is refused rather than adopted
+		// (infra.ProjectInfo.CreatedLabel, init_adopt.go): a run must not
+		// adopt a project whose origin it cannot read.
+		r.crm.SetLabels(newProj, map[string]string{infra.CreatedLabelKey: "made-by-hand"})
+		for _, args := range [][]string{{"--create-project", "--plan-only"}, {"--create-project"}} {
+			out, _, err := r.run(t, true, newProj+"\n", args...)
+			if ExitCode(err) != ExitUserError || !strings.Contains(out+errString(err), "holds something of Fugaro's") {
+				t.Errorf("%v: exit %d (%v), want the refusal:\n%s", args, ExitCode(err), err, out)
+			}
+			if strings.Contains(out, "adopted existing project") {
+				t.Errorf("%v: a project whose origin label this program never wrote was adopted:\n%s", args, out)
+			}
+		}
+		if got := r.crm.Labels(newProj)[infra.CreatedLabelKey]; got != "made-by-hand" {
+			t.Errorf("%s on the refused project = %q, want the value it carried, %q", infra.CreatedLabelKey, got, "made-by-hand")
+		}
+		r.nothingDone(t, "a project carrying the origin label with an unwritten value")
+	})
+
 	t.Run("the origin label with a value this program does not write", func(t *testing.T) {
 		r := newProjectRig(t)
 		r.foreign(true)

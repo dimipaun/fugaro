@@ -176,11 +176,25 @@ type Entry struct {
 	//
 	// A record that could not be read is absent rather than zero: a run whose
 	// result.json is corrupt and one that never finalized are the same absence
-	// here, and a reader that has to tell them apart reads the bucket (the
-	// listing's own "record unreadable" row does, and it is not this reader's
-	// job to invent one).
+	// here. What tells them apart is LaunchUnreadable and RecordUnreadable
+	// below.
 	Launch *runstore.Launch `json:"launch,omitempty"`
 	Record *runstore.Record `json:"record,omitempty"`
+
+	// LaunchUnreadable and RecordUnreadable say the bucket holds the object
+	// and the fold could not use it -- a syntax error, a shape the decoder
+	// refuses, an object past the size cap -- as opposed to its simply not
+	// being there. They are the one fact the two absent records cannot carry,
+	// and a reader that prints rows and counts needs it: without them a run
+	// whose launch.json is corrupt and which died before finalize is the same
+	// absent launch, no record and no status as a run that was claimed and
+	// never launched, so a reader that reads no object at all would count it
+	// among the runs that never started and drop it from every figure, while
+	// the bucket read returns it as a run that did start with a launcher
+	// nobody can read (internal/cli, readRunObjects). False is "the fold had
+	// nothing to read, or read what was there".
+	LaunchUnreadable bool `json:"launch_unreadable,omitempty"`
+	RecordUnreadable bool `json:"record_unreadable,omitempty"`
 }
 
 // Summary is the installation's one summary document,

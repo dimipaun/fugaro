@@ -748,10 +748,10 @@ func planDirs(t *testing.T, log string) []string {
 // already has the block keeps it. The block is the record of a service that
 // exists — its URL is the audience every caller's ID token is minted for, and
 // its job table is the installation's own — so the run carries it as it is
-// found and moves the members it owns: the image, and the two members the
-// carry's own rewrite writes over it (verifier_accounts, CSR14, and
-// review_job_accounts, the review table the same refresh unions in — see the
-// expectation below).
+// found and moves the members it owns: the image, and the members the carry's
+// own rewrites write over it (verifier_accounts, CSR14; review_job_accounts,
+// the review table the same refresh unions in; and signer_account, the first of
+// the identity half's three names — see the expectation below).
 //
 // Mutation (verified, run and restored): rebuild the block from the spec
 // (infra.Credentials) instead of carrying it, and this test fails on the
@@ -781,7 +781,12 @@ func TestUpdateKeepsAnOptedInInstallationsServiceUnchanged(t *testing.T) {
 	// rig's config records a Bitbucket repository and has the service opted in,
 	// so the installation deploys the implicit review-only job of that provider
 	// (plan task RJ8, finding F6) and the service has to admit the caller that
-	// runs it. Every other member is the earlier run's, byte for byte.
+	// runs it. And signer_account is the identity half's arrival, the same kind
+	// again: the names are written by the run that DEPLOYS the service and by
+	// no other, so an installation that already has the block gains the signer
+	// — and the roster and the implicit admins, where this rig's config names
+	// any (TestUpdateNamesTheServicesIdentity is that case) — on the next
+	// update. Every other member is the earlier run's, byte for byte.
 	want := map[string]any{
 		"account_id":       infra.CredentialsAccountID,
 		"service":          infra.CredentialsServiceName,
@@ -793,7 +798,8 @@ func TestUpdateKeepsAnOptedInInstallationsServiceUnchanged(t *testing.T) {
 			"provider": "bitbucket", "repo": "acme/sandbox", "workflow": "web"}},
 		"review_job_accounts": []any{map[string]any{
 			"profile": infra.ImplicitReviewProfile, "provider": "bitbucket", "account": config.DefaultClaudeAccount}},
-		"url": credentialsServiceURL,
+		"url":            credentialsServiceURL,
+		"signer_account": infra.SignerAccountID + "@" + fpID + ".iam.gserviceaccount.com",
 		"verifier_accounts": []any{
 			"fugaro-verifier@proj-1234.iam.gserviceaccount.com"},
 	}
@@ -822,6 +828,74 @@ func seedCheckoutGitSecret(t *testing.T, r *imagesRig, repo string) {
 	r.sm.Seed(gcp.SecretID(slug, config.BitbucketSecret), map[string]string{
 		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: config.BitbucketSecret,
 	}, []byte(credsValue(t, "git")))
+}
+
+// TestUpdateNamesTheServicesIdentity: the block's three identity names —
+// signer_account, roster_service_accounts and implicit_admins — are written by
+// the run that DEPLOYS the credentials service (infra.Credentials) and by no
+// other run, because every later run carries the block as it is found. The
+// names are new in this release, so every installation that already has the
+// block carries one without them, and nothing ever adds them: the service
+// renders no FUGARO_ROSTER_SERVICE_ACCOUNTS and no FUGARO_IMPLICIT_ADMINS at
+// exactly the installations that have it — LM13's acceptance unmet where it
+// counts — and the runs' signer, which LM14's probe reads to decide whether the
+// minter grant can move, never reaches the process either. `fugaro update` is
+// the whole upgrade (CLAUDE.md's HARD RULE), so the carry is where they arrive
+// or they arrive nowhere.
+//
+// The block here is the earlier release's, byte for byte what the deploy wrote
+// before the names existed (seedCredentialsService), and the run is an ordinary
+// update. The config names a `serviceAccount:` operator and a budget admin, so
+// both lists have something to carry: the roster is the launcher class's
+// service accounts (the module makes the service's invoker grant for the same
+// list) and the implicit admins are the gate's own.
+//
+// Mutation (verified, run and restored): drop the
+// infra.RefreshCredentialsServiceIdentity call in init_stages.go's
+// writeCarriedCredentials and this fails on all three names: the block keeps
+// exactly the members the earlier release wrote.
+func TestUpdateNamesTheServicesIdentity(t *testing.T) {
+	r := credentialsRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	credentialsOutputs(t, r)
+	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
+	r.appendConfig(t, "terraform:\n  operators: ['serviceAccount:"+rosterSAJob+"']\n  budget_admins: ['user:boss@example.com']\n")
+	out, errOut, err := executeStdin(t, "", "update")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("an ordinary update of an installation that has the service failed: %v\n%s", err, s)
+	}
+	svc := credentialsServiceEntry(t, r)
+	if want := infra.SignerAccountID + "@" + fpID + ".iam.gserviceaccount.com"; svc["signer_account"] != want {
+		t.Errorf("credentials_service.signer_account = %v, want %q: the signer is the Firebase root's own account, in the project the budget block names, and it is the name the service signs a run's identity as — an installation that already has the block has to gain it on the next update, or LM14's probe reads no signer and the minter grant can never move\n%s", svc["signer_account"], want, s)
+	}
+	if got, _ := svc["roster_service_accounts"].([]any); !reflect.DeepEqual(got, []any{rosterSAJob}) {
+		t.Errorf("credentials_service.roster_service_accounts = %v, want [%s]: the roster's service accounts as the bare addresses a token's email claim carries, which is the same list the module makes the service's invoker grant for — without them the process refuses the account IAM just admitted (F31)\n%s", got, rosterSAJob, s)
+	}
+	if got, _ := svc["implicit_admins"].([]any); !reflect.DeepEqual(got, []any{"boss@example.com"}) {
+		t.Errorf("credentials_service.implicit_admins = %v, want [boss@example.com]: the machine's own budget admins as the bare addresses the gate judges a launch by, so the issuer's scope check gives the gate's answer (F29, R16 arm 1)\n%s", got, s)
+	}
+	// A name with nothing to carry is DELETED rather than written empty, which
+	// is what the deploy writes and what the module's defaults read as the empty
+	// class: a run that leaves an empty array behind would carry a member no
+	// later run can tell from a class the config cleared.
+	bare := credentialsRig(t)
+	bare.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	credentialsOutputs(t, bare)
+	seedCredentialsService(t, bare, oldCredentialsRef("1.2.2"))
+	out, errOut, err = executeStdin(t, "", "update")
+	if err != nil {
+		t.Fatalf("an ordinary update of an installation that has the service failed: %v\n%s", err, out+errOut)
+	}
+	bareSvc := credentialsServiceEntry(t, bare)
+	for _, key := range []string{"roster_service_accounts", "implicit_admins"} {
+		if got, ok := bareSvc[key]; ok {
+			t.Errorf("credentials_service.%s = %v, want the key absent: this rig's config names no launcher service account and no budget admin, and a name with nothing to carry is what the deploy writes nothing for", key, got)
+		}
+	}
+	if bareSvc["signer_account"] == nil {
+		t.Error("credentials_service.signer_account is absent: the signer is derived from the budget block's project, which this rig names, and it is not a list")
+	}
 }
 
 // TestUpdateRefreshesTheServicesJobTable: the table is the one member of the
