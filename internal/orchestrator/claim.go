@@ -386,6 +386,20 @@ func ClaimRef(agentID string, w WorkItem) ItemRef {
 	return ItemRef{Orchestrator: agentID, Item: w.ID}
 }
 
+// claimKey is where one item of one node's claim stands (ClaimRef, ClaimPath),
+// and it is one function because two places have to agree on it exactly: the
+// cycle that learned an item is another orchestrator's by being refused its
+// claim, and the plan that leaves that item out (tick's carry, planNode). A
+// reference that cannot be built is the empty key, which no cycle can learn
+// anything about: an item Start refused a claim on had a reference to refuse.
+func claimKey(agentID string, w WorkItem) string {
+	path, err := ClaimPath(ClaimRef(agentID, w))
+	if err != nil {
+		return ""
+	}
+	return path
+}
+
 // settledClaimPaths is the claim of every item the nodes have finished: the
 // claim paths whose item is done or cancelled, keyed the way ClaimPath keys
 // them, which is what a cycle hands Refresh so that a finished plan task is

@@ -432,6 +432,87 @@ func TestAClaimSkipIsInFlightNotEmpty(t *testing.T) {
 	}
 }
 
+// TestAClaimSkipLeavesTheCycleItsRoom is what a skip costs the cycle that made
+// it: nothing. An item another orchestrator holds is work this daemon was not
+// going to start, so the room the plan gave it goes back to the cycle and the
+// node is planned again for whatever that room reaches — the item the plan had
+// no allowance left for is started in this same cycle.
+//
+// The case is the one a two-orchestrator project lives in. A finished plan
+// task's claim stands for good (this file's header) and the rival's own copy of
+// that task reads approved for good, because nothing syncs the two nodes: a
+// project whose list starts with tasks another orchestrator holds would spend
+// every cycle's whole allowance on skips, never plan past them and never start
+// the work that is its own — with `Skipped > 0` reading as in flight, so the
+// breaker never says anything about it either (outcome). Here the allowance is
+// exactly the items held elsewhere, so a cycle that spent it on skips starts
+// nothing at all.
+//
+// Mutation (run, restored): leave the tally alone on a skip (drop `c.planned--`)
+// and the item that is this daemon's own is never planned, so this cycle
+// carries nothing and the item stands queued.
+func TestAClaimSkipLeavesTheCycleItsRoom(t *testing.T) {
+	ctx := context.Background()
+	now := o6Now()
+	approvedAt := now.Add(-time.Minute)
+
+	// The plan node's own order, which is the order the allowance is spent in:
+	// the two tasks the rival holds, then the one this orchestrator may start.
+	items := []orchestrator.WorkItem{
+		cg4Task("wi-1", "demo/A", approvedAt),
+		cg4Task("wi-2", "demo/B", approvedAt),
+		cg4Task("wi-3", "demo/C", approvedAt),
+	}
+	theirs, mine := items[:2], items[2]
+
+	f := gcpfake.NewRTDB(t)
+	o := cg4OrchestratorWith(t, f, cg4First, "demo", now, "20261107-120000-aaaa",
+		withCaps(func(c *orchestrator.Caps) { c.MaxPerCycle = len(theirs) }), items...)
+
+	// The rival took both tasks of the two it holds and finished them, which is
+	// the claim that never comes off again: its node is not one this project
+	// updates, so the hold is what this cycle meets every time.
+	rival := cg4Claim(t, rtdbClient(t, f), cg4Rival, clockAt(now))
+	settled := map[string]bool{}
+	for _, w := range theirs {
+		ref := orchestrator.ClaimRef(cg4Rival, w)
+		if took, err := rival.Take(ctx, ref); err != nil || !took {
+			t.Fatalf("the rival's take of %q: took=%v, err=%v", w.PlanTask, took, err)
+		}
+		settled[cg4PathOf(t, ref)] = true
+	}
+	if err := rival.Refresh(ctx, settled); err != nil {
+		t.Fatalf("the rival's settlement of the tasks it finished: %v", err)
+	}
+
+	rep := o.step()
+	if rep.Skipped != len(theirs) {
+		t.Fatalf("the cycle skipped %d action(s) where %d of the node's items are held elsewhere", rep.Skipped, len(theirs))
+	}
+	if rep.Carried != 1 {
+		t.Fatalf("the cycle carried %d action(s), and the room the %d skips gave back is what reaches the item that is this daemon's own (D3209)", rep.Carried, len(theirs))
+	}
+	if got := o.launcher.asked; len(got) != 1 {
+		t.Fatalf("the cycle asked its launcher to start %v, want the one run for %q", got, mine.ID)
+	}
+	if o.mint.calls != 1 {
+		t.Errorf("the cycle minted %d run id(s) for the one item it started", o.mint.calls)
+	}
+
+	s := o.planState()
+	if w, ok := s.Item(mine.ID); !ok || w.Phase != orchestrator.PhaseRunning {
+		t.Errorf("the item that is this daemon's own reads back as %+v, and the room a skip leaves is room the plan spends on it", w)
+	}
+	for _, w := range theirs {
+		if got, ok := s.Item(w.ID); !ok || got.Phase != orchestrator.PhaseQueued {
+			t.Errorf("the held item %q reads back as %+v, and an item another orchestrator holds is left exactly where it stands", w.ID, got)
+		}
+	}
+	if holder, _ := cg4Held(t, f, cg4PathOf(t, orchestrator.ClaimRef(cg4First, mine))); holder != cg4First {
+		t.Errorf("the claim on the item the cycle started names %q, not the orchestration that started it", holder)
+	}
+}
+
 // TestAFinishedPlanTaskIsNotTakenByARival is the second run the claim exists to
 // stop, arriving from the other side: the orchestrator that held the plan task
 // finishes it, and the rival that skipped it still carries the task approved in
@@ -526,6 +607,14 @@ type cg4Orchestrator struct {
 // refused by.
 func cg4OrchestratorAt(t *testing.T, f *gcpfake.RTDB, agentID, plan string, now time.Time, item orchestrator.WorkItem, run string) *cg4Orchestrator {
 	t.Helper()
+	return cg4OrchestratorWith(t, f, agentID, plan, now, run, o6Caps(), item)
+}
+
+// cg4OrchestratorWith is cg4OrchestratorAt over the items and the caps a test
+// means: a plan node carries several tasks, and a test of what a cycle spends
+// its allowance on has to set that allowance.
+func cg4OrchestratorWith(t *testing.T, f *gcpfake.RTDB, agentID, plan string, now time.Time, run string, caps orchestrator.Caps, items ...orchestrator.WorkItem) *cg4Orchestrator {
+	t.Helper()
 	db := rtdbClient(t, f)
 	o := &cg4Orchestrator{
 		t:        t,
@@ -534,14 +623,14 @@ func cg4OrchestratorAt(t *testing.T, f *gcpfake.RTDB, agentID, plan string, now 
 		reader:   &tickReader{},
 	}
 	state := cg4SeedNode(t, db, agentID, orchestrator.ShardState, o6Node(t, now))
-	o.plan = cg4SeedNode(t, db, agentID, orchestrator.PlanShard(plan), o6Node(t, now, item))
+	o.plan = cg4SeedNode(t, db, agentID, orchestrator.PlanShard(plan), o6Node(t, now, items...))
 	o.tick = &orchestrator.Tick{
 		Store:    state,
 		Nodes:    []orchestrator.Store{o.plan},
 		Runs:     o.reader,
 		Launcher: o.launcher,
 		Mint:     o.mint.mint,
-		Caps:     o6Caps(),
+		Caps:     caps,
 		Claims:   cg4Claim(t, db, agentID, clockAt(now)),
 		Now:      clockAt(now),
 		Notifier: &tickSink{},
@@ -595,8 +684,15 @@ func (o *cg4Orchestrator) planState() orchestrator.State {
 // the O6 helpers give, with the plan task two orchestrators of a project name
 // alike, approved as it now stands.
 func cg4PlanItem(id string, approvedAt time.Time) orchestrator.WorkItem {
+	return cg4Task(id, cg4PlanTask, approvedAt)
+}
+
+// cg4Task is that item for one named plan task, which is what a claim is keyed
+// by (ClaimRef): a node carrying several tasks of one plan carries several
+// claims.
+func cg4Task(id, planTask string, approvedAt time.Time) orchestrator.WorkItem {
 	w := workItemOf(id)
-	w.PlanTask = cg4PlanTask
+	w.PlanTask = planTask
 	return o6ApprovedBy(w, approvedAt)
 }
 

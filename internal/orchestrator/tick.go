@@ -175,7 +175,10 @@ type Report struct {
 	// Skipped is how many of the plan's actions the cycle skipped because the
 	// item is another orchestrator's: the claim on it is held elsewhere
 	// (ErrItemClaimed, D3209), so the item is that daemon's work and this cycle
-	// carries nothing for it and fails nothing over it.
+	// carries nothing for it and fails nothing over it. It spends no cap room
+	// either: the plan leaves the items this cycle has learned are another
+	// orchestrator's out before the caps are read, and a skip hands its slot
+	// back, so the room goes to the work that is this daemon's own (carry).
 	//
 	// It is not a move and it is not a cycle that did nothing. Two orchestrators
 	// of one project are the deployment the claim exists for (D3206, D3207), and
@@ -386,6 +389,14 @@ type cycle struct {
 	// find no pause and start work into the refusal the pause was raised for
 	// (O19, D2022 (a)).
 	paused bool
+	// held is the claim of every item another orchestrator holds, by claim path
+	// (claimKey), as this cycle has found it out: an action the starter refused
+	// for ErrItemClaimed (D3209). The plan leaves those items out, so a skip
+	// spends no room and the node is planned again for the room it leaves
+	// (carry). It is one cycle's own reading and nothing is kept from it, so an
+	// item whose claim was settled between two cycles is that cycle's work
+	// again.
+	held map[string]bool
 }
 
 // bind makes the node at i the one this cycle is working on.
@@ -906,29 +917,63 @@ func (c *cycle) writeFold(ctx context.Context, base State, folded int, ops []Op,
 // no question still plans nothing while one stands anywhere in the project.
 // The first action that cannot be carried out ends the cycle — what it left is
 // what the starter committed before it, and the next tick re-derives the rest.
+//
 // An action whose item another orchestrator holds the claim on is not one of
 // those: it is skipped, because the item is that orchestrator's work and not
 // this daemon's (ErrItemClaimed, D3209), and nothing about it is this cycle's to
 // carry or to fail over. The skip is counted on the report all the same
 // (Skipped), because a cycle that skipped every action it planned is a cycle
 // waiting on another orchestrator and not one that did nothing (outcome).
+//
+// What a skip must not do is spend the cycle's room (claimKey): the item was
+// never started, so the slot the plan gave it goes back — the tally comes down
+// — the item is remembered as another orchestrator's and the node is planned
+// again for whatever the room it used leaves. That is what makes a project
+// usable when the items that come first in a node's order are held elsewhere:
+// finished plan-task claims stand for good and a rival's own copy of those tasks
+// reads approved for good, so without this the daemon would spend its whole
+// allowance on skips and never plan the work that is its own. Each pass either
+// carries everything it planned or leaves at least one more item out, so it ends.
 func (c *cycle) carry(ctx context.Context, view RunView) error {
 	starter := Starter{Launcher: c.tick.Launcher, Commit: c.commit, Mint: c.tick.Mint, Claims: c.tick.Claims}
-	actions, planned := planNode(c.state, view, c.tick.Caps, c.now, c.counts, c.planned, c.paused)
-	c.planned = planned
-	for _, a := range actions {
-		next, err := starter.Start(ctx, c.state, a, c.now)
-		if errors.Is(err, ErrItemClaimed) {
-			c.rep.Skipped++
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		c.state = next
-		c.rep.Carried++
+	if c.held == nil {
+		c.held = map[string]bool{}
 	}
-	return nil
+	for {
+		actions, planned := planNode(c.state, view, c.tick.Caps, c.now, c.counts, c.planned, c.paused, c.held)
+		c.planned = planned
+		if len(actions) == 0 {
+			return nil
+		}
+		skipped := false
+		for _, a := range actions {
+			next, err := starter.Start(ctx, c.state, a, c.now)
+			if errors.Is(err, ErrItemClaimed) {
+				c.rep.Skipped++
+				// The slot the plan gave the action goes back to the cycle: the
+				// item was never started, so it must not hold room a launch
+				// would use. Only a launch and a retry are counted by the plan —
+				// a re-issue spends nothing a cap is there to bound (planNode) —
+				// so only those have a slot to hand back.
+				if a.Kind == ActionLaunch || a.Kind == ActionRetry {
+					c.planned--
+				}
+				if w, ok := c.state.Item(a.ItemID); ok {
+					c.held[claimKey(c.state.AgentID, w)] = true
+				}
+				skipped = true
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			c.state = next
+			c.rep.Carried++
+		}
+		if !skipped {
+			return nil
+		}
+	}
 }
 
 // outcome is how the cycle reads itself for the breaker: a cycle that folded,

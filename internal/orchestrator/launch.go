@@ -263,7 +263,7 @@ type Action struct {
 // ladder launches on top (LadderLaunch): a rung's runs are the executor's to
 // ask for, and its own bound is not this plan's caps.
 func Plan(s State, view RunView, caps Caps, now time.Time) []Action {
-	actions, _ := planNode(s, view, caps, now, CountsOf(s, now), 0, BreakerOpen(s, now))
+	actions, _ := planNode(s, view, caps, now, CountsOf(s, now), 0, BreakerOpen(s, now), nil)
 	return actions
 }
 
@@ -283,7 +283,14 @@ func Plan(s State, view RunView, caps Caps, now time.Time) []Action {
 // through a pause that stands, which is the stop O19 and D2022 (a) exist for.
 // What hands it in is the cycle, over every node it works (Tick.Nodes); a
 // daemon's own node reads it off the state it plans, which is what Plan does.
-func planNode(s State, view RunView, caps Caps, now time.Time, counts Counts, planned int, paused bool) ([]Action, int) {
+//
+// held is the claim of every item a cycle has learned another orchestrator
+// holds, by claim path (claimKey, D3209), and an item in it is left out before
+// the caps are read: it is not this daemon's work, so it must not spend the
+// cycle's allowance — a project whose first items are a rival's would otherwise
+// spend every cycle on skips and never plan past them. A plan that has learned
+// nothing (Plan, which reads no claims) hands nil and plans as it always did.
+func planNode(s State, view RunView, caps Caps, now time.Time, counts Counts, planned int, paused bool, held map[string]bool) ([]Action, int) {
 	if caps.KillSwitch || OverCap(s) || paused {
 		return nil, planned
 	}
@@ -301,6 +308,9 @@ func planNode(s State, view RunView, caps Caps, now time.Time, counts Counts, pl
 		}
 		a, ok := nextAttempt(s, w)
 		if !ok {
+			continue
+		}
+		if held[claimKey(s.AgentID, w)] {
 			continue
 		}
 		if !counts.Room(caps, planned) {
@@ -537,8 +547,8 @@ type MintFunc func(now time.Time) (string, error)
 // ErrItemClaimed is an action this orchestrator may not start: another
 // orchestrator holds the claim on the item (D3209). It is not a failure —
 // nothing was committed, nothing was started and the state is handed back as it
-// was — and the caller that meets it skips the item and carries on with the
-// next one.
+// was — and the caller that meets it skips the item, spends no cap room on it
+// and carries on with the next one (tick's carry).
 var ErrItemClaimed = errors.New("orchestrator: another orchestrator holds the item")
 
 // Starter carries out the actions a plan called for, intent first: it claims
