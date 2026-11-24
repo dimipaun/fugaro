@@ -393,3 +393,52 @@ func TestUpdateSummaryWritesNothingOutsideTheUpdateDoor(t *testing.T) {
 		})
 	}
 }
+
+// TestUpdateSummaryConvergedHistoryReadsNoRun: an installation that has
+// converged keeps converging on every later `fugaro update`, and the price of
+// that must not be one object read a run. Which runs hold a summary comes from
+// ONE listing of the repository (indexedRuns' shape), so a history of a
+// thousand runs that all hold one is read by the walk without opening a single
+// run; only the runs a summary is missing are read, and each of those is read
+// for its record and its task.
+//
+// Mutations caught: going back to a ReadSummary a run (the driver counts one
+// read a run of the window on every update, forever), and a listing that reads
+// the runs it walks rather than the summary objects under them.
+func TestUpdateSummaryConvergedHistoryReadsNoRun(t *testing.T) {
+	const history = 1000
+	b, ids := lsBucketRuns(t, history)
+	ctx := context.Background()
+	for _, id := range ids[:history-1] {
+		s := runstore.Open(b.Bucket, appSlug, id)
+		rec, err := s.ReadRecord(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec, err := s.ReadTask(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := runstore.WriteSummary(ctx, s, runstore.NewSummary(rec, spec, time.Now().UTC())); err != nil {
+			t.Fatal(err)
+		}
+	}
+	missing := ids[history-1]
+	d := &lsWidthDriver{objects: map[string][]byte{}, width: make(chan struct{})}
+	lsDriverObjects(t, d, b)
+
+	written, err := backfillRunSummariesIn(ctx, blob.NewBucket(d), time.Now().UTC(), func(string, ...any) {})
+	if err != nil {
+		t.Fatalf("the walk failed over a converged history: %v", err)
+	}
+	if written != 1 {
+		t.Errorf("the walk wrote %d summaries, want the one run of %d that holds none", written, history)
+	}
+	want := []string{lsRunObjectKey(missing, "result.json"), lsRunObjectKey(missing, "task.json")}
+	if got := d.keysRead(); !slices.Equal(got, want) {
+		t.Errorf("the walk read %v, want %v and nothing else: a run that already holds a summary is not read, and a converged installation reads no run at all", got, want)
+	}
+	if _, ok := d.objects[lsRunObjectKey(missing, runstore.SummaryName)]; !ok {
+		t.Errorf("the walk read the one run that holds no summary and wrote none for it")
+	}
+}

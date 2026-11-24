@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path"
 	"time"
 
 	"gocloud.dev/blob"
@@ -26,6 +28,12 @@ import (
 // step is RL2B's shape (update_prindex.go): it walks each repository's runs of
 // the last 90 days once, reads each run's own task and record, and creates the
 // summary it would have written, create-if-absent.
+//
+// Which runs already hold one is one listing of the repository, as the index
+// step reads its own (indexedRuns): a converged installation reads no object of
+// its runs at all, and an installation converges by reading only the runs that
+// are missing one. Reading each run's summary instead would cost one read a run
+// of the 90-day window on every update, forever.
 //
 // Create-if-absent and never a rewrite, for the reason the index's step is
 // (the HARD RULE, docs/design/update-in-flight.md): a summary a run wrote is
@@ -96,25 +104,27 @@ func backfillRunSummariesIn(ctx context.Context, b *blob.Bucket, now time.Time, 
 	since := now.Add(-followUpLookback)
 	written := 0
 	for _, slug := range slugs {
+		// What the repository already holds, in one listing, before any run of
+		// it is read: a converged installation reads nothing below, and one
+		// that is missing summaries reads the runs that are missing one and no
+		// other. A summary that is there but unusable counts as there: the
+		// object is the run's own, and a create-only write would not replace it
+		// anyway.
+		summarized, err := summarizedRuns(ctx, b, slug)
+		if err != nil {
+			warnf("the runs of %s were skipped: their summaries could not be listed (%v)", safetext.Field(slug), safetext.FieldErr(err))
+			continue
+		}
 		ids, err := runstore.ListRunIDs(ctx, b, slug, since)
 		if err != nil {
 			warnf("the runs of %s were skipped: they could not be listed (%v)", safetext.Field(slug), safetext.FieldErr(err))
 			continue
 		}
 		for _, id := range ids {
-			s := runstore.Open(b, slug, id)
-			// What the run already holds, read first so a converged
-			// installation pays one small read a run and not the run's task
-			// and record too. A summary that is there but unusable is left
-			// alone like one that is there and good: the object is the run's
-			// own, and a create-only write would not replace it anyway.
-			switch _, err := s.ReadSummary(ctx); {
-			case err == nil, errors.Is(err, runstore.ErrCorrupt):
-				continue
-			case !errors.Is(err, runstore.ErrNotFound):
-				warnf("%s was not summarized: its summary could not be read (%v)", safetext.Field(slug+"/"+id), safetext.FieldErr(err))
+			if summarized[id] {
 				continue
 			}
+			s := runstore.Open(b, slug, id)
 			rec, err := s.ReadRecord(ctx)
 			switch {
 			case errors.Is(err, runstore.ErrNotFound):
@@ -145,7 +155,7 @@ func backfillRunSummariesIn(ctx context.Context, b *blob.Bucket, now time.Time, 
 			// give the same run.
 			if err := runstore.CreateSummary(ctx, s, runstore.NewSummary(rec, spec, now)); err != nil {
 				if errors.Is(err, runstore.ErrExists) {
-					continue // the run wrote its own between the read above and here
+					continue // the run wrote its own between the listing above and here
 				}
 				warnf("%s was not summarized: %v", safetext.Field(slug+"/"+id), safetext.FieldErr(err))
 				continue
@@ -154,4 +164,27 @@ func backfillRunSummariesIn(ctx context.Context, b *blob.Bucket, now time.Time, 
 		}
 	}
 	return written, nil
+}
+
+// summarizedRuns is the runs of one repository that already hold a summary, in
+// one flat listing of it (indexedRuns' shape): every object whose base name is
+// the summary's is one run's, and the run is the key's parent segment.
+func summarizedRuns(ctx context.Context, b *blob.Bucket, slug string) (map[string]bool, error) {
+	prefix := "runs/" + slug + "/"
+	out := map[string]bool{}
+	it := b.List(&blob.ListOptions{Prefix: prefix})
+	for {
+		obj, err := it.Next(ctx)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("listing %s: %w", prefix, err)
+		}
+		if obj.IsDir || path.Base(obj.Key) != runstore.SummaryName {
+			continue
+		}
+		out[path.Base(path.Dir(obj.Key))] = true
+	}
+	return out, nil
 }
