@@ -311,6 +311,43 @@ func TestFirestoreReaderPages(t *testing.T) {
 		}
 	})
 
+	// A window is a moment and a run id names whole seconds, so the two reads
+	// meet the question at different granularities: the record read tests the mint
+	// time itself (`!t.Before(since)`) and every real window carries a fraction
+	// (`runs stats` builds it as now minus a duration). The index's floor is the
+	// window's own second rounded up, so a run minted earlier in that second is
+	// below it -- the same run the bucket read drops.
+	t.Run("a window inside a second holds what the bucket holds", func(t *testing.T) {
+		f := seeded(t)
+		bucket := gcpfake.NewGCS(t).Bucket(t, "runs")
+		for _, id := range []string{runNewest, runTieLow, runMid} {
+			s := runstore.Open(bucket.Bucket, pageSlug, id)
+			if err := s.WriteLaunch(context.Background(), &runstore.Launch{Version: 1, RunID: id}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		since := indexAt(10, 0).Add(500 * time.Millisecond)
+		want, err := runstore.ListRunIDs(context.Background(), bucket.Bucket, pageSlug, since)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(want, []string{runNewest}) {
+			t.Fatalf("the bucket's window = %v, want the runs after %s alone", want, since)
+		}
+		got := ids(f.list(Filter{Slugs: []string{pageSlug}, Since: since}))
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("the index's window = %v, the bucket's = %v, want one window", got, want)
+		}
+		// And the walk stops at the window's own second rounded up, not the second
+		// the window starts in: a walk that stopped at the truncated second reads
+		// the runs the page's own window filter then drops, and a page cut at them
+		// reports a next page over a window that holds nothing more.
+		page := f.list(Filter{Slugs: []string{pageSlug}, Since: since, Limit: 1})
+		if len(page.Entries) != 1 || page.Next != nil {
+			t.Fatalf("a page of one over a window of one = %v with Next %+v, want the one row and no next page", ids(page), page.Next)
+		}
+	})
+
 	t.Run("the summary is the document, with every state it does not carry", func(t *testing.T) {
 		sum, err := f.read.Summary(context.Background())
 		if err != nil {

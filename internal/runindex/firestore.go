@@ -41,7 +41,20 @@ func windowed(f Filter) bool { return !f.Since.IsZero() }
 // sinceRunID is the run id a window starts at: run ids begin with their UTC
 // mint time (task.NewRunID), so comparing ids compares start times, and these
 // are the same 15 characters runstore.ListRunIDs offsets its listing by.
-func sinceRunID(since time.Time) string { return since.UTC().Format("20060102-150405") }
+//
+// The floor is the first whole second at or after the window, because a run id
+// names whole seconds while a window does not: every real one is a moment
+// (`runs stats` builds it as now minus a duration), and the record read tests
+// the run's mint time itself (`!t.Before(since)`, runstore.ListRunIDs). Rounding
+// up is what makes the id comparison say the same thing: a run minted earlier in
+// the window's own second is below the floor, exactly as it is before the window.
+func sinceRunID(since time.Time) string {
+	at := since.UTC().Truncate(time.Second)
+	if at.Before(since) {
+		at = at.Add(time.Second)
+	}
+	return at.Format("20060102-150405")
+}
 
 // runIDTime is when a run id was minted, and false for an id this build cannot
 // read as one. A run whose id names no moment is not one the window can place,

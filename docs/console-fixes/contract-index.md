@@ -174,10 +174,13 @@ record read beneath the index windows by (`runstore.ListRunIDs`). A window is
 read as the point where the ordered walk stops, and a stop has to be a position
 in the order, so the window's key and the order's key are one: a windowed page
 is queried and merged in the run id's order, descending, and the walk stops at
-the first run id before the window's own `YYYYMMDD-HHMMSS`. The index and the
-record read it replaces then hold **the same runs in the same order for the same
-window**, a cut set included: a run that started before `--since` and finished
-after it is in neither read, and one that started after it is in both however
+the first run id before the window's own second — **rounded up**, because a run
+id names whole seconds while a window is a moment (`runs stats` builds it as now
+minus a duration) and the record read tests the mint time itself. The index and
+the record read it replaces then hold **the same runs in the same order for the
+same window**, a cut set included: a run that started before `--since` and
+finished after it is in neither read, a run minted earlier in the window's own
+second is in neither either, and one that started after it is in both however
 old its own last write is. Without that, `runs stats`'s `index_complete` would
 claim the two reads hold one window while they held two.
 
