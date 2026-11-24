@@ -987,7 +987,7 @@ func firstReaching(entry Entry, repo Repo, in Installation, pools []PoolSpec) (S
 	for _, s := range entry.Chain {
 		switch s.Kind {
 		case KindPool:
-			if poolReaches(s.Pool, repo.Name, in, pools) {
+			if poolAdmitsRepo(s.Pool, repo.Name, in, pools) {
 				return s, true
 			}
 		case KindAnthropic, KindProvider, KindVertex:
@@ -999,10 +999,10 @@ func firstReaching(entry Entry, repo Repo, in Installation, pools []PoolSpec) (S
 	return Source{}, false
 }
 
-// poolReaches is the pool's admission: a member consents to a repository
+// poolAdmitsRepo is the pool's admission: a member consents to a repository
 // through its own allow_data_to, and an account the installation's config does
 // not carry consents to nobody (config.ClaudeAccount.AllowsData).
-func poolReaches(pool, repo string, in Installation, pools []PoolSpec) bool {
+func poolAdmitsRepo(pool, repo string, in Installation, pools []PoolSpec) bool {
 	for _, p := range pools {
 		if p.Name != pool {
 			continue
