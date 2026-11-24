@@ -119,26 +119,40 @@ func TestRecipesCleanupOffersRemovalOnlyWhenEveryCopyIsStored(t *testing.T) {
 // is offered no removal, for the whole folder or for a file of it. Everything
 // in the folder counts: a file that is not <name>.yaml is a file with no copy
 // like any other, and one git rm -r would have taken with the rest.
+//
+// The path is one shell word in the command the line prints, because the line
+// is printed to be pasted and a repository names its own files: a file called
+// "we;ird.yaml" would otherwise print a line that runs `ird.yaml` — or, with
+// worse text after the ";", whatever that text says — when it is run as it
+// reads.
 func TestRecipesCleanupNamesPublishFirst(t *testing.T) {
 	const repo, provider = "acme/other", "github"
+	const weird = "we;ird.yaml"
 	dir := t.TempDir()
 	testutil.WriteFiles(t, dir, map[string]string{
 		".fugaro/recipes/team.yaml":     cleanupTeam,
 		".fugaro/recipes/notes.txt":     "notes\n",
 		".fugaro/recipes/Bad_Name.yaml": cleanupLoop,
+		".fugaro/recipes/" + weird:      cleanupLoop,
 	})
 	lines := recipesCleanupLines(dir, recipesStore{provider: provider, repo: repo})
-	if len(lines) != 3 {
+	if len(lines) != 4 {
 		t.Fatalf("lines = %+v, want one per file", lines)
 	}
-	for _, rel := range []string{".fugaro/recipes/team.yaml", ".fugaro/recipes/notes.txt", ".fugaro/recipes/Bad_Name.yaml"} {
+	for _, rel := range []string{".fugaro/recipes/team.yaml", ".fugaro/recipes/notes.txt", ".fugaro/recipes/Bad_Name.yaml", ".fugaro/recipes/" + weird} {
 		l, ok := cleanupLine(lines, rel)
 		if !ok {
 			t.Fatalf("lines = %+v, want a line for %s", lines, rel)
 		}
-		if !strings.Contains(l.Message, "fugaro recipes publish "+rel) || !strings.Contains(l.Message, "first") {
+		if !strings.Contains(l.Message, "fugaro recipes publish "+quoteWord(rel)) || !strings.Contains(l.Message, "first") {
 			t.Errorf("%s: message = %q, want the publish of that file first", rel, l.Message)
 		}
+	}
+	// A name a shell reads is not left bare in the command: the line names the
+	// quoted word, and never the unquoted path as one.
+	if l, _ := cleanupLine(lines, ".fugaro/recipes/"+weird); !strings.Contains(l.Message, "publish '.fugaro/recipes/we;ird.yaml'") ||
+		strings.Contains(l.Message, "publish .fugaro/recipes/we;ird.yaml") {
+		t.Errorf("message = %q, want the path quoted as one shell word", l.Message)
 	}
 	for _, l := range lines {
 		if strings.Contains(l.String(), "git rm") {

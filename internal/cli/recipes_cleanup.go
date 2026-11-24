@@ -32,7 +32,10 @@ type recipesStore struct {
 // only when EVERY file in it is stored, because git rm -r takes the ones that
 // are not with the ones that are. A file with no copy gets fugaro recipes
 // publish <file> first instead, and no removal is offered at all: the file is
-// the only place that text exists, so deleting the folder would lose it.
+// the only place that text exists, so deleting the folder would lose it. The
+// path goes into that command as one shell word (quoteWord): a repository names
+// its own files, and the line is printed to be pasted, so a name holding ; or
+// $( is a word of its own and not one the shell reads.
 //
 // Nothing is deleted and nothing is asked — the lines are the diff a person
 // runs, the same offer the plugin pin removal makes. root is the checkout and
@@ -66,7 +69,7 @@ func recipesCleanupLines(root string, store recipesStore) []config.Problem {
 			stored++
 			continue
 		}
-		lines = append(lines, config.Problem{Path: rel, Message: "has no copy in the project store: run `fugaro recipes publish " + rel + "` first"})
+		lines = append(lines, config.Problem{Path: rel, Message: "has no copy in the project store: run `fugaro recipes publish " + quoteWord(rel) + "` first"})
 	}
 	if len(entries) > 0 && stored == len(entries) {
 		lines = append(lines, config.Problem{Path: recipe.RepoDir, Message: "every file here is in the project store: remove the folder with `git rm -r " + recipe.RepoDir + "`"})
