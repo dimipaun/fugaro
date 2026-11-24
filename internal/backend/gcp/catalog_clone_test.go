@@ -12,6 +12,7 @@ import (
 	cloudbuild "google.golang.org/api/cloudbuild/v1"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -212,6 +213,10 @@ func TestCloneStepIsGeneratedAndSeparateFromTheEntryBuild(t *testing.T) {
 // The repository's own workflow secrets are not this step's: an entry that
 // installed from a private registry declared them in its fugaro.yaml, and an
 // entry that may mount no secret at all is B9's answer to D2311.
+//
+// A definition that bakes is the one exception, and it is the entry's own
+// author who asks for the mount: the bake stage is a RUN of that definition and
+// clones with it (Baked, TestBakedEntryBuildKeepsTheCredential).
 func TestEntryBuildCarriesNoSecretAndNoIdentity(t *testing.T) {
 	for _, tc := range catalogCloneSpecs(t) {
 		t.Run(tc.name, func(t *testing.T) {
@@ -523,6 +528,15 @@ func (r catalogCloneRun) calls(t *testing.T, name string) [][]string {
 // (which is how a test points REPO_URL at a host of its choosing).
 func runCatalogClone(t *testing.T, st *cloudbuild.BuildStep, tree, submodules string, env map[string]string, creds map[string]string) catalogCloneRun {
 	t.Helper()
+	return runCatalogShell(t, catalogCloneScriptOf(t, st), st.Env, tree, submodules, env, creds)
+}
+
+// runCatalogShell is that run for any shell a step of a catalog build carries:
+// the clone step's generated script, or the revoke a baked definition's build
+// step ends with (which is the same text in the same image class, and which
+// this runs the way the step's own shell does — one dollar per pair).
+func runCatalogShell(t *testing.T, script string, stepEnv []string, tree, submodules string, env map[string]string, creds map[string]string) catalogCloneRun {
+	t.Helper()
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("no bash")
@@ -554,8 +568,8 @@ func runCatalogClone(t *testing.T, st *cloudbuild.BuildStep, tree, submodules st
 	if err := os.WriteFile(r.creds, []byte(line.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	script := catalogCloneScriptOf(t, st)
 	script = strings.ReplaceAll(script, "/run/secrets/git-credentials", r.creds)
+	script = strings.ReplaceAll(script, "/creds/git-credentials", r.creds)
 	script = strings.ReplaceAll(script, "/out", r.out)
 	// The values the step's env carries are the request's own, except the ones
 	// the request substitutes, which a test states itself.
@@ -563,11 +577,11 @@ func runCatalogClone(t *testing.T, st *cloudbuild.BuildStep, tree, submodules st
 		"PATH=" + bin + ":" + os.Getenv("PATH"),
 		"LOG=" + log, "TREE=" + tree, "SUBMODULES=" + submodules, "WORKSPACE=" + r.dir,
 	}
-	for _, kv := range st.Env {
+	for _, kv := range stepEnv {
 		if _, v, _ := strings.Cut(kv, "="); strings.Contains(v, "${") {
 			continue
 		}
-		cmdEnv = append(cmdEnv, kv)
+		cmdEnv = append(cmdEnv, strings.ReplaceAll(kv, catalogCloneCredential, r.creds))
 	}
 	for k, v := range env {
 		cmdEnv = append(cmdEnv, k+"="+v)
@@ -885,5 +899,126 @@ func TestCloneStepCredentialIsRevokedAtTheEnd(t *testing.T) {
 	r = runCatalogClone(t, bb, "printf 'a\\n' > \"$CHECKOUT/a\"\n", "", map[string]string{"REPO_URL": bs.RepoURL}, map[string]string{"bitbucket.org": "fixture-token-1"})
 	if r.err != nil || len(r.calls(t, "curl")) != 0 {
 		t.Errorf("a Bitbucket clone calls curl: %v\n%s", r.err, r.out0)
+	}
+}
+
+// catalogGitHubSpec is the spec of an entry on GitHub, where the provider's
+// credential is an installation token the step that last reads it revokes.
+func catalogGitHubSpec(t *testing.T) CatalogBuildSpec {
+	t.Helper()
+	s := catalogBuildSpec(t)
+	s.GitProvider = gitprov.KindGitHub
+	s.RepoURL = "https://github.com/acme/app.git"
+	s.GitUser = ""
+	s.GitHubAppID = "12345"
+	return s
+}
+
+// TestBakedEntryBuildKeepsTheCredential is the failure check 390 found: the
+// bake stage imagebake composes into a definition is a RUN of that definition,
+// and it clones with the secret the entry's build step is handed. The request
+// took that secret — and the volume it lives in — out of the entry's build step
+// for every definition, and the clone step removed the credential file at its
+// own exit, so a definition that bakes cloned with nothing and answered
+// `could not read Username for 'https://github.com'`, a sentence naming neither
+// the credential nor the build that owed it.
+//
+// A definition that bakes keeps both, and the revoke moves with the file to the
+// step that reads it last — the entry's own build, whose template trap already
+// removes it at its exit. Every other definition is unchanged: the credential
+// reaches the clone step's build and no build of the entry's own (B8, F19,
+// D2311), and the clone step revokes and removes the file as it always has.
+func TestBakedEntryBuildKeepsTheCredential(t *testing.T) {
+	baked := catalogGitHubSpec(t)
+	baked.Baked = true
+	b, err := CatalogBuildRequest("proj-1234", baked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	build := step(t, b, "build")
+	script := strings.Join(build.Args, "\n")
+	if !strings.Contains(script, catalogTemplateCredentialArg) {
+		t.Errorf("the entry's build is handed no credential, so its bake stage clones with none: %q", script)
+	}
+	if !slices.ContainsFunc(build.Volumes, func(v *cloudbuild.Volume) bool {
+		return v.Name == "fugaro-creds" && v.Path == "/creds"
+	}) {
+		t.Errorf("the entry's build mounts no volume the credential lives in: %+v", build.Volumes)
+	}
+	for _, want := range []string{"CRED=" + catalogCloneCredential, "REPO_HOST=github.com", "GITHUB_API=" + github.DefaultBaseURL} {
+		if !slices.Contains(build.Env, want) {
+			t.Errorf("the entry's build does not carry %q, which the revoke it ends with reads: %v", want, build.Env)
+		}
+	}
+	if !everyDollarIsDoubled(script) {
+		t.Errorf("the entry's build step holds a dollar Cloud Build would substitute: %q", script)
+	}
+	// The file outlives the clone step for this definition, which means the
+	// clone step neither removes it nor revokes with it.
+	clone := step(t, b, catalogCloneStepID)
+	if got := strings.Join(clone.Args, "\n"); strings.Contains(got, "trap 'rm -f "+catalogCloneCredential+"' EXIT") {
+		t.Error("the clone step removes the credential a baked definition's own build step reads")
+	}
+	if got := catalogCloneScriptOf(t, clone); strings.Contains(got, "installation/token") {
+		t.Error("the clone step revokes a token the entry's build step is about to read")
+	}
+	// The entry's build step is the last to read it, so the revoke is its, and
+	// the template's own trap is what removes the file.
+	if !strings.Contains(script, "installation/token") {
+		t.Errorf("the entry's build step ends without revoking the token it read: %q", script)
+	}
+	if !strings.Contains(script, "rm -f "+catalogCloneCredential) {
+		t.Errorf("the entry's build step leaves the credential file behind: %q", script)
+	}
+	// And what it runs is a revoke: the token read back out of the store file
+	// the credential step wrote, decoded by git's own reader, into the private
+	// curl config — one call to GitHub's endpoint, and the token nowhere in the
+	// step's arguments or output.
+	i := strings.Index(script, "tok=$$(")
+	if i < 0 {
+		t.Fatalf("the entry's build step carries no revoke: %q", script)
+	}
+	r := runCatalogShell(t, strings.ReplaceAll(script[i:], "$$", "$"), build.Env, "", "",
+		nil, map[string]string{"github.com": "fixture%2Ftoken-1"})
+	if r.err != nil {
+		t.Fatalf("the entry's build step revoke failed: %v\n%s", r.err, r.out0)
+	}
+	calls := r.calls(t, "curl")
+	if len(calls) != 1 {
+		t.Fatalf("the entry's build step made %d curl calls, want the one revoke: %v", len(calls), calls)
+	}
+	if !slices.Contains(calls[0], github.DefaultBaseURL+"/installation/token") || !slices.Contains(calls[0], "DELETE") {
+		t.Errorf("the entry's build step does not revoke at GitHub's endpoint: %v", calls[0])
+	}
+	data, err := os.ReadFile(filepath.Join(r.dir, "log", "curl-config"))
+	if err != nil {
+		t.Fatalf("the revoke was handed no config: %v", err)
+	}
+	if want := "header = \"Authorization: Bearer fixture/token-1\"\n"; string(data) != want {
+		t.Errorf("the curl config = %q, want %q", data, want)
+	}
+	if strings.Contains(string(r.out0), "fixture") {
+		t.Fatalf("the entry's build step printed the token: %s", r.out0)
+	}
+
+	// Every other definition: the credential is the clone step's alone.
+	plain := catalogGitHubSpec(t)
+	pb, err := CatalogBuildRequest("proj-1234", plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pbuild := step(t, pb, "build")
+	if got := strings.Join(pbuild.Args, "\n"); strings.Contains(got, "id=git-credentials") {
+		t.Errorf("an entry that bakes nothing is still handed the credential: %q", got)
+	}
+	if len(pbuild.Volumes) != 0 {
+		t.Errorf("an entry that bakes nothing mounts the volume the credential lives in: %+v", pbuild.Volumes)
+	}
+	pclone := step(t, pb, catalogCloneStepID)
+	if got := strings.Join(pclone.Args, "\n"); !strings.Contains(got, "trap 'rm -f "+catalogCloneCredential+"' EXIT") {
+		t.Error("the clone step leaves the credential file for a build that mounts no secret")
+	}
+	if got := catalogCloneScriptOf(t, pclone); !strings.Contains(got, "installation/token") {
+		t.Error("the clone step of an entry that bakes nothing does not revoke the token it read")
 	}
 }
