@@ -521,10 +521,14 @@ func (d *orchestratorDaemon) updateDue(ctx context.Context) (bool, error) {
 // caller is what does the holding.
 //
 // The read goes through versionstamp.Source, so the cache rule is the CLI's one
-// rule — the stamp at start and at every tick, and at most one database read
-// per quarter hour (D3263) — and the fail-open rule is the CLI's too: a
-// database that cannot be read is one line and a daemon that drives on
-// (D3264), and only a stamp that is really above this binary stops it.
+// rule (D3263) and the fail-open rule is the CLI's too: a database that cannot
+// be read is one line and a daemon that drives on (D3264), and only a stamp
+// that is really above this binary stops it. The cache bounds this to one read
+// per quarter hour once the node is there; a project whose node is absent
+// caches nothing — a read that finds no stamp removes the entry, so that a node
+// somebody deleted cannot go on refusing from a fresh one — and until that
+// project's first post-L1 `fugaro update` writes it, this is one read a cycle
+// (the 30s interval), not one a quarter hour.
 //
 // A stamp that is present and malformed is the one case a read fails closed
 // (T1): the sentence names the node and the one thing that repairs it, and the

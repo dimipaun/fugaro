@@ -102,6 +102,149 @@ func TestDaemonBelowTheStampHoldsUnderAUnit(t *testing.T) {
 	}
 }
 
+// TestDaemonMalformedStampHolds: a stamp that is present and malformed is the
+// one read this fence may not fail open on (T1), and the daemon is no exception
+// to it: the node is one somebody meant and this binary cannot read, so driving
+// the project from it is what the package's sentence exists to prevent. That
+// sentence — the node and the one thing that repairs it — is what the person
+// gets, followed by the hold every other stop under a unit gets and never an
+// exit (R7).
+func TestDaemonMalformedStampHolds(t *testing.T) {
+	f := newDaemonFixture(t)
+	binary := stubBinary(t, t.TempDir(), "fugaro", "echo v9.9.9")
+	d, out := f.daemon(t, binary)
+	// The real error, not a stand-in: the sentence is the package's own, and a
+	// test that spelled its own would pin nothing about what the person reads.
+	_, _, err := versionstamp.Decode([]byte(`{"schema":2,"min":"9.9.9","set_at":"2026-11-23T09:00:00Z"}`))
+	if err == nil {
+		t.Fatal("a stamp a later release wrote must be a read this binary refuses")
+	}
+	d.stamp = &fakeRequiredCLI{err: err}
+	waits := 0
+	d.wake = func(context.Context) error {
+		waits++
+		if waits > 1 {
+			f.cancel()
+		}
+		return nil
+	}
+	before := f.db.Value(f.statePath(t))
+
+	if err := d.start(f.ctx); err != nil {
+		t.Fatalf("a daemon holding over a malformed stamp returned %v", err)
+	}
+	if !strings.Contains(out.String(), "holds a stamp this fugaro cannot read") {
+		t.Errorf("the malformed stamp's own sentence is missing: %q", out.String())
+	}
+	if !strings.Contains(out.String(), versionstamp.Path) {
+		t.Errorf("the sentence must name the node the person has to look at: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "holding instead of exiting") {
+		t.Errorf("a daemon under a unit must hold on a stamp it cannot read rather than exit: %q", out.String())
+	}
+	if after := f.db.Value(f.statePath(t)); !reflect.DeepEqual(before, after) {
+		t.Errorf("a daemon stopped by a malformed stamp wrote the state node:\nafter  %v\nbefore %v", after, before)
+	}
+	if execs := f.run.Executions(); len(execs) != 0 {
+		t.Errorf("a daemon stopped by a malformed stamp started %d execution(s)", len(execs))
+	}
+	state, err := d.lease.Read(context.Background())
+	if err != nil {
+		t.Fatalf("reading the lease node: %v", err)
+	}
+	if state.Held || state.Holder != "" {
+		t.Errorf("the lease names %q, and a daemon that claimed nothing before its first read cannot hold it", state.Holder)
+	}
+}
+
+// TestDaemonUnreadableStampDrivesOn: a database that cannot be read is not an
+// installation that is above this binary, and D3264 is explicit that a read
+// fails open — one line saying why, and a daemon that drives on. Nothing was
+// read to stop on, and a daemon that stopped here would stop the project's
+// orchestrator over a network the next tick may find.
+func TestDaemonUnreadableStampDrivesOn(t *testing.T) {
+	f := newDaemonFixture(t)
+	d, out := f.running(t, "")
+	d.stamp = &fakeRequiredCLI{res: versionstamp.Result{Origin: versionstamp.OriginNone, Reason: "the database could not be reached"}}
+	waits := 0
+	d.wake = func(context.Context) error {
+		waits++
+		if waits > 2 {
+			f.cancel()
+			return context.Canceled
+		}
+		return nil
+	}
+
+	if err := d.loop(f.ctx); err != nil {
+		t.Fatalf("the daemon returned %v over a stamp it could not read", err)
+	}
+	if waits != 3 {
+		t.Fatalf("the daemon waited %d times, want the three cycles this test ended it after: a read that failed is not a reason to stop driving", waits)
+	}
+	if !strings.Contains(out.String(), "could not be read, so this daemon drives on") {
+		t.Errorf("the failed read was not the one line it owes: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "the database could not be reached") {
+		t.Errorf("the line must name why the read failed: %q", out.String())
+	}
+	if strings.Contains(out.String(), "requires fugaro") {
+		t.Errorf("a read that failed is not a stamp above this binary: %q", out.String())
+	}
+}
+
+// TestDaemonMidRunUnderAUnitHolds: the stamp rises under a daemon a unit started,
+// and there the stop is a hold like any other — the unit starts this binary again
+// after any exit, so the line says holding and not stopping, and nothing exits
+// cleanly until the binary at the unit's path has moved on. The hold is what the
+// test ends, so what it pins is that the wording and the behaviour agree: the
+// daemon does not leave while the unit's binary is still this one.
+func TestDaemonMidRunUnderAUnitHolds(t *testing.T) {
+	f := newDaemonFixture(t)
+	binary := stubBinary(t, t.TempDir(), "fugaro", "echo "+runningVersion)
+	d, out := f.running(t, binary)
+	st := &fakeRequiredCLI{}
+	d.stamp = st
+	waits := 0
+	d.wake = func(context.Context) error {
+		waits++
+		switch waits {
+		case 1:
+			// The admin's update lands while this daemon waits between cycles.
+			st.set(requiredCLI(t, "9.9.9"))
+			return nil
+		case 2:
+			// The hold's own wait: the unit's binary has not moved yet.
+			return nil
+		}
+		f.cancel()
+		return context.Canceled
+	}
+
+	if err := d.loop(f.ctx); err != nil {
+		t.Fatalf("the daemon returned %v where the stamp rising is a clean stop", err)
+	}
+	if waits != 3 {
+		t.Fatalf("the daemon waited %d times, want the one cycle, the one hold wait and the cancel that ended it", waits)
+	}
+	if !strings.Contains(out.String(), "requires fugaro 9.9.9") {
+		t.Errorf("the daemon did not name the stamp that rose under it: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "holding instead of exiting") {
+		t.Errorf("under a unit the stop is a hold, and the line must say so: %q", out.String())
+	}
+	if strings.Contains(out.String(), "exiting cleanly") {
+		t.Errorf("the daemon exited cleanly while the unit's binary was still this one, so the unit would start the same old binary again: %q", out.String())
+	}
+	held, err := d.lease.Read(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if held.Held || held.Holder != "" {
+		t.Errorf("the lease names %q after the stamp rose, and a daemon that holds drives nothing", held.Holder)
+	}
+}
+
 // TestDaemonOnceBelowTheStampExits: --once is one cycle by its own contract,
 // and a foreground run with no --binary is nobody's unit — nothing starts it
 // again — so both exit 0 below the stamp, exactly as they do when an update is
