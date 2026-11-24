@@ -202,7 +202,11 @@ case "$verb $sub" in
     ;;
   delete)
     must folder-delete-status folderdelete
-    printf 'Deleted [%s].\n' "${pos[3]:-}"
+    # Google's own answer while a project under the folder is still pending
+    # deletion. The fake used to print `Deleted [...]`, which hid a teardown whose
+    # folder deletes could never succeed on a real run.
+    printf 'ERROR: (gcloud.resource-manager.folders.delete) FAILED_PRECONDITION: the folder %s cannot be deleted while it holds a project pending deletion\n' "${pos[3]:-}" >&2
+    exit 1
     ;;
   *)
     printf 'fake gcloud: unexpected folders verb %s\n' "$arg" >&2
@@ -443,9 +447,13 @@ test_the_happy_path() {
   expect_contains "$calls" "--assertion-key chk720-not-a-key" "the pin's key is the check's own placeholder"
   # The add's second run is the one the link hands back.
   expect_count "$dir/CALLS" "workspace project add" 2 "the happy path"
-  # The teardown deleted what the check made, and both folders.
+  # The teardown deleted the three projects and issued NO folder delete: a folder
+  # delete while the projects under it are still in DELETE_REQUESTED cannot
+  # succeed, so the row leaves both folders, says why, and names the commands.
   expect_count "$dir/GCALLS" "gcloud --quiet projects delete" 3 "the happy path"
-  expect_count "$dir/GCALLS" "gcloud --quiet resource-manager folders delete" 2 "the happy path"
+  expect_count "$dir/GCALLS" "resource-manager folders delete" 0 "the happy path"
+  expect_contains "$out" "are left behind, and that is on purpose" "the happy path: the folders are left on purpose"
+  expect_contains "$out" "gcloud resource-manager folders delete" "the happy path: the row names the folder commands"
   # The check's own working directory is gone and its config root was its own.
   expect_contains "$out" "its whole XDG_CONFIG_HOME" "the happy path"
 }

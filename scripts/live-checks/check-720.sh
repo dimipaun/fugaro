@@ -35,7 +35,11 @@
 # boring-cost baseline behind them (the credentials service, the images, the
 # daily check), plus a test folder and a third project with no parent. That is
 # real money until the projects are deleted, which is what the `teardown` row
-# does at the end (and `--keep` does not). Nothing of YOUR machine's
+# does at the end (and `--keep` does not). The two folders are NOT deleted: a
+# project spends about 30 days in DELETE_REQUESTED, Resource Manager refuses a
+# folder delete while one under it is in that state, and a folder costs nothing —
+# the row names the commands for you to run once the projects are really gone.
+# Nothing of YOUR machine's
 # installations is read or written: the check's entire config root is its own
 # scratch directory (XDG_CONFIG_HOME), so `fugaro` cannot see a config of yours,
 # and the projects it moves are the ones it created itself.
@@ -156,7 +160,9 @@ Usage:
 It writes nothing of yours: its config root is its own directory, so no
 installation of this machine is read or changed. It creates real GCP projects
 (they cost money until the teardown row deletes them) and deletes every project
-and folder it created unless --keep is given.
+it created unless --keep is given. It leaves the two folders it made: a folder
+cannot be deleted while a project under it is still in DELETE_REQUESTED, so the
+teardown row names the commands to run about 30 days later.
 
   PASS (exit 0)  FAIL (exit 1)  INCOMPLETE (exit 2 stopped, exit 3 unverified)
 USAGE
@@ -332,7 +338,9 @@ Check 720 plan (--dry-run: nothing below is called)
   steps               workspace init, project add, workspace add, project link,
                       project add (again), project rm, project unlink
   U8                  an owner grant by API for ${GRANTEE:-<the account gcloud is authenticated as>} on $NOORG
-  teardown            both projects, the no-org project and the test folder are deleted
+  teardown            both projects and the no-org project are deleted; the two
+                      folders are left (a folder cannot be deleted before the
+                      projects under it leave Google's ~30-day delete queue)
   config root         $CONFIG_HOME (this check's own; no installation of this machine is read)
 PLAN
 }
@@ -910,22 +918,18 @@ else
       left="${left}${left:+, }$p"
     fi
   done
-  if g_do resource-manager folders delete "$FOLDER" >/dev/null 2>&1; then
-    deleted="${deleted}${deleted:+, }$FOLDER"
+  if [ -n "$left" ]; then
+    fact teardown FAIL "these were NOT deleted and are still costing money: $left (deleted: $deleted). Delete them yourself: gcloud projects delete <id>"
   else
-    left="${left}${left:+, }$FOLDER"
-  fi
-  if [ -n "$WS_FOLDER" ]; then
-    if g_do resource-manager folders delete "$WS_FOLDER" >/dev/null 2>&1; then
-      deleted="${deleted}${deleted:+, }$WS_FOLDER (the workspace's own)"
-    else
-      left="${left}${left:+, }$WS_FOLDER (the workspace's own)"
-    fi
-  fi
-  if [ -z "$left" ]; then
-    fact teardown PASS "every project and folder this check created was deleted: $deleted. A GCP project spends a while in DELETE_REQUESTED before it is gone, and that is Google's own queue, not this check's"
-  else
-    fact teardown FAIL "these were NOT deleted and are still costing money: $left (deleted: $deleted). Delete them yourself: gcloud projects delete <id>, gcloud resource-manager folders delete <id>"
+    # NO folder delete is issued, deliberately. A project spends about 30 days in
+    # DELETE_REQUESTED before it is gone, and Resource Manager refuses to delete a
+    # folder while any project under it is still in that state — so a folder delete
+    # issued here can only fail, and a FAIL row for a call that cannot succeed would
+    # make the check unable to pass however right its moves are. Folders cost
+    # nothing; the row names the commands to run once the projects are really gone.
+    folders="$FOLDER"
+    [ -n "$WS_FOLDER" ] && folders="$folders, $WS_FOLDER (the workspace's own)"
+    fact teardown PASS "every project this check created was deleted: $deleted. These folders are left behind, and that is on purpose: $folders. A project spends about 30 days in DELETE_REQUESTED before it is really gone, Resource Manager refuses to delete a folder while a project under it is still in that state, and folders themselves cost nothing. Once the projects are gone, delete each with \`gcloud resource-manager folders delete <id>\`"
   fi
 fi
 
