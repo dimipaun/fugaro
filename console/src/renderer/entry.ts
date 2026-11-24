@@ -140,6 +140,8 @@ import type {
 } from './screens/spend'
 import { cacheInvalidator } from './cache-invalidate'
 import type { CacheScope } from './cache-invalidate'
+import { prewarm } from './prewarm'
+import type { PrewarmTab } from './prewarm'
 import {
   BUSY_SLOT_CLASS,
   CACHE_FRESH_MS,
@@ -3330,6 +3332,21 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * for a section nobody is looking at the moment the run is left. */
   let leaveRun: () => void = () => undefined
 
+  /** startPrewarm is the queue that reads the other tabs into their caches once
+   * the tab on screen has been painted (PW1, D2906). It is a door of the same
+   * kind as the four above: the reads it starts belong to the sections below it
+   * -- they are `bridge` calls and the tabs' own caches -- and the navigation
+   * that owns the first paint is written above every screen. `drawLive` calls
+   * it, and it is a variable here for the reason the doors are. */
+  let startPrewarm: () => void = () => undefined
+
+  /** prewarmed is whether that queue has already run for this installation. It
+   * is started from the Live screen's first paint, and `drawLive` runs on every
+   * poll tick -- so the flag is what keeps the console's reads for the *other*
+   * tabs to once. `forgetLive` clears it with the rest of the installation's
+   * state, because the caches it filled are that installation's. */
+  let prewarmed = false
+
   /** show switches the panel to one view. The Live screen is not re-read here --
    * its model is the one the last poll drew, which is the point of a live
    * screen -- and the other three read on entry. The Live screen's **rigor join**
@@ -3577,43 +3594,59 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // would replace the screen they did open. The interval is stopped by
     // `syncPolling`; this is the read that was already on its way.
     if (currentView !== 'live') return
-    const answer = replyData(reply)
-    if (!answer.ok) {
-      rail.setState('silent')
-      refuse('live.watch', answer.sentence, () => void pollLive())
-      return
+    /** paintLive puts this answer on the panel: the frame, or the refusal for a
+     * read the console could not make. It is a closure of its own so that the
+     * prewarm below follows **every** first paint -- a console whose feed refused
+     * has painted its active tab just as one whose frame landed has, and the tabs
+     * it is not showing are read for it the same way. */
+    const paintLive = (): void => {
+      const answer = replyData(reply)
+      if (!answer.ok) {
+        rail.setState('silent')
+        refuse('live.watch', answer.sentence, () => void pollLive())
+        return
+      }
+      const envelope = answer.data as Record<string, unknown>
+      live.reply = reply
+      const decoded = decodeSnapshot(envelope['document'], 'live.watch')
+      if (!decoded.ok) {
+        rail.setState('silent')
+        refuse('live.watch', decoded.skew.because, () => void pollLive())
+        return
+      }
+      const feed = feedHealthOf(envelope['receivedAt'], nowStamp())
+      // The rail's state word is this read's own: the console is reading this
+      // installation now (`running`), unless the frame it holds has gone quiet --
+      // which is the second of the two conditions the design gives `silent`
+      // (section 4.1). A read that was refused sets it above.
+      rail.setState(feed.stale ? 'silent' : 'running')
+      const model = buildLiveModel(decoded.value, history, feed, live.rigor, hourHistory)
+      setGauge({ notionalUsd: model.total.notionalUsd, countedUsd: model.total.countedUsd, capUsd: model.total.dailyCapUsd })
+      // The kill banner is the `kill` view. It is asked for through the gate --
+      // the one door -- with an empty drawing, because what a reduced console
+      // withholds here is not a screen but one panel of the Live screen: the
+      // answer decides whether the model the screen is handed carries the kill
+      // state at all.
+      const mayDrawKill = gate.drawScreen('kill', () => undefined) === 'drawn'
+      // The caps are the second view this screen withholds (`caps` beside `kill`
+      // above), and the answer travels the same way the kill banner's does: as a
+      // model the screen is handed, so a figure the gate withheld is one the
+      // gauge cannot draw back later.
+      const drawn = renderLive(factory, mayDrawKill ? model : killWithheld(model), theme, hidesView(gate.compatibility, 'caps'))
+      live.drawn = drawn
+      replace(drawn)
+      wireRuns(drawn, model)
+      placeLaunch()
     }
-    const envelope = answer.data as Record<string, unknown>
-    live.reply = reply
-    const decoded = decodeSnapshot(envelope['document'], 'live.watch')
-    if (!decoded.ok) {
-      rail.setState('silent')
-      refuse('live.watch', decoded.skew.because, () => void pollLive())
-      return
-    }
-    const feed = feedHealthOf(envelope['receivedAt'], nowStamp())
-    // The rail's state word is this read's own: the console is reading this
-    // installation now (`running`), unless the frame it holds has gone quiet --
-    // which is the second of the two conditions the design gives `silent`
-    // (section 4.1). A read that was refused sets it above.
-    rail.setState(feed.stale ? 'silent' : 'running')
-    const model = buildLiveModel(decoded.value, history, feed, live.rigor, hourHistory)
-    setGauge({ notionalUsd: model.total.notionalUsd, countedUsd: model.total.countedUsd, capUsd: model.total.dailyCapUsd })
-    // The kill banner is the `kill` view. It is asked for through the gate --
-    // the one door -- with an empty drawing, because what a reduced console
-    // withholds here is not a screen but one panel of the Live screen: the
-    // answer decides whether the model the screen is handed carries the kill
-    // state at all.
-    const mayDrawKill = gate.drawScreen('kill', () => undefined) === 'drawn'
-    // The caps are the second view this screen withholds (`caps` beside `kill`
-    // above), and the answer travels the same way the kill banner's does: as a
-    // model the screen is handed, so a figure the gate withheld is one the
-    // gauge cannot draw back later.
-    const drawn = renderLive(factory, mayDrawKill ? model : killWithheld(model), theme, hidesView(gate.compatibility, 'caps'))
-    live.drawn = drawn
-    replace(drawn)
-    wireRuns(drawn, model)
-    placeLaunch()
+    paintLive()
+    // The tab on screen has been painted -- with the frame this read read, or
+    // with the refusal for the frame it could not -- and that is the moment the
+    // console reads for the tabs it is *not* showing (PW1, D2906). It is here
+    // rather than in `pollLive` because this is the paint: a poll that found
+    // another view on screen painted nothing, and starts nothing. The queue runs
+    // once per installation (`prewarmed`), which is what keeps the cadence's own
+    // repeats from re-reading the other tabs.
+    startPrewarm()
   }
 
   /**
@@ -5268,6 +5301,24 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * so a view read for one installation is never drawn under another. */
   const spendViews = resultCache<SpendModel>(CACHE_LIMIT)
 
+  /** reportReader is the report's whole-document read -- the fallback RS5's
+   * stream hands over to when the feed cannot be asked (`readReportStream`'s
+   * `report`). It is at the entry's scope and not inside `showSpend` because the
+   * prewarm queue reads the same command, and one closure over `bridge` is the
+   * read both callers want: a refusal travels on a thrown value, which is how
+   * `refusalSentence` reads it (`cause.sentence`, the shape `CliSource` throws),
+   * so a read the console could not make at all is drawn with *that* sentence
+   * rather than as a CLI refusal that printed nothing.
+   *
+   * **The visit's tokens are not its business.** Which answer stays and which
+   * mark comes down belong to the section that asked (`spendReportRead`), so a
+   * reader shared by two callers holds no state at all. */
+  const reportReader: SpendReader = async (args) => {
+    const answer = documentOf(await bridge.runReport(args))
+    if (!answer.ok) throw { sentence: answer.sentence }
+    return answer.data
+  }
+
   /** spendCapsRead and spendReportRead are the two sections' read lifecycles:
    * each has its own busy mark, its own sequence token and its own refusal, so a
    * slow report cannot take the caps' mark down and a control change cannot make
@@ -5357,17 +5408,6 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * read that is really in flight. */
     let reportToken = 0
     let capsToken = 0
-
-    const reader: SpendReader = async (args) => {
-      const answer = documentOf(await bridge.runReport(args))
-      // The sentence travels on the thrown value, which is how `readSpend`
-      // reads a refusal (`refusalSentence` takes `cause.sentence`, the shape
-      // `CliSource` throws). A read the console could not make at all -- a
-      // rejection, an answer that is not a reply -- must be drawn with *that*
-      // sentence, not as a read the CLI refused and printed nothing for.
-      if (!answer.ok) throw { sentence: answer.sentence }
-      return answer.data
-    }
 
     // The by-person read is the same shape over `statsRuns`, and its refusal is
     // the panel's alone: `readSpend` turns a throw here into the panel's own
@@ -5537,7 +5577,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     const loadReport = async (readWith: SpendControls, token: number): Promise<void> => {
       const outcome = await readReportStream({
         stream: (args) => ops.streamSpend(args),
-        report: (args) => reader(args),
+        report: reportReader,
         controls: readWith,
         // The caps are handed over for the model's own `caps` field, which the
         // report section does not draw: the caps are their own section, and this
@@ -7786,6 +7826,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * the frame and the burn history of an installation that is gone. */
   const forgetLive = (): void => {
     live.drawn = null
+    // The prewarm queue belonged to the installation being left, and the caches
+    // it filled are dropped below with the rest of that installation's state:
+    // the next one is read afresh, which is a queue of its own.
+    prewarmed = false
     live.rigor = new Map()
     live.rigorAt = 0
     history = new BurnHistory()
@@ -7978,6 +8022,134 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       return
     }
     void choose(row.project)
+  }
+
+  // ---- The prewarm queue (PW1, D2906) -----------------------------------
+
+  /**
+   * prewarmGraph reads the Graph tab's primary section -- the plan the canvas is
+   * drawn from, and the run list a node's door comes from -- and caches the pair
+   * `readGraph` and `decorateRuns` cache, under the same key.
+   *
+   * **The plan scope is the one scope it reads, and H9's fallback is not made
+   * from here.** A console that opens on the coordinator scope because the plan
+   * of its installation cannot be read is answering a drawing the operator is
+   * looking at; a tab nobody is on has no drawing to save, so a refused plan
+   * leaves the Graph cold and its own visit makes the read and, if it is that
+   * refusal, the trip.
+   *
+   * **A read that fails caches nothing at all.** A view served from this cache
+   * is stamped and, while it is younger than `CACHE_FRESH_MS`, is not re-read
+   * (`showGraph`), so half a Graph -- a canvas with no doors, cached out of a run
+   * list that was refused -- would be a picture the operator's own visit draws
+   * and does not correct.
+   */
+  const prewarmGraph = async (still: () => boolean): Promise<void> => {
+    const plan = documentOf(await bridge.planStatus({ all: true }))
+    if (!plan.ok) return
+    const decoded = decodePlanStatus(plan.data, 'plan.status')
+    if (!decoded.ok) return
+    const listed = documentOf(await bridge.listRuns({ since: RUNS_SINCE }))
+    if (!listed.ok) return
+    if (!still()) return
+    graphViews.put(graphKey(), { document: decoded.value, runs: runIdsIn(listed.data) }, Date.now())
+    // **The cadence is stamped too**, and it is not the cache's own age: the age
+    // says what the *view* is worth, and `graph.readAt` is what
+    // `maybeRefreshGraph` measures the next read from. A cached Graph whose
+    // entry was not read in this tab would leave the tab reading the plan again
+    // on the first tick it is entered -- the warm view served and then
+    // immediately replaced, which is what the queue exists to avoid.
+    graph.readAt = Date.now()
+  }
+
+  /**
+   * prewarmSpend reads the Spend tab's primary section: the report, with the
+   * three controls a visit opens on (`SPEND_DEFAULT_CONTROLS` -- `showSpend`
+   * starts there on every visit, so this key is the one the operator's first
+   * visit looks up).
+   *
+   * **It is the tab's own streamed read** (`readReportStream`, RS5's path), so
+   * what the queue warms is what a visit warms: where the feed cannot be asked
+   * -- no handler, a CLI below the feed's floor, a refusal -- that same read is
+   * the whole `report --json` document, and the model is built from it either
+   * way. The caps are handed over exactly as the visit hands them over, for the
+   * model's own `caps` field; the caps themselves are their own section and
+   * their own read, and no cache holds them.
+   */
+  const prewarmSpend = async (still: () => boolean, project: string): Promise<void> => {
+    const outcome = await readReportStream({
+      stream: (args) => ops.streamSpend(args),
+      report: reportReader,
+      controls: SPEND_DEFAULT_CONTROLS,
+      caps: spendBudget,
+      project,
+      withheld: hidesView(gate.compatibility, 'spend'),
+    })
+    if (outcome.status !== 'complete') return
+    if (still()) spendViews.put(spendViewKey(project, SPEND_DEFAULT_CONTROLS), outcome.model, Date.now())
+  }
+
+  /**
+   * prewarmProjects reads the Projects tab's primary section: the whole
+   * `budget show --json` document, which is the one thing that tab's cache
+   * holds. **It is the whole document and not `budget show --stream`**, because
+   * a streamed view is deliberately never cached (RS5): a cache hit is drawn as
+   * a whole document, and the members the feed does not carry would come back as
+   * absences the console could not account for. So the read that fills this
+   * cache is the document's own, exactly as the visit's fallback makes it -- and
+   * where that read is refused this tab stays cold and its own visit draws the
+   * refusal.
+   */
+  const prewarmProjects = async (still: () => boolean, project: string): Promise<void> => {
+    const answer = documentOf(await bridge.showBudget({}))
+    if (!answer.ok) return
+    if (still()) projectsViews.put(cacheKey([project, 'projects']), answer.data, Date.now())
+  }
+
+  /**
+   * startPrewarm is the queue the Live screen's first paint leaves behind: after
+   * the tab on screen has been drawn, the console reads each **other** tab's
+   * primary section into its cache, one read at a time, in the order the
+   * navigation offers them (`prewarm`, `src/renderer/prewarm.ts`; PW1, D2906).
+   * The operator's first switch to one of those tabs then draws a view this
+   * session already read -- stamped `as of`, like any other cached view -- and
+   * re-reads it in the background on the cache's own rule.
+   *
+   * **The generation is read here and not claimed.** A door claims when the
+   * view changes; this one does not change it, and claiming would cancel the
+   * read the operator's own press started a moment before -- a switch landing
+   * between that press and this tick's paint would draw nothing at all. What the
+   * queue holds is the generation it saw, and `still` is how it asks whether
+   * that is still the view on screen: every tab switch and every installation
+   * switch claims, so one check answers for both.
+   *
+   * **Live is not in the list**, and there is nothing for it to be: the tab on
+   * screen is the one this queue follows, its model is the poll's own read, and
+   * the feed the other views read is not something a second reader warms. The
+   * Coordinator is not in it either -- it keeps no session cache at all, so
+   * there is no view to warm (`showCoordinator`).
+   *
+   * **Every first paint starts it, a refusal included**: a console whose own
+   * feed could not be read has still drawn its active tab, and the tabs it is
+   * not showing are sections of their own -- so `drawLive` starts the queue on
+   * that door too, and what a reduced console or one whose CLI version is
+   * refused does instead is read by `prewarm` itself, which asks the mode.
+   */
+  startPrewarm = (): void => {
+    if (prewarmed) return
+    prewarmed = true
+    const watching = generation
+    const still = (): boolean => generation === watching
+    // The project is the open row's, read once: an installation switch moves the
+    // generation, which is what stops the queue -- so this name is either the
+    // installation the queue was started for or a read that caches nothing.
+    const project = railNow.find((row) => row.open)?.project ?? ''
+    const tabs: readonly PrewarmTab[] = [
+      { id: 'graph', read: () => prewarmGraph(still) },
+      { id: 'spend', read: () => prewarmSpend(still, project) },
+      { id: 'projects', read: () => prewarmProjects(still, project) },
+    ]
+    void prewarm({ mode: gate.compatibility.mode, active: currentView, still, tabs })
   }
 
   // ---- The first read ---------------------------------------------------

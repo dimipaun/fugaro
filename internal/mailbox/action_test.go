@@ -79,6 +79,46 @@ func TestConfirmConstantsMatchTheSharedModule(t *testing.T) {
 		}
 	}
 
+	// D2786's session policy, which `shared/confirm/policy.js` owns: the two
+	// values the ruling reads, their defaults (P6's `mobile.costly_modes` and
+	// `mobile.biometric_on_costly`) and C2's bounds for them. Each is read out of
+	// the module, so a default moved on one side fails here.
+	policy := readSharedFile(t, "confirm", "policy.js")
+	if got := jsList(t, policy, jsPolicyCostlyModes, "DEFAULT_COSTLY_MODES"); !sameStrings(got, ConfirmDefaultCostlyModes) {
+		t.Errorf("ConfirmDefaultCostlyModes is %v, the module's DEFAULT_COSTLY_MODES is %v", ConfirmDefaultCostlyModes, got)
+	}
+	if m := jsPolicyBiometric.FindSubmatch(policy); m == nil {
+		t.Fatal("shared/confirm/policy.js no longer declares DEFAULT_BIOMETRIC_ON_COSTLY in a shape this test reads")
+	} else if got := string(m[1]) == "true"; got != ConfirmDefaultBiometricOnCostly {
+		t.Errorf("ConfirmDefaultBiometricOnCostly is %v, the module's is %v", ConfirmDefaultBiometricOnCostly, got)
+	}
+	if got := jsProduct(t, policy, jsPolicyMaxCostlyModes, "MAX_COSTLY_MODES"); got != ConfirmMaxCostlyModes {
+		t.Errorf("ConfirmMaxCostlyModes is %d, the module's is %d", ConfirmMaxCostlyModes, got)
+	}
+	if got := jsProduct(t, policy, jsPolicyMaxModeLength, "MAX_MODE_LENGTH"); got != ConfirmMaxModeLen {
+		t.Errorf("ConfirmMaxModeLen is %d, the module's is %d", ConfirmMaxModeLen, got)
+	}
+	// A pending read-back may hold the destructive verbs and D2786's costly
+	// start, which is the module's own composition of the two.
+	if !jsConfirmPendingVerbs.Match(confirm) {
+		t.Fatal("shared/confirm/index.js no longer composes PENDING_VERBS out of DESTRUCTIVE_VERBS and VERB.LAUNCH")
+	}
+	pending := append(append([]string{}, jsList(t, confirm, jsConfirmDestructiveVerbs, "DESTRUCTIVE_VERBS")...), ConfirmVerbLaunch)
+	if !sameStrings(pending, ConfirmPendingVerbs) {
+		t.Errorf("ConfirmPendingVerbs is %v, the module's PENDING_VERBS is %v", ConfirmPendingVerbs, pending)
+	}
+	kindBlock := jsConfirmTargetKindBlock.FindSubmatch(confirm)
+	if kindBlock == nil {
+		t.Fatal("shared/confirm no longer declares a TARGET_KIND table this test can read")
+	}
+	kinds := map[string]string{}
+	for _, m := range jsRefusalEntry.FindAllSubmatch(kindBlock[1], -1) {
+		kinds[string(m[1])] = string(m[2])
+	}
+	if got := kinds["MODE"]; got != ConfirmTargetMode {
+		t.Errorf("ConfirmTargetMode is %q, the module's TARGET_KIND.MODE is %q", ConfirmTargetMode, got)
+	}
+
 	// P6.5's prompt vocabulary: the cap and the two replies. (The TTL itself is
 	// internal/cli's: TestMailboxPromptTtlIsTheModulesNumber holds it.)
 	if got := jsProduct(t, prompts, jsPromptsMaxPending, "DEFAULT_MAX_PENDING"); got != int64(ConfirmMaxPrompts) {
@@ -600,6 +640,41 @@ func TestConfirmValidateActionBindsTheHeadReadBack(t *testing.T) {
 	}
 }
 
+// TestConfirmRefusesAStateThatDoesNotSayWhatIsCostly: the module refuses a
+// state whose `costlyModes` is missing (`missing-field/costlyModes`), and a port
+// that read a nil list as "no mode is costly" would fail open on the worst
+// answer: a costly start would pass through with no read-back while the phone
+// asked for one. A state that *names* no costly mode is the empty list, which is
+// read as what it says.
+func TestConfirmRefusesAStateThatDoesNotSayWhatIsCostly(t *testing.T) {
+	state, refusal := ConfirmInitialState(ConfirmOptions{Now: testNow})
+	if refusal != nil {
+		t.Fatalf("the empty machine was refused: %s", refusal.Code)
+	}
+	launch := ConfirmEvent{
+		Type: ConfirmEventCommand, Now: testNow + 1000,
+		UtteranceID: "utt-1", Text: "kick off the docs job in pro mode",
+		Verb: ConfirmVerbLaunch, Mode: "pro", HasMode: true,
+		ActionID: "act-1", HasActionID: true,
+	}
+
+	state.CostlyModes = nil
+	if answer := ConfirmStep(state, launch); answer.OK || answer.Code != CodeMissingField || answer.Field != "costlyModes" {
+		t.Errorf("a state with no costly mode list was answered: ok=%v code=%s field=%s, want %s/%s",
+			answer.OK, answer.Code, answer.Field, CodeMissingField, "costlyModes")
+	}
+
+	// A start that is not costly is a plain start, which carries no action id:
+	// it is the same event the machine passes through with no read-back.
+	plain := launch
+	plain.ActionID, plain.HasActionID = "", false
+	state.CostlyModes = []string{}
+	if answer := ConfirmStep(state, plain); !answer.OK || answer.Outcome != ConfirmOutcomePassThrough {
+		t.Errorf("a session that calls no mode costly did not pass the start through: ok=%v outcome=%s code=%s",
+			answer.OK, answer.Outcome, answer.Code)
+	}
+}
+
 func openTestMemory(t *testing.T, path string, cap int) *ConfirmMemory {
 	t.Helper()
 	m, err := OpenConfirmMemory(ConfirmMemoryOptions{
@@ -625,9 +700,16 @@ func sameStrings(left, right []string) bool {
 
 func readSharedModule(t *testing.T, name string) []byte {
 	t.Helper()
-	body, err := os.ReadFile(filepath.Join("..", "..", "shared", name, "index.js"))
+	return readSharedFile(t, name, "index.js")
+}
+
+// readSharedFile reads one file of one shared module, for a value the module
+// keeps in a file beside its entry point.
+func readSharedFile(t *testing.T, module, file string) []byte {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("..", "..", "shared", module, file))
 	if err != nil {
-		t.Fatalf("reading shared/%s: %v", name, err)
+		t.Fatalf("reading shared/%s/%s: %v", module, file, err)
 	}
 	return body
 }
@@ -706,10 +788,18 @@ var (
 	jsConfirmPRMax             = regexp.MustCompile(`(?m)^export const PR_MAX = (\d+);$`)
 	jsConfirmForwardJump       = regexp.MustCompile(`(?m)^export const MAX_FORWARD_JUMP_MS = (\d+) \* (\d+) \* (\d+) \* (\d+) \* (\d+);$`)
 	jsConfirmCue               = regexp.MustCompile(`(?m)^export const CONFIRM_CUE = '([^']*)';$`)
-	jsRefusalBlock             = regexp.MustCompile(`(?s)export const REFUSAL = Object\.freeze\(\{(.*?)\n\}\);`)
-	jsRefusalEntry             = regexp.MustCompile(`(?m)^\s*([A-Z_0-9]+): '([^']*)',$`)
+	// D2786's policy half lives in shared/confirm/policy.js, which
+	// shared/confirm/index.js re-exports as its only entry point.
+	jsConfirmPendingVerbs  = regexp.MustCompile(`(?m)^const PENDING_VERBS = Object\.freeze\(\[\.\.\.DESTRUCTIVE_VERBS, VERB\.LAUNCH\]\);$`)
+	jsPolicyCostlyModes    = regexp.MustCompile(`(?m)^export const DEFAULT_COSTLY_MODES = Object\.freeze\(\[([^\]]*)\]\);$`)
+	jsPolicyBiometric      = regexp.MustCompile(`(?m)^export const DEFAULT_BIOMETRIC_ON_COSTLY = (true|false);$`)
+	jsPolicyMaxCostlyModes = regexp.MustCompile(`(?m)^export const MAX_COSTLY_MODES = (\d+);$`)
+	jsPolicyMaxModeLength  = regexp.MustCompile(`(?m)^export const MAX_MODE_LENGTH = (\d+);$`)
+	jsRefusalBlock         = regexp.MustCompile(`(?s)export const REFUSAL = Object\.freeze\(\{(.*?)\n\}\);`)
+	jsRefusalEntry         = regexp.MustCompile(`(?m)^\s*([A-Z_0-9]+): '([^']*)',$`)
 
 	jsConfirmVerbBlock        = regexp.MustCompile(`(?s)export const VERB = Object\.freeze\(\{(.*?)\n\}\);`)
+	jsConfirmTargetKindBlock  = regexp.MustCompile(`(?s)export const TARGET_KIND = Object\.freeze\(\{(.*?)\n\}\);`)
 	jsConfirmDestructiveVerbs = regexp.MustCompile(`(?m)^export const DESTRUCTIVE_VERBS = Object\.freeze\(\[([^\]]*)\]\);$`)
 	jsConfirmPassThroughVerbs = regexp.MustCompile(`(?m)^export const PASS_THROUGH_VERBS = Object\.freeze\(\[([^\]]*)\]\);$`)
 	jsConfirmRefusedVerbs     = regexp.MustCompile(`(?ms)^export const REFUSED_VERBS = Object\.freeze\(\[([^\]]*)\]\);$`)
@@ -852,7 +942,10 @@ func commandEvent(verb string, target *ConfirmTarget) ConfirmEvent {
 	if target != nil {
 		ev.Target, ev.HasTarget = target, true
 	}
-	if _, destructive := confirmVerbTargetKinds[verb]; destructive {
+	// A destructive verb carries the action id the confirmation will name. A
+	// launch's is D2786's: a *costly* start carries one too, which a test that
+	// means it sets itself, beside the mode that made it costly.
+	if confirmContains(ConfirmDestructiveVerbs, verb) {
 		ev.ActionID, ev.HasActionID = "act-1", true
 	}
 	return ev

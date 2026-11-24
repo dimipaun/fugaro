@@ -89,6 +89,7 @@ by, with `data-*` where the class is shared and the attribute is what says which
 | `runs[].auth` | `live-run-auth` |
 | `runs[].mode` | not drawn — the decoder does not read the key; the rigor chip (`live-run-mode`) draws the join out of `runs ls --json` (`runs[].rigor.mode`), which is another document's field |
 | `runs[].from` | not drawn — the decoder does not read the key |
+| `runs[].source` | not drawn — the decoder does not read the key; what the run's running stage goes out on, in place of the auth column, is the visibility plan's VS1 |
 | `runs[].notional` | not drawn — it marks the spend reading `~$`; the figure is `live-run-spend` |
 | `runs[].spent_usd` | `live-run-spend` |
 | `runs[].age_seconds` | `live-run-age` |
@@ -154,10 +155,10 @@ silent omission: each is a field Watch prints (or the CLI writes) that Live does
 candidate for a task by amendment rather than something this table lets pass.
 
 1. **Not decoded at all** — the CLI writes it and the console never reads the key: the whole of
-   `drift[]`; `total.runs` and `total.run_hours`; `runs[]`'s `mode`, `from`, `job`, `profile`,
-   `provider`, `account`, `plan_task`, `credential` and `waiting_until`; `finished[]` and `ready[]`'s
-   `job`, `profile`, `provider`, `account`, `launched_by` and `plan_task`. A screen that wants one of
-   these needs the decoder first.
+   `drift[]`; `total.runs` and `total.run_hours`; `runs[]`'s `mode`, `from`, `source`, `job`,
+   `profile`, `provider`, `account`, `plan_task`, `credential` and `waiting_until`; `finished[]` and
+   `ready[]`'s `job`, `profile`, `provider`, `account`, `launched_by` and `plan_task`. A screen that
+   wants one of these needs the decoder first.
 2. **Decoded and never drawn** — the console reads it and no cell shows it: `runs[]`'s `verify`,
    `recipe`, `workflow`, `requested_by`, `halted`, `repo` and `pr_number`; `repos[].spent_usd` and
    `repos[].leased_usd`; `total.burn.fast`; and, on both finished lists, `slug`, `status`, `outcome`

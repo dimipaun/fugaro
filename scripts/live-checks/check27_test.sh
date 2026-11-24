@@ -194,8 +194,9 @@ write_fake_fugaro() { # dir
 #
 # `setup` is the whole point of the check, so this fake models what makes it a
 # person's run: with NO terminal it REFUSES (the project is created only where a
-# person can type), and with one it prints the wizard's banner and suggestion,
-# asks "Type the GCP project's ID: " and reads the line the pty wrote — then
+# person can type), and with one it prints the wizard's question and its
+# suggestion, "GCP project ID [fugaro-fugaro]: ", and reads the line the pty
+# wrote — then
 # writes the project, its buckets, its job, its secrets, its images, its billing
 # link and its Firestore location into $FAKE27_DIR/state, so every read-back the
 # check makes is a reading of what this fake really leaves behind. With a
@@ -243,8 +244,11 @@ rigor_or_wait() { # mode args...
   local mode=$1
   shift
   if [ "${FAKE27_NO_RIGOR:-}" = "$mode" ] || [ -z "$(flag --rigor "$@" || true)" ]; then
-    printf "the project's rigor mode decides how much review every run of it gets; type one of them (this is the one question of the wizard with no suggestion, so Enter is not an answer):\n"
-    printf "Type the project's rigor mode: "
+    # The heading above the modes and the question's own line, as the wizard
+    # prints them. The four mode rows between the two are left out: this check
+    # reads none of them, and its own row reader would take them for plan rows.
+    printf 'Rigor mode, which sets how much review each run gets:\n'
+    printf 'Rigor mode: '
     sleep 600
   fi
 }
@@ -390,10 +394,8 @@ setup)
     exit "${FAKE27_NEG_EXIT:-1}"
   fi
   answer=""
-  printf 'fugaro setup: this is the first run here; each answer has a suggestion, press Enter to accept it.\n'
   if [ -z "${FAKE27_ASK_NOTHING:-}" ]; then
-    printf "the GCP project's ID [fugaro-fugaro]\n"
-    printf "Type the GCP project's ID: "
+    printf "GCP project ID [fugaro-fugaro]: "
     if [ -n "${FAKE27_BLOCK:-}" ]; then
       sleep 600
     fi

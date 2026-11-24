@@ -401,8 +401,14 @@ type AdminList interface {
 // audit a call is one that must not start, because the alternative is a
 // service that writes credentials it cannot account for.
 type Config struct {
-	// Callers is the launcher class: the roster of people who may write their
-	// own credentials, over Google's ID-token key set.
+	// Callers is the class this installation admits: its own roster's
+	// launchers and, on a workspace's own project, the people of the
+	// workspace's roster (WC3, R5, D3143) — one list, because the two are
+	// admitted to the same routes on the same terms. A roster person is the
+	// caller this package already serves best: their token's own `sub` names
+	// their container (ScopeUser) and the derived admin list decides the
+	// shared prefix (ScopeShared), so the second class widens WHO may write and
+	// nothing about what they may write.
 	Callers Caller
 	// Admins is the derived admin list: who may write the project-shared
 	// prefix and sweep a member's containers.

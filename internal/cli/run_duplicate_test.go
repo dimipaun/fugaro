@@ -10,12 +10,15 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -124,6 +127,31 @@ func dupLivePRRun(t *testing.T, f *cloudFixture, id, root string, pr int) {
 	if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, LaunchedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// pausedPRRun stores a run that suspended itself on pull request pr and names
+// no plan task: a --pr follow-up of root launched on its own, which is the
+// command the refusal itself prints, that then paused waiting for a credential.
+// Its row carries the pull request and no task, so the guard never matches it --
+// and the pull request it is suspended on reads paused for every row the guard
+// does see, the finished run that left that pull request among them (the fold
+// is the pull request's, and the node that says the pause stands is written by
+// the test, pausedNode).
+func pausedPRRun(t *testing.T, f *cloudFixture, id, root string, pr int, at time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	if err := s.CreateTask(ctx, followUpSpec(id, root, root, pr)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, LaunchedAt: at}); err != nil {
+		t.Fatal(err)
+	}
+	rec := prRecord(id, "", pr, 1)
+	rec.Branch, rec.Status, rec.Stage, rec.Outcome, rec.StartedAt = "fugaro/"+root, runstore.StatusPaused, "implement", runstore.OutcomeNone, at
+	writeRecord(t, f, id, rec)
 }
 
 // dupFinishedRun stores a run of planTask that ended, leaving pull request pr
@@ -255,9 +283,11 @@ func TestRunRefusesADuplicatePlanTask(t *testing.T) {
 // stopped, on a chain whose remaining budget the live run is still spending
 // against. While a run is in flight --pr is missing too, and so is it where the
 // pull request a run of the task left is itself live, a run of it going that the
-// guard did not match: resolvePR refuses a follow-up whose pull request has a run
-// still going, so it would be one more dead end, and waiting -- over the
-// repository, or over that one pull request -- is the whole of both shapes. A way out that does nothing,
+// guard did not match, or itself paused, a run of it suspended in a pause that
+// still stands: resolvePR refuses a follow-up while any of the pull request's
+// runs is live *or suspended*, so --pr would be one more dead end in each, and
+// waiting -- over the repository, or over that one pull request -- is the whole
+// of those shapes. A way out that does nothing,
 // that is refused itself, or that starts the duplicate by another door, is worse
 // than none.
 func TestRunDuplicateRefusalNamesTheWaysOut(t *testing.T) {
@@ -357,6 +387,41 @@ func TestRunDuplicateRefusalNamesTheWaysOut(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("a run suspended on the pull request a run of the task left", func(t *testing.T) {
+		// The same shape, one step further on: the run of pull request 7 that
+		// the guard never matches did not stop going -- it suspended itself into
+		// a pause that still stands (PR12). Between the pause and its resume that
+		// chain is in flight, so resolvePR refuses a follow-up of that pull
+		// request exactly as it refuses one with a run going, and `fugaro run --pr
+		// 7` -- the command the default branch of the refusal prints -- would be a
+		// way out that is itself refused. Printing it anyway is the bug this
+		// sub-test exists for.
+		f := duplicateRig(t)
+		at := time.Now().UTC()
+		resume := at.Add(time.Hour)
+		dupFinishedRun(t, f, dupLeft, duplicatePlan, 7, runstore.OutcomeReady)
+		suspended := wallRunIDAt(0, "000700", "d7d7")
+		pausedPRRun(t, f, suspended, dupLeft, 7, at)
+		pausedNode(t, f, suspended, dupLeft, resume, false)
+
+		msg := dupRefused(t, f, "already being worked on", "run", "--repo", "acme/app", "--run-id", dupNext, "--plan-task", duplicatePlan, "Add a feature")
+		for _, want := range []string{
+			"run " + task.ShortRun(dupLeft) + " left pull request #7 of acme/app",
+			"suspended in a pause that will resume it",
+			"wait for the pause on that pull request to be resumed (fugaro runs ls --pr 7 --repo acme/app)",
+			"--allow-duplicate",
+		} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("refusal = %q, want %q in it", msg, want)
+			}
+		}
+		for _, bad := range []string{"fugaro run --pr", "--retry", "--continues"} {
+			if strings.Contains(msg, bad) {
+				t.Errorf("refusal names %s while a run of that pull request is suspended, and that launch is refused too: %q", bad, msg)
+			}
+		}
+	})
 }
 
 // dupRef is the ref the refusal's commands name a run by, and the one the CLI's
@@ -431,6 +496,46 @@ func TestRunDuplicateWaysOutRun(t *testing.T) {
 		}
 		if n := len(f.run.Executions()); n != 1 {
 			t.Fatalf("%d executions, want the follow-up launch's one", n)
+		}
+	})
+
+	t.Run("a pull request a run suspended on: the listing, not --pr", func(t *testing.T) {
+		// The pull request a run of the task left has a run of its own suspended
+		// in a pause that stands. The refusal must not print `fugaro run --pr 7`
+		// here, and this arm is the proof rather than the assertion: it runs that
+		// launch and the pause refuses it (resolvePR), which is exactly the dead
+		// end the printed way out would send the caller into. What it prints
+		// instead -- the pull request's listing -- runs, and the deliberate
+		// second attempt it names beside it really launches.
+		f := duplicateRig(t)
+		at := time.Now().UTC()
+		dupFinishedRun(t, f, dupLeft, duplicatePlan, 7, runstore.OutcomeReady)
+		suspended := wallRunIDAt(0, "000800", "d8d8")
+		pausedPRRun(t, f, suspended, dupLeft, 7, at)
+		pausedNode(t, f, suspended, dupLeft, at.Add(time.Hour), false)
+
+		msg := dupRefused(t, f, "already being worked on", "run", "--repo", "acme/app", "--run-id", dupNext, "--plan-task", duplicatePlan, "Add a feature")
+		if strings.Contains(msg, "fugaro run --pr") {
+			t.Fatalf("refusal prints `fugaro run --pr` while a run of that pull request is suspended in a standing pause: %q", msg)
+		}
+		// The launch it must not print, run as printed: refused, because the
+		// suspended run holds that pull request exactly as a running one does.
+		if _, _, err := execute(t, "run", "--pr", "7", "--repo", "acme/app", "--run-id", dupOther, "Add a feature"); ExitCode(err) != ExitUserError {
+			t.Fatalf("`fugaro run --pr 7` with a run of it suspended: err = %v, want the follow-up refusal the printed way out would have been", err)
+		}
+		if n := len(f.run.Executions()); n != 0 {
+			t.Fatalf("%d executions after the launch the refusal must not print, want none", n)
+		}
+		// The listing it prints instead is a way out rather than another
+		// refusal: it starts nothing and reports the pull request.
+		if _, _, err := execute(t, "runs", "ls", "--pr", "7", "--repo", "acme/app"); err != nil {
+			t.Fatalf("the printed `fugaro runs ls --pr 7 --repo acme/app`: %v", err)
+		}
+		if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", dupNext, "--plan-task", duplicatePlan, "--allow-duplicate", "Add a feature"); err != nil {
+			t.Fatalf("the printed --allow-duplicate way out was refused: %v", err)
+		}
+		if n := len(f.run.Executions()); n != 1 {
+			t.Fatalf("%d executions, want the deliberate second attempt's one", n)
 		}
 	})
 }
@@ -611,5 +716,48 @@ func TestRunDuplicateIgnoresItsOwnRunID(t *testing.T) {
 	}
 	if n := len(f.run.Executions()); n != 1 {
 		t.Fatalf("%d executions, want the first launch's one", n)
+	}
+}
+
+// TestRunPlanTaskLaunchReadsNoExecutionPerRun: a launch with --plan-task reads
+// the history to find a duplicate, and what it asks the compute platform must
+// not grow with that history. Every run whose execution the platform has since
+// deleted used to cost a request of its own, which on a 90-day window was
+// thousands per launch, against a read quota the launches themselves share.
+//
+// Mutation caught: following each run the executions listing lacks with a read
+// of its own.
+func TestRunPlanTaskLaunchReadsNoExecutionPerRun(t *testing.T) {
+	f := duplicateRig(t)
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	const history = 60
+	at := time.Now().Add(-48 * time.Hour)
+	for i := range history {
+		id := at.Add(time.Duration(i)*time.Minute).Format("20060102-150405") + fmt.Sprintf("-%04x", i)
+		s := runstore.Open(b, appSlug, id)
+		if err := s.CreateTask(ctx, firstRunSpec(id)); err != nil {
+			t.Fatal(err)
+		}
+		gone := backend.ExecID{GCPProject: "proj-1234", Region: "us-east5", Job: gcp.JobName(appSlug, "web"), Name: fmt.Sprintf("gone-%04x", i)}.String()
+		if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, Execution: gone, LaunchedAt: at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, errOut, err := execute(t, "run", "--repo", "acme/app", "--run-id", dupNext, "--plan-task", duplicatePlan, "Add a feature"); err != nil {
+		t.Fatalf("launch: %v (%s)", err, errOut)
+	}
+	gets := 0
+	for _, r := range f.run.Requests() {
+		if r.Method == "GET" && strings.Contains(r.Path, "/executions/") {
+			gets++
+		}
+	}
+	if gets != 0 {
+		t.Fatalf("a launch over %d past runs read %d executions one by one, want none: the cost of a launch must not grow with the history", history, gets)
 	}
 }

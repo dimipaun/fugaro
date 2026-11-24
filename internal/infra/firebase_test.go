@@ -105,10 +105,15 @@ func TestFirebaseTfvarsGolden(t *testing.T) {
 	inst := installationSpec(t)
 	inst.Launchers = []string{"user:launcher@example.com"}
 	inst.Operators = []string{"user:operator@example.com", "user:launcher@example.com"}
+	// FirestoreDatabaseExists is true in every fixture here: each stands for an
+	// installation that has completed a setup, so the database the run index's
+	// composite indexes are created under is there (RI2), and the golden plans
+	// these fixtures are made from carry those indexes.
 	fs, err := Firebase(inst, FirebaseInputs{FP: "aurora-fp",
-		Admins:         []string{"user:owner@example.com", "group:editors@example.com", "user:owner@example.com"},
-		BudgetAdmins:   []string{"user:extra@example.com"},
-		HistoryAccount: "fugaro-history@proj-1234.iam.gserviceaccount.com"})
+		Admins:                  []string{"user:owner@example.com", "group:editors@example.com", "user:owner@example.com"},
+		BudgetAdmins:            []string{"user:extra@example.com"},
+		HistoryAccount:          "fugaro-history@proj-1234.iam.gserviceaccount.com",
+		FirestoreDatabaseExists: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,10 +194,11 @@ func TestCoordinatorTfvarsGolden(t *testing.T) {
 	}
 	inst.Coordinator = &cs
 	fs, err := Firebase(inst, FirebaseInputs{FP: "aurora-fp",
-		Admins:             []string{"user:owner@example.com", "group:editors@example.com", "user:owner@example.com"},
-		BudgetAdmins:       []string{"user:extra@example.com"},
-		HistoryAccount:     "fugaro-history@proj-1234.iam.gserviceaccount.com",
-		CoordinatorAccount: "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"})
+		Admins:                  []string{"user:owner@example.com", "group:editors@example.com", "user:owner@example.com"},
+		BudgetAdmins:            []string{"user:extra@example.com"},
+		HistoryAccount:          "fugaro-history@proj-1234.iam.gserviceaccount.com",
+		CoordinatorAccount:      "fugaro-coordinator@proj-1234.iam.gserviceaccount.com",
+		FirestoreDatabaseExists: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,9 +240,10 @@ func TestViewerTfvarsGolden(t *testing.T) {
 	inst.Operators = []string{"user:operator@example.com", "user:launcher@example.com"}
 	inst.Viewers = []string{"user:viewer@example.com", "group:auditors@example.com"}
 	fs, err := Firebase(inst, FirebaseInputs{FP: "aurora-fp",
-		Admins:         []string{"user:owner@example.com", "group:editors@example.com", "user:owner@example.com"},
-		BudgetAdmins:   []string{"user:extra@example.com"},
-		HistoryAccount: "fugaro-history@proj-1234.iam.gserviceaccount.com"})
+		Admins:                  []string{"user:owner@example.com", "group:editors@example.com", "user:owner@example.com"},
+		BudgetAdmins:            []string{"user:extra@example.com"},
+		HistoryAccount:          "fugaro-history@proj-1234.iam.gserviceaccount.com",
+		FirestoreDatabaseExists: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -466,7 +473,7 @@ func TestFirebaseSpecRefusals(t *testing.T) {
 // two-project layout's tfvars carry no such field.
 func TestFirebaseSameProject(t *testing.T) {
 	inst := installationSpec(t)
-	in := FirebaseInputs{FP: inst.Project, Admins: []string{"user:owner@example.com"}, HistoryAccount: "fugaro-history@proj-1234.iam.gserviceaccount.com"}
+	in := FirebaseInputs{FP: inst.Project, Admins: []string{"user:owner@example.com"}, HistoryAccount: "fugaro-history@proj-1234.iam.gserviceaccount.com", FirestoreDatabaseExists: true}
 	spec, err := Firebase(inst, in)
 	if err != nil {
 		t.Fatalf("the installation's own project refused: %v", err)

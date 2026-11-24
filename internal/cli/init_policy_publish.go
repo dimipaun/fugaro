@@ -72,12 +72,13 @@ func publishedMode(mode string) string {
 // policyConfigDrift is the members of the published node the local config is
 // the source of and that the node does not carry, in the order a diff reads.
 //
-// One member is not the config's: the mobile block's source is the publisher's
-// own default for a node that carries none (projectpolicy.MobileForPublish,
-// O9), and the row is there for the same reason the config's own are — a
-// publish would write a member the node does not carry, and a stage that could
-// not see it would leave the node at the release behind for ever. It is the
-// only member of the list a config cannot state.
+// Two members are not the config's: the mobile block and the app's
+// crash-report switch beside it, whose source is the publisher's own default
+// for a node that carries neither (projectpolicy.MobileForPublish and
+// MobileCrashReportsForPublish, O9), and the rows are there for the same reason
+// the config's own are — a publish would write a member the node does not
+// carry, and a stage that could not see it would leave the node at the release
+// behind for ever. They are the only members of the list a config cannot state.
 //
 // The comparison is the JSON both sides spell, so a member the node omits and a
 // config that states nothing for it are one value (the carrier's omitempty is
@@ -471,8 +472,8 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 		return out
 	}
 	add(projectpolicy.BitbucketTokensKey, tokens, p.BitbucketTokens, false)
-	// The mobile block is the one member of this comparison whose source is
-	// neither this machine's config nor the node: a publish writes the node's
+	// The mobile block is one of the two members of this comparison whose source
+	// is neither this machine's config nor the node: a publish writes the node's
 	// own block when it carries one and O9's defaults when it does not
 	// (projectpolicy.MobileForPublish), so the row is silent for a node that
 	// carries a block — the switches are the project's own answers and this
@@ -492,6 +493,17 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 	// rule of its own here, so the node this stage decides on and the node the
 	// publish writes cannot disagree (F40, the plan's global constraint).
 	add("mobile", projectpolicy.MobileForPublish(p.Mobile), p.Mobile, false)
+	// The app's crash-report switch is the row above's twin and it is a key of
+	// its own, beside the block and never inside it (policy.go's
+	// Policy.MobileCrashReports): a member added inside the block would be
+	// refused by every reader of the release behind — the block decodes strictly
+	// — which is exactly what update promises never to do while runs are in
+	// flight. So the switch travels as a tolerated top-level key, and this row
+	// is what carries it: the node's own answer where it carries one, and the
+	// publish's default otherwise (MobileCrashReportsForPublish), so a node
+	// published before the key existed is a difference this stage reports and
+	// publishes once, and the run after finds nothing.
+	add(projectpolicy.MobileCrashReportsKey, projectpolicy.MobileCrashReportsForPublish(p.MobileCrashReports), p.MobileCrashReports, false)
 	return out
 }
 
@@ -1821,12 +1833,13 @@ func reseedPolicyKeys(old []byte, lc *localcfg.Config, p *projectpolicy.Policy, 
 			})
 		case "base_branch":
 			set(member, []string{"base_branch"}, p.BaseBranch, func() { lc.BaseBranch = p.BaseBranch })
-		case "mobile":
-			// The block is the node's own and no config key carries it: the
-			// publish writes the node's block back (MobileForPublish), so there
-			// is nothing in this file for a re-seed to bring in line, and
-			// sending the operator to a hand edit for it would ask for a key
-			// the config has no place for.
+		case "mobile", projectpolicy.MobileCrashReportsKey:
+			// The block and the crash-report switch beside it are the node's own
+			// and no config key carries either: the publish writes the node's
+			// block back (MobileForPublish) and the switch's value back
+			// (MobileCrashReportsForPublish), so there is nothing in this file
+			// for a re-seed to bring in line, and sending the operator to a hand
+			// edit for it would ask for a key the config has no place for.
 		default:
 			// The account-choice members — default_claude_account and each
 			// claude_account_stages.<stage> — land here, and the refusal above
