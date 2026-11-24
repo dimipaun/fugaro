@@ -240,8 +240,8 @@ func newRunsStatsCmd() *cobra.Command {
 			"the index has not folded yet arrives as its id, its repository and its status\n" +
 			"alone -- no launcher and no record to read -- so the index read counts it under\n" +
 			"'unknown' with no record, where the record read would name the launcher its own\n" +
-			"launch recorded. A folded run reads the same either way, and index_complete says\n" +
-			"which of the two reads a caller is looking at.\n\n" +
+			"launch recorded. A folded run both windows hold reads the same either way, and\n" +
+			"index_complete says which of the two reads a caller is looking at.\n\n" +
 			"--json prints {version, project, by, view, you, admin, since, until, max_runs,\n" +
 			"truncated, index_complete, rows[], totals[], unlaunched, notes}; rows and totals\n" +
 			"carry {user, currency, runs, succeeded, failed, halted, infra_error, other,\n" +
@@ -255,7 +255,7 @@ func newRunsStatsCmd() *cobra.Command {
 	f.StringVar(&o.by, "by", userStatsByUser, "what to break the figures down by (user)")
 	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name, or a path inside its checkout)")
 	f.BoolVar(&o.all, "all", false, "every repository in the runs bucket")
-	f.StringVar(&o.since, "since", userStatsDefaultSince, "only runs started within this long (7d, 36h, 90m; 0 for all)")
+	f.StringVar(&o.since, "since", userStatsDefaultSince, "only runs the read places within this long (7d, 36h, 90m; 0 for all)")
 	f.IntVar(&o.maxRuns, "max-runs", userStatsMaxRuns, "read at most this many runs, newest first (a bigger window is truncated and says so)")
 	f.BoolVar(&o.allUsers, "all-users", false, "show every user's row, not only your own (the table names whose numbers it shows)")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
@@ -593,7 +593,8 @@ func readRunObjects(ctx context.Context, env *cloudEnv, slugs []string, since, u
 // and not the other's. And an overlay row -- a run the index has not folded yet
 // -- carries no launch and no record, so the index read counts it under the
 // unknown launcher with no record, where the record read would name the launcher
-// its own launch recorded. A folded run reads the same either way.
+// its own launch recorded. A folded run both windows hold reads the same either
+// way.
 func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since time.Time, max int) (userStatsRead, error) {
 	idx, err := runIndexReader(ctx, env)
 	if err != nil {

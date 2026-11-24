@@ -9107,8 +9107,8 @@ opposite sides of an edge is in one read's window and not the other's. And a run
 the index has not folded yet arrives as its id, its repository and its status
 alone -- no launcher and no record to read -- so the index read counts it under
 'unknown' with no record, where the record read would name the launcher its own
-launch recorded. A folded run reads the same either way, and index_complete says
-which of the two reads a caller is looking at.
+launch recorded. A folded run both windows hold reads the same either way, and
+index_complete says which of the two reads a caller is looking at.
 
 --json prints {version, project, by, view, you, admin, since, until, max_runs,
 truncated, index_complete, rows[], totals[], unlaunched, notes}; rows and totals
@@ -9134,7 +9134,7 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
-| `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
+| `--since` | string | `7d` | no | only runs the read places within this long (7d, 36h, 90m; 0 for all) |
 
 Subcommands:
 
