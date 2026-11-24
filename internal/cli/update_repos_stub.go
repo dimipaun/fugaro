@@ -6,6 +6,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
 // update_repos_stub.go is C1's stand-in for the real reader (R21): while it
@@ -47,6 +48,13 @@ var enrolledReposImpl = func(ctx context.Context, in enrolledIn) ([]repoView, []
 		v.Head = headOfDefaultBranch(ctx, root, db.ref)
 		v.YAML = db.data
 		v.Cfg = db.cfg
+	}
+	if v.Unread != "" {
+		// The reason is repository-controlled text (a parse's own sentence
+		// about the file it read), and a stage may print it without
+		// newRepoLine -- in a notice, or in doctor's row -- so it is made
+		// safe and bounded here, as repoView promises.
+		v.Unread = pluginwire.Printable(oneLine(v.Unread))
 	}
 	return []repoView{v}, nil
 }

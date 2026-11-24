@@ -101,17 +101,25 @@ func TestHintFirstMovesOnlyHumanLines(t *testing.T) {
 // ones. A repository it could not read comes back with its reason and nothing
 // else -- no branch, no head commit, no bytes, no parse, no extra files -- so
 // Read() alone tells a stage whether there is anything to plan from, and a
-// stage can never be handed a file the update must not act on. The read shape
-// is the complement: everything the reader read, and no reason.
+// stage can never be handed a file the update must not act on, and the reason
+// is one printable line whatever the repository's file held. The read shape is
+// the complement: everything the reader read, and no reason.
 func TestUnreadRepoViewCarriesTheReasonAlone(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		yaml string
 		want string
+		long bool
 	}{
 		{name: "no fugaro.yaml on the default branch", want: "no fugaro.yaml on the default branch"},
 		{name: "a fugaro.yaml that does not validate",
 			yaml: "version: 1\nproject: aurora\nnope: 1\n", want: "its fugaro.yaml is not valid"},
+		// The parse's sentence about the file is the repository's text: it
+		// quotes the field it refused, so a name the repository chose can be
+		// as long as the file allows.
+		{name: "a fugaro.yaml whose problem quotes more than a line may hold",
+			yaml: "version: 1\nproject: aurora\n" + strings.Repeat("x", pluginwire.MaxPrintable+50) + ": 1\n",
+			want: "its fugaro.yaml is not valid", long: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Chdir(repoCheckout(t, "https://github.com/acme/app.git", tc.yaml))
@@ -132,6 +140,20 @@ func TestUnreadRepoViewCarriesTheReasonAlone(t *testing.T) {
 			}
 			if v.YAML != nil || v.Cfg != nil || len(v.Files) != 0 {
 				t.Errorf("the unread view carries bytes %q, a parse %+v and %d files, want none of them: a stage must not plan from a repository update cannot read", v.YAML, v.Cfg, len(v.Files))
+			}
+			// The reason is one printable line whatever the file held: a
+			// stage prints it without newRepoLine (a notice, doctor's row),
+			// and the parse's own sentence is not this program's text.
+			for _, r := range v.Unread {
+				if r < 0x20 || r == 0x7f || r == 0x202e {
+					t.Errorf("the reason came back holding %q, want one printable line: %q", r, v.Unread)
+				}
+			}
+			if n, max := len([]rune(v.Unread)), pluginwire.MaxPrintable+len("... (truncated)"); n > max {
+				t.Errorf("the reason came back %d runes long, want at most %d: it is bounded", n, max)
+			}
+			if tc.long && !strings.HasSuffix(v.Unread, "(truncated)") {
+				t.Errorf("a reason too long for a line came back as %q, want it cut and saying so", v.Unread)
 			}
 		})
 	}

@@ -33,8 +33,10 @@ What a stage may rely on:
 ## A repository that could not be read
 
 `repoView.Unread` carries one line saying why -- a 404, no access, no `fugaro.yaml` on the default
-branch, a file that does not validate, a provider that cannot be read. `repoView.Read()` is the
-yes/no, and the reader answers one shape or the other whole: an unread view carries no branch, no
+branch, a file that does not validate, a provider that cannot be read. The reason is sanitised and
+bounded before it is handed out, because a stage may print it without `newRepoLine` -- in a notice,
+or in doctor's row -- and the parse's own sentence about the file is the repository's text.
+`repoView.Read()` is the yes/no, and the reader answers one shape or the other whole: an unread view carries no branch, no
 head commit, no `fugaro.yaml`, no parse and no extra files, so a stage never holds half a
 repository and never has to ask which half it may use.
 
