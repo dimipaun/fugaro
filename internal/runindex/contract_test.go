@@ -48,6 +48,7 @@ func TestContractShapes(t *testing.T) {
 			Status:       runstore.StatusSucceeded,
 			PlanTask:     "C-INDEX",
 			PR:           3540,
+			Branch:       "fugaro/20261120-093000-a1b2",
 			RequestedBy:  "dev@example.invalid",
 			LaunchedBy:   "dev@example.invalid",
 			Batch:        "20261120-093000",
@@ -89,6 +90,7 @@ func TestContractShapes(t *testing.T) {
 		// not in the document fails too.
 		keysAre(t, want, []string{
 			"run_id", "slug", "repo", "updated_at", "status", "plan_task", "pr",
+			"branch",
 			"requested_by", "launched_by", "batch", "tier", "rigor",
 			"started_at", "finished_at", "workflow", "title", "recipe",
 			"oauth_account", "previous_run", "follow_up", "follow_up_of",

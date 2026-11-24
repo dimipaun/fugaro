@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -310,8 +311,7 @@ type runOptions struct {
 	// title at all: the task prompt's first line is the title, exactly as
 	// before the flag existed. A follow-up (--pr) inherits its previous
 	// run's title unless this is given, and, with no title and no task of
-	// its own, takes the title of the pull request it continues
-	// (newFollowUpSpec, followUpPRTitle).
+	// its own, is refused (newFollowUpSpec).
 	title string
 	// token is the named Claude account (docs/named-oauth-tokens/spec.md)
 	// this run uses: fugaro run --token. A follow-up (--pr) inherits its
@@ -491,10 +491,10 @@ func newRunCmd() *cobra.Command {
 			"heading) of the pull request the run opens when the agent writes no pr.md of\n" +
 			"its own. Without it the run is named by the task's first line, so briefs that\n" +
 			"start with the same preamble all read alike. A follow-up (--pr) keeps its run's\n" +
-			"title unless --title is given, and with neither a title nor a task of its own it\n" +
-			"takes the title of the pull request it continues, read from the code host (a host\n" +
-			"that cannot be read leaves the run named by its own instructions). A task of its\n" +
-			"own always wins, and --retry takes none (the stored task keeps its own).\n\n" +
+			"title (the first line of its brief when it had none) unless --title is given; one\n" +
+			"whose chain names nothing and which has no task of its own is refused, naming\n" +
+			"--title, and so is any launch left with no title. A review launch with neither is\n" +
+			"named Review of PR #N. --retry takes none (the stored task keeps its own).\n\n" +
 			"--plan-task PLAN/TASK records which task of which plan this run works on, so\n" +
 			"the console's graph can join the run to that node. One plan and one task id,\n" +
 			"as the plan's own graph spells them, at most 128 bytes; what the run does is\n" +
@@ -543,7 +543,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.workflow, "workflow", "", "workflow to run (default: the repo's only workflow)")
 	f.StringVar(&o.runID, "run-id", "", "run ID to use; repeating one reports its launch instead of starting another")
 	f.StringVar(&o.batch, "batch", "", "batch label, to group runs in fugaro runs ls")
-	f.StringVar(&o.title, "title", "", "the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given, and with no title and no task of its own it takes the pull request's title instead")
+	f.StringVar(&o.title, "title", "", "the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given, and one whose chain names nothing and which has no task of its own is refused, naming --title")
 	f.StringVar(&o.planTask, "plan-task", "", "record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given. A plan task that a run in flight, or a pull request a run of it left behind, already holds is refused (--allow-duplicate launches it anyway)")
 	f.BoolVar(&o.allowDuplicate, "allow-duplicate", false, "launch even though the plan task named by --plan-task is already being worked on: a run of it in flight, or a pull request a run of it left behind. It turns that one refusal off, for a second attempt that is deliberate (the redundant attempts of a hard task); it records nothing, and with no --plan-task there is nothing to duplicate and it changes nothing")
 	f.StringVar(&o.tf, "task-file", "", "read the task from this file, or - for stdin")
@@ -2058,9 +2058,7 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if spec.Title != "" {
 			if err := checkCloneImageSince(env.lc, spec, titlesSince,
 				"a job title (--title, kept by --pr follow-ups and --retry)", "the job title", "", warn); err != nil {
-				if !dropDefaultedTitle(spec, warn) {
-					return config.Inputs{}, err
-				}
+				return config.Inputs{}, err
 			}
 		}
 		if spec.PlanTask != "" {
@@ -2326,9 +2324,7 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if spec.Title != "" {
 			if err := checkImageSince(ctx, env, slug, spec, kind, titlesSince,
 				"a job title (--title, kept by --pr follow-ups and --retry)", "the job title", "", warn); err != nil {
-				if !dropDefaultedTitle(spec, warn) {
-					return config.Inputs{}, err
-				}
+				return config.Inputs{}, err
 			}
 		}
 		// The plan task's own gate, for the same reason as the three
@@ -2859,9 +2855,9 @@ func ownerRuledText(cmd *cobra.Command, value string) (string, error) {
 //
 // The flag's absence is not a title, and leaves o.title empty — every
 // surface then falls back to the task's first line, exactly as before the
-// flag existed (a follow-up that also has no task of its own takes the pull
-// request's title instead, which is followUpPRTitle's business and not this
-// function's: the flag's value is the one thing here that a person typed).
+// flag existed (a launch left with no title at all is refused by createTask,
+// not here: the flag's value is the one thing this function judges, the one
+// thing a person typed).
 // Its PRESENCE with nothing in it is a mistake and is
 // refused: --title "" would otherwise be silently the same as no --title at
 // all, which is the one reading nobody meant. The emptiness check runs
@@ -3636,6 +3632,24 @@ func printBatch(w io.Writer, batch string, attempts int, incomplete bool, result
 	return enc.Encode(batchResult{Batch: batch, Attempts: attempts, Incomplete: incomplete, Runs: results})
 }
 
+// reviewTitle names a review launch that carries neither --title nor a brief:
+// the pull requests it reviews, which is all the launcher knows without
+// reading the host, so every run keeps a title.
+func reviewTitle(prs []int) string {
+	nums := make([]string, len(prs))
+	for i, n := range prs {
+		nums[i] = "#" + strconv.Itoa(n)
+	}
+	title := "Review of PR " + nums[0]
+	if len(nums) > 1 {
+		title = "Review of PRs " + strings.Join(nums, ", ")
+	}
+	if r := []rune(title); len(r) > task.MaxTitleRunes {
+		title = strings.TrimSpace(string(r[:task.MaxTitleRunes]))
+	}
+	return title
+}
+
 // reviewSpec is the task of a review-mode launch: fugaro run --recipe NAME
 // --pr A [--pr B ...], NAME naming a mode: review recipe (rr, already
 // resolved and confirmed by the caller). It reviews any open pull request
@@ -3715,7 +3729,11 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 	// launch, and its line names what it read (spec §7, D2099).
 	o.account = launchAccount{Name: account, Alias: alias}
 	printRecipeNote(warn, rr, true)
-	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, BaseBranch: base, Workflow: workflow, Task: text, Title: o.title, PlanTask: o.planTask,
+	title := o.title
+	if title == "" && strings.TrimSpace(text) == "" {
+		title = reviewTitle(o.pr)
+	}
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, BaseBranch: base, Workflow: workflow, Task: text, Title: title, PlanTask: o.planTask,
 		RequestedBy: me, Batch: o.batch, Recipe: rr.taskRecipe(), ReviewPRs: append([]int(nil), o.pr...),
 		Rigor: rigor.Rigor(o.rigor), Paths: o.paths, Tier: tier.Tier(o.tier)}
 	// The task the pull request was written for, resolved here rather than by
@@ -5547,6 +5565,12 @@ func adoptStoredProjectLayer(ctx context.Context, s *runstore.Store, spec *task.
 
 // createTask stores task.json once. A repeated run ID must repeat its task.
 func createTask(ctx context.Context, s *runstore.Store, spec *task.Spec) error {
+	// The one place every launch stores its task: a run with no title is listed
+	// by "-" in watch, ls and the console, which the repository's hard rule
+	// forbids, so it is refused here whatever path built the spec.
+	if spec.TitleLine() == "" {
+		return userErr("this run has no title (nothing in --title, the brief's first line or the chain names it), and every run has one; pass --title \"<what the run does>\" (at most 100 characters)")
+	}
 	err := s.CreateTask(ctx, spec)
 	if err == nil {
 		return nil
@@ -7347,20 +7371,4 @@ func gitUserName(ctx context.Context) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
-}
-
-// dropDefaultedTitle lets a launch whose job image cannot read a title go on
-// without the one the launcher made up for a follow-up (Follow-up of PR #N,
-// followUpDefaultTitle): the run is then listed by its own instructions, as
-// before the default existed. It answers false for any other title, which the
-// gate still refuses.
-func dropDefaultedTitle(spec *task.Spec, warn io.Writer) bool {
-	if !spec.IsFollowUp() || spec.Title != followUpDefaultTitle(spec.PR) {
-		return false
-	}
-	spec.Title = ""
-	if warn != nil {
-		fmt.Fprintln(warn, "note: the job image predates job titles, so this run carries none")
-	}
-	return true
 }

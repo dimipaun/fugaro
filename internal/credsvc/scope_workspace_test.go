@@ -1958,6 +1958,10 @@ func (p *wsPerson) personCall(t *testing.T, svc *svc, slip, secret, body string,
 // answered the secret the run presents on every call after (R3, R4).
 func TestWorkspaceModeServesTheGrantAndTheClaim(t *testing.T) {
 	p := newWSPerson(t)
+	// The member's switch is ON: the grant names the person's own token, and a
+	// call under it is served that candidate only while the switch says so
+	// (personal_workspace.go: the default is the stub's OFF, which refuses).
+	personalSwitch(t, true, nil)
 	svc := p.service(t)
 
 	// The route set: both are served by a deployment with its own half wired,
@@ -2369,6 +2373,10 @@ func TestARemovedPersonIsRefusedAfterTheReread(t *testing.T) {
 // the run cannot tell "removed" from "not yours".
 func TestARemovedPersonsSlipIsRefused(t *testing.T) {
 	p := newWSPerson(t)
+	// The member's switch is ON: the grant names the person's own token, and a
+	// call under it is served that candidate only while the switch says so
+	// (personal_workspace.go: the default is the stub's OFF, which refuses).
+	personalSwitch(t, true, nil)
 	svc := p.service(t)
 
 	slip := p.granted(t, svc, p.grantBody(t, wsAccountA, creds.PersonTokenName))
