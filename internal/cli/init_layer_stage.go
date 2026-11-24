@@ -87,6 +87,16 @@ type layerStage struct {
 
 func newLayerStage(e *initEngine) *layerStage { return &layerStage{e: e} }
 
+// forget drops the read this stage's plan was made from, so that the next one
+// is made from the file as it stands now. The lift stage writes its lifted
+// values into the very file this stage publishes, and it runs before this one:
+// without this the publish would be made from the document the run read before
+// that write, or refused as one that changed under it — leaving the migration
+// written on this machine and never published (update_lift.go).
+func (s *layerStage) forget() {
+	s.planned, s.p, s.err = false, nil, nil
+}
+
 func (layerStage) Name() string    { return initflow.Layer }
 func (layerStage) SelfConfirming() {}
 

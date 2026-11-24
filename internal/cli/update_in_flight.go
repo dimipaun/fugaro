@@ -284,6 +284,10 @@ func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []inFli
 		steps = append(steps, inFlightStep{
 			line: "policy: a cascade project's runs pick up the new policy at their next model call"})
 	}
+	if e.liftLowersCaps(ctx, db) {
+		steps = append(steps, inFlightStep{
+			line: "caps: a repository cap above the project's ceiling is lowered in place, and a lease compares against the lower figure from then on"})
+	}
 	if e.credentialsWindowOpens(ctx, db) {
 		steps = append(steps, inFlightStep{
 			line: "credentials service: a call between the node's raise and its move is refused"})
@@ -333,6 +337,76 @@ func (e *initEngine) managedProjectRead(ctx context.Context) bool {
 	}
 	managed, err := r.managedProject(ctx, e.c)
 	return err == nil && managed
+}
+
+// liftLowersCaps is whether this run's lift stage can lower a repository cap
+// that a run in flight is compared against (B18): a repository node whose cap
+// stands above the project's ceiling is lowered in place, and from then on a
+// lease of that repository compares against the lower figure. The ceiling is
+// the global cap where one is set and the default for repositories with no node
+// of their own otherwise, which is the figure budget.Evaluate takes for the
+// repository — so a project with a global cap set has nothing to lower here,
+// because its runs already meet the lower figure.
+//
+// Like budgetModeBindsRuns it errs towards naming a step that may end up doing
+// nothing: the cap planner is registered by RC4, and a run whose planner cannot
+// read the repositories leaves the nodes alone.
+func (e *initEngine) liftLowersCaps(ctx context.Context, db *rtdb.Client) bool {
+	caps, err := readLiftCaps(ctx, db)
+	if err != nil {
+		return false
+	}
+	perRun := capsCeiling(
+		perRunOf(caps.Global), perRunOfDefaults(caps.Defaults))
+	daily := capsCeiling(
+		dailyOf(caps.Global), dailyOfDefaults(caps.Defaults))
+	for _, rc := range caps.Repos {
+		if rc.PerRunMicros != nil && perRun != nil && *rc.PerRunMicros > *perRun {
+			return true
+		}
+		if rc.DailyMicros != nil && daily != nil && *rc.DailyMicros > *daily {
+			return true
+		}
+	}
+	return false
+}
+
+// capsCeiling is the figure a repository's cap is judged against: the global
+// one where it is set, the default otherwise, and neither when neither is set —
+// a project with no ceiling has nothing above it to lower.
+func capsCeiling(globalBudget, fallback *budget.Micros) *budget.Micros {
+	if globalBudget != nil {
+		return globalBudget
+	}
+	return fallback
+}
+
+func perRunOf(g *budget.GlobalCaps) *budget.Micros {
+	if g == nil {
+		return nil
+	}
+	return g.PerRunMicros
+}
+
+func dailyOf(g *budget.GlobalCaps) *budget.Micros {
+	if g == nil {
+		return nil
+	}
+	return g.DailyMicros
+}
+
+func perRunOfDefaults(d *budget.DefaultCaps) *budget.Micros {
+	if d == nil {
+		return nil
+	}
+	return d.RepoPerRunMicros
+}
+
+func dailyOfDefaults(d *budget.DefaultCaps) *budget.Micros {
+	if d == nil {
+		return nil
+	}
+	return d.RepoDailyMicros
 }
 
 // budgetModeBindsRuns is whether this run's budget-mode step can put the
