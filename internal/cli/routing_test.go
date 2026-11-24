@@ -55,10 +55,15 @@ model_routing:
 
 // routingRepoYAML is the checkout's own fugaro.yaml: the security review's
 // model, so the models the read judges come from two documents (the
-// installation's config and the checkout's file) rather than one.
+// installation's config and the checkout's file) rather than one. gcp_project
+// names the cached layer's, without which that layer's defaults apply to this
+// file at no pass at all (config.Resolve's anchor rule).
 const routingRepoYAML = `version: 1
 project: aurora
+gcp_project: aurora-gcp
 git: { provider: github }
+workflows:
+  web: { commands: { build: sh b.sh, test: sh t.sh } }
 agent:
   auth: api-key
   crafts:
@@ -68,7 +73,13 @@ agent:
 `
 
 // routingProjectLayer is the project layer file the last cloud read cached: the
-// first-line review's model, which no narrower layer sets.
+// first-line review's model, which no narrower layer sets, and two agent keys a
+// run of the project is served on through the layer rather than through the
+// checkout's own file — defaults.agent.model, which both the coder's and the
+// reviewer's pin fall back to, and its background pin. The read carries both,
+// because a project layer naming them names models every repository of the
+// project calls (the level rung has its own test below, so this fixture's layer
+// names no level).
 const routingProjectLayer = `version: 1
 project: aurora
 gcp_project: aurora-gcp
@@ -76,6 +87,9 @@ defaults:
   git: { provider: github }
   agent:
     auth: api-key
+    model: claude-fable-5-1
+    models:
+      background: claude-opus-5
     crafts:
       review: {model: claude-sonnet-5-5}
 `
@@ -105,12 +119,7 @@ func routingFixture(t *testing.T) (configPath, orig string) {
 		t.Fatal(err)
 	}
 	t.Setenv("FUGARO_CONFIG", path)
-	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
-		GCPProject: "aurora-gcp", Bucket: "fugaro-runs-aurora-gcp",
-		CheckedAt: time.Now(), YAML: routingProjectLayer,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	routingSaveLayer(t, routingProjectLayer)
 	testutil.IsolateGit(t)
 	dir := filepath.Join(home, "checkout")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -129,12 +138,28 @@ func routingFixture(t *testing.T) (configPath, orig string) {
 	return path, orig
 }
 
+// routingSaveLayer caches a project layer file as the last cloud read, the one
+// modelsLayer reads. A test that needs a layer of its own writes it here rather
+// than building a second world around the fixture.
+func routingSaveLayer(t *testing.T, layer string) {
+	t.Helper()
+	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
+		GCPProject: "aurora-gcp", Bucket: "fugaro-runs-aurora-gcp",
+		CheckedAt: time.Now(), YAML: layer,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // routingModelsWant is the models the fixture resolves to, in the order the
-// crafts resolve: the coder's vendor model (which the merge judge inherits, so
-// both crafts are named on its row), the first-line review's from the project
-// layer, the senior review's from the installation's config, the security
-// review's from the checkout, and the vision slot the checkout pins. It is
-// spelled once so the text read and the document cannot disagree about it.
+// read names them: the crafts first — the coder's vendor model (which the merge
+// judge inherits, so both crafts are named on its row), the first-line review's
+// from the project layer, the senior review's from the installation's config and
+// the security review's from the checkout — then the agent's pins, which the
+// layer answers for as much as the checkout does: the layer's agent.model (one
+// row for the coder and the reviewer, since both fall back to it) and its
+// background pin, then the vision slot the checkout pins.
+// It is spelled once so the text read and the document cannot disagree about it.
 var routingModelsWant = []struct {
 	model  string
 	crafts string
@@ -144,6 +169,8 @@ var routingModelsWant = []struct {
 	{model: "claude-sonnet-5-5", crafts: config.CraftReview, entry: "claude-*"},
 	{model: "claude-opus-5-5", crafts: config.CraftSeniorReview, entry: "claude-*"},
 	{model: "claude-sonnet-5", crafts: config.CraftSecurityReview, entry: "claude-*"},
+	{model: "claude-fable-5-1", crafts: "", entry: "claude-*"},
+	{model: "claude-opus-5", crafts: "", entry: "claude-*"},
 	{model: "claude-haiku-4-5", crafts: "", entry: "claude-*"},
 }
 
@@ -177,6 +204,34 @@ func TestRoutingLs(t *testing.T) {
 				t.Errorf("the %s row does not carry %q: %q", want.model, cell, line)
 			}
 		}
+	}
+}
+
+// TestRoutingLevelModelComesFromTheLayer is the review level's rung of the
+// model list: a project layer naming defaults.agent.levels.<level>.model names
+// a model every repository of the project reviews on, and the read carries it
+// even though no other document of this machine does. The layer cached here
+// names that key alone, so the row can come from nowhere else.
+func TestRoutingLevelModelComesFromTheLayer(t *testing.T) {
+	routingFixture(t)
+	routingSaveLayer(t, `version: 1
+project: aurora
+gcp_project: aurora-gcp
+defaults:
+  git: { provider: github }
+  agent:
+    auth: api-key
+    levels:
+      l2:
+        model: claude-opus-5
+`)
+	out, _, err := execute(t, "routing", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	line := routingLine(t, routingSection(t, out, "MODEL"), "claude-opus-5")
+	if !strings.Contains(line, "claude-*") {
+		t.Errorf("the layer's level model is not a row of the read: %q\n%s", line, out)
 	}
 }
 

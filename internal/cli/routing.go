@@ -253,7 +253,15 @@ type routingModel struct {
 // the cached project layer — the same call `fugaro craft ls` makes, so a table
 // is never judged against a model list of its own), the four models
 // `agent.models` pins (config.Agent.PinnedModels, the models a run under a
-// budget charges through the gateway), and each review level's own model.
+// budget charges through the gateway), and each review level's own model. The
+// agent those last two are read from is the launch's own resolution —
+// config.Resolve, this checkout's file over the layer's defaults.agent, the
+// pass craftLsServes reads a craft's model verdict with — never the checkout's
+// block alone: a project layer pinning defaults.agent.model, defaults.agent.
+// models.<role> or defaults.agent.levels.<level>.model names a model every
+// repository of the project runs on, and the table a write is refused over has
+// to carry it. Where this directory is no checkout the block reads as it does
+// for `fugaro craft ls`, empty.
 //
 // One list for the whole family: `ls` renders it and `set`/`rm` hand it to the
 // checks (routing.Checks.Models), so the table a person reads about and the
@@ -272,6 +280,14 @@ func routingModels(cmd *cobra.Command, lc *localcfg.Config) []routingModel {
 	}
 	files.layer = modelsLayer(lc.Name)
 	eff, _ := craft.Resolve(craftLsLayers(files), craftLsSpread(lc))
+	// Read after the layers are assembled: files.agent stays the checkout's own
+	// block, which craftLsLayers reads the repo layer's crafts from.
+	agent := files.agent
+	if files.repo {
+		if cfg, _, ps := config.Resolve(files.data, files.layer); len(ps) == 0 {
+			agent = cfg.Agent
+		}
+	}
 
 	var out []routingModel
 	add := func(model, craftName string) {
@@ -293,10 +309,10 @@ func routingModels(cmd *cobra.Command, lc *localcfg.Config) []routingModel {
 	for _, name := range config.CraftNames {
 		add(eff[name].Model, name)
 	}
-	for _, model := range files.agent.PinnedModels() {
+	for _, model := range agent.PinnedModels() {
 		add(model, "")
 	}
-	for _, l := range []*config.LevelSetting{files.agent.Levels.L1, files.agent.Levels.L2, files.agent.Levels.L3} {
+	for _, l := range []*config.LevelSetting{agent.Levels.L1, agent.Levels.L2, agent.Levels.L3} {
 		if l != nil {
 			add(l.Model, "")
 		}

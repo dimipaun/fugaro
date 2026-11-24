@@ -28,7 +28,7 @@
     },
     "models": {
       "type": "array",
-      "description": "One row per model a run of this project can be served on, in the order the crafts resolve: the five crafts' resolved models, the four models agent.models pins, and each review level's agent.levels.<level>.model. The rungs decided per launch — a task's own grade, a --model override — are not here, because no file names them.",
+      "description": "One row per model a run of this project can be served on, in the order the crafts resolve: the five crafts' resolved models, the four models agent.models pins, and each review level's agent.levels.<level>.model. The agent those pins and levels are read from is the one a run resolves — this checkout's fugaro.yaml over the project layer's defaults.agent — so a model the layer names and no repository does is a row here too. The rungs decided per launch — a task's own grade, a --model override — are not here, because no file names them.",
       "items": {
         "$ref": "#/$defs/model"
       }
