@@ -60,11 +60,25 @@
 // refuse a non-Claude model on Vertex until GV4 lifts that rule — so this
 // translation's only callers today are GV4's wiring and the tests below, and
 // the wire is exercised for real by the owner's Check 886.
+//
+// The round trip GV2 completes is anchored HERE, because the request is where
+// the signature lands: a tool call this file sends carries the THOUGHT SIGNATURE
+// Vertex answered that call with. Gemini 3 checks the signature of every functionCall
+// part it is sent back and answers a missing one with a 400 (the thinking page
+// cited above), so a tool loop — the very thing this translation exists for —
+// does not work unless the signature comes back, and the second call of that
+// loop is the one that carries it. Where it lives on the Anthropic side is the
+// tool call's ID, minted by GV2 with vertexGeminiThoughtSignatureID when Vertex
+// sends a signature and read back here by vertexGeminiThoughtSignature: an ID is
+// the one member of a tool call a harness echoes back verbatim, where a member
+// of this service's own invention would be dropped by the SDK the harness is
+// built on before the next call was ever made.
 
 package credsvc
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -98,6 +112,38 @@ const (
 	// length of 64."
 	vertexGeminiMaxFunctionNameBytes = 64
 )
+
+// vertexGeminiThoughtSignatureID is the prefix a tool call's ID carries when
+// that ID encodes the thought signature Vertex sent with the call — the one
+// place on the Anthropic side where a signature lives, and the reason it is
+// there rather than in a member of its own is in this file's header. GV2 mints
+// the ID: the signature's bytes as URL-safe base64 with no padding, because an
+// ID is not a place for `+`, `/` or `=`.
+const vertexGeminiThoughtSignatureID = "toolu_vrtx_thought_"
+
+// vertexGeminiThoughtSignature answers the thought signature a tool call's ID
+// carries, and "" when it carries none — a call whose id the harness minted, or
+// one the model answered without thinking. What is answered is the standard
+// base64 Vertex's `bytes` member takes, re-encoded from the bytes the ID held,
+// so the value Vertex sent is the value it is sent back.
+//
+// An ID with the prefix and nothing decodable after it is a typed refusal and
+// not a call without a signature: Gemini 3 checks the signature of a replayed
+// functionCall, so an unreadable one is a call that cannot be sent at all, and
+// refusing it here names the member where Vertex's own 400 would name nothing an
+// operator could act on.
+func vertexGeminiThoughtSignature(id, where string) (string, error) {
+	encoded, prefixed := strings.CutPrefix(id, vertexGeminiThoughtSignatureID)
+	if !prefixed {
+		return "", nil
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil || len(signature) == 0 {
+		return "", untranslatableMember(where+".id",
+			"this tool call's id carries the thought signature Vertex answered with, and what follows the prefix is not a signature: Gemini 3 checks the signature of a function call sent back to it and refuses a call without one, so a call whose signature cannot be read is one this translation will not send")
+	}
+	return base64.StdEncoding.EncodeToString(signature), nil
+}
 
 // vertexGeminiFunctionNameRE is that rule as a rule, applied to every tool the
 // agent offers: a name Vertex would refuse is refused HERE, where the refusal
@@ -210,7 +256,14 @@ func vertexGeminiPath(callPath, project, location, spelling string, stream bool)
 // `anthropic_version` (a member of Vertex's Anthropic publisher and of nothing
 // else). Everything else is either mapped below or refused — see the file's own
 // note on the two deliberate drops, `cache_control` and `metadata.user_id`.
-func vertexGeminiBody(body []byte) ([]byte, error) {
+//
+// counting is the token-count path, and it is the one body this translation
+// builds that is NOT a generateContent request: Vertex's CountTokensRequest has
+// no `toolConfig` member at all, so a tool choice sent to it is a request Vertex
+// rejects as an unknown field. The member is still READ there — a tool choice
+// this translation cannot carry is refused on either path — and it is left out
+// of the counting body alone, where it cannot change the input being counted.
+func vertexGeminiBody(body []byte, counting bool) ([]byte, error) {
 	call, err := readVertexObject(body, "")
 	if err != nil {
 		return nil, err
@@ -251,7 +304,9 @@ func vertexGeminiBody(body []byte) ([]byte, error) {
 			if err != nil {
 				return nil, err
 			}
-			out["toolConfig"] = config
+			if !counting {
+				out["toolConfig"] = config
+			}
 		case "max_tokens":
 			n, ok := vertexJSONInt(m.Value)
 			if !ok || n < 1 {
@@ -569,7 +624,15 @@ func vertexGeminiPart(raw json.RawMessage, where string, calls map[string]string
 			return nil, err
 		}
 		calls[id] = name
-		return map[string]any{"functionCall": map[string]any{"name": name, "args": args}}, nil
+		part := map[string]any{"functionCall": map[string]any{"name": name, "args": args}}
+		signature, err := vertexGeminiThoughtSignature(id, where)
+		if err != nil {
+			return nil, err
+		}
+		if signature != "" {
+			part["thoughtSignature"] = signature
+		}
+		return part, nil
 	case "tool_result":
 		callID, ok := vertexJSONString(fields["tool_use_id"])
 		if !ok {

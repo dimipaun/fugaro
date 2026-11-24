@@ -337,12 +337,13 @@ func vertexPathFor(publisher, callPath, project, location, spelling string, stre
 
 // vertexBodyFor is the body of that same call, drawn from the same publisher:
 // vertexBody (the Messages translation) for the Anthropic publisher, and
-// vertexGeminiBody (GV1's) for the Google one.
-func vertexBodyFor(publisher string, body []byte, spelling string, keepModel bool) ([]byte, error) {
+// vertexGeminiBody (GV1's) for the Google one. The counting flag is C1's token
+// count, which each publisher's counting endpoint takes a different body for.
+func vertexBodyFor(publisher string, body []byte, spelling string, counting bool) ([]byte, error) {
 	if publisher == pricing.VertexPublisherGoogle {
-		return vertexGeminiBody(body)
+		return vertexGeminiBody(body, counting)
 	}
-	return vertexBody(body, spelling, keepModel)
+	return vertexBody(body, spelling, counting)
 }
 
 // vertexDestination is the URL one Vertex call goes to: the host the location

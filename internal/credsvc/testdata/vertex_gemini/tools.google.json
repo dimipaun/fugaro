@@ -6,8 +6,14 @@
       "role": "model",
       "parts": [
         {"text": "sure"},
-        {"functionCall": {"name": "read_file", "args": {"path": "a.txt"}}},
-        {"functionCall": {"name": "run_command", "args": {"argv": ["ls"]}}}
+        {
+          "functionCall": {"name": "read_file", "args": {"path": "a.txt"}},
+          "thoughtSignature": "YSBmaXh0dXJlIHRob3VnaHQgc2lnbmF0dXJl"
+        },
+        {
+          "functionCall": {"name": "run_command", "args": {"argv": ["ls"]}},
+          "thoughtSignature": "YSBzZWNvbmQgZml4dHVyZSB0aG91Z2h0IHNpZ25hdHVyZQ=="
+        }
       ]
     },
     {

@@ -34,17 +34,17 @@
       "role": "assistant",
       "content": [
         {"type": "text", "text": "sure"},
-        {"type": "tool_use", "id": "toolu_one", "name": "read_file", "input": {"path": "a.txt"}},
-        {"type": "tool_use", "id": "toolu_two", "name": "run_command", "input": {"argv": ["ls"]}}
+        {"type": "tool_use", "id": "toolu_vrtx_thought_YSBmaXh0dXJlIHRob3VnaHQgc2lnbmF0dXJl", "name": "read_file", "input": {"path": "a.txt"}},
+        {"type": "tool_use", "id": "toolu_vrtx_thought_YSBzZWNvbmQgZml4dHVyZSB0aG91Z2h0IHNpZ25hdHVyZQ", "name": "run_command", "input": {"argv": ["ls"]}}
       ]
     },
     {
       "role": "user",
       "content": [
-        {"type": "tool_result", "tool_use_id": "toolu_one", "content": "the file's text"},
+        {"type": "tool_result", "tool_use_id": "toolu_vrtx_thought_YSBmaXh0dXJlIHRob3VnaHQgc2lnbmF0dXJl", "content": "the file's text"},
         {
           "type": "tool_result",
-          "tool_use_id": "toolu_two",
+          "tool_use_id": "toolu_vrtx_thought_YSBzZWNvbmQgZml4dHVyZSB0aG91Z2h0IHNpZ25hdHVyZQ",
           "content": [{"type": "text", "text": "stdout: ok"}, {"type": "text", "text": "stderr: none"}],
           "is_error": true
         }

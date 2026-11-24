@@ -84,13 +84,19 @@ func geminiDoc(t *testing.T, raw []byte) any {
 // prompt with a tool loop in it; every sampling member a caller sets; a forced
 // tool), and the Google side is what Vertex must be sent for it.
 //
+// The tool loop's own round trip is pinned by the `tools` pair: the tool calls
+// it replays carry the thought signature Gemini 3 checks, and the pair holds the
+// id GV2 mints to the `thoughtSignature` this translation sends — including the
+// base64 padding the id form drops. The subtest after the pairs is the other
+// branch of that rule, a tool call whose id carries no signature at all.
+//
 // Mutation (run, restore): carry `model`, `stream` or `anthropic_version` into
-// the body, or map a role or a block onto the wrong member, and the pair it
-// belongs to is red.
+// the body, map a role or a block onto the wrong member, or drop the signature
+// round trip, and the pair it belongs to is red.
 func TestGeminiRequestTranslation(t *testing.T) {
 	for _, name := range []string{"text", "tools", "sampling", "forced_tool"} {
 		t.Run(name, func(t *testing.T) {
-			sent, err := vertexGeminiBody(geminiPair(t, name, "anthropic"))
+			sent, err := vertexGeminiBody(geminiPair(t, name, "anthropic"), false)
 			if err != nil {
 				t.Fatalf("the %q request was refused: %v", name, err)
 			}
@@ -103,6 +109,22 @@ func TestGeminiRequestTranslation(t *testing.T) {
 				name, indent(t, got), indent(t, want))
 		})
 	}
+
+	t.Run("a tool call whose id carries no signature is sent without one", func(t *testing.T) {
+		body := `{"model":"google/gemini-3-pro","max_tokens":16,"messages":[{"role":"assistant","content":[` +
+			`{"type":"tool_use","id":"toolu_01A09q90qw90lq917835lq9","name":"read_file","input":{"path":"a.txt"}}]}]}`
+		sent, err := vertexGeminiBody([]byte(body), false)
+		if err != nil {
+			t.Fatalf("a tool call whose id a harness minted was refused: %v", err)
+		}
+		call := geminiDoc(t, sent).(map[string]any)["contents"].([]any)[0].(map[string]any)["parts"].([]any)[0].(map[string]any)
+		if _, signed := call["thoughtSignature"]; signed {
+			t.Error("a thought signature was sent for a tool call whose id carried none: this translation carries a signature when the call has one and never invents one, because a call a model answered without a signature has none to carry")
+		}
+		if _, called := call["functionCall"]; !called {
+			t.Errorf("the tool call did not reach Vertex as a functionCall: %s", sent)
+		}
+	})
 }
 
 // indent is a document as one line of readable JSON, for a failure that has to
@@ -213,19 +235,26 @@ func TestAGeminiCallGoesToTheGooglePublisher(t *testing.T) {
 
 	t.Run("a token count is a countTokens", func(t *testing.T) {
 		s, watch, _ := vertexGeminiFixture(t, anthropicfake.MessageOK("google/gemini-3-flash", testUsage))
-		cl := vertexCall(t, CountTokensPath, string(geminiPair(t, "text", "anthropic")))
+		// The tools pair is the one that carries a `tool_choice`, which is what
+		// makes this subtest about the COUNTING body and not only about the path:
+		// Vertex's CountTokensRequest has no toolConfig member at all.
+		cl := vertexCall(t, CountTokensPath, string(geminiPair(t, "tools", "anthropic")))
 		done, _, rec, _ := serveVertexCall(t, s, vertexIdentity(s, testProject), cl, testVertexSource())
 		if !done || rec.Code != http.StatusOK {
 			t.Fatalf("the token count is answered %d (%v), want it served", rec.Code, done)
 		}
-		// This pair names the Pro model, so the spelling asserted here is the
-		// other row of the table: the path carries the map's answer for whatever
-		// model the body named.
-		if got, want := watch.sawURL(t, 0), "https://"+testVertexRegion+"-aiplatform.googleapis.com"+prefix+"gemini-3-pro:countTokens"; got != want {
+		if got, want := watch.sawURL(t, 0), "https://"+testVertexRegion+"-aiplatform.googleapis.com"+prefix+"gemini-3-flash:countTokens"; got != want {
 			t.Errorf("the token count went to %q, want %q: Google's counting endpoint names its model in the path, unlike the Anthropic publisher's", got, want)
 		}
-		if _, named := geminiDoc(t, s.up.Body(0)).(map[string]any)["model"]; named {
+		counted := geminiDoc(t, s.up.Body(0)).(map[string]any)
+		if _, named := counted["model"]; named {
 			t.Error("the counting request names a model in its body: this publisher takes it from the path alone")
+		}
+		if _, sent := counted["toolConfig"]; sent {
+			t.Errorf("the counting request carries a toolConfig: Vertex's CountTokensRequest has no such member, so the call is one it rejects as an unknown field, and a tool choice changes nothing about the input being counted: %s", s.up.Body(0))
+		}
+		if _, sent := counted["tools"]; !sent {
+			t.Errorf("the counting request carries no tools: a declaration is part of the input the count is of, so it is the tool CHOICE that is left out and not the tools: %s", s.up.Body(0))
 		}
 	})
 }
@@ -290,6 +319,11 @@ func TestAnUntranslatableMemberIsRefused(t *testing.T) {
 		body: head + `"tools":[{"name":"read_file","input_schema":{"type":"object",` +
 			`"properties":{"path":{"type":"string"}},"additionalProperties":{"description":"` + geminiPlanted + `"}}}],` + tail,
 		member: "tools[0].input_schema.additionalProperties",
+	}, {
+		name: "a tool call whose signature cannot be read",
+		body: `{"model":"google/gemini-3-pro","max_tokens":16,"messages":[{"role":"assistant",` +
+			`"content":[{"type":"tool_use","id":"` + vertexGeminiThoughtSignatureID + `not-a-signature!!","name":"read_file","input":{"path":"a.txt"}}]}]}`,
+		member: "messages[0].content[0].id",
 	}, {
 		name: "a thinking block",
 		body: `{"model":"google/gemini-3-pro","max_tokens":16,"messages":[{"role":"assistant",` +
