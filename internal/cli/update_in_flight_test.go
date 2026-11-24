@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -71,6 +72,16 @@ const (
 // is a fact of its own under the count's line.
 func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	r := newConvergeRig(t, v3Node(nil))
+	// IS5's step is one of the writes this run makes while the run is going, so
+	// the fixture carries what it acts on: the operator's workflow_secrets
+	// block and one name's project copy. The copy is a Secret Manager container
+	// and a node of the database — neither of them anything a run holds — and
+	// the assertions at the end are that it happened and that the run still owns
+	// every write it makes afterwards.
+	operatorIdentity(t)
+	r.appendConfig(t, "workflow_secrets:\n  deploy-token: { allow_data_to: [acme/*] }\n")
+	registerInstallation(t, r.initRig)
+	r.seedProjectKey(t, "deploy-token")
 	// The deployed rules are the release behind's document and not a stand-in:
 	// the add-only assertion below is a diff against what a run of that release
 	// was granted by.
@@ -167,6 +178,20 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	// rewritten, and the run that resumes it picks the chain up afterwards.
 	held.untouched(t, r)
 	held.resumes(t, r)
+
+	// IS5's copy ran over the same in-flight run, and what it wrote is not
+	// something a run holds: the workflow secret's project copy is in the
+	// `fugaro_p_` grammar afterwards, beside the ledger, the counters and the
+	// records laterWrites above read back byte for byte.
+	if _, found := fakeContainer(t, r.sm, grammarID(t, "deploy-token")); !found {
+		t.Errorf("%s is not there after the update: a migration that waits for the runs to finish is the second command the HARD RULE forbids",
+			grammarID(t, "deploy-token"))
+	}
+	if ps, found := projectSecretsOf(t, r.db); !found {
+		t.Errorf("%s is not there after the update", creds.PathProjectSecrets())
+	} else if _, ok := ps.Rule("deploy-token"); !ok {
+		t.Errorf("the record holds no entry for deploy-token after the update: %v", ps.Secrets)
+	}
 }
 
 // TestUpdateCountsPausedRuns is PR6's own acceptance read against the note: the

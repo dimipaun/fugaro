@@ -707,6 +707,15 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// this run leaves behind — and it returns no error either: the list is a derived
 	// object, and failing an upgrade over one is what the HARD RULE forbids.
 	e.writeAdminList(ctx)
+	// And D3325's: every workflow secret's project copy moves into the
+	// `fugaro_p_` grammar the intake writes and the credentials service serves,
+	// as the operator (update_workflowsecrets.go's copyWorkflowSecretsToGrammar).
+	// It is here for the reason the eight around it are — the converge has
+	// applied everything it had, so the project-wide containers it reads are the
+	// ones this run leaves behind — and it returns no error either: a name that
+	// was not copied keeps its mount and its copy, and the next update copies it
+	// (the HARD RULE, G4).
+	e.copyWorkflowSecretsToGrammar(ctx)
 	// And D3087's: where the installation's located things are, read from the
 	// cloud and written down in this machine's own config (LP14 of
 	// docs/location-preference/, docs/location-preference/record.md). It is
