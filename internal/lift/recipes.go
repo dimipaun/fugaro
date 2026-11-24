@@ -182,17 +182,23 @@ func planCopy(ch Change, p Project, copyName string, cs []*recipeCandidate) Chan
 			return leftLines(ch, cs, fmt.Sprintf("the copy name %s is claimed by another repository's file", copyName))
 		}
 	}
+	out, err := renameRecipe(data, copyName)
+	if err != nil {
+		return leftLines(ch, cs, fmt.Sprintf("its name: line could not be rewritten: %v", err))
+	}
+	// The store holds a copy as it is published — the repository's file with
+	// its name: line rewritten — so an update that wrote its copies and stopped
+	// before its records meets its own work here rather than the repository's
+	// file, and the sum it is compared against is the rewritten text's. Summing
+	// the file instead would read every rerun's own copy as another's and leave
+	// it, naming a name the migration itself took.
 	if sum, inStore := p.Recipes[copyName]; inStore {
-		if sum == recipe.Sum(data) {
+		if sum == recipe.Sum(out) {
 			return ch
 		}
 		return leftLines(ch, cs, fmt.Sprintf("the copy name %s is already taken", copyName))
 	}
-	out, err := renameRecipe(data, copyName)
-	switch {
-	case err != nil:
-		return leftLines(ch, cs, fmt.Sprintf("its name: line could not be rewritten: %v", err))
-	case len(out) > recipe.MaxBytes:
+	if len(out) > recipe.MaxBytes {
 		// The rewritten copy is what a run parses, and one over the limit is
 		// refused by the same parser that read the file: it is named, not
 		// published, so a repository's runs keep the file they have.

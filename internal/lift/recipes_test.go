@@ -54,6 +54,17 @@ func TestPlanRecipes(t *testing.T) {
 	copyReviewApp := copyOf(t, "review", "github", app)
 	copyReviewWeb := copyOf(t, "review", "github", web)
 	copyDefaultApp := copyOf(t, "default", "github", app)
+	// The copies a first plan would publish: the store holds them as they are
+	// written, the files with their name: lines rewritten, which is what the
+	// copy-already-written case below seeds and the trap it is about.
+	appCopy, err := renameRecipe(recipeText("review", "one"), copyReviewApp)
+	if err != nil {
+		t.Fatalf("renameRecipe(review, %s): %v", copyReviewApp, err)
+	}
+	webCopy, err := renameRecipe(recipeText("review", "two"), copyReviewWeb)
+	if err != nil {
+		t.Fatalf("renameRecipe(review, %s): %v", copyReviewWeb, err)
+	}
 	catalogReviewOnly, ok := recipe.CatalogText("review-only")
 	if !ok {
 		t.Fatal("the catalog holds no review-only recipe, and this test's catalog-clash case needs one")
@@ -209,6 +220,23 @@ func TestPlanRecipes(t *testing.T) {
 				fmt.Sprintf("acme/app: .fugaro/recipes/review.yaml is left: the copy name %s is already taken", copyReviewApp),
 				fmt.Sprintf("acme/web: .fugaro/recipes/review.yaml is published as %s, its name: line rewritten and nothing else", copyReviewWeb),
 			},
+		},
+		{
+			// An update that wrote its copies and stopped before its records
+			// reruns: the store holds the copies it wrote, so the second plan
+			// meets its own work under the copy names rather than another
+			// repository's claim on them, and says nothing about either — the
+			// repositories' records are all it still owes.
+			name: "copy-already-written",
+			project: Project{Recipes: map[string]string{
+				copyReviewApp: recipe.Sum(appCopy),
+				copyReviewWeb: recipe.Sum(webCopy),
+			}},
+			repos: []Repo{
+				repoWith(app, "github", recipeFileAt("review.yaml", recipeText("review", "one"))),
+				repoWith(web, "github", recipeFileAt("review.yaml", recipeText("review", "two"))),
+			},
+			records: []string{slugApp, slugWeb},
 		},
 		{
 			name: "copy-over-the-limit",
