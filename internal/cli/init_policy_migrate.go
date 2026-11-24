@@ -1967,8 +1967,8 @@ func installSpec(o *initOptions, lc *localcfg.Config, say sayWithheld) (infra.In
 			continue
 		}
 		kept.CarriedProjectJobs = []string{name}
-		say(fmt.Sprintf("kept the shared job of %s as deployed: this config cannot compose it; a later %s writes one once fixed",
-			defaultProfileNameList([]string{name}), selfCommand()+" update"),
+		say(withheldLine("kept the shared job of ", prefixedProfileNames([]string{name}),
+			fmt.Sprintf(" as deployed: this config cannot compose it; a later %s writes one once fixed", selfCommand()+" update")),
 			fmt.Sprintf("kept the shared job of %s as the installation holds it: this local config cannot compose it now (%s)",
 				defaultProfileNameList([]string{name}), oneLineCLI(err.Error())))
 		return kept, nil
@@ -2039,11 +2039,17 @@ func heldDefaultProfiles(o *initOptions, lc *localcfg.Config) []string {
 // defaultProfileNameList spells a held set as defaultProfileNames spells a
 // written one, from the names the installation answered for.
 func defaultProfileNameList(names []string) string {
+	return strings.Join(prefixedProfileNames(names), ", ")
+}
+
+// prefixedProfileNames is those names as the list a withheld write's line reads,
+// which is the list nameList cuts to the characters the line has.
+func prefixedProfileNames(names []string) []string {
 	out := make([]string, len(names))
 	for i, n := range names {
 		out[i] = "profiles." + n
 	}
-	return strings.Join(out, ", ")
+	return out
 }
 
 // createDefaultProfiles writes the default profile of every provider this
@@ -2106,8 +2112,9 @@ func (e *initEngine) createDefaultProfiles(ctx context.Context) {
 			e.lc.Profiles = nil
 		}
 		r.withheld(
-			fmt.Sprintf("no default profile written: this config cannot compose %s; a later %s writes it once fixed",
-				nameList(profileNames(created), 1), selfCommand()+" update"),
+			withheldLine("no default profile written: this config cannot compose ",
+				profileNames(created),
+				fmt.Sprintf("; a later %s writes it once fixed", selfCommand()+" update")),
 			fmt.Sprintf("no default profile was written (%s): %s",
 				defaultProfileNames(created), oneLineCLI(err.Error())))
 		return
@@ -2279,23 +2286,51 @@ func (e *initEngine) repinDefaultCatalogEntry(next *localcfg.Config, host, owner
 // project's own configuration that the operator edits.
 //
 // The line carries the repositories where they are what the operator acts on
-// and they fit (repoList), and the log carries them all either way: the owner's
-// rule of 2026-11-24 is that this warning is one line of about 140 characters,
-// and a project can list twenty repositories.
+// and they fit within its bound (withheldLine), and the log carries them all
+// either way: the owner's rule of 2026-11-24 is that this warning is one line
+// of about withheldLineMax characters, and a project can list twenty
+// repositories.
 func (e *initEngine) withholdDefaultCatalogEntry(line, why string) {
 	e.r.withheld(line, why)
 }
 
-// nameList names at most shown of the names a withheld write is about, with
-// the rest counted, so that the line stays a line: the owner's rule of
-// 2026-11-24 is that such a warning is one line of about 140 characters, and a
-// project can list twenty repositories or two long profile names. What is left
-// out is in the run's log, with the rest of the reason.
-func nameList(names []string, shown int) string {
-	if len(names) <= shown {
-		return strings.Join(names, ", ")
+// withheldLineMax is how long the line a withheld write builds may be: the
+// owner's rule of 2026-11-24, that such a warning is one line of about this
+// many characters rather than the 600 it was. It is the line itself, without
+// the reporter's own `Warning: ` label in front of it (initRun.warn prints
+// whatever the caller builds).
+const withheldLineMax = 140
+
+// withheldLine is one line of a withheld write: the fixed head and the fixed
+// tail with the names the write is about between them, cut to as many names as
+// leave the whole line within withheldLineMax characters
+// (nameList). The count is what holds the bound for a project that lists twenty
+// repositories or names two long profiles; what the line cuts is in the run's
+// log with the rest of the reason (initRun.withheld).
+func withheldLine(head string, names []string, tail string) string {
+	return head + nameList(names, withheldLineMax-len(head)-len(tail)) + tail
+}
+
+// nameList names as many of the names a withheld write is about as fit budget
+// characters, with the rest counted, "and 3 more". The count is part of the
+// line, so a list that only fits without it is cut one name further: what the
+// reader is left with has to say that it is not the whole list, or the line
+// reads as a project with one repository.
+//
+// One name is the floor, and it is named whole even when it alone runs over the
+// budget: a line a little long reads better than one whose remedy names no
+// repository, and half a repository name is not one the operator can act on.
+func nameList(names []string, budget int) string {
+	if len(names) == 0 {
+		return ""
 	}
-	return strings.Join(names[:shown], ", ") + fmt.Sprintf(", and %d more", len(names)-shown)
+	shown := len(names)
+	list := strings.Join(names, ", ")
+	for shown > 1 && len(list) > budget {
+		shown--
+		list = strings.Join(names[:shown], ", ") + fmt.Sprintf(", and %d more", len(names)-shown)
+	}
+	return list
 }
 
 // catalogEntries is the entries of a catalog a config may not have at all, as a
@@ -2346,13 +2381,13 @@ func catalogEntries(cat *config.Catalog) []config.Entry {
 // be refused the moment the entry lands.
 func (e *initEngine) defaultCatalogEntryRefusal(cat *config.Catalog, imageMap map[string]string, entry config.Entry, node *projectpolicy.Policy) (line, why string) {
 	if repos := unadmittedRepos(e.lc, node); len(repos) > 0 {
-		return fmt.Sprintf("no default catalog entry written: this project does not admit %s; nothing to do", nameList(repos, 2)),
+		return withheldLine("no default catalog entry written: this project does not admit ", repos, "; nothing to do"),
 			fmt.Sprintf("this project does not admit %s — a repository is admitted when the project's published allow_repos names it and a profile of its provider admits it — and a repository it does not admit runs on the per-repository job its own root deploys, so the entry would be the image of that job: a checkout: baked workflow of it that writes no image of its own is refused there (unbuiltOnBaked, D1191)",
 				strings.Join(repos, ", "))
 	}
 	cfg, slug := e.checkoutWorkflows()
 	if repos := unvouchedRepos(e.lc, e.heldCanonical()); len(repos) > 0 {
-		return fmt.Sprintf("no default catalog entry written: this machine holds no checkout of %s; nothing to do", nameList(repos, 2)),
+		return withheldLine("no default catalog entry written: this machine holds no checkout of ", repos, "; nothing to do"),
 			fmt.Sprintf("this project's config lists %s: a repository this run holds no checkout of keeps the per-repository job its own root deploys, whose image is this project's catalog default — where a checkout: baked workflow that writes no image of its own is refused (unbuiltOnBaked, D1191), and this run cannot read those workflows from here",
 				strings.Join(repos, ", "))
 	}

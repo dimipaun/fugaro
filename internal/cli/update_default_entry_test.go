@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -421,6 +422,93 @@ func TestTheWithheldEntryWarningIsOneLineAndNamesTheAction(t *testing.T) {
 			t.Errorf("the line does not name what the operator does about the workflow that holds the write back, an image of the workflow's own: %q", line)
 		}
 	})
+	// The bound is held by the characters the line has left, not by a count of
+	// the names it is about: a project of twenty repositories, or two long
+	// profile names, is a project whose list has to be cut to stay one line —
+	// and the line still has to say that it is not the whole list.
+	t.Run("a project that lists more repositories than the line holds", func(t *testing.T) {
+		siblings := []string{"acme/repo1", "acme/repo2", "acme/repo3", "acme/repo4", "acme/repo5", "acme/repo6"}
+		allowed := []string{"github/acme/app"}
+		for _, name := range siblings {
+			allowed = append(allowed, "github/"+name)
+		}
+		node := currentNode()
+		node["allow_repos"] = allowed
+		r := ownImageRigNode(t, node)
+		onlyRepos(t, r, siblings...)
+		out := convergeOn(t, r, []string{"policy-vs-jobs"})
+
+		line := oneWithheldEntryLine(t, out)
+		shown := strings.Count(line, "acme/repo")
+		if shown == 0 || shown >= len(siblings) {
+			t.Errorf("the line names %d of the %d repositories the write waits on, and the rule is that it names what fits and counts the rest: %q",
+				shown, len(siblings), line)
+		}
+		if want := fmt.Sprintf("and %d more", len(siblings)-shown); !strings.Contains(line, want) {
+			t.Errorf("the line does not count the %d repositories it cut (%q), so it reads as a project that lists the %d it names: %q",
+				len(siblings)-shown, want, shown, line)
+		}
+		log := withheldEntryLog(t)
+		for _, want := range siblings {
+			if !strings.Contains(log, want) {
+				t.Errorf("the log does not hold %s, which the line cut without the reader having anywhere to read it:\n%s", want, log)
+			}
+		}
+	})
+}
+
+// TestNameListCutsToTheCharactersItHas is the bound's own edge, below the whole
+// line: what the list is given is the characters the head and the tail left,
+// the list says how many names it cut, and it never cuts the last name it has
+// — a line whose remedy names no repository is worse than a line a little over
+// the bound.
+func TestNameListCutsToTheCharactersItHas(t *testing.T) {
+	names := []string{"acme/one", "acme/two", "acme/three", "acme/four"}
+	cases := []struct {
+		name   string
+		names  []string
+		budget int
+		want   string
+	}{
+		{"every name when they fit", names, 41, "acme/one, acme/two, acme/three, acme/four"},
+		{"as many as fit, the rest counted", names, 30, "acme/one, acme/two, and 2 more"},
+		{"the count needs its own room", names, 20, "acme/one, and 3 more"},
+		{"one name is the floor, over budget or not", names, 4, "acme/one, and 3 more"},
+		{"a lone name is never cut", []string{"acme/one"}, 1, "acme/one"},
+		{"nothing to name", nil, 140, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := nameList(tc.names, tc.budget); got != tc.want {
+				t.Errorf("nameList(%q, %d) = %q, want %q", tc.names, tc.budget, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestTheWithheldLineHoldsItsBound is the same rule over a whole line built by
+// withheldLine: the head and the tail are kept whole and the names are what
+// gives, so the warning is one line of at most withheldLineMax characters
+// whatever the project lists.
+func TestTheWithheldLineHoldsItsBound(t *testing.T) {
+	repos := make([]string, 0, 20)
+	for i := range 20 {
+		repos = append(repos, fmt.Sprintf("acme/service-repository-%02d", i))
+	}
+	const head, tail = "no default catalog entry written: this machine holds no checkout of ", "; nothing to do"
+	line := withheldLine(head, repos, tail)
+	if n := len(line); n > withheldLineMax {
+		t.Errorf("withheldLine over twenty repositories is %d characters, want at most %d: %q", n, withheldLineMax, line)
+	}
+	if !strings.HasPrefix(line, head) || !strings.HasSuffix(line, tail) {
+		t.Errorf("the line is %q, want the head and the tail whole with the names between them", line)
+	}
+	if !strings.Contains(line, repos[0]) || !strings.Contains(line, fmt.Sprintf("and %d more", len(repos)-1)) {
+		t.Errorf("the line is %q, want the first repository named and the other %d counted: the cut is not the same thing as the list", line, len(repos)-1)
+	}
+	if strings.Contains(line, repos[len(repos)-1]) {
+		t.Errorf("the line is %q and names the last of the twenty repositories as well, so it names what it says it counted", line)
+	}
 }
 
 // oneWithheldEntryLine is the withheld write's one line, with the owner's rule
