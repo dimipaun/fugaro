@@ -28,7 +28,9 @@ recorded; read them for what each row settles. This file is the commands and wha
   repositories only, and they must differ. The first must be a **vertex** repository (`agent.auth: vertex`): U1's
   reading is a run that holds a run identity and still fetches.
 - **A checkout of the first one**, `CHECK920_CHECKOUT`. The review half is `fugaro review --pr N`, which resolves
-  the repository from its own checkout's origin, so the check runs it there.
+  the repository from its own checkout's origin, so the check runs it there — and the origin must name the
+  repository under test **exactly** (`owner/name`): a checkout of another one stops the check before it calls
+  anything, because a review launched there would be a real run of *that* repository's pull request #N.
 - **Two workflow secrets, declared by the first repository.** In its own `fugaro.yaml`:
 
   ```yaml
@@ -202,7 +204,9 @@ not measure reads `UNVERIFIED` and the verdict is `INCOMPLETE` (exit `3`). The s
 - **A coding agent's session** (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_REMOTE`, `CURSOR_AGENT` or
   `AI_AGENT` in the environment) — refused on sight, with the two commands to run yourself.
 - **An input missing or malformed** — `CHECK920_REPO`, `CHECK920_CHECKOUT` (a directory, with a readable origin
-  that names `CHECK920_REPO`), `CHECK920_UNLISTED_REPO`, `CHECK920_SECRET` or `CHECK920_FILE_SECRET`. The two
+  that names `CHECK920_REPO` exactly: a checkout of another repository is stopped here, before anything is called,
+  rather than launching a review of that repository's pull request), `CHECK920_UNLISTED_REPO`, `CHECK920_SECRET` or
+  `CHECK920_FILE_SECRET`. The two
   repositories must differ, the two secret names must differ, and a name is `[a-z0-9][a-z0-9-]{0,62}`.
 - **No local config, or the wrong one** — `${XDG_CONFIG_HOME:-$HOME/.config}/fugaro/projects/fugaro.yaml`
   (`CHECK920_CONFIG` names another file), naming no Realtime Database URL, no runs bucket, or another GCP project:

@@ -1091,6 +1091,48 @@ test_the_same_repository_twice_stops() {
   expect_contains "$err" "must not be CHECK920_REPO" "the same repository twice: the stop says so"
 }
 
+# The review half runs `fugaro review --pr N` FROM the checkout, and the CLI
+# resolves the repository from that checkout's origin: a checkout of another
+# repository would launch a REAL review — a cloud run, the installation's budget
+# — of that repository's pull request #N, and the review row would be about a
+# repository this check never read. The origin here is `acme/sandbox-prod`, a
+# name that CONTAINS `acme/sandbox`, so a substring reading would have gone on
+# and launched it.
+test_a_checkout_of_another_repository_stops_before_the_launch() {
+  case_dir wrongcheckout
+  write_review_row
+  git -C "$CHECKOUT" remote set-url origin https://github.com/acme/sandbox-prod.git
+  run920
+  expect_status "$status" 2 "a checkout of another repository: the verdict"
+  expect_contains "$out" "CHECK 920 RESULT END (exit 2)" "a checkout of another repository: the end line"
+  expect_contains "$err" "is a checkout of acme/sandbox-prod, not acme/sandbox" "a checkout of another repository: the stop names both"
+  local calls
+  calls=$(cat "$CALLS")
+  if [ -n "$calls" ]; then fail "a checkout of another repository: a tool was called: $(printf '%s' "$calls" | head -c 300)"; fi
+  expect_not_contains "$out" "FACT review: PASS" "a checkout of another repository: no review row passed"
+}
+
+test_a_checkout_with_no_readable_origin_stops() {
+  case_dir noorigin
+  mkdir -p "$cdir/plain"
+  CHECK920_CHECKOUT=$cdir/plain run920
+  expect_status "$status" 2 "a checkout with no origin: the verdict"
+  expect_contains "$err" "is not a checkout with a readable origin remote" "a checkout with no origin: the stop says so"
+  [ ! -s "$CALLS" ] || fail "a checkout with no origin: it called something: $(head -c 400 "$CALLS")"
+}
+
+# `git remote get-url origin` answers in whatever shape the remote is spelled,
+# and the CLI resolves the repository the same way: the ssh spelling must be read
+# as the repository it names rather than stop the check.
+test_an_ssh_origin_names_the_repository_the_same_way() {
+  case_dir sshorigin
+  write_review_row
+  git -C "$CHECKOUT" remote set-url origin git@github.com:acme/sandbox.git
+  run920
+  expect_status "$status" 0 "an ssh origin: the verdict"
+  expect_row "$out" review PASS "an ssh origin: the review ran"
+}
+
 test_an_unknown_argument_stops() {
   case_dir unknown
   run920_raw --catalouge
@@ -1258,6 +1300,9 @@ t test_an_agent_session_is_refused
 t test_an_xtrace_shell_is_refused
 t test_a_missing_input_stops_before_the_first_read
 t test_the_same_repository_twice_stops
+t test_a_checkout_of_another_repository_stops_before_the_launch
+t test_a_checkout_with_no_readable_origin_stops
+t test_an_ssh_origin_names_the_repository_the_same_way
 t test_an_unknown_argument_stops
 t test_the_token_is_never_on_argv_and_the_config_is_0600
 t test_stdin_is_closed

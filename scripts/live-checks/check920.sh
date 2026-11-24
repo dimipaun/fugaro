@@ -95,7 +95,10 @@
 #   steps file carries that snippet);
 # CHECK920_CHECKOUT (REQUIRED in the run mode: a checkout of CHECK920_REPO.
 #   The review half is `fugaro review --pr N`, which resolves the repository
-#   from its own checkout's origin, so the check runs it there);
+#   from its own checkout's origin, so the check runs it there — and the origin
+#   must name CHECK920_REPO exactly: a checkout of another repository launches
+#   a real review of THAT repository's pull request, so the check stops before
+#   it calls anything at all);
 # CHECK920_UNLISTED_REPO (REQUIRED in the run mode: a sandbox repository that
 #   declares the same secret and which the secret's allow-list does NOT admit);
 # CHECK920_SECRET (REQUIRED in the run mode: the workflow secret declared as an
@@ -821,6 +824,24 @@ mint_token() {
   unset tok
 }
 
+# origin_repo CHECKOUT: the `owner/name` a checkout's origin remote names, or
+# nothing when there is no readable one. It is the read the CLI itself makes to
+# resolve a repository from a checkout (`git remote get-url origin`), and the
+# words are the URL's path after its host with a trailing `.git` dropped, in
+# whatever shape the remote is spelled (`https://github.com/o/n.git`,
+# `git@github.com:o/n.git`, `ssh://git@host/o/n`).
+origin_repo() { # origin_repo CHECKOUT
+  local url
+  url=$(git -C "$1" remote get-url origin 2>/dev/null </dev/null) || return 1
+  url=${url%.git}
+  case "$url" in
+  *://*) url=${url#*://}; url=${url#*/} ;;
+  *@*:*) url=${url#*:} ;;
+  esac
+  [ -n "$url" ] || return 1
+  printf '%s' "$url"
+}
+
 guard_inputs() {
   if [ "$MODE" = catalog ]; then return 0
   fi
@@ -828,6 +849,21 @@ guard_inputs() {
   printf '%s' "$REPO" | grep -Eq "$REPO_RE" || stop "CHECK920_REPO='$REPO' is not owner/name"
   [ -n "$CHECKOUT" ] || stop "CHECK920_CHECKOUT must name a checkout of ${REPO}: the review half is 'fugaro review --pr N', which resolves the repository from its own checkout's origin"
   [ -d "$CHECKOUT" ] || stop "CHECK920_CHECKOUT='$CHECKOUT' is not a directory"
+  # The review half runs `fugaro review --pr N` FROM this checkout, and the CLI
+  # resolves the repository from that checkout's own origin: a checkout of
+  # another repository would launch a REAL review — a cloud run, the
+  # installation's budget — of that repository's pull request number N, and the
+  # review row would be about a repository this check never read. So the origin
+  # is read here, before anything is called at all, and a checkout that is not
+  # ${REPO}'s STOPS the check. The owner/name is compared whole: `acme/sandbox`
+  # is a substring of `acme/sandbox-prod`, so a reading that asked whether the
+  # origin CONTAINS ${REPO} would launch the review anyway.
+  local origin lower
+  origin=$(origin_repo "$CHECKOUT") ||
+    stop "CHECK920_CHECKOUT='${CHECKOUT}' is not a checkout with a readable origin remote (git -C '${CHECKOUT}' remote get-url origin failed or printed nothing): the review half is 'fugaro review --pr N', which resolves the repository from the checkout's origin, so no review could be launched from it. Name a checkout of ${REPO} with CHECK920_CHECKOUT"
+  lower=$(printf '%s' "$origin" | tr '[:upper:]' '[:lower:]')
+  [ "$lower" = "$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')" ] ||
+    stop "CHECK920_CHECKOUT='${CHECKOUT}' is a checkout of ${origin}, not ${REPO}: 'fugaro review --pr N' run there would resolve the repository from that origin and launch a real review (a cloud run, and the installation's budget) of that repository's pull request #N — a repository this check never read. Name a checkout of ${REPO} with CHECK920_CHECKOUT"
   [ -n "$UNLISTED" ] || stop "CHECK920_UNLISTED_REPO must name the sandbox repository the allow-list does NOT admit"
   printf '%s' "$UNLISTED" | grep -Eq "$REPO_RE" || stop "CHECK920_UNLISTED_REPO='$UNLISTED' is not owner/name"
   [ "$UNLISTED" != "$REPO" ] || stop "CHECK920_UNLISTED_REPO must not be CHECK920_REPO: the two rows are the served repository and the refused one"
@@ -862,17 +898,6 @@ guard_project() {
     fact fugaro-version FAIL "$(printf '%s' "$ver" | head -1 | cut -c1-120) — a development build is not the release this check is about: a checkout build resolves no released credentials-service image to deploy, and this check is about what that image does. Install the release under test and run it again"
   else
     fact fugaro-version PASS "$(printf '%s' "$ver" | head -1 | cut -c1-120)"
-  fi
-  # Check 921 launches nothing and reviews nothing, and CHECK920_CHECKOUT is
-  # empty in that mode: `git -C ""` would read whatever directory the owner
-  # happened to run from, and a row that is not 921's own would ride its verdict.
-  if [ "$MODE" = catalog ]; then return 0; fi
-  rc=0
-  git -C "$CHECKOUT" remote get-url origin >"$SCRATCH/origin" 2>"$SCRATCH/origin.err" || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    unmeasured review "CHECK920_CHECKOUT='${CHECKOUT}' has no readable origin ($(first_line "$SCRATCH/origin.err")), so 'fugaro review --pr N' run there would not resolve ${REPO}"
-  elif ! grep -q "$REPO" "$SCRATCH/origin"; then
-    unmeasured review "CHECK920_CHECKOUT='${CHECKOUT}' names origin $(first_line "$SCRATCH/origin"), which is not ${REPO}: a review launched there would review another repository's pull request"
   fi
 }
 

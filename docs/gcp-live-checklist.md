@@ -25596,7 +25596,9 @@ steps you follow are in
 - **A `file: true` secret arrives `0400`, and is absent in a review (D3327, G3, R5).** The run's own verify record
   out of its `result.json` passed on a clean tree; the steps' `test:` command fails unless the file secret arrived as
   a **`0400`** non-empty file at the path its variable names, so that record passing **is** the arrival. Then a real
-  `fugaro review --pr N` run of its own — launched from your checkout — finished carrying neither container and with
+  `fugaro review --pr N` run of its own — launched from your checkout, whose origin must name the repository under
+  test **exactly** (a checkout of another repository stops the check before it calls anything, rather than launching
+  a review of that repository's pull request) — finished carrying neither container and with
   no `workflow-secret` act in the service's log for it: a review reads an untrusted checkout and prompt, so the file
   is absent in it.
 - **An unlisted repository is refused, with the fix (G1, D3328).** A run in the sandbox repository the secret's
