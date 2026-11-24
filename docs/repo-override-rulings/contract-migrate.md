@@ -36,7 +36,8 @@ reader, no store and no command lives in the contract.
 | `lift.Project` | what the project holds before the migration: `Layer` (the local layer file's tree), `Recipes` (the store's names and sums), `Caps`, `Prices` and `Migrated` |
 | `lift.Caps` | the budget database's cap nodes: `Global`, `Defaults`, and `Repos` — each repository's own `config/caps/repos/<slug>` node, by slug |
 | `lift.Change` | one item's whole effect: `LayerEdits`, `StoreWrites`, `DBWrites`, `Records` and `Lines`; `Change.Empty()` says it carries nothing |
-| `lift.LayerEdit` | one write into the layer file's tree: `Path` (the key path from the layer's root, one segment per key, so a repository name holding a dot stays one key) and `Value` |
+| `lift.LayerEdit` | one write into the layer file's tree: `Path` (the key path from the layer's root, one segment per key, so a repository name holding a dot stays one key) and one of the two shapes below, `Value` or `Item` |
+| `lift.LayerItem` | one item of the sequence a layer edit writes into: `KeyField`/`Key` (the field the item is addressed by, and its value), `Fields` (its scalar fields), `Lists` (its fields that are sequences of scalars) and `Items` (its fields that are sequences of mappings, each written the way this item is) |
 | `lift.StoreWrite` | one object the runs bucket gains: `Key` (`recipe.ObjectKey`) and `Data` |
 | `lift.DBWrite` | one budget database node: `Path` (`budget.PathCapsRepo`) and `Value` |
 | `lift.Planner` | `func(Project, []Repo) (Change, error)` |
@@ -65,6 +66,32 @@ answers is a change M2 can refuse to apply without having half-applied it.
 The error a planner returns is for a change it cannot compute at all (an input it cannot read, a
 value it cannot reconcile). It is not a refusal of one repository: a repository the migration
 cannot move is named in `Lines` and left alone, and `update` still converges for the rest.
+
+## The two layer writes, and who applies them
+
+`LayerEdit` carries one of two shapes, and each is a write the layer file's own editor
+(`internal/yamledit`) already makes. A planner spells one of the two and never a node the editor
+cannot write, so every edit a change carries is one M2 can apply.
+
+- **`Value` is a scalar at `Path`** — MC1's model, AB3's rate, RG2's level. M2 lands it with the
+  editor's scalar write (`SetScalar`), the shape every settings write in the repo uses.
+- **`Item` is an item of the sequence at `Path`, addressed by `KeyField`** — RG2's project area,
+  keyed on `name`. M2 lands its `Fields` and its `Lists` with the editor's keyed-item writes
+  (`UpsertSeqItemByKey` for the scalars, `UpsertSeqItemListByKey` for a list of scalars such as a
+  member's `paths`), writing an item the sequence already holds under that key where it stands
+  rather than doubling it, so a second `update` converges.
+
+`LayerItem.Items` carries the one shape neither of those writes reaches: a field whose value is a
+sequence of mappings, which is RG2's area `members` (`{repo, paths}`). The layer file's editor has
+no operation for it — `UpsertSeqItemListByKey` writes a list of scalars, not a list of mappings — so
+**M2 owes that operation**, and this contract carries the members in full (`Items`) so nothing a
+planner decides is lost between the planner and the file. It is the applier's shape that decides
+what a planner may spell: a `members` list written as a value no applier can land would fail
+`update` for that repository, which is the defect `Items` exists to keep out.
+
+The editor's other writes (the empty mapping, the removals) are not shapes the six items make; an
+item that needs one raises a change to this contract (**R-planner-change**), rather than smuggling
+a third shape into `Value`.
 
 ## Once per repository, then never again (D3305)
 

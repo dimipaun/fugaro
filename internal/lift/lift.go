@@ -105,15 +105,46 @@ type Change struct {
 	Lines []string
 }
 
-// LayerEdit is one write into the layer file's tree. Path is the key path from
-// the tree's root, one segment per key, which is the shape the layer file's own
-// editor takes (yamledit) and the only one that can name a repository: AB3's
+// LayerEdit is one write into the layer file's tree, in the two shapes the layer
+// file's own editor writes (yamledit): a scalar at a path, and an item of the
+// sequence at a path, addressed by one of that item's fields. A planner spells
+// one of the two — Value or Item — and never a node the editor cannot write, so
+// every edit a change carries is one M2 can apply.
+//
+// Path is the key path from the tree's root, one segment per key, which is the
+// shape the editor takes and the only one that can name a repository: AB3's
 // ab.repos.<repo> and RG2's defaults.rigor.repos.<repo> key on owner/name, and a
 // repository name may hold a dot, so a dotted spelling would split it into two
 // keys and write a node the layer's strict decode refuses.
 type LayerEdit struct {
-	Path  []string
-	Value any
+	Path []string
+	// Value is the scalar a scalar write lands, written as the layer file's
+	// schema reads it: a model, a rigor level, a rate ("0" is the number 0).
+	Value string
+	// Item is the item the sequence at Path gains, and the only shape a scalar
+	// cannot express: RG2's project area, whose level is a scalar and whose
+	// members are a sequence of mappings. An item the sequence already holds
+	// under KeyField's value is written where it stands, never doubled, so a
+	// second update converges.
+	Item *LayerItem
+}
+
+// LayerItem is one item of the sequence a layer edit writes into, its fields in
+// the shapes the layer's schema gives the block's: the field the item is
+// addressed by, its scalars, its lists of scalars, and its lists of items.
+type LayerItem struct {
+	// KeyField is the field the item's sequence is addressed by — a project
+	// area keys on name, a member on repo — and Key its value.
+	KeyField string
+	Key      string
+	// Fields are the item's scalar fields, by name.
+	Fields map[string]string
+	// Lists are the item's fields whose value is a sequence of scalars (a
+	// member's paths).
+	Lists map[string][]string
+	// Items are the item's fields whose value is a sequence of mappings (a
+	// project area's members), each written the way this item is.
+	Items map[string][]LayerItem
 }
 
 // StoreWrite is one object the runs bucket gains.
