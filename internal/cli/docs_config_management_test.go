@@ -360,7 +360,7 @@ const (
 // table (MG2) and `fugaro routing set` edits one after that (RT5) — so neither a
 // name in the allowlist nor a prefix of it reaches a row of it.
 const (
-	cfmRegistryRows   = 535
+	cfmRegistryRows   = 536
 	cfmAllowlistNamed = 121
 )
 
@@ -628,6 +628,11 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 // the local config's own `bitbucket_tokens.*` block is the machine's file, one
 // row per member of a typed Bitbucket token's record, and no name or prefix in
 // the allowlist reaches it.
+//
+// WS19 of docs/workspace-service/ is the last mover, by one row and by none:
+// the owner's shared list gains `workspace_shared.*.all_members`, written by
+// `fugaro workspace share --all-members` and by no name or prefix in the
+// allowlist (the whole block is the `workspace` family's, D853).
 //
 // It counts through the same predicate the write path uses, so the test and the
 // command cannot disagree about what "the allowlist carries" means: the three

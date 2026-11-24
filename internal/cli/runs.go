@@ -262,7 +262,7 @@ func newRunsCmd() *cobra.Command {
 		Use:   "runs",
 		Short: "List and inspect runs",
 	}
-	cmd.AddCommand(newLsCmd(), newRunsStatsCmd(), newRunsSummaryCmd(), newRunsDigestCmd(), newRunsReportsCmd(), newRunsShowCmd(), newRunsWatchCmd())
+	cmd.AddCommand(newLsCmd(), newRunsStatsCmd(), newRunsSummaryCmd(), newRunsDigestCmd(), newRunsReportsCmd(), newRunsShowCmd(), newRunsWatchCmd(), newRunsReindexCmd())
 	return cmd
 }
 
@@ -702,6 +702,11 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	// that listing found: its answer is the join's, so the two states cost one
 	// backend call and never two (U2).
 	execs := map[string]backend.Execution{}
+	// listed is set only when the listing below is the whole of the window: an
+	// execution it lacks is then one the platform no longer holds, which is
+	// what a read of it would answer, one call per run, for every run of the
+	// window whose execution Cloud Run has already deleted.
+	listed := false
 	switch {
 	case live != nil:
 		execs = live.execs
@@ -719,6 +724,7 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 				execs[id.Key()] = e
 			}
 		}
+		listed = true
 	}
 
 	// The price book warns through warnf too: a VM run whose region or
@@ -729,7 +735,7 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	rows := make([]runview.Row, len(runs))
 	errs = make([]error, len(runs))
 	parallelN(len(runs), followWorkers, func(i int) {
-		if errs[i] = followExecution(ctx, env, &runs[i], execs, warnf); errs[i] == nil {
+		if errs[i] = followExecution(ctx, env, &runs[i], execs, listed, warnf); errs[i] == nil {
 			rows[i] = runview.Join(runs[i].in, prices, now)
 		}
 	})
@@ -1006,8 +1012,12 @@ func readRecord(ctx context.Context, s *runstore.Store, rd runcache.Reader) (*ru
 }
 
 // followExecution joins r with its execution, from execs (the listing)
-// or, when the listing lacks it, from the backend.
-func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs map[string]backend.Execution, warnf func(string, ...any)) error {
+// or, when the listing lacks it, from the backend. A listing that is the whole
+// of the window (listed) is the platform's answer for every run in it, so a run
+// it lacks has no execution and none is read: a read would be one request per
+// run of the window, which on a long history is thousands against a quota the
+// launches share.
+func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs map[string]backend.Execution, listed bool, warnf func(string, ...any)) error {
 	in, s, name := &r.in, r.store, r.execution
 	if name == "" || in.Problem != "" {
 		return nil
@@ -1024,7 +1034,15 @@ func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs ma
 	if e, ok := execs[eid.Key()]; ok {
 		hint = &e
 	}
-	x, err := env.checkExecution(ctx, hint, name, in.Slug, in.RunID)
+	var (
+		x   *backend.Execution
+		err error
+	)
+	if hint != nil || !listed {
+		x, err = env.checkExecution(ctx, hint, name, in.Slug, in.RunID)
+	} else {
+		err = env.checkExecutionName(name)
+	}
 	if err != nil {
 		in.Problem = "not following its execution: " + err.Error()
 		warnf("warning: run %s/%s: %s\n", in.Slug, task.ShortRun(in.RunID), in.Problem)
