@@ -576,6 +576,11 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// reconciliation D1377): a measurement, so the default screen is untouched
 	// and --all and --json carry it.
 	o.Checks = append(o.Checks, doctorImageEnvChecks(ctx, lc)...)
+	// Every deployed run job that mounts a workflow secret, by job and variable
+	// name (IS10, D3331): the live reading of T3's class, and for the same
+	// reason a measurement — before the flip a vertex repository and one the
+	// flip does not serve keep those mounts by design.
+	o.Checks = append(o.Checks, doctorJobMountChecks(ctx, lc)...)
 	// The secrets-brokering checks that read the installation rather than this
 	// checkout (plan B1.9): the credentials service and its callers' invoker
 	// grants, the age of the stored credentials, and — behind

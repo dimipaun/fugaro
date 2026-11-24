@@ -227,7 +227,10 @@ func TestRunPRPrintsPRBranch(t *testing.T) {
 	// the pull request's chain, whose root is the run the branch is named for,
 	// and the two runs are that run and the one this launch started — the count
 	// `runs show` of the new run reads once its record links it into the chain.
-	want := markDone + " launch " + task.ShortRun(fuID) + " (follow-up of PR #7, after " + task.ShortRun(rootID) + ")\n  branch fugaro/" + rootID + "\n  chain " + rootID + " (2 runs, UNENFORCED)\n  logs https://"
+	// ENFORCED since AB4: this launch minted the run's token, so the chain it
+	// replies with is the database's (F7). The chain's figures are the per-run
+	// nodes the database holds, and this fixture's runs have none.
+	want := markDone + " launch " + task.ShortRun(fuID) + " (follow-up of PR #7, after " + task.ShortRun(rootID) + ")\n  branch fugaro/" + rootID + "\n  chain " + rootID + " (2 runs, ENFORCED)\n  logs https://"
 	if !strings.HasPrefix(out, want) {
 		t.Fatalf("output:\n%s\nwant prefix:\n%s", out, want)
 	}
