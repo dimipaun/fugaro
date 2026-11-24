@@ -56,6 +56,14 @@ const (
 		" (a top-level key of the layer file, like claude_models) and a repository can only tighten it," +
 		" because the per-run cap stays the ceiling and a stage budget is a fraction under it (G6)"
 
+	// whyKept is what every row D3237 kept says beside itself: the owner ruled
+	// that the key stays settable in a repository (docs/repo-override-rulings,
+	// spec §3), and the scope table and docs/project-layer.md print the
+	// citation. A lifted row carries none of it: release B takes InRepo off
+	// those rows (XB1) rather than marking them retired, because "retired"
+	// means named and still honoured (D3063, R1).
+	whyKept = "a repository may still set it, approved by D3237"
+
 	// The retired keys' sentences (R3 of
 	// docs/credentials-belong-to-models/reconciliation.md): what a person is
 	// told where a document still writes one. Each says what replaced the key
@@ -73,6 +81,11 @@ const (
 		" config and offers its removal, see docs/credentials-belong-to-models"
 )
 
+// keptWhy is a row's own reason with whyKept's citation after it, so a shared
+// sentence (whyPolicy, whyGovernance, whyFiles) carries the citation only where
+// it is composed, never onto a row D3237 did not rule on.
+func keptWhy(why string) string { return why + "; " + whyKept }
+
 // Scopes is every fugaro.yaml key and the layers it may be set in. A key
 // not listed under a block is unknown. docs/project-layer.md prints this
 // table; TestScopeTableMatchesDocs keeps the two equal.
@@ -82,12 +95,12 @@ var Scopes = []ScopeRow{
 	{Key: "gcp_project", In: InRepo, Why: whyAnchor},
 	{Key: "profile", In: InRepo, Why: "it chooses a profile; the project chooses its default with default_profile"},
 	{Key: "git.provider", In: InProject | InRepo},
-	{Key: "git.base_branch", In: InRepo, Why: whyBranch},
-	{Key: "git.author", In: InRepo, Why: whyRepoShape},
-	{Key: "git.pr.labels", In: InProject | InRepo},
-	{Key: "git.pr.reviewers", In: InRepo, Why: whyPeople},
-	{Key: "git.pr.early_draft", In: InProject | InRepo},
-	{Key: "git.pr.checkpoints", In: InProject | InRepo},
+	{Key: "git.base_branch", In: InRepo, Why: keptWhy(whyBranch)},
+	{Key: "git.author", In: InRepo, Why: keptWhy(whyRepoShape)},
+	{Key: "git.pr.labels", In: InProject | InRepo, Why: whyKept},
+	{Key: "git.pr.reviewers", In: InRepo, Why: keptWhy(whyPeople)},
+	{Key: "git.pr.early_draft", In: InProject | InRepo, Why: whyKept},
+	{Key: "git.pr.checkpoints", In: InProject | InRepo, Why: whyKept},
 	{Key: "agent.auth", In: InProject | InRepo, Retired: InProject | InRepo, RetiredWhy: whyRetiredAuth},
 	{Key: "agent.model", In: InProject | InRepo | InOverride},
 	{Key: "agent.models.coder", In: InProject | InRepo},
@@ -127,43 +140,43 @@ var Scopes = []ScopeRow{
 	{Key: "model_grades.strong.access", In: InProject | InRepo, Why: whyGrade, Retired: InRepo, RetiredWhy: whyRetiredGradeAccess},
 	{Key: "model_grades.strongest.model", In: InProject | InRepo, Why: whyGrade},
 	{Key: "model_grades.strongest.access", In: InProject | InRepo, Why: whyGrade, Retired: InRepo, RetiredWhy: whyRetiredGradeAccess},
-	{Key: "agent.review_rounds", In: InProject | InRepo | InOverride},
-	{Key: "agent.max_budget_usd", In: InProject | InRepo | InOverride},
-	{Key: "agent.instructions", In: InRepo, Why: whyFiles},
-	{Key: "agent.review", In: InRepo, Why: whyFiles},
-	{Key: "agent.max_output_tokens.coder", In: InRepo, Why: whyPolicy},
-	{Key: "agent.max_output_tokens.reviewer", In: InRepo, Why: whyPolicy},
-	{Key: "agent.max_run_tokens", In: InRepo, Why: whyPolicy},
-	{Key: "agent.first_line_review", In: InProject | InRepo},
-	{Key: "agent.first_line_rounds", In: InProject | InRepo},
+	{Key: "agent.review_rounds", In: InProject | InRepo | InOverride, Why: whyKept},
+	{Key: "agent.max_budget_usd", In: InProject | InRepo | InOverride, Why: whyKept},
+	{Key: "agent.instructions", In: InRepo, Why: keptWhy(whyFiles)},
+	{Key: "agent.review", In: InRepo, Why: keptWhy(whyFiles)},
+	{Key: "agent.max_output_tokens.coder", In: InRepo, Why: keptWhy(whyPolicy)},
+	{Key: "agent.max_output_tokens.reviewer", In: InRepo, Why: keptWhy(whyPolicy)},
+	{Key: "agent.max_run_tokens", In: InRepo, Why: keptWhy(whyPolicy)},
+	{Key: "agent.first_line_review", In: InProject | InRepo, Why: whyKept},
+	{Key: "agent.first_line_rounds", In: InProject | InRepo, Why: whyKept},
 	// The per-level review block (L1.3, D722): each level's four keys are its
 	// own row because a level's settings are read one by one, and either
 	// layer may set any of them — the merge is per key, so a project's l1
 	// stays in effect beside a repository's l2.
 	{Key: "agent.levels.l1.model", In: InProject | InRepo},
-	{Key: "agent.levels.l1.effort", In: InProject | InRepo},
-	{Key: "agent.levels.l1.none", In: InProject | InRepo},
-	{Key: "agent.levels.l1.focus", In: InProject | InRepo},
+	{Key: "agent.levels.l1.effort", In: InProject | InRepo, Why: whyKept},
+	{Key: "agent.levels.l1.none", In: InProject | InRepo, Why: whyKept},
+	{Key: "agent.levels.l1.focus", In: InProject | InRepo, Why: whyKept},
 	{Key: "agent.levels.l2.model", In: InProject | InRepo},
-	{Key: "agent.levels.l2.effort", In: InProject | InRepo},
-	{Key: "agent.levels.l2.none", In: InProject | InRepo},
-	{Key: "agent.levels.l2.focus", In: InProject | InRepo},
+	{Key: "agent.levels.l2.effort", In: InProject | InRepo, Why: whyKept},
+	{Key: "agent.levels.l2.none", In: InProject | InRepo, Why: whyKept},
+	{Key: "agent.levels.l2.focus", In: InProject | InRepo, Why: whyKept},
 	{Key: "agent.levels.l3.model", In: InProject | InRepo},
-	{Key: "agent.levels.l3.effort", In: InProject | InRepo},
-	{Key: "agent.levels.l3.none", In: InProject | InRepo},
-	{Key: "agent.levels.l3.focus", In: InProject | InRepo},
-	{Key: "agent.adversarial_rounds", In: InProject | InRepo},
+	{Key: "agent.levels.l3.effort", In: InProject | InRepo, Why: whyKept},
+	{Key: "agent.levels.l3.none", In: InProject | InRepo, Why: whyKept},
+	{Key: "agent.levels.l3.focus", In: InProject | InRepo, Why: whyKept},
+	{Key: "agent.adversarial_rounds", In: InProject | InRepo, Why: whyKept},
 	// The stop rule's time half (the owner's ruling of 2026-11-08) is a share
 	// of the run's budget, so it belongs where the timeouts do: a project sets
 	// it for the workflows whose budget it knows, and a repository replaces it.
-	{Key: "agent.review_stop_fraction", In: InProject | InRepo},
+	{Key: "agent.review_stop_fraction", In: InProject | InRepo, Why: whyKept},
 	// The keep-warm beat's switch (R10, D2985): a run's own behaviour, turned
 	// off where its other behaviour is configured. A project whose deployment
 	// shape says the beat is not needed sets it for every repository of it,
 	// and a repository replaces it — neither is a widening, because a run
 	// that sends no beat is slower at a call and never less correct.
-	{Key: "agent.workspace_beat", In: InProject | InRepo},
-	{Key: "agent.recipe", In: InProject | InRepo | InOverride},
+	{Key: "agent.workspace_beat", In: InProject | InRepo, Why: whyKept},
+	{Key: "agent.recipe", In: InProject | InRepo | InOverride, Why: whyKept},
 	{Key: "agent.oauth_token", In: InRepo | InOverride, Retired: InRepo, RetiredWhy: whyRetiredAccount, Why: "it names a credential identity that only the repository's own, PR-reviewed fugaro.yaml may choose among names the local config (never the project layer) allow-lists"},
 	{Key: "agent.compression", In: InRepo | InOverride, Why: "it changes what the model sees on every call; the project layer and a profile are the same launcher-writable bucket object agent.oauth_token already distrusts for the identical reason"},
 	// The triage stage's switch (D1854): the repository's own reviewed file and
@@ -174,7 +187,7 @@ var Scopes = []ScopeRow{
 	// could put the stage back after the base branch took it away. D1854 admits
 	// the owner's published policy node as the other home; that one arrives as
 	// the runner's ceiling (policy.Layer.Triage) and is not this table's.
-	{Key: "agent.triage", In: InRepo, Why: "it turns a review round's own stage off, and a launcher writes the task and the project layer that travels in it; only the repository's own, PR-reviewed fugaro.yaml — read from the base branch — may set it, the reason agent.compression and agent.oauth_token are refused to a layer"},
+	{Key: "agent.triage", In: InRepo, Why: keptWhy("it turns a review round's own stage off, and a launcher writes the task and the project layer that travels in it; only the repository's own, PR-reviewed fugaro.yaml — read from the base branch — may set it, the reason agent.compression and agent.oauth_token are refused to a layer")},
 	// The review-against-task switch (R7 of docs/review-against-task/): the
 	// repository's own reviewed file and nothing else, for the triage switch's
 	// reason one step sharper — the key decides whether a review judges a run's
@@ -183,22 +196,22 @@ var Scopes = []ScopeRow{
 	// admits the owner's published policy node as the other home; that one
 	// arrives as the runner's ceiling (policy.Layer.ReviewAgainstTask) and is
 	// not this table's.
-	{Key: "agent.review_against_task", In: InRepo, Why: "it turns off the check every review stage makes of a run's own work, and a launcher writes the task and the project layer that travels in it; only the repository's own, PR-reviewed fugaro.yaml — read from the base branch — may set it, the reason agent.triage beside it and agent.compression are refused to a layer"},
-	{Key: "budget.mode", In: InRepo, Why: whyPolicy},
-	{Key: "budget.per_run_usd", In: InRepo, Why: whyPolicy},
-	{Key: "budget.allowed_models", In: InRepo, Why: whyPolicy},
-	{Key: "budget.per_day_usd", In: InRepo, Why: whyPolicy},
-	{Key: "governance.review_ratio", In: InProject | InRepo, Why: whyGovernance},
-	{Key: "governance.review_floor_calls", In: InProject | InRepo, Why: whyGovernance},
-	{Key: "governance.max_subagents", In: InProject | InRepo, Why: whyGovernance},
-	{Key: "governance.stage_budget", In: InProject | InRepo, Why: whyGovernance},
-	{Key: "governance.stage_tokens", In: InProject | InRepo, Why: whyGovernance},
-	{Key: "governance.stage_timeout", In: InProject | InRepo, Why: whyGovernance},
-	{Key: "governance.tiers", In: InProject | InRepo, Why: whyGovernance},
+	{Key: "agent.review_against_task", In: InRepo, Why: keptWhy("it turns off the check every review stage makes of a run's own work, and a launcher writes the task and the project layer that travels in it; only the repository's own, PR-reviewed fugaro.yaml — read from the base branch — may set it, the reason agent.triage beside it and agent.compression are refused to a layer")},
+	{Key: "budget.mode", In: InRepo, Why: keptWhy(whyPolicy)},
+	{Key: "budget.per_run_usd", In: InRepo, Why: keptWhy(whyPolicy)},
+	{Key: "budget.allowed_models", In: InRepo, Why: keptWhy(whyPolicy)},
+	{Key: "budget.per_day_usd", In: InRepo, Why: keptWhy(whyPolicy)},
+	{Key: "governance.review_ratio", In: InProject | InRepo, Why: keptWhy(whyGovernance)},
+	{Key: "governance.review_floor_calls", In: InProject | InRepo, Why: keptWhy(whyGovernance)},
+	{Key: "governance.max_subagents", In: InProject | InRepo, Why: keptWhy(whyGovernance)},
+	{Key: "governance.stage_budget", In: InProject | InRepo, Why: keptWhy(whyGovernance)},
+	{Key: "governance.stage_tokens", In: InProject | InRepo, Why: keptWhy(whyGovernance)},
+	{Key: "governance.stage_timeout", In: InProject | InRepo, Why: keptWhy(whyGovernance)},
+	{Key: "governance.tiers", In: InProject | InRepo, Why: keptWhy(whyGovernance)},
 	{Key: "workflows.*.profile", In: InRepo, Why: "it chooses a profile"},
-	{Key: "workflows.*.job_profile", In: InRepo, Why: "it chooses a job profile of the project policy; the policy is the project's, so a repository picks among the profiles it defines and never writes them"},
+	{Key: "workflows.*.job_profile", In: InRepo, Why: keptWhy("it chooses a job profile of the project policy; the policy is the project's, so a repository picks among the profiles it defines and never writes them")},
 	{Key: "workflows.*.base", In: InProfile | InRepo, Why: whyRemoved},
-	{Key: "workflows.*.checkout", In: InProfile | InRepo},
+	{Key: "workflows.*.checkout", In: InProfile | InRepo, Why: whyKept},
 	{Key: "workflows.*.image.node", In: InProfile | InRepo, Why: whyRemoved},
 	{Key: "workflows.*.image.jdk", In: InRepo, Why: whyRemoved},
 	{Key: "workflows.*.image.apt", In: InProfile | InRepo},
@@ -207,15 +220,15 @@ var Scopes = []ScopeRow{
 	{Key: "workflows.*.image.tools", In: InProfile | InRepo},
 	{Key: "workflows.*.image.key_files", In: InRepo, Why: whyFiles},
 	{Key: "workflows.*.dockerfile", In: InRepo, Why: whyFiles},
-	{Key: "workflows.*.commands.build", In: InProfile | InRepo},
-	{Key: "workflows.*.commands.test", In: InProfile | InRepo},
-	{Key: "workflows.*.commands.lint", In: InProfile | InRepo},
-	{Key: "workflows.*.commands.fix", In: InProfile | InRepo},
-	{Key: "workflows.*.commands.render", In: InProfile | InRepo},
-	{Key: "workflows.*.commands.probe", In: InProfile | InRepo},
-	{Key: "workflows.*.commands.rerun_failed", In: InProfile | InRepo},
-	{Key: "workflows.*.commands.reports", In: InProfile | InRepo},
-	{Key: "workflows.*.cache", In: InProfile | InRepo},
+	{Key: "workflows.*.commands.build", In: InProfile | InRepo, Why: whyKept},
+	{Key: "workflows.*.commands.test", In: InProfile | InRepo, Why: whyKept},
+	{Key: "workflows.*.commands.lint", In: InProfile | InRepo, Why: whyKept},
+	{Key: "workflows.*.commands.fix", In: InProfile | InRepo, Why: whyKept},
+	{Key: "workflows.*.commands.render", In: InProfile | InRepo, Why: whyKept},
+	{Key: "workflows.*.commands.probe", In: InProfile | InRepo, Why: whyKept},
+	{Key: "workflows.*.commands.rerun_failed", In: InProfile | InRepo, Why: whyKept},
+	{Key: "workflows.*.commands.reports", In: InProfile | InRepo, Why: whyKept},
+	{Key: "workflows.*.cache", In: InProfile | InRepo, Why: whyKept},
 	{Key: "workflows.*.secrets", In: InRepo, Why: whySecrets},
 	{Key: "workflows.*.resources.cpu", In: InProfile | InRepo},
 	{Key: "workflows.*.resources.memory", In: InProfile | InRepo},
@@ -229,29 +242,29 @@ var Scopes = []ScopeRow{
 	{Key: "workflows.*.rebuild.lockfiles", In: InProfile | InRepo},
 	{Key: "workflows.*.rebuild.base", In: InProfile | InRepo},
 	{Key: "workflows.*.rebuild.paths", In: InProfile | InRepo},
-	{Key: "workflows.*.inputs.max_files", In: InProfile | InRepo},
-	{Key: "workflows.*.inputs.max_bytes", In: InProfile | InRepo},
-	{Key: "workflows.*.inputs.max_total_bytes", In: InProfile | InRepo},
+	{Key: "workflows.*.inputs.max_files", In: InProfile | InRepo, Why: whyKept},
+	{Key: "workflows.*.inputs.max_bytes", In: InProfile | InRepo, Why: whyKept},
+	{Key: "workflows.*.inputs.max_total_bytes", In: InProfile | InRepo, Why: whyKept},
 	// The tags a job of the workflow needs (D1155, spec project-image-catalog
 	// §Repo configuration item 3), beside image_name: the catalog's entries are
 	// the project's policy and a repository chooses among them, so only its own
 	// file may state this reference.
-	{Key: "workflows.*.needs", In: InRepo, Why: "it is a repository's own reference to an entry of the project's image catalog, and the entries themselves are the project's (D1155)"},
+	{Key: "workflows.*.needs", In: InRepo, Why: keptWhy("it is a repository's own reference to an entry of the project's image catalog, and the entries themselves are the project's (D1155)")},
 	// A repository's ask for an A/B reviewer arm (the owner's ruling of
 	// 2026-11-16, O12): the review level the arm replays over the champion's
 	// own recorded patch. The ask turns a second review of this repository's
 	// runs on, and the challengers such an arm is admitted against are the
 	// project's top-level ab: block's (D556), so only the repository's own,
 	// PR-reviewed file may state it, as workflows.*.needs beside it is.
-	{Key: "workflows.*.ab.reviewer_arm", In: InRepo, Why: "it asks for a second review of this repository's own runs, and the challengers that review is admitted against are the project's (the top-level ab: block, D556), so the repository's own, PR-reviewed file is where the ask is stated"},
+	{Key: "workflows.*.ab.reviewer_arm", In: InRepo, Why: keptWhy("it asks for a second review of this repository's own runs, and the challengers that review is admitted against are the project's (the top-level ab: block, D556), so the repository's own, PR-reviewed file is where the ask is stated")},
 	// A repository's A/B opt-out (D556, F18): the ab: block is the project
 	// layer's, because a repository author could name a challenger model and
 	// send that repository's code to a provider the owner opened only to
 	// others, and rate is the one leaf left to the repository — it may lower
 	// the sampling rate to 0 and say nothing else (validateRepoAB).
 	{Key: "ab.rate", In: InRepo, Why: "it is the repository's own opt-out of sampling, and every other leaf of the block is the project's (D556)"},
-	{Key: "followup.trusted", In: InRepo, Why: whyFollowup},
-	{Key: "followup.allow_public", In: InRepo, Why: whyFollowup},
+	{Key: "followup.trusted", In: InRepo, Why: keptWhy(whyFollowup)},
+	{Key: "followup.allow_public", In: InRepo, Why: keptWhy(whyFollowup)},
 	// Both rigor keys are settable in both layers (D20, D20c): the project
 	// sets defaults.rigor.default as the mode every repository of the project
 	// runs at, and either layer may name area rules. A repository cannot
@@ -269,14 +282,14 @@ var Scopes = []ScopeRow{
 	// turns it off for every repository of it, and a repository decides for
 	// itself — the key is a preference, so the narrower layer replaces the
 	// wider one rather than only tightening it.
-	{Key: "planning.decoupling", In: InProject | InRepo},
+	{Key: "planning.decoupling", In: InProject | InRepo, Why: whyKept},
 	// Both layers write the security list (D1501), and the project's rows are
 	// first in the union (D1506): the project layer says what every repository
 	// of the project has to treat as security-sensitive, and a repository adds
 	// the trees of its own. The list is a union and never a replacement, so
 	// the project layer cannot be overridden from below — the same reason
 	// rigor.areas is settable in both.
-	{Key: "security.patterns", In: InProject | InRepo},
+	{Key: "security.patterns", In: InProject | InRepo, Why: whyKept},
 }
 
 // ExecutableKeys are the profile keys whose values run as shell, or control

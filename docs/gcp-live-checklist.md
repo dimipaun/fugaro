@@ -8025,10 +8025,12 @@ owner's**. Its subject is the push design's own outline: `docs/mobile/design/pus
 device-token store and its own retention question"); **the owner gave that later yes on 2026-11-14**, 
 approving **P5.2** and splitting it into **P5.2.1–P5.2.10**. So the design is of record and the number is 
 held — **but this check is run by the owner only if the owner builds push**, and the check drives things 
-that are **not built**: the sender that derives the events and calls FCM is **P5.2.6** 
-(`internal/cli/push.go`, absent), the app's registration and its receipt are **P5.2.8** and **P5.2.9** 
+that are **not built**: the app's registration and its receipt are **P5.2.8** and **P5.2.9** 
 (`mobile/src/push/`, absent), and the account that may send is **P5.2.7** (a Terraform grant that exists 
-nowhere). **No agent performs any step of it**, and nothing on it touches `belong`.
+nowhere). The sender that derives the events and calls FCM is **P5.2.6**, and it IS built 
+(`internal/cli/push.go`, merged: the sweep derives its own events, holds the ledger, the cap, the dedupe 
+and the quiet hours, and calls FCM), so the guard below stops on the app and on the grant and not on the 
+sender. **No agent performs any step of it**, and nothing on it touches `belong`.
 
 **Why a live check, and what a unit test cannot see.** The rules cases (P5.2.2 and P5.2.3, merged: 
 `internal/budget/rules/rules_test.go` and its `firebase`-tagged `emulator_push_test.go`) prove that **no 
