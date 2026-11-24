@@ -376,8 +376,9 @@ effective set is the **intersection** of:
   `allow_repos` legs are asked over the canonical name **recovered from the member's own policy**
   rather than from that child: the child holds account names and no repository, so the name is the
   entry of the account's `allow_repos` whose `task.Slug` is the verified slug (§5) — the **run's**
-  repository, which §8's residual risk 7 is about: nothing holds that slug to the repository the
-  calling job account belongs to.
+  repository, which §8's residual risk 7 was about: nothing then held that slug to the repository the
+  calling job account belongs to, and WS2 of
+  [workspace-service](../workspace-service/implementation-plan.md) holds it now.
 
 The member's policy is always the tighter side, because that is what "only tighten" means
 (`internal/policy/merge.go`). A credential the workspace holds and the member's policy excludes is
@@ -788,21 +789,23 @@ and the publish path keys the child with `task.Slug` of the same canonical name,
 repository is the entry whose slug is the verified one. A child that is **stale** against the policy
 it was derived from (a `repos rm` that did not touch it, two concurrent publishes, a hand edit) is
 therefore refused here exactly as the member's own service refuses it. The slug is the run identity's
-own and it is **not** held to the repository the calling job account belongs to — the comparison the
-member's front door makes (`internal/credsvc/server.go`:737) — because the per-member table names
-accounts and no repository, so the node is the **run's** repository and the account that called may
-belong to another — the column the owner's per-member table does not carry, and **review finding
-N1**. That is the divergence; it is stated
+own and it **was not** held to the repository the calling job account belongs to — the comparison the
+member's front door makes (`internal/credsvc/server.go`:737) — because the per-member table then named
+accounts and no repository, so the node was the **run's** repository and the account that called could
+belong to another — the column the owner's per-member table did not carry, and **review finding
+N1**. That was the divergence; it is stated
 here rather than left to be found, and it is narrow: the workspace's allow-list is still mandatory,
 the member's policy must still declare the credential, the repository's own node must still admit it,
 the member's two canonical legs are asked, and option (B) the owner refused is still refused.
-Whether to close the pairing is the owner's call, and
-closing it is a column rather than a redesign: the repository beside each job account in the
+Whether to close the pairing was the owner's call, and
+closing it was a column rather than a redesign: the repository beside each job account in the
 owner's per-member table — the pair `credsvc.JobAccount` already carries for the installation's own
-jobs, which yields the slug the pairing needs — and the column this table does not. It is stated
-again as residual risk 7 below, which is where W6 leaves it:
-the pairing stated and **not** enforced, because this release's row names job accounts and no
-repository.
+jobs, which yields the slug the pairing needs — and the column that table has since carried. It is stated
+again as residual risk 7 below, which is where W6 left it:
+the pairing stated and **not** enforced by that release, because its row named job accounts and no
+repository — and WS3 and WS4 of
+[workspace-service](../workspace-service/implementation-plan.md) gave the table that column, with
+WS2 of that plan holding the run identity's verified slug to it.
 
 **The workspace cap's integrity, after the amendment.** The cap is enforced at the service (D1299)
 and **metered there too** (D1301 as amended, §5): the service reserves before each call it pays for
@@ -908,15 +911,16 @@ ceiling is decided.
    that flag is exactly what a custom token can do. It is there because an unverified address is one
    nobody proved they own, and the provider pin is what answers this risk.)
 7. A shared credential is served where the member's own service would refuse it: **the run's
-   repository is not held to the calling job account.** The workspace's service asks the repository
+   repository was not held to the calling job account, which is what this risk stated while it was
+   open.** The workspace's service asks the repository
    from the **slug the run identity verified** — the repository's own admission child, the node that
    repository's administrator published (projectpolicy.PathRepo), gates the account names asked, and
    the member's two canonical `allow_repos` legs are asked over the name recovered from the member's
    **own policy**, the entry of the account's `allow_repos` whose `task.Slug` is that slug (the child
    itself holds names and no repository) — so a child stale against the policy it was derived from is
-   refused here, and nothing ties that slug to the account
-   that called: the per-member table names a member's job service accounts and no repository, so an
-   account admitted for one repository can present a run identity of **another** repository of the
+   refused here, and nothing then tied that slug to the account
+   that called: the per-member table named a member's job service accounts and no repository, so an
+   account admitted for one repository could present a run identity of **another** repository of the
    same member and be served that repository's admissions, where the member's own front door refuses
    the same call by comparing the two (`internal/credsvc/server.go`:737, `!bound || ja.Slug !=
    id.Slug`; **review finding N1**, and the table it compares is built from the installation's own
@@ -935,7 +939,7 @@ ceiling is decided.
    `credsvc.JobAccount` already carries for the installation's own jobs, which yields the slug the
    pairing needs — not a redesign, and **the owner made that call on 2026-11-10, as recommended:
    W6 shipped with the pairing stated here and not enforced**, the column taken by the task that
-   gives the per-member table a writer, because the row's job accounts are emails and `Verify`
+   gave the per-member table a writer, because the row's job accounts were emails and `Verify`
    therefore had no slug to compare
    ([reconciliation.md](reconciliation.md) §9, O3). **That task is WS3 and WS4 of
    [workspace-service](../workspace-service/implementation-plan.md), and WS2 of that plan enforces

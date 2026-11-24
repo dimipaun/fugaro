@@ -591,7 +591,7 @@ carries the module and its stage skips without that flag, so the plain `fugaro u
 handoff prints (`fugaro workspace add`, `internal/cli/workspace.go`) binds nothing. **The
 reconciliation alarm still runs nowhere**, and that is the owner's own decision rather than a gap:
 D2991 deferred it, because it needs a ledger record no member writes and it gets a spec of its own
-([workspace-service](../workspace-service/implementation-plan.md) §7), so
+([workspace-service](../workspace-service/implementation-plan.md) §10, "Considered and declined"), so
 `budget.ReconcileWorkspace` has no non-test caller by design and WS8's `SECURITY.md` says so in the
 same breath as the cap binding. What the release ships is the meter bound and the alarm deferred, each
 stated where a reader finds it.
