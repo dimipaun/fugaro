@@ -1354,8 +1354,11 @@ func TestBillingLeftForTheAdminAndTheRerunResumes(t *testing.T) {
 	// links nothing, so no alert is created on an account it cannot name — the
 	// amount is dropped with the one line that says what adds it, rather than
 	// reaching the installation's Terraform, whose own rule refuses a budget
-	// with no billing account.
-	if !strings.Contains(all, questionFor("--budget").label) {
+	// with no billing account. The question is read off its prompt line like
+	// every other check that one was asked (askedPrompt): the row's `what` is
+	// the question in a sentence and belongs to a refusal, so no output carries
+	// it.
+	if !strings.Contains(all, askedPrompt("--budget")) {
 		t.Errorf("the resumed creation never asked the budget question:\n%s", all)
 	}
 	if !strings.Contains(all, fmt.Sprintf(budgetNoAccount, resumedBudgetAmount)) {

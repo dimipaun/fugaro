@@ -14361,6 +14361,7 @@
         "internal/issueresolve/**",
         "internal/issues/**",
         "internal/issuesync/**",
+        "internal/lift/**",
         "internal/localcfg/**",
         "internal/lock/**",
         "internal/logtail/**",
