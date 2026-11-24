@@ -5,7 +5,7 @@
 # Generated 2026-10-18 with:
 #   gcloud iam list-testable-permissions //cloudresourcemanager.googleapis.com/projects/<project> --project <project> --format='value(name,customRolesSupportLevel)'
 # keeping the rows whose second column is empty and whose name starts with one of the prefixes
-#   aiplatform apikeys artifactregistry
+#   aiplatform apikeys artifactregistry batch billing* cloudasset cloudbuild cloudscheduler compute datastore firebase* iam
 #   identitytoolkit logging monitoring resourcemanager run secretmanager serviceusage storage
 # To refresh: re-run the command, filter the same way, replace the lines below (sorted, one per line),
 # and add the prefix of any new service a module uses. A permission at level TESTING or NOT_SUPPORTED

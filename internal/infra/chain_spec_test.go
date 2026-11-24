@@ -29,6 +29,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // chainAPIKeyAgent is the agent block of the fixtures the mounts are told
@@ -74,6 +75,17 @@ model_routing:
       - { kind: pool, pool: subscriptions }
 `
 
+// chainLauncherPoolLC is a table whose only source is the launcher's own pool:
+// a source that names NO pool in the table (which pool serves is decided per
+// run, D3176), so the plan has no member list to read and answers the walk's
+// own direction — the pool a launcher may designate is one that may hold the
+// built-in Vertex credential.
+const chainLauncherPoolLC = repoRootLC + `model_routing:
+  - match: "claude-*"
+    chain:
+      - { kind: launcher-pool }
+`
+
 // chainAnthropicLC is a table that names no Vertex anywhere: the project's own
 // Anthropic key, admitted to this repository, and nothing else.
 const chainAnthropicLC = repoRootLC + `model_routing:
@@ -107,6 +119,22 @@ const enforceBudgetLC = "budget: { mode: enforce, per_run_usd: 20 }\n"
 
 // observeBudgetLC is the same block with the mode release 1 leaves alone.
 const observeBudgetLC = "budget: { mode: observe }\n"
+
+// repoRootWithoutService plans the same repository fixture on the installation
+// as it is when the switch was never turned on: no credentials service in the
+// installation's outputs and no readiness record for the repository, which is
+// the pair repoRootServed turns on.
+func repoRootWithoutService(t *testing.T, agent, lc, mode string) RepoSpec {
+	t.Helper()
+	in := repoRootInputs(t, agent)
+	in.LC = parseLC(t, lc)
+	in.Policy = &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: mode}}
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rs
+}
 
 // providerMountOf reports whether a model-mount list holds a provider's key,
 // which is the one model credential the release-1 bridge's `anthropic` arm
@@ -203,6 +231,24 @@ func TestSpecFromTheTable(t *testing.T) {
 	if vertexBridge.Installation.CredentialsService != nil {
 		t.Error("a vertex repository with no table plans an address and an invoker grant for the service: no arm of the release-1 bridge serves that auth, and the job reaches Vertex with its own account as it always did")
 	}
+
+	// And the gate the table does not escape: a table is no service. On an
+	// installation that never opted in — or one whose root has not recorded this
+	// repository ready — nothing can hand the run a credential, so the table's
+	// answer is not read at all and the job keeps every mount it would have had.
+	// The drop and the address are one decision: taking the mounts while
+	// CredentialsService stays nil is a run that reaches no model credential and
+	// has no way to ask for one, which is the state the gate exists to prevent.
+	unserved := repoRootWithoutService(t, chainAPIKeyAgent, chainTableLC, config.BudgetObserve)
+	if got := unserved.ModelSecretsServed; got != config.ModelSecretServedNone {
+		t.Errorf("a table-served repository on an installation with no credentials service plans model_secrets_served = %q, want %q: nothing serves it, so its own mounts must stay", got, config.ModelSecretServedNone)
+	}
+	if unserved.Installation.CredentialsService != nil {
+		t.Error("the spec tells a job about a credentials service the installation does not have")
+	}
+	if mounts := modelMountsOf(unserved.Workflows["web"]); len(mounts) == 0 {
+		t.Error("a table-served repository on an installation with no credentials service mounts nothing and is told about no service: the run then reaches no credential its chain names, which is what the installed-and-ready gate is for")
+	}
 }
 
 // TestTheServiceIsPlannedVertexWhereNamed is CS11's second clause: the
@@ -233,6 +279,7 @@ func TestTheServiceIsPlannedVertexWhereNamed(t *testing.T) {
 	}{
 		{"the vertex kind", repoRootLC + chainVertexSource, true, true},
 		{"a pool whose members hold the built-in vertex credential", chainVertexPoolLC, true, true},
+		{"a launcher-pool source, which names no pool in the table", chainLauncherPoolLC, true, true},
 		{"the recorded per-repository fact", vertexRecordOf(repoRootLC), false, true},
 		{"the project's own Anthropic key and no Vertex anywhere", chainAnthropicLC, false, false},
 	} {

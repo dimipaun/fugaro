@@ -190,6 +190,20 @@ func chainSourceServes(s routing.Source, repo string) bool {
 // The provider kind is never it. A provider's key is an API key of that
 // provider's own service; the models it serves are its own, whatever Claude
 // spelling they carry, and no call of it is made on the project's GCP identity.
+//
+// The launcher-pool kind is true, and it is the one arm that differs from its
+// sibling in chainSourceServes in the other direction: a launcher-pool source
+// names NO pool in the table (routing.Source.Pool is empty for it — which pool
+// serves is decided per run, D3176, and the plan cannot follow it), so there is
+// no member list here to walk and no name to look up. The answer is the walk's
+// own direction rather than a read: a pool a launcher may designate is one that
+// may hold the built-in Vertex credential, so this file says the chain may reach
+// Vertex and the API is enabled and the service's role planned for it. Inert
+// until PL4 replaces the launcher lookup (the shipped internal/credsvc stub
+// answers found=false for every principal, so nothing designates a pool today),
+// and it is written down here so the next reader does not take it for an
+// oversight: the alternative — false — would leave a run the launcher sends to a
+// Vertex-holding pool with no API and no grant.
 func chainSourceReachesVertex(s routing.Source, pools []config.Pool, creds []config.Credential) bool {
 	switch s.Kind {
 	case routing.KindVertex:
@@ -197,6 +211,8 @@ func chainSourceReachesVertex(s routing.Source, pools []config.Pool, creds []con
 	case routing.KindPool:
 		p, ok := chainPool(pools, s.Pool)
 		return ok && config.PoolHasVertexMember(p, creds) != ""
+	case routing.KindLauncherPool:
+		return true
 	}
 	return false
 }

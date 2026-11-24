@@ -462,18 +462,26 @@ func CredentialsServiceServes(installed, ready bool, auth, mode string) bool {
 //     a provider's key is forwarded, not attached, by the route that spends it
 //     (R6, D1634), so its mount is the run's own and stays.
 //
-// The table is read FIRST and takes the whole answer, which is what makes the
-// two registries come apart at all: a repository the table serves is served
-// however its file names its auth — including a `vertex` one, which no arm
-// below answers for and which has no credential to mount either way — and a
-// repository the table does not serve is the bridge's, `none` or `anthropic`
-// by the list above. `plan` is ChainPlanFor's answer for this repository.
+// `serves` gates the table, and the order matters: `serves` is the switch's
+// answer, which CredentialsServiceServesChains holds to installed-and-ready
+// just as CredentialsServiceServes does, so `plan.Serves` on a repository of an
+// installation with no service — or one whose root has not recorded readiness —
+// is a table this run is not told about. Reading the table first would drop the
+// job's model mounts there and leave it with CredentialsService nil beside them,
+// which is exactly the state the switch exists to prevent: no mount and no
+// address is a run that reaches no credential at all.
+//
+// So a repository the table serves AND the switch reaches is `all` however its
+// file names its auth — including a `vertex` one, which no arm below answers for
+// and which has no credential to mount either way — and a repository the table
+// does not serve is the bridge's, `none` or `anthropic` by the list above.
+// `plan` is ChainPlanFor's answer for this repository.
 func ModelSecretsServed(plan ChainPlan, serves bool, auth string) string {
-	if plan.Serves {
-		return config.ModelSecretServedAll
-	}
 	if !serves {
 		return config.ModelSecretServedNone
+	}
+	if plan.Serves {
+		return config.ModelSecretServedAll
 	}
 	if auth == config.AuthCascade {
 		return config.ModelSecretServedAll
