@@ -170,6 +170,48 @@ func TestUserRevokeMobileReportsWhatItLeft(t *testing.T) {
 	}
 }
 
+// TestUserRevokeMobileReachesTheRecordOfASpelledAddress: the roster's member form
+// folds the domain alone (access.Member), while the invitation keys the member
+// record on the address with its local part folded too (pairAdministeredEmail).
+// The removal takes the address as the invitation named it, and the database
+// accepts a Patch of a key that is not there, so a revoke of user:Alice@example.com
+// that passed the roster's spelling on would leave alice@example.com's record —
+// and its devices — in place and still report the record deleted.
+func TestUserRevokeMobileReachesTheRecordOfASpelledAddress(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	userRevokeMobileAs(t)
+	const (
+		spelled   = "Alice@example.com"
+		canonical = "alice@example.com"
+	)
+	f.pairSeedGrants(t,
+		pairGrant(t, pairMe, accesslib.RoleAdmin, "project"),
+		pairGrant(t, spelled, accesslib.RoleOperator, "project"),
+	)
+	f.pairSeedDeviceFor(pairDevC, "phone-c", canonical, "operator")
+	f.pairSeedItem(t, pairDevC)
+	f.db.Set(mobilesession.RefreshFamilyPath(pairDevC), map[string]any{"token": pairRefreshTokenC})
+	key := pairAddressKey(t, canonical)
+	f.db.Set(pairMemberRoot+"/"+key, map[string]any{"v": pairMemberVersion, "email": canonical})
+
+	out, _, err := userRevokeMobileRun(t, "user:"+spelled, "operator", "project")
+	if err != nil {
+		t.Fatalf("revoking the last pair of a spelled address: %v\n%s", err, out)
+	}
+	for _, path := range []string{
+		rules.PathDevices + "/" + pairDevC,
+		mobilesession.RefreshFamilyPath(pairDevC),
+		pairMemberRoot + "/" + key,
+	} {
+		if v := f.db.Value(path); v != nil {
+			t.Errorf("%s survived the removal of the address's last grant: %v\n%s", path, v, out)
+		}
+	}
+	if !strings.Contains(out, pairMemberRoot+"/"+key) {
+		t.Errorf("the command does not name the record it deleted (%s): a removal keyed on another spelling deletes nothing and reports success anyway\n%s", pairMemberRoot+"/"+key, out)
+	}
+}
+
 // containsLine reports whether lines holds want, for the grants node's own
 // order not to matter.
 func containsLine(lines []string, want string) bool {

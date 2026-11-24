@@ -14,6 +14,7 @@ import (
 	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/mobileauth"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/shellword"
@@ -768,7 +769,17 @@ func userMobileRemoval(ctx context.Context, out io.Writer, lc *localcfg.Config, 
 	if !ok {
 		return nil
 	}
-	removal, err := pairRemoveMember(ctx, lc, db, address)
+	// The roster's own member form folds the domain alone (access.Member), while
+	// the invitation keys the record — and the device nodes — on the address with
+	// its local part folded too (pairAdministeredEmail). The removal takes the
+	// address as the invitation named it, and a Patch of a key that is not there
+	// succeeds, so the roster's spelling would leave the record in place and still
+	// read as deleted: the address goes through the invitation's own normalisation.
+	canonical, err := mobileauth.NormalizeEmail(strings.ToLower(strings.TrimSpace(address)))
+	var removal pairMemberRemoval
+	if err == nil {
+		removal, err = pairRemoveMember(ctx, lc, db, canonical)
+	}
 	if err != nil {
 		return userErr("the pair is revoked and %s is off the roster, but their mobile access could not be removed: %v; delete what is left by hand", safetext.Field(address), err)
 	}
