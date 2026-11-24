@@ -232,7 +232,7 @@ func TestPlanModels(t *testing.T) {
 	t.Run("a migrated repository is named and never written", func(t *testing.T) {
 		app := repoAt(t, "acme/app", "agent:\n  models:\n    coder: claude-opus-5-5\n")
 		web := repoAt(t, "acme/web", "agent:\n  models:\n    coder: claude-opus-5-5\n")
-		p := Project{Migrated: map[string]bool{slugOf(t, "acme/app"): true}}
+		p := Project{Migrated: map[string]bool{modelSlugOf(t, "acme/app"): true}}
 		c := planModels(t, p, app, web)
 
 		checkChange(t, c, []LayerEdit{edit("defaults.agent.models.coder", "claude-opus-5-5")}, []string{
@@ -244,7 +244,7 @@ func TestPlanModels(t *testing.T) {
 	t.Run("a second update changes nothing", func(t *testing.T) {
 		app := repoAt(t, "acme/app", "")
 		web := repoAt(t, "acme/web", "")
-		p := Project{Migrated: map[string]bool{slugOf(t, "acme/app"): true, slugOf(t, "acme/web"): true}}
+		p := Project{Migrated: map[string]bool{modelSlugOf(t, "acme/app"): true, modelSlugOf(t, "acme/web"): true}}
 		c := planModels(t, p, app, web)
 
 		if !c.Empty() {
@@ -336,7 +336,7 @@ func checkRecords(t *testing.T, c Change, repos ...Repo) {
 	t.Helper()
 	want := make([]string, len(repos))
 	for i, r := range repos {
-		want[i] = slugOf(t, r.Repo)
+		want[i] = modelSlugOf(t, r.Repo)
 	}
 	if !slices.Equal(c.Records, want) {
 		t.Errorf("Records = %q, want %q", c.Records, want)
@@ -362,7 +362,7 @@ func layerOf(t *testing.T, text string) map[string]any {
 	return m
 }
 
-func slugOf(t *testing.T, name string) string {
+func modelSlugOf(t *testing.T, name string) string {
 	t.Helper()
 	s, err := task.Slug("github", name)
 	if err != nil {
