@@ -1156,8 +1156,15 @@ func (d *orchestratorDaemon) loop(ctx context.Context) error {
 		// past it. The id goes back the way abandon gives it back, and what this
 		// daemon does next is what it does below the stamp at start: it holds
 		// under a unit and exits 0 under --once or with no --binary.
+		//
+		// The local endpoint stops before the hold and not with the process: a
+		// hold under a unit does not end — it lasts until the binary the unit
+		// names moves on — and a reader on this machine would go on being
+		// answered from a feed no cycle refreshes, which is the one thing a
+		// daemon that has stopped driving owes nobody (R7).
 		if d.belowRequiredCLI(ctx, true) {
 			d.release(ctx)
+			d.unserve(ctx)
 			return d.holdForUpdate(ctx)
 		}
 		d.refreshCaps(ctx)

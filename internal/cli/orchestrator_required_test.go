@@ -2,6 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -156,11 +160,23 @@ func TestDaemonOnceBelowTheStampExits(t *testing.T) {
 // next cycle stops it: the lease goes back the way abandon gives it back, so
 // the id is not held for the whole TTL by a process that is stopping, and
 // nothing is driven after the line.
+//
+// The local endpoint stops with it. A hold under a unit does not end, and a
+// reader on this machine must not go on being answered from a feed no cycle
+// refreshes: the registry file is what says so from outside the process.
 func TestDaemonRaisedMidRunStopsClaiming(t *testing.T) {
 	f := newDaemonFixture(t)
 	d, out := f.running(t, "")
 	st := &fakeRequiredCLI{}
 	d.stamp = st
+	getenv, dir := endpointState(t)
+	d.registryGetenv, d.registryGOOS = getenv, "linux"
+	registry := filepath.Join(dir, "aurora.json")
+	d.serve(f.ctx)
+	t.Cleanup(func() { d.unserve(context.Background()) })
+	if _, err := os.Stat(registry); err != nil {
+		t.Fatalf("the endpoint was not served before the stamp rose, so this test would prove nothing: %v", err)
+	}
 	waits := 0
 	d.wake = func(context.Context) error {
 		waits++
@@ -187,6 +203,9 @@ func TestDaemonRaisedMidRunStopsClaiming(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "stopping; the lease is released") {
 		t.Errorf("a daemon that stops mid-run must say the id is going back: %q", out.String())
+	}
+	if _, err := os.Stat(registry); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the daemon still serves a local endpoint after the stamp rose, and a reader would be answered from a feed no cycle refreshes: %v", err)
 	}
 	held, err := d.lease.Read(context.Background())
 	if err != nil {
