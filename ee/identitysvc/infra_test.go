@@ -34,6 +34,7 @@
 package identitysvc
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -921,13 +922,13 @@ var tfSecondForms = []struct{ header, what string }{
 
 // TestInfraTheRootIsOneFormOfConfiguration: the root is plain HCL in one form —
 // no `.tf.json`, no override file, no variable file, and no `module`, `import` or
-// `moved` block — and its three files are the ones the plan names. A second form
+// `moved` block — and its four files are the ones the plan names. A second form
 // is a place the key's algorithm, the signer role or a sign-in provider is
 // decided where no check above changes.
 func TestInfraTheRootIsOneFormOfConfiguration(t *testing.T) {
-	want := []string{"auth.tf", "keyring.tf", "main.tf"}
+	want := []string{"auth.tf", "keyring.tf", "main.tf", "pairedlist.tf"}
 	if got := tfFiles(t); !slices.Equal(got, want) {
-		t.Errorf("the root's Terraform is %v, want %v: A3 creates these three files, and a file added to this root later — K1's pairedlist.tf is the next the plan names — is added to this list in the same commit, so that the root's whole shape stays something this suite states (A3)", got, want)
+		t.Errorf("the root's Terraform is %v, want %v: A3 creates auth.tf, keyring.tf and main.tf, K1 adds pairedlist.tf — the paired list's own database and the symmetric key it is sealed under — and a file added to this root later is added to this list in the same commit, so that the root's whole shape stays something this suite states (A3, K1)", got, want)
 	}
 
 	// A module, an import and a moved block are the same kind of second form,
@@ -958,16 +959,26 @@ func TestInfraTheRootIsOneFormOfConfiguration(t *testing.T) {
 // beside it, a protection level the algorithm is not offered at, or a route by
 // which material generated outside the store could reach the key ring.
 func TestInfraTheSigningKeyIsNonExportable(t *testing.T) {
-	keys := 0
+	// The root declares two keys and no more, each read by name: the signing key
+	// below, and K1's symmetric key the paired list is sealed under (read by
+	// TestInfraThePairedListIsSealedUnderItsOwnKey). A third is a key whose
+	// algorithm, protection level and lifecycle no check here reads, and the
+	// signing key must be the only one that signs — a second ASYMMETRIC_SIGN key
+	// is a second route to material the signer's whole design keeps in one place.
+	keys, signing := 0, 0
 	for _, rel := range tfFiles(t) {
 		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
-			if strings.Contains(tfHeader(block), `"google_kms_crypto_key"`) {
-				keys++
+			if !strings.Contains(tfHeader(block), `"google_kms_crypto_key"`) {
+				continue
+			}
+			keys++
+			if purpose, _ := tfAttr(block, "purpose"); tfCompact(purpose) == `"ASYMMETRIC_SIGN"` {
+				signing++
 			}
 		}
 	}
-	if keys != 1 {
-		t.Errorf("the root declares %d KMS crypto keys, want exactly 1: the signer role is granted on the key ring, so a second key in it is one the signer signs with and a key whose algorithm, protection level and lifecycle no check here reads (D2792, O7)", keys)
+	if keys != 2 || signing != 1 {
+		t.Errorf("the root declares %d KMS crypto keys, %d of them ASYMMETRIC_SIGN, want 2 and 1: the signer role is granted on the signing key's ring, so a third key is one the signer signs with and a key whose algorithm, protection level and lifecycle no check here reads, and the paired list's key (K1) is symmetric and can neither sign nor be signed with (D2792, O7, K1)", keys, signing)
 	}
 
 	key := tfBlock(t, `resource "google_kms_crypto_key" "signing"`)
@@ -1008,6 +1019,101 @@ func TestInfraTheSigningKeyIsNonExportable(t *testing.T) {
 				t.Errorf("%s writes %s: the signing key's private half is created inside the key ring and nowhere else — no import, no external store, no file (D2792, O7, .claude/rules/ee.md)", rel, route)
 			}
 		}
+	}
+}
+
+// TestInfraThePairedListIsSealedUnderItsOwnKey: K1's cloud side is its own
+// database and its own key ring, the key is symmetric and encrypt-and-decrypt
+// only, the sealer role takes nothing of the signing ring, and the rules
+// document beside the service denies every client read and write.
+//
+// The mutations this fails on: the key moved into the signing ring (one ring, so
+// one grant reaches both), its purpose or algorithm moved onto the signing pair,
+// a lifecycle without prevent_destroy, a rotation period nobody set, a second
+// database, a grant made at the project rather than at the ring, a permission
+// beyond seal and open, a second member on the grant, and rtdb.rules.json
+// granting anything at all.
+func TestInfraThePairedListIsSealedUnderItsOwnKey(t *testing.T) {
+	db := tfBlock(t, `resource "google_firebase_database_instance" "pairedlist"`)
+	tfAttrsAre(t, db, "the paired-list database", []tfWant{
+		{"project", "var.project"},
+		{"instance_id", `"${var.project}-default-rtdb"`},
+		{"type", `"DEFAULT_DATABASE"`},
+	}, "the identity project has one Realtime Database and Firebase names it `<project>-default-rtdb`; the list is the only thing it holds, and a second instance or another type is a store no rule here and no document below describes (K1, D2798)")
+	tfAttrsAre(t, tfNested(t, db, "lifecycle"), "the paired-list database's lifecycle", []tfWant{
+		{"prevent_destroy", "true"},
+	}, "every person's paired list lives in this instance, so losing it loses their projects: a destroy is a step a person takes on purpose and never an apply's side effect (K1, O16)")
+
+	dbs := 0
+	for _, rel := range tfFiles(t) {
+		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
+			if strings.Contains(tfHeader(block), `"google_firebase_database_instance"`) {
+				dbs++
+			}
+		}
+	}
+	if dbs != 1 {
+		t.Errorf("the root declares %d Realtime Database instances, want exactly 1: the identity project has one, the paired list is the only tree in it, and a second is a store no check here reads (K1)", dbs)
+	}
+
+	ring := tfBlock(t, `resource "google_kms_key_ring" "pairedlist"`)
+	tfAttrsAre(t, ring, "the paired-list key ring", []tfWant{
+		{"project", "var.project"},
+		{"name", "var.pairedlist_keyring"},
+		{"location", "var.region"},
+	}, "the sealing key lives in a ring of its own beside the signing one, so the sealing grant and the signing grant are two reaches: one ring is a ring where both sit together (K1, D2182)")
+	if got, signing := tfVarDefault(t, "pairedlist_keyring"), tfVarDefault(t, "keyring"); got == signing {
+		t.Errorf("the paired-list key ring and the signing key ring both default to %s, want two names: a shared ring is one grant away from both, which is the separation D2182 makes everywhere else", got)
+	}
+
+	key := tfBlock(t, `resource "google_kms_crypto_key" "pairedlist"`)
+	tfAttrsAre(t, key, "the paired-list key", []tfWant{
+		{"key_ring", "google_kms_key_ring.pairedlist.id"},
+		{"name", "var.pairedlist_key"},
+		{"purpose", `"ENCRYPT_DECRYPT"`},
+		{"rotation_period", "var.pairedlist_rotation"},
+	}, "the list is sealed with a symmetric key in K1's own ring: an asymmetric key cannot take the uid as additional authenticated data, which is the whole of what stops one person's ciphertext being served as another's (K1, O16, D2796)")
+	tfAttrsAre(t, tfNested(t, key, "version_template"), "the paired-list key's version_template", []tfWant{
+		{"algorithm", `"GOOGLE_SYMMETRIC_ENCRYPTION"`},
+		{"protection_level", `"SOFTWARE"`},
+	}, "GOOGLE_SYMMETRIC_ENCRYPTION is the algorithm KMS generates the material of and never hands out, and SOFTWARE is the level Cloud KMS offers it at")
+	tfAttrsAre(t, tfNested(t, key, "lifecycle"), "the paired-list key's lifecycle", []tfWant{
+		{"prevent_destroy", "true"},
+	}, "every person's list is sealed under this key, so removing it makes every stored list unopenable: that is a deliberate edit of this file and never an apply's side effect (K1)")
+	if got := tfVarDefault(t, "pairedlist_rotation"); got != `"7776000s"` {
+		t.Errorf("pairedlist_rotation defaults to %s, want \"7776000s\": a key that is never rotated is one whose compromise reaches every list ever sealed under it (K1, O4)", got)
+	}
+
+	role := tfBlock(t, `resource "google_project_iam_custom_role" "pairedlist_sealer"`)
+	tfAttrsAre(t, role, "the paired-list sealer role", []tfWant{
+		{"role_id", "var.pairedlist_sealer_role"},
+		{"permissions", `["cloudkms.cryptoKeyVersions.useToEncrypt", "cloudkms.cryptoKeyVersions.useToDecrypt"]`},
+	}, "the store seals and opens and does nothing else with the ring: these two permissions do nothing on an asymmetric key, and the signer's two do nothing on a symmetric one, so the separation is enforced by the permissions as well as by the rings (K1, D2182)")
+
+	grant := tfBlock(t, `resource "google_kms_key_ring_iam_member" "signer_seals"`)
+	tfAttrsAre(t, grant, "the paired-list sealing grant", []tfWant{
+		{"member", "google_service_account.signer.member"},
+		{"role", "google_project_iam_custom_role.pairedlist_sealer.id"},
+		{"key_ring_id", "google_kms_key_ring.pairedlist.id"},
+	}, "the one account that seals and opens is the service's own, and the grant is made on K1's ring and not at the project: a grant at the project would reach every key the project ever holds (K1, A3)")
+
+	// The rules document is a file the deployment publishes over the database's
+	// own REST API, so this root writes none of it and this check reads the
+	// document itself: it must deny a read and a write at the root and grant
+	// nothing anywhere, because what a phone holds is a Firebase ID token and the
+	// project's API key and neither may read a node.
+	rules, err := os.ReadFile("rtdb.rules.json")
+	if err != nil {
+		t.Fatalf("reading rtdb.rules.json: %v", err)
+	}
+	var doc struct {
+		Rules map[string]any `json:"rules"`
+	}
+	if err := json.Unmarshal(rules, &doc); err != nil {
+		t.Fatalf("rtdb.rules.json is not a rules document: %v", err)
+	}
+	if len(doc.Rules) != 2 || doc.Rules[".read"] != false || doc.Rules[".write"] != false {
+		t.Errorf("rtdb.rules.json is %s, want {\".read\": false, \".write\": false} and nothing else: the signer's account holds the database role and passes the rules, and a phone is not that account — so a rule granting a read or a write anywhere is a store a client can dump, which is the one thing K1's sealing is for (K1, D2796)", strings.TrimSpace(string(rules)))
 	}
 }
 
@@ -1109,22 +1215,25 @@ func TestInfraTheSignerRoleIsTheNarrowestThatSigns(t *testing.T) {
 // grant whose role is a variable defaulting to a predefined role — so the
 // discriminator is "this block grants a role", whatever it is called, and the
 // answer for a grant nobody has reviewed is this list's absence. Each of the
-// four is read as the attributes it writes above, because a header is not a
+// them is read as the attributes it writes above, because a header is not a
 // role.
 var tfSanctionedGrants = map[string]string{
 	`resource "google_project_iam_custom_role" "signer"`:                "the signer role itself, and the whole of what signing takes",
 	`resource "google_kms_key_ring_iam_member" "signer_signs"`:          "its one grant, to the signer's own account",
 	`resource "google_storage_bucket_iam_member" "signer_reads"`:        "the service's read of the signed key set, which holds no key",
 	`resource "google_cloud_run_v2_service_iam_member" "signer_public"`: "the signer's public invoker, which reaches no key at all",
+	`resource "google_project_iam_custom_role" "pairedlist_sealer"`:     "K1's paired-list role: seal and open the symmetric key and nothing else, which is nothing on an asymmetric key and no reach of the signing ring",
+	`resource "google_kms_key_ring_iam_member" "signer_seals"`:          "its one grant, to the signer's own account and on K1's own ring",
 }
 
 // tfSignerRefs is every block of this root that may name the signer's account,
 // and how many times: the service's template makes the service that identity,
-// and the two grants name it as their member. A block that names it and is not
+// and the three grants name it as their member. A block that names it and is not
 // on this list is a block that runs as the signer, grants it or exports it.
 var tfSignerRefs = map[string]int{
 	`resource "google_cloud_run_v2_service" "signer"`:            1,
 	`resource "google_kms_key_ring_iam_member" "signer_signs"`:   1,
+	`resource "google_kms_key_ring_iam_member" "signer_seals"`:   1,
 	`resource "google_storage_bucket_iam_member" "signer_reads"`: 1,
 }
 
@@ -1358,17 +1467,28 @@ func TestInfraTheServiceSignsWithThisKeyAndServesTheJWKS(t *testing.T) {
 		t.Errorf("the root grants allUsers %d times, want exactly 1: the signer is the one public surface here, and a second one — on the key-set bucket above all — is a reach the plan never asked for", publicGrants)
 	}
 
-	outputs := 0
+	// The root's outputs are what a deploy reads back, and each is read by a
+	// named task: the JWKS URL P8 pins and P1 fetches, and K1's two values —
+	// the database the paired list lives in and the key it is sealed under —
+	// which whoever mounts the paired-list route hands to the program
+	// (pairedlist.tf). A further output is a value no task here reads.
+	outputs := map[string]string{
+		`output "jwks_url"`:                "the JWKS URL P8 pins and P1 fetches",
+		`output "pairedlist_database_url"`: "the database K1's store reads and writes",
+		`output "pairedlist_key"`:          "the symmetric key K1's list is sealed under",
+	}
+	seen := make(map[string]bool, len(outputs))
 	for _, rel := range tfFiles(t) {
 		for _, block := range tfBlocks(tfSource(t, rel), `output "`) {
-			outputs++
-			if tfHeader(block) != `output "jwks_url"` {
-				t.Errorf("%s declares the output %s: the JWKS URL is the one value P8 pins and P1 fetches, and a second output here is a value nobody reads", rel, tfHeader(block))
+			header := tfHeader(block)
+			seen[header] = true
+			if _, ok := outputs[header]; !ok {
+				t.Errorf("%s declares the output %s: this root's outputs are the JWKS URL and K1's two paired-list values, and a further output is a value no task here reads", rel, header)
 			}
 		}
 	}
-	if outputs != 1 {
-		t.Errorf("the root declares %d outputs, want exactly 1 (jwks_url): the JWKS URL is what Check 730's apply prints for P8 to pin", outputs)
+	if len(seen) != len(outputs) {
+		t.Errorf("the root declares %d outputs, want exactly %d:\n%s", len(seen), len(outputs), tfList(outputs))
 	}
 	url := tfBlock(t, `output "jwks_url"`)
 	value, _ := tfAttr(url, "value")
