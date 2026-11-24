@@ -315,7 +315,7 @@ func (o *memberOffboarder) offboardDropRoster(ctx context.Context, m workspace.M
 		if dropped == 0 {
 			return 0, nil
 		}
-		if err := offboardNoAdminLeft(m.Project, person, grants, next); err != nil {
+		if err := offboardNoAdminLeft(m.Project, person, grants, next, true); err != nil {
 			return 0, err
 		}
 		raw, err := accesslib.Encode(next)
