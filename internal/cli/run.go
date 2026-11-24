@@ -5876,10 +5876,11 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 // the ask can say refuses a launch: a backend that has no deployed job to
 // read (Cloud Batch starts one per run and keeps none) cannot be asked at all,
 // a job not deployed yet is refused by the launch's own step, and a launcher
-// with no checkout of this repository reads no workflow file, so whether the
-// catalog speaks for this workflow is the deploy-time arm's to refuse (F7) —
-// the ask answers nothing here, and the deployed image's entry is still read
-// and stamped (deployedCatalogEntry).
+// with no checkout of this repository reads no workflow file, so the pin and
+// coverage claims that are ABOUT that file are not made — the deployed image's
+// entry is still read and stamped, and whether the catalog speaks for the
+// workflow at all is decided without the file, from the project's map
+// (deployedCatalogEntry).
 //
 // The workflow it judges is the one in this launcher's working tree, as the
 // artifact gate's recipe is (recipeForLaunch) and for the same reason: the
@@ -5920,7 +5921,11 @@ func catalogDockerAsk(ctx context.Context, env *cloudEnv, slug string, spec *tas
 // coverage claims below are claims ABOUT the workflow, and nothing refuses
 // over a workflow this launcher cannot read — and what it costs nothing is the
 // entry: the deployed image is the catalog's whether or not a checkout here
-// can read the file that describes the job.
+// can read the file that describes the job. Whether the catalog speaks for
+// that job at all is still answered without the file where it can be: when the
+// deployed image is an entry's and the project's map gives this repository
+// that entry, the catalog's claim on the job is the map's own and needs no
+// checkout (below).
 //
 // (`catalogDockerAsk` stays as the two composed for the callers that want the
 // answer alone, which is every reader of the tag rule.)
@@ -5951,11 +5956,13 @@ func deployedCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec 
 	// entry, be it through the workflow's own reference, the project's map or
 	// the catalog's default.
 	speaks := false
+	hasWorkflowFile := false
 	var w config.Workflow
 	var sel catalog.Selection
 	var selErr error
 	if co := checkoutConfig(ctx, spec.Repo); co != nil {
 		if wt, ok := co.Workflows[spec.Workflow]; ok {
+			hasWorkflowFile = true
 			w = wt
 			sel, selErr = catalog.JobImage(catalog.ImageRequest{
 				Catalog:   cat,
@@ -6015,6 +6022,23 @@ func deployedCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec 
 			return config.Entry{}, false, nil
 		}
 		return config.Entry{}, false, catalogMovedErr(spec.Workflow, name, image)
+	}
+	// A launcher with no file for this workflow asked the resolver nothing, so
+	// whether the catalog speaks for the job is read from what needs no file:
+	// the deployed image is an entry's (the lookup above), and the project's map
+	// gives this repository that entry (D1906) — the same fact the deploy-time
+	// spec builder read when it built the job, which is why the job runs the
+	// entry's image at all. Without this a repository the map names was judged
+	// by its own build record, which `image build` and `image refresh` refuse to
+	// write while repo-level images are disabled (D1900): the launch of a
+	// catalog repository from outside its checkout was refused for good, in the
+	// per-repository wording of the record that can never exist. A repository
+	// the map does not name keeps the image this project builds for it, and its
+	// own record with it.
+	if !hasWorkflowFile && !speaks {
+		if mapped, mappedOK := mappedEntryName(env.lc.ImageMapEffective(publishedMap), spec.Repo); mappedOK && mapped == entry.Name {
+			speaks = true
+		}
 	}
 	// A configuration the resolver refuses — this job's own reference, a pin or
 	// the map's entry, naming a name the catalog does not hold — is refused at
@@ -6088,6 +6112,25 @@ func catalogDockerOn(env *cloudEnv, workflow string, entry config.Entry) (bool, 
 // exist only for the length of a run answers it not at all.
 type jobImageReader interface {
 	JobImage(ctx context.Context, job string) (string, bool, error)
+}
+
+// mappedEntryName is the catalog entry the project's repo-to-image map gives
+// repo, and whether it gives it one. The map is read under repo's canonical
+// form, which is the form its keys are validated in and the form the resolver
+// looks a repository up by (catalog.ImageRequest.mappedEntry): a launcher with
+// no checkout has repository names as the person spelled them, and a lookup
+// that skipped the canonicalization would miss the map entry for every
+// repository written in another case.
+func mappedEntryName(imageMap map[string]string, repo string) (string, bool) {
+	if len(imageMap) == 0 {
+		return "", false
+	}
+	c, err := task.CanonicalRepo(repo)
+	if err != nil {
+		return "", false
+	}
+	name, ok := imageMap[c]
+	return name, ok && name != ""
 }
 
 // catalogEntryOf is the one catalog entry whose image image is, and whether
