@@ -613,7 +613,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.BoolVar(&o.noLogIsolation, "no-log-isolation", false, "leave Fugaro job logs in _Default instead of their own log bucket")
 	f.StringVar(&o.registryCleanup, "registry-cleanup", "", "Artifact Registry cleanup: dry-run (the default), on or off")
 	f.StringVar(&o.firebase, "firebase-project", "", "turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: confirmed by the person at the terminal where it is a first-time question, already there on a run that re-converges an installation that has it) and the config")
-	f.StringVar(&o.budgetMode, "budget-mode", "", "with --firebase-project: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe)")
+	f.StringVar(&o.budgetMode, "budget-mode", "", "with --firebase-project: observe or enforce: the jobs' budget mode in the project config, and the project-wide mode in the database (an absent one is seeded observe)")
 	f.StringArrayVar(&o.budgetAdmins, "budget-admin", nil, "with --firebase-project: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins)")
 	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, at your own real terminal (never with --json; nothing is typed there, being at it is what confirms the step). A first run of "+d.name+" always creates its project, so the flag only says so explicitly. An ID that already exists is refused unless an earlier run of "+d.name+" made it Fugaro's (the resume), and one that holds nothing of Fugaro's is adopted instead: "+d.name+" uses it as if it had created it. Billing is not linked unless --link-billing is also given; without it "+d.name+" prints the one gcloud command that links it, unless the run asks the billing question (no --json and no coding agent's session) and has no terminal, where it is refused there at once instead, in the sentence naming --link-billing")
 	f.StringVar(&o.displayName, "display-name", "", "on a first run, which creates the project: its display name (default: its ID)")
@@ -2159,8 +2159,13 @@ func (o *initOptions) check() error {
 			return userErr("--firebase-project %q is not a project ID (6 to 30 of a-z, 0-9 and '-', starting with a letter)", fp)
 		case checkFirebaseProject(fp, o.cloud.gcpProject) != nil:
 			return checkFirebaseProject(fp, o.cloud.gcpProject)
-		case o.budgetMode != "" && !slices.Contains([]string{"off", "observe", "enforce"}, o.budgetMode):
-			return userErr("--budget-mode %q must be off, observe or enforce", o.budgetMode)
+		case policy.Mode(o.budgetMode).Removed():
+			// The old word is refused with the vocabulary's own text, not with a
+			// list of the words that are left: a person who wrote it is told why
+			// it is gone and what to write instead (AB3, C1, D3009).
+			return userErr("--budget-mode: %s", policy.ModeOffRefusal)
+		case o.budgetMode != "" && !slices.Contains([]string{policy.ModeObserve, policy.ModeEnforce}, o.budgetMode):
+			return userErr("--budget-mode %q must be observe or enforce", o.budgetMode)
 		}
 	}
 	// A budget is declared by --budget and --budget-currency together, and the
