@@ -203,6 +203,12 @@ func runChainRaise(cmd *cobra.Command, o *chainRaiseOptions, ref string) error {
 	// reason silently.
 	entry := runstore.ChainRaise{By: me, At: time.Now().UTC(), Reason: reason, Limits: raised}
 	rootRec.ChainRaises = append(rootRec.ChainRaises, entry)
+	// No summary is written beside this record, and a stale one is harmless:
+	// the projection carries no chain raise (runstore.SummaryRecord), so the
+	// summary the run left is still the rewritten record's own account for
+	// every field a row shows, while a summary written from a launcher's
+	// command would be an object the contract says the run's own job writes
+	// (runstore.TestAChainRaiseLeavesTheSummaryProjectionUnchanged).
 	if err := s.Sibling(root).WriteRecord(ctx, rootRec); err != nil {
 		return remote(fmt.Errorf("recording the raise in runs/%s/%s/result.json: %w", slug, root, err))
 	}
