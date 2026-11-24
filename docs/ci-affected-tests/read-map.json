@@ -16968,6 +16968,7 @@
         "*",
         "cmd/fugaro/**",
         "deploy/terraform/**",
+        "docs/backlog/**",
         "docs/plans/*",
         "docs/release-streams.yaml",
         "ee/ab/**",
