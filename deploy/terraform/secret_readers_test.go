@@ -48,12 +48,13 @@ var secretReaderExceptions = []struct {
 			"deploy/terraform/gcp/modules/repo/build.tf google_secret_manager_secret_iam_member.build",
 			"deploy/terraform/gcp/modules/repo/check.tf google_cloud_run_v2_job.check",
 			// B6 moved the catalog build onto the project's build identity,
-			// and a Cloud Build build resolves `availableSecrets` as the
-			// account it runs as: the identity therefore holds one
-			// secretAccessor per repository whose catalog entries this project
-			// builds, exactly the reach the per-repository build account's row
-			// above carries, and nothing wider (never the project).
-			"deploy/terraform/gcp/modules/installation/build_identity.tf google_secret_manager_secret_iam_member.build_identity_git_secret",
+			// and the identity then held one secretAccessor per repository
+			// whose catalog entries this project builds, exactly the reach the
+			// per-repository build account's row above carries and nothing
+			// wider (never the project). IS8 took that accessor out again
+			// (D3330): a catalog entry's build mounts no secret of its own and
+			// asks the credentials service for the git credential it clones
+			// with, so the identity reads none.
 			"images/derived/cloudbuild.yaml",
 		},
 	},

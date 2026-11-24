@@ -2923,6 +2923,29 @@ run "credentials_service_on" {
     ]) == 0
     error_message = "the service's account holds no project-level role: it reads one secret and nothing else"
   }
+  # And the build identity holds NOTHING in Secret Manager (IS8, D3330). A
+  # catalog entry's build used to mount the repository's provider credential as
+  # its AvailableSecrets, which Cloud Build resolves as the account the build
+  # runs as, so this module gave the identity one secretAccessor per repository
+  # of the catalog check's own input. The build asks the installation's
+  # credentials service for that credential now, so no container is read by the
+  # account a catalog build runs as and the plan must carry no grant naming it
+  # — every row above is another account's. The list is spelled out over each
+  # container the module can reach rather than over one of them, because the
+  # over-reach this rules out is a row on the container the next reader adds.
+  assert {
+    condition = length([
+      for m in concat(
+        [for g in google_secret_manager_secret_iam_member.credentials_bundle : g.member],
+        [for g in google_secret_manager_secret_iam_member.operator : g.member],
+        [for g in google_secret_manager_secret_iam_member.voice_provider_keys : g.member],
+        [for g in google_secret_manager_secret_iam_member.licence_renewal : g.member],
+        [for g in google_secret_manager_secret_iam_member.orchestrator_pairing_key : g.member],
+        [for g in google_secret_manager_secret_iam_member.coordinator_app_key : g.member],
+      ) : m if m == google_service_account.build_identity[0].member
+    ]) == 0
+    error_message = "the build identity must hold no secretAccessor on any container: a catalog entry's build reads its git credential from the credentials service, never from a secret the account it runs as may read (IS8, D3330), and a leftover accessor is a reach nothing uses"
+  }
 }
 
 # CS11's cloud half, where the installation names Vertex: the service's account

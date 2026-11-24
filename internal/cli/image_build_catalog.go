@@ -484,10 +484,24 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		// (F10/IS11): nothing is copied, nothing is built, nothing is pushed,
 		// and the request is submitted with none of a build's own inputs,
 		// which CatalogBuildSpec.checkPrebuilt refuses one by one.
+		// The address of the service this build's credential step asks for the
+		// entry's git credential (IS8, D3330): the installation's own record of
+		// it, the same value a repository's build request carries (image.go's
+		// buildServiceURL). A Dockerfile entry whose installation records none
+		// is refused here and not submitted, for buildServiceURL's reason: the
+		// request names no secret any more, so a build without the address
+		// would hold no credential at all and fail at its credential step long
+		// after it was billed. A prebuilt entry clones nothing and carries no
+		// address (checkPrebuilt reads neither).
+		serviceURL := configuredCredentialsServiceURL(lc)
+		if e.Source.Kind != config.SourceImage && serviceURL == "" {
+			return failStep(rep.rep, step, withLease(userErr("a catalog entry's build clones its source through the installation's credentials service, and this config records no address for it (credentials_service.url): the request names no secret at all, so a build submitted without the address would hold no credential and fail at its credential step long after it was billed. Run %s at the installation's own checkout — that records the service's address — and then run this again", selfCommand()+" update"), lease.release(ctx)))
+		}
 		spec := gcp.CatalogBuildSpec{
 			Entry: e.Name, Slug: rs.Slug,
 			ServiceAccount: gcp.BuildIdentityEmail(lc.GCPProject), MachineType: lc.Build.MachineType,
 			Bucket: lc.RecordBucketURL(), NoSmoke: o.noSmoke,
+			CredentialsServiceURL: serviceURL,
 			// The record carries the template this build ran, so a release that
 			// changes how catalog images are built reaches the entry the next
 			// time the check reads it (F33, D1402).
