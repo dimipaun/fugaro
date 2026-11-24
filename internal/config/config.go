@@ -1689,8 +1689,8 @@ func AgentOf(data []byte) (Agent, bool) {
 	if len(ps) > 0 {
 		return Agent{}, false
 	}
-	if len(dropLiftedKeys(tree)) > 0 {
-		if c, ps = decodeTree(tree); len(ps) > 0 {
+	if dropped, notes := dropLiftedKeys(tree); len(notes) > 0 {
+		if c, ps = decodeTree(dropped); len(ps) > 0 {
 			return Agent{}, false
 		}
 	}

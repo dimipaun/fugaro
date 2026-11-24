@@ -688,10 +688,30 @@ func TestAgentModelsValidation(t *testing.T) {
 // red about is the fourth slot's own.
 const visionRoleIDs = "coder: claude-opus-5-5, reviewer: claude-sonnet-5-5, background: claude-haiku-4-5"
 
-// visionAgent parses minimalYAML with the four model slots written.
+// visionAgent resolves minimalYAML over a project layer pinning the four model
+// slots: the slots are a project's from release A on (D3237, R2), so a
+// repository's own file may write them and no longer decides them — the drop
+// leaves a run with the project's. The layer is aurora's own, and the file is
+// minimalYAML anchored to it.
 func visionAgent(t *testing.T, models string) (*Config, []Problem) {
 	t.Helper()
-	return Parse([]byte(strings.Replace(minimalYAML, "workflows:", "agent:\n  models: {"+models+"}\nworkflows:", 1)))
+	l, ps := ParseProjectLayer([]byte("version: 1\nproject: aurora\ngcp_project: aurora-fugaro\ndefaults:\n  agent:\n    models: {"+models+"}\n"),
+		LayerAnchor{Project: "aurora", GCPProject: "aurora-fugaro"})
+	if len(ps) > 0 {
+		t.Fatalf("layer problems: %v", ps)
+	}
+	c, _, ps := Resolve([]byte(strings.Replace(minimalYAML, "project: aurora\n", "project: aurora\ngcp_project: aurora-fugaro\n", 1)), l)
+	return c, ps
+}
+
+// visionRepo is the same file with the slots written in the repository's own
+// file, which is where a value that is not a model ID is refused at the key the
+// owner wrote: the file is read as written and its slots dropped (R2), so the
+// problems are all these fixtures are for.
+func visionRepo(t *testing.T, models string) []Problem {
+	t.Helper()
+	_, ps := Parse([]byte(strings.Replace(minimalYAML, "workflows:", "agent:\n  models: {"+models+"}\nworkflows:", 1)))
+	return ps
 }
 
 // TestVisionSlotIsCheckedLikeTheOthers (V1, D2003, D2007): agent.models.vision
@@ -735,8 +755,10 @@ func TestVisionSlotIsCheckedLikeTheOthers(t *testing.T) {
 		t.Errorf("a vision model on the allow-list is refused: %v", ps)
 	}
 
-	// An ID: the slot is held to the model-ID shape wherever it is written.
-	_, ps = visionAgent(t, visionRoleIDs+`, vision: "has space"`)
+	// An ID: the slot is held to the model-ID shape wherever it is written,
+	// the repository's own file included — release A reads and still validates
+	// what a file wrote, and the drop is what keeps the value out of the run.
+	ps = visionRepo(t, visionRoleIDs+`, vision: "has space"`)
 	if got := paths(ps); got != "agent.models.vision" {
 		t.Errorf("a vision value that is not a model ID: problems at %q, want agent.models.vision", got)
 	}
@@ -762,7 +784,7 @@ func TestDiagnoseSlotIsCheckedLikeTheOthers(t *testing.T) {
 		t.Errorf("PinnedModels() = %q, want the four run pins: a diagnosis follows no run", pins)
 	}
 
-	_, ps = visionAgent(t, visionRoleIDs+`, diagnose: "bad model!"`)
+	ps = visionRepo(t, visionRoleIDs+`, diagnose: "bad model!"`)
 	if got := paths(ps); got != "agent.models.diagnose" {
 		t.Errorf("a diagnose value that is not a model ID: problems at %q, want agent.models.diagnose", got)
 	}
@@ -1327,9 +1349,13 @@ func TestInputTotalCapHasACeiling(t *testing.T) {
 // refusal of an effort outside config.Efforts has to be Fugaro's: Claude Code
 // takes a value it does not know without a word.
 func TestLevelsDecodeStrict(t *testing.T) {
+	// The model a level runs as is the project's from release A on (D3237,
+	// D3291): a file's agent.levels.lN.model is read and dropped, and a level
+	// that wrote nothing else goes with it — so the settings below are the
+	// ones a repository still decides.
 	const levels = `agent:
   levels:
-    l1: { model: claude-haiku-4-5 }
+    l1: { model: claude-haiku-4-5, effort: low }
     l2: { none: true }
     l3: { model: claude-opus-5-5, effort: xhigh, focus: the migration and its rollback }
 `
@@ -1345,9 +1371,9 @@ func TestLevelsDecodeStrict(t *testing.T) {
 		off    bool
 		focus  string
 	}{
-		{name: "l1", set: cfg.Agent.Levels.L1, model: "claude-haiku-4-5"},
+		{name: "l1", set: cfg.Agent.Levels.L1, effort: "low"},
 		{name: "l2", set: cfg.Agent.Levels.L2, off: true},
-		{name: "l3", set: cfg.Agent.Levels.L3, model: "claude-opus-5-5", effort: "xhigh", focus: "the migration and its rollback"},
+		{name: "l3", set: cfg.Agent.Levels.L3, effort: "xhigh", focus: "the migration and its rollback"},
 	} {
 		if tc.set == nil {
 			t.Fatalf("agent.levels.%s was decoded to nil: the key was dropped rather than read", tc.name)
@@ -1396,7 +1422,14 @@ func TestLevelsDecodeStrict(t *testing.T) {
 
 	// `model: none` is the level's switch written the other way: the resolved
 	// configuration carries a level that is skipped, never a model named none.
-	skipped, problems := Parse([]byte(minimalYAML + "agent:\n  levels:\n    l2: { model: none }\n"))
+	// The literal is a level's model and so a lifted key in a repository's
+	// file (D3291, R2); the project states it now, in its layer's defaults.
+	l, lps := ParseProjectLayer([]byte("version: 1\nproject: aurora\ngcp_project: aurora-fugaro\ndefaults:\n  agent:\n    levels:\n      l2: { model: none }\n"),
+		LayerAnchor{Project: "aurora", GCPProject: "aurora-fugaro"})
+	if len(lps) > 0 {
+		t.Fatalf("defaults.agent.levels.l2: { model: none } was refused: %v", lps)
+	}
+	skipped, _, problems := Resolve([]byte(strings.Replace(minimalYAML, "project: aurora\n", "project: aurora\ngcp_project: aurora-fugaro\n", 1)), l)
 	if len(problems) > 0 {
 		t.Fatalf("agent.levels.l2: { model: none } was refused: %v", problems)
 	}

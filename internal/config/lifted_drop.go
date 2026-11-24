@@ -6,12 +6,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// dropLiftedKeys removes every lifted key a repository's file writes from the
-// tree Resolve merges, and answers the note of each (config.LiftedKeys, R2 of
+// dropLiftedKeys is tree with every lifted key a repository's file writes
+// removed, and the note of each (config.LiftedKeys, R2 of
 // docs/repo-override-rulings/reconciliation.md, D3237). It is the one drop:
 // the merge never sees a lifted value, so no reader downstream — the merge,
 // the repository's own flags or a config a run carries — has to know a key was
 // lifted in order to stop honouring it.
+//
+// The answer is a copy, and tree itself is left as it was written: Resolve
+// judges a file's problems on the file as written (spec §4), where the lifted
+// keys still decode and still validate for one release, and merges the copy —
+// so the tree it drops from is never the only copy of what the file said.
 //
 // A block left empty by the drop goes with its keys, so a file that wrote
 // nothing but lifted keys resolves exactly as one that wrote none of them:
@@ -22,9 +27,25 @@ import (
 // (RepoRigorSet, setsRigor) and R2 keeps it opting in after the drop — a file
 // that wrote `rigor: {default: hotfix}` still runs by the repository's own
 // rules, with no level of its own.
-func dropLiftedKeys(tree map[string]any) []RetiredKeyNote {
-	notes, _ := dropLifted(tree, "")
-	return notes
+func dropLiftedKeys(tree map[string]any) (map[string]any, []RetiredKeyNote) {
+	out := copyTree(tree)
+	notes, _ := dropLifted(out, "")
+	return out, notes
+}
+
+// copyTree is tree with every mapping under it copied and the leaves shared: a
+// *yaml.Node is read and never written once it is in the tree, so the copy is
+// a tree of its own to delete keys from (dropLifted) while the nodes the file
+// wrote stay the ones both trees go on to marshal.
+func copyTree(tree map[string]any) map[string]any {
+	out := make(map[string]any, len(tree))
+	for k, v := range tree {
+		if sub, ok := v.(map[string]any); ok {
+			v = copyTree(sub)
+		}
+		out[k] = v
+	}
+	return out
 }
 
 // dropLifted is dropLiftedKeys at one mapping, and says whether anything under
