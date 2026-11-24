@@ -444,10 +444,15 @@ func (p *Provider) GitAuthReadOnly(ctx context.Context, minValid time.Duration) 
 	return gitprov.GitAuth{Username: gitUsername, Token: tok, Expires: exp}, nil
 }
 
-// Repository implements gitprov.Provider.
+// Repository implements gitprov.Provider. The reply names the repository's
+// default branch as well, which is the branch a read that names no ref is made
+// at, so it is carried out of this read rather than fetched by a call of its
+// own (a host that names none leaves it empty; nothing here refuses it, since
+// only a read that needs the name can judge that).
 func (p *Provider) Repository(ctx context.Context) (gitprov.RepoInfo, error) {
 	var repo struct {
-		Private *bool `json:"private"`
+		Private       *bool  `json:"private"`
+		DefaultBranch string `json:"default_branch"`
 	}
 	if err := p.api.Do(ctx, "GET", p.repoPath(""), nil, &repo); err != nil {
 		return gitprov.RepoInfo{}, fmt.Errorf("reading the repository: %w", err)
@@ -457,7 +462,7 @@ func (p *Provider) Repository(ctx context.Context) (gitprov.RepoInfo, error) {
 		// follow-up run there without allow_public.
 		return gitprov.RepoInfo{}, errors.New("reading the repository: the response has no private field")
 	}
-	return gitprov.RepoInfo{Private: *repo.Private}, nil
+	return gitprov.RepoInfo{Private: *repo.Private, DefaultBranch: repo.DefaultBranch}, nil
 }
 
 // restUser is a comment's or pull request's author in the REST API; null

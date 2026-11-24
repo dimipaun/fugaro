@@ -439,8 +439,10 @@ func TestLaunchSpecOldImageWarnsAndOmits(t *testing.T) {
 // first assertion.
 func TestFollowUpFromReviewRunMarksFindings(t *testing.T) {
 	f, reviewID := fixBriefSeed(t)
-	// The follow-up carries its chain's title, so the image has to be one that
-	// reads titles; it also has to read the review's spec, or the launch drops it.
+	// The two fields are read by a runner from reviewSpecSince on, and dropped
+	// for an image that predates it (reviewSpecSkew) — the fixture's own record
+	// is the policy node's release, which the fields' release postdates — so
+	// this test's installation is one updated onto an image that reads them.
 	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+reviewSpecSince)
 	putReviewArtifact(t, f, reviewID, fixFirstArtifact(reviewID))
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--review-run", reviewID, "also rename x"); err != nil {

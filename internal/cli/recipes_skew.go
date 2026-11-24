@@ -1879,10 +1879,14 @@ func checkImageSinceDev(ctx context.Context, env *cloudEnv, slug string, spec *t
 // per-workflow record is one `fugaro image build --workflow` and `image
 // refresh` refuse to write while repo-level images are disabled, so it stays
 // at whatever base it had when the catalog took over, and judging it would
-// refuse a launch on an image nothing runs. A failed resolution is not an
-// answer, so the repository's own record is judged as before.
+// refuse a launch on an image nothing runs. That is as true for a launch from
+// outside the repository's checkout as from inside it: the entry is the
+// deployed job's image and the project's map is what names it for this
+// repository, neither of which a checkout is needed for
+// (deployedCatalogEntry). A failed resolution is not an answer, so the
+// repository's own record is judged as before.
 func launchCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) (config.Entry, bool) {
-	entry, ok, err := deployedCatalogEntry(ctx, env, slug, spec)
+	entry, ok, _, err := deployedCatalogEntry(ctx, env, slug, spec)
 	if err != nil || !ok {
 		return config.Entry{}, false
 	}

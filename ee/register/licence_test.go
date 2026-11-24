@@ -86,7 +86,8 @@ var licenceTestObjectPath = filepath.FromSlash(project.Object)
 
 // The two keyring entry names the tests mint under: the fixture's own, and one
 // no ring in this package holds, which is how a test gets a key that does not
-// verify. Neither is a production id, and the production keyring is empty.
+// verify. Neither is a production id, and the production keyring holds the
+// production id alone (S2.9).
 const (
 	licenceTestKeyID   = "licence-register-test-v1"
 	licenceStrangerKey = "licence-register-test-stranger-v1"
@@ -478,9 +479,9 @@ func TestTheLicenceObjectIsTheStores(t *testing.T) {
 // licenceRingPublished is whether this build's own keyring holds a key, read
 // once as the package's value: the fixtures swap licenceRing for a pair they
 // mint, so a test that asked later would be asking about a test's ring. The
-// ring is empty in the repository (.claude/rules/ee.md: a later task, S2.9,
-// publishes the production halves), and this is where a release that changes
-// that is caught.
+// ring is empty in the repository (S2.9 published the production half in
+// ee/licence's own ring; this ring is published with K4.2's release), and this
+// is where a release that changes that is caught.
 var licenceRingPublished = len(licenceRing) > 0
 
 // TestTheRenewalContainerIsCreatedBeforeTheRingIsPublished holds the order

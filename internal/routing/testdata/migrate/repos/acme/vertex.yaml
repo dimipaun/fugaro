@@ -1,0 +1,5 @@
+# Vertex, with one model the checked-in map spells and one it does not.
+auth: vertex
+models:
+  - id: gemini-3-pro
+  - id: gemini-9-ultra

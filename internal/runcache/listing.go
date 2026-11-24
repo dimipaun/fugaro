@@ -13,11 +13,16 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
-// cachedNames are the three objects of a run this cache holds. They are the
-// three a run listing reads; nothing else under a run's prefix is
-// cached -- transcripts and reports are large, and the cancel marker and
-// the launch claim are read on paths that need the bucket as it is now.
-var cachedNames = map[string]bool{"task.json": true, "launch.json": true, "result.json": true}
+// cachedNames are the objects of a run this cache holds: the three a run
+// listing has always read, and the run's summary, which stands in for two of
+// them (docs/runs-ls-speed, RL4). The summary has to be here or it is never
+// read at all: with an index, an object the listing did not see is absent, so
+// a listing that left summary.json out of its own listing would answer every
+// run from the three objects and save nothing. Nothing else under a run's
+// prefix is cached -- transcripts and reports are large, and the cancel
+// marker and the launch claim are read on paths that need the bucket as it is
+// now.
+var cachedNames = map[string]bool{"task.json": true, "launch.json": true, "result.json": true, "summary.json": true}
 
 // List answers, in one listing, the generation of every cached object of
 // slug's runs, keyed by object name.
@@ -85,11 +90,11 @@ func List(ctx context.Context, b *blobx.Bucket, slug, from string) map[string]in
 	}
 }
 
-// isCachedObject reports whether key is one of the three objects of a run
-// of the listed slug. Anything else the runs bucket holds under the same
-// prefix -- the launch claim, the cancel marker, a future object -- is left
-// out of the index, and a caller that reads one reads the bucket: the index
-// answers only for the names it was built from.
+// isCachedObject reports whether key is one of the cached objects of a run of
+// the listed slug. Anything else the runs bucket holds under the same prefix
+// -- the launch claim, the cancel marker, a transcript, a future object -- is
+// left out of the index, and a caller that reads one reads the bucket: the
+// index answers only for the names it was built from.
 func isCachedObject(prefix, key string) bool {
 	rest, ok := strings.CutPrefix(key, prefix)
 	if !ok {

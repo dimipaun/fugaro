@@ -11,6 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -285,6 +286,18 @@ func catalogCheckSpec(lc *localcfg.Config, bucket string, paused bool, container
 		return nil, err
 	}
 	env := platformEnvFor(lc, lc.Name, bucket)
+	// The credentials service's own URL, which is where the builds this job
+	// submits are answered their git credential (IS8, D3330): a catalog
+	// entry's build clones its source through the service and no longer
+	// through a secret of its own, so the step that fetches that credential
+	// reads this address from the job's environment exactly as a repository
+	// check's does (imagecheck.go's checkServiceURL, and projectjobs.go's own
+	// copy of this fact for a shared job). Absent on an installation whose
+	// local config carries no service block, where a submitted build is
+	// refused instead of running with nothing to clone with.
+	if cs := lc.CredentialsService; cs != nil && cs.URL != "" {
+		env[providers.EnvCredentialsServiceURL] = cs.URL
+	}
 	// The budget backend, which this job leases each build's cost through: the
 	// same variable every other job of the installation carries (projectJobEnv
 	// sets it the same way), and absent on an installation that has none — the

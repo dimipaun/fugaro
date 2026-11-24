@@ -2,6 +2,7 @@ package mailbox
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -77,6 +78,46 @@ func TestConfirmConstantsMatchTheSharedModule(t *testing.T) {
 		if !mine[code] {
 			t.Errorf("the module refuses with %q, which this package does not speak", code)
 		}
+	}
+
+	// D2786's session policy, which `shared/confirm/policy.js` owns: the two
+	// values the ruling reads, their defaults (P6's `mobile.costly_modes` and
+	// `mobile.biometric_on_costly`) and C2's bounds for them. Each is read out of
+	// the module, so a default moved on one side fails here.
+	policy := readSharedFile(t, "confirm", "policy.js")
+	if got := jsList(t, policy, jsPolicyCostlyModes, "DEFAULT_COSTLY_MODES"); !sameStrings(got, ConfirmDefaultCostlyModes) {
+		t.Errorf("ConfirmDefaultCostlyModes is %v, the module's DEFAULT_COSTLY_MODES is %v", ConfirmDefaultCostlyModes, got)
+	}
+	if m := jsPolicyBiometric.FindSubmatch(policy); m == nil {
+		t.Fatal("shared/confirm/policy.js no longer declares DEFAULT_BIOMETRIC_ON_COSTLY in a shape this test reads")
+	} else if got := string(m[1]) == "true"; got != ConfirmDefaultBiometricOnCostly {
+		t.Errorf("ConfirmDefaultBiometricOnCostly is %v, the module's is %v", ConfirmDefaultBiometricOnCostly, got)
+	}
+	if got := jsProduct(t, policy, jsPolicyMaxCostlyModes, "MAX_COSTLY_MODES"); got != ConfirmMaxCostlyModes {
+		t.Errorf("ConfirmMaxCostlyModes is %d, the module's is %d", ConfirmMaxCostlyModes, got)
+	}
+	if got := jsProduct(t, policy, jsPolicyMaxModeLength, "MAX_MODE_LENGTH"); got != ConfirmMaxModeLen {
+		t.Errorf("ConfirmMaxModeLen is %d, the module's is %d", ConfirmMaxModeLen, got)
+	}
+	// A pending read-back may hold the destructive verbs and D2786's costly
+	// start, which is the module's own composition of the two.
+	if !jsConfirmPendingVerbs.Match(confirm) {
+		t.Fatal("shared/confirm/index.js no longer composes PENDING_VERBS out of DESTRUCTIVE_VERBS and VERB.LAUNCH")
+	}
+	pending := append(append([]string{}, jsList(t, confirm, jsConfirmDestructiveVerbs, "DESTRUCTIVE_VERBS")...), ConfirmVerbLaunch)
+	if !sameStrings(pending, ConfirmPendingVerbs) {
+		t.Errorf("ConfirmPendingVerbs is %v, the module's PENDING_VERBS is %v", ConfirmPendingVerbs, pending)
+	}
+	kindBlock := jsConfirmTargetKindBlock.FindSubmatch(confirm)
+	if kindBlock == nil {
+		t.Fatal("shared/confirm no longer declares a TARGET_KIND table this test can read")
+	}
+	kinds := map[string]string{}
+	for _, m := range jsRefusalEntry.FindAllSubmatch(kindBlock[1], -1) {
+		kinds[string(m[1])] = string(m[2])
+	}
+	if got := kinds["MODE"]; got != ConfirmTargetMode {
+		t.Errorf("ConfirmTargetMode is %q, the module's TARGET_KIND.MODE is %q", ConfirmTargetMode, got)
 	}
 
 	// P6.5's prompt vocabulary: the cap and the two replies. (The TTL itself is
@@ -538,6 +579,10 @@ func TestConfirmValidateActionRefusesARecordWithoutAConfirmation(t *testing.T) {
 		{"no confirmation id", func(a *Action) { a.Confirmation.ID = "" }, CodeMissingField, "action.confirmation.id"},
 		{"no confirmation time", func(a *Action) { a.Confirmation.At = 0 }, CodeBadTimestamp, "action.confirmation.at"},
 		{"no action id", func(a *Action) { a.ID = "" }, CodeMissingField, "action.id"},
+		// A launch is a mailbox action now (J5a, O10) and a destructive verb
+		// this allow-list does not authorise: O10's own gate --
+		// ConfirmValidateLaunch -- is what reads a start, so a record that
+		// carries one here authorises nothing.
 		{"a launch", func(a *Action) { a.Verb = ConfirmVerbLaunch }, CodeConfirmRefusedVerb, "action.verb"},
 		{"the kill switch", func(a *Action) { a.Verb = "kill-switch" }, CodeConfirmRefusedVerb, "action.verb"},
 		{"a verb outside the set", func(a *Action) { a.Verb = "explode" }, CodeUnknownVerb, "action.verb"},
@@ -600,6 +645,207 @@ func TestConfirmValidateActionBindsTheHeadReadBack(t *testing.T) {
 	}
 }
 
+// TestActionLaunchGateRefusesACostlyStartWithNoConfirmation is O10's red step:
+// the gate this task owns refuses a start in a mode the session calls costly
+// when the record carries no confirmation. A modified client -- one that
+// skipped the read-back, or one that was told to -- is the case the gate exists
+// for, and the modes it judges by are the session's own, so a mode the session
+// does not name passes through unread.
+func TestActionLaunchGateRefusesACostlyStartWithNoConfirmation(t *testing.T) {
+	start := func(mode string) *Action {
+		return &Action{ID: "act_1", Verb: ConfirmVerbLaunch, Mode: mode, Target: Target{Repo: "dimipaun/fugaro", IsRepo: true}}
+	}
+	// The default policy is P6's: `pro` and `critical` are costly, and every
+	// other mode is D162's pass-through.
+	for _, mode := range ConfirmDefaultCostlyModes {
+		if _, refusal := ConfirmValidateLaunch(start(mode), ConfirmLaunchOptions{}); refusal == nil {
+			t.Errorf("a start in %q with no confirmation was honoured", mode)
+		} else if refusal.Code != CodeMissingField || refusal.Field != "action.confirmation" {
+			t.Errorf("a start in %q was refused %s/%s, want %s/action.confirmation", mode, refusal.Code, refusal.Field, CodeMissingField)
+		}
+	}
+	for _, mode := range []string{"default", "fast", "cheap"} {
+		if _, refusal := ConfirmValidateLaunch(start(mode), ConfirmLaunchOptions{}); refusal != nil {
+			t.Errorf("a start in %q was refused: %s (D162: only a costly mode is read back)", mode, refusal)
+		}
+	}
+	// The session's own list decides, not the default: a mode the session added
+	// is costly, and a default mode the session dropped is not.
+	if _, refusal := ConfirmValidateLaunch(start("turbo"), ConfirmLaunchOptions{CostlyModes: []string{"turbo"}}); refusal == nil {
+		t.Error("a session-declared costly mode was started with no confirmation")
+	}
+	if _, refusal := ConfirmValidateLaunch(start("pro"), ConfirmLaunchOptions{CostlyModes: []string{"turbo"}}); refusal != nil {
+		t.Errorf("a mode the session does not call costly was refused: %s", refusal)
+	}
+	// A session that names no costly mode is the empty list, which is read as
+	// what it says -- the same reading ConfirmInitialState gives it.
+	if _, refusal := ConfirmValidateLaunch(start("pro"), ConfirmLaunchOptions{CostlyModes: []string{}}); refusal != nil {
+		t.Errorf("an empty costly list was read as a refusal: %s", refusal)
+	}
+}
+
+// TestActionLaunchGateBindsTheModeAndSpendsTheConfirmation: what the gate hands
+// back is the record a consumer starts from, and the two things it has to carry
+// are the mode the record named -- bound as J3's machine binds a costly start's
+// target, so a caller reads one shape whatever produced it -- and the
+// confirmation the phone wrote, for the caller to spend against its own memory
+// before anything runs.
+func TestActionLaunchGateBindsTheModeAndSpendsTheConfirmation(t *testing.T) {
+	a := &Action{
+		ID: "act_1", Verb: ConfirmVerbLaunch, Mode: "pro",
+		Target:          Target{Repo: "dimipaun/fugaro", IsRepo: true},
+		Confirmation:    Confirmation{ID: "conf_1", At: testNow},
+		HasConfirmation: true,
+	}
+	record, refusal := ConfirmValidateLaunch(a, ConfirmLaunchOptions{})
+	if refusal != nil {
+		t.Fatalf("a read-back costly start was refused: %s", refusal)
+	}
+	if record.Verb != ConfirmVerbLaunch || record.ID != "act_1" {
+		t.Errorf("the record is %+v", record)
+	}
+	if record.Target.Kind != ConfirmTargetMode || record.Target.Mode != "pro" {
+		t.Errorf("the record's target is %+v, want the mode %q bound", record.Target, "pro")
+	}
+	if record.Confirmation.ID != "conf_1" || record.Confirmation.At != testNow {
+		t.Errorf("the record's confirmation is %+v", record.Confirmation)
+	}
+	// A plain start's record carries no confirmation at all: there is nothing to
+	// spend, and a zero Confirmation would be one the caller might try to.
+	a.Mode, a.HasConfirmation = "default", false
+	record, refusal = ConfirmValidateLaunch(a, ConfirmLaunchOptions{})
+	if refusal != nil {
+		t.Fatalf("a plain start was refused: %s", refusal)
+	}
+	if record.Confirmation != (ConfirmConfirmation{}) {
+		t.Errorf("a plain start's record carries the confirmation %+v", record.Confirmation)
+	}
+	if record.Target.Mode != "default" {
+		t.Errorf("a plain start's record binds %q", record.Target.Mode)
+	}
+}
+
+// TestActionLaunchGateRefusesWhatIsNotALaunch: the gate answers one verb, and
+// the destructive records are ConfirmValidateAction's. Each refuses the other's
+// verbs, so a caller that hands a record to the wrong one is refused rather
+// than answered with a record that authorises nothing.
+func TestActionLaunchGateRefusesWhatIsNotALaunch(t *testing.T) {
+	for _, verb := range []string{ConfirmVerbCancel, ConfirmVerbMerge, ConfirmVerbConfirm} {
+		a := &Action{
+			ID: "act_1", Verb: verb, Mode: "pro",
+			Target:          Target{Run: "20261018-125859-d3c8"},
+			Confirmation:    Confirmation{ID: "conf_1", At: testNow},
+			HasConfirmation: true,
+		}
+		if _, refusal := ConfirmValidateLaunch(a, ConfirmLaunchOptions{}); refusal == nil {
+			t.Errorf("a %s record was honoured by the launch gate", verb)
+		} else if refusal.Code != CodeConfirmRefusedVerb || refusal.Field != "action.verb" {
+			t.Errorf("a %s record was refused %s/%s, want %s/action.verb", verb, refusal.Code, refusal.Field, CodeConfirmRefusedVerb)
+		}
+	}
+	if _, refusal := ConfirmValidateLaunch(nil, ConfirmLaunchOptions{}); refusal == nil {
+		t.Error("a nil record was honoured")
+	}
+}
+
+// TestActionLaunchGateRefusesAPolicyItCannotRead: the costly list is the one
+// input the gate takes from outside, and a list it cannot read is refused
+// rather than read as "no mode is costly". The lenient reading of a defect is
+// exactly the reading that lets a costly start through with no read-back, so
+// each of the module's own refusals for the list is pinned here.
+func TestActionLaunchGateRefusesAPolicyItCannotRead(t *testing.T) {
+	a := &Action{ID: "act_1", Verb: ConfirmVerbLaunch, Mode: "pro", Target: Target{Repo: "dimipaun/fugaro", IsRepo: true}}
+	for _, c := range []struct {
+		name  string
+		modes []string
+		code  Code
+		field string
+	}{
+		{"a mode carrying a control character", []string{"pro\u0000"}, CodeBadCharacter, "costlyModes"},
+		{"a mode past the length bound", []string{strings.Repeat("x", ConfirmMaxModeLen+1)}, CodeTooLong, "costlyModes"},
+		{"an empty mode", []string{""}, CodeMissingField, "costlyModes"},
+		{
+			"more modes than a session may name",
+			func() []string {
+				modes := make([]string, ConfirmMaxCostlyModes+1)
+				for i := range modes {
+					modes[i] = fmt.Sprintf("m-%d", i)
+				}
+				return modes
+			}(),
+			CodeTooLong, "costlyModes",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, refusal := ConfirmValidateLaunch(a, ConfirmLaunchOptions{CostlyModes: c.modes}); refusal == nil {
+				t.Fatal("an unreadable costly list was read as a policy")
+			} else if refusal.Code != c.code || refusal.Field != c.field {
+				t.Errorf("refused %s/%s, want %s/%s", refusal.Code, refusal.Field, c.code, c.field)
+			}
+		})
+	}
+	// The list at its own bounds is a policy like any other, and a costly mode
+	// in it still needs its confirmation.
+	modes := make([]string, ConfirmMaxCostlyModes)
+	for i := range modes {
+		modes[i] = fmt.Sprintf("m-%d", i)
+	}
+	if _, refusal := ConfirmValidateLaunch(a, ConfirmLaunchOptions{CostlyModes: modes}); refusal != nil {
+		t.Errorf("a list at the count bound was refused: %s", refusal)
+	}
+	// A record whose confirmation is present but not one is refused rather than
+	// handed back for a caller to spend: the gate re-reads the shape of what it
+	// answers with.
+	broken := &Action{
+		ID: "act_1", Verb: ConfirmVerbLaunch, Mode: "pro",
+		Target:          Target{Repo: "dimipaun/fugaro", IsRepo: true},
+		Confirmation:    Confirmation{ID: "", At: testNow},
+		HasConfirmation: true,
+	}
+	if _, refusal := ConfirmValidateLaunch(broken, ConfirmLaunchOptions{}); refusal == nil || refusal.Field != "action.confirmation.id" {
+		t.Errorf("a confirmation with no id: %v", refusal)
+	}
+	broken.Confirmation = Confirmation{ID: "conf_1"}
+	if _, refusal := ConfirmValidateLaunch(broken, ConfirmLaunchOptions{}); refusal == nil || refusal.Code != CodeBadTimestamp {
+		t.Errorf("a confirmation with no time: %v", refusal)
+	}
+}
+
+// TestConfirmRefusesAStateThatDoesNotSayWhatIsCostly: the module refuses a
+// state whose `costlyModes` is missing (`missing-field/costlyModes`), and a port
+// that read a nil list as "no mode is costly" would fail open on the worst
+// answer: a costly start would pass through with no read-back while the phone
+// asked for one. A state that *names* no costly mode is the empty list, which is
+// read as what it says.
+func TestConfirmRefusesAStateThatDoesNotSayWhatIsCostly(t *testing.T) {
+	state, refusal := ConfirmInitialState(ConfirmOptions{Now: testNow})
+	if refusal != nil {
+		t.Fatalf("the empty machine was refused: %s", refusal.Code)
+	}
+	launch := ConfirmEvent{
+		Type: ConfirmEventCommand, Now: testNow + 1000,
+		UtteranceID: "utt-1", Text: "kick off the docs job in pro mode",
+		Verb: ConfirmVerbLaunch, Mode: "pro", HasMode: true,
+		ActionID: "act-1", HasActionID: true,
+	}
+
+	state.CostlyModes = nil
+	if answer := ConfirmStep(state, launch); answer.OK || answer.Code != CodeMissingField || answer.Field != "costlyModes" {
+		t.Errorf("a state with no costly mode list was answered: ok=%v code=%s field=%s, want %s/%s",
+			answer.OK, answer.Code, answer.Field, CodeMissingField, "costlyModes")
+	}
+
+	// A start that is not costly is a plain start, which carries no action id:
+	// it is the same event the machine passes through with no read-back.
+	plain := launch
+	plain.ActionID, plain.HasActionID = "", false
+	state.CostlyModes = []string{}
+	if answer := ConfirmStep(state, plain); !answer.OK || answer.Outcome != ConfirmOutcomePassThrough {
+		t.Errorf("a session that calls no mode costly did not pass the start through: ok=%v outcome=%s code=%s",
+			answer.OK, answer.Outcome, answer.Code)
+	}
+}
+
 func openTestMemory(t *testing.T, path string, cap int) *ConfirmMemory {
 	t.Helper()
 	m, err := OpenConfirmMemory(ConfirmMemoryOptions{
@@ -625,9 +871,16 @@ func sameStrings(left, right []string) bool {
 
 func readSharedModule(t *testing.T, name string) []byte {
 	t.Helper()
-	body, err := os.ReadFile(filepath.Join("..", "..", "shared", name, "index.js"))
+	return readSharedFile(t, name, "index.js")
+}
+
+// readSharedFile reads one file of one shared module, for a value the module
+// keeps in a file beside its entry point.
+func readSharedFile(t *testing.T, module, file string) []byte {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("..", "..", "shared", module, file))
 	if err != nil {
-		t.Fatalf("reading shared/%s: %v", name, err)
+		t.Fatalf("reading shared/%s/%s: %v", module, file, err)
 	}
 	return body
 }
@@ -706,10 +959,18 @@ var (
 	jsConfirmPRMax             = regexp.MustCompile(`(?m)^export const PR_MAX = (\d+);$`)
 	jsConfirmForwardJump       = regexp.MustCompile(`(?m)^export const MAX_FORWARD_JUMP_MS = (\d+) \* (\d+) \* (\d+) \* (\d+) \* (\d+);$`)
 	jsConfirmCue               = regexp.MustCompile(`(?m)^export const CONFIRM_CUE = '([^']*)';$`)
-	jsRefusalBlock             = regexp.MustCompile(`(?s)export const REFUSAL = Object\.freeze\(\{(.*?)\n\}\);`)
-	jsRefusalEntry             = regexp.MustCompile(`(?m)^\s*([A-Z_0-9]+): '([^']*)',$`)
+	// D2786's policy half lives in shared/confirm/policy.js, which
+	// shared/confirm/index.js re-exports as its only entry point.
+	jsConfirmPendingVerbs  = regexp.MustCompile(`(?m)^const PENDING_VERBS = Object\.freeze\(\[\.\.\.DESTRUCTIVE_VERBS, VERB\.LAUNCH\]\);$`)
+	jsPolicyCostlyModes    = regexp.MustCompile(`(?m)^export const DEFAULT_COSTLY_MODES = Object\.freeze\(\[([^\]]*)\]\);$`)
+	jsPolicyBiometric      = regexp.MustCompile(`(?m)^export const DEFAULT_BIOMETRIC_ON_COSTLY = (true|false);$`)
+	jsPolicyMaxCostlyModes = regexp.MustCompile(`(?m)^export const MAX_COSTLY_MODES = (\d+);$`)
+	jsPolicyMaxModeLength  = regexp.MustCompile(`(?m)^export const MAX_MODE_LENGTH = (\d+);$`)
+	jsRefusalBlock         = regexp.MustCompile(`(?s)export const REFUSAL = Object\.freeze\(\{(.*?)\n\}\);`)
+	jsRefusalEntry         = regexp.MustCompile(`(?m)^\s*([A-Z_0-9]+): '([^']*)',$`)
 
 	jsConfirmVerbBlock        = regexp.MustCompile(`(?s)export const VERB = Object\.freeze\(\{(.*?)\n\}\);`)
+	jsConfirmTargetKindBlock  = regexp.MustCompile(`(?s)export const TARGET_KIND = Object\.freeze\(\{(.*?)\n\}\);`)
 	jsConfirmDestructiveVerbs = regexp.MustCompile(`(?m)^export const DESTRUCTIVE_VERBS = Object\.freeze\(\[([^\]]*)\]\);$`)
 	jsConfirmPassThroughVerbs = regexp.MustCompile(`(?m)^export const PASS_THROUGH_VERBS = Object\.freeze\(\[([^\]]*)\]\);$`)
 	jsConfirmRefusedVerbs     = regexp.MustCompile(`(?ms)^export const REFUSED_VERBS = Object\.freeze\(\[([^\]]*)\]\);$`)
@@ -852,7 +1113,10 @@ func commandEvent(verb string, target *ConfirmTarget) ConfirmEvent {
 	if target != nil {
 		ev.Target, ev.HasTarget = target, true
 	}
-	if _, destructive := confirmVerbTargetKinds[verb]; destructive {
+	// A destructive verb carries the action id the confirmation will name. A
+	// launch's is D2786's: a *costly* start carries one too, which a test that
+	// means it sets itself, beside the mode that made it costly.
+	if confirmContains(ConfirmDestructiveVerbs, verb) {
 		ev.ActionID, ev.HasActionID = "act-1", true
 	}
 	return ev

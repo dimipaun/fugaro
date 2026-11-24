@@ -1,0 +1,13 @@
+{
+  "model": "google/gemini-3-pro",
+  "max_tokens": 1024,
+  "temperature": 0.2,
+  "anthropic_version": "2023-06-01",
+  "stream": false,
+  "system": "You are a careful engineer.",
+  "messages": [
+    {"role": "user", "content": "hello"},
+    {"role": "assistant", "content": [{"type": "text", "text": "hi"}]},
+    {"role": "user", "content": [{"type": "text", "text": "go on", "cache_control": {"type": "ephemeral"}}]}
+  ]
+}

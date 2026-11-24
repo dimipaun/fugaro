@@ -666,6 +666,27 @@ func (b *Bundle) Lookup(name string) (Entry, bool) {
 	return b.entries[i], true
 }
 
+// RepoCredential answers one member of C1's family (KindRepoCredential) by its
+// DOCUMENT KEY — the one spelling of a (repository, credential) pair
+// (RepoCredentialKey) and the one the bundle's own index is keyed by.
+//
+// It is a selection by KIND, like AppKey and ProviderKey and for the same
+// reason: the family's entries are not in byName, so a caller that holds a
+// member's document key — a candidate built from it, an entry the copy wrote and
+// this service is to serve — has no other way to reach the value. It answers
+// nothing for a name the document does not hold, and it derives nothing: the
+// caller hands over the key and gets that entry or none, so it can reach no
+// repository's credential but the one it named (R2, HG1). A caller whose name
+// could be a CALL's must derive it from the verified repository first, as the
+// provider route does (providerServedEntry).
+func (b *Bundle) RepoCredential(key string) (Entry, bool) {
+	i, ok := b.repoCredentials[key]
+	if !ok {
+		return Entry{}, false
+	}
+	return b.entries[i], true
+}
+
 // AppKey answers the bundle's GitHub App private key (C2.1), which is the
 // entry whose document key is config.GitHubAppKeySecret. found=false is a
 // document that holds no App key, which the mint refuses on (ErrMintNoAppKey)

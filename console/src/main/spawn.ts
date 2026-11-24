@@ -375,8 +375,11 @@ export function locationsFor(platform: string = process.platform): PlatformLocat
  * -- git, the tools `doctor` finds with `LookPath`, `gcloud`, and their
  * plugins -- which is the leak F41 exists to forbid, and the same "a credential
  * handed over for no reader" the WSL route below leaves the key out for.
- * Nothing reaches that state yet, only because `PRODUCTION_KEYRING` is empty
- * and every paste is refused until S2.9. **A real installation must not be
+ * Nothing reaches that state, and it is the floor below that keeps it out rather
+ * than the ring: `PRODUCTION_KEYRING` is held empty (S2.9 publishes the key in
+ * `ee/licence/keys/production.pub` and the release that closes this hand-off
+ * fills the ring), and the floor hands a key to no child at all in the meantime.
+ * **A real installation must not be
  * handed the key before the child can take it back out**, so the hand-off asks a
  * floor on the child's version -- `LICENCE_KEY_CLI_FLOOR`
  * (`src/shared/version.ts`), the release that carries the registration point --
@@ -478,6 +481,14 @@ export const SPAWN_FLAGS: readonly string[] = Object.freeze([
   '--dir',
   '--repo',
   '--all',
+  // `plan status`'s own opt-out of the forge lookups (IR4 of the console-fixes
+  // plan, D3217 as amended), and `plan.status`'s argv is its only user: it is
+  // the Graph tab's first paint, which is drawn from a read that spawns no `gh`
+  // -- so the declared argument is a boolean on that one row and nothing else in
+  // this module can emit the word. It is held behind
+  // `PLAN_STATUS_NO_MERGES_CLI_FLOOR` (`src/shared/version.ts`) and no release
+  // names that floor yet, so it reaches no child today.
+  '--no-merges',
   // `budget show`'s own opt-in, and the Spend screen's caps read is its only
   // caller: it costs a listing of the runs bucket, so no other row carries it.
   '--compute',
@@ -1087,14 +1098,29 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // its document is `console/docs/json-contract.md` §6.12). The words here are
     // the command's own (`newPlanStatusCmd`), the way every other row's are.
     //
-    // `--all` is the screen's own control and the row's one declared argument;
-    // `--json` is fixed. `--gcp-project` and `--region` are flags of the CLI's
-    // cloud group that this console never emits: neither is on `SPAWN_FLAGS`, so
-    // `assertArgvFlags` would refuse an argv carrying one.
+    // `--all` is the screen's own control and `--no-merges` the second argument
+    // the Graph tab passes (IR4 of the console-fixes plan, D3217 as amended);
+    // `--json` is fixed. The two arguments are booleans, so a renderer can ask
+    // for the word and never spell one, and the argv the first paint builds is
+    // `plan status --json --all --no-merges --project <name>`.
+    //
+    // **`--no-merges` is the flag the first paint is drawn from**: the read
+    // spawns no `gh` and answers `merges_read: false`, so the canvas paints
+    // without waiting for up to thirty-two forge lookups, and the plain read
+    // decorates the merged nodes afterwards. It is held behind
+    // `PLAN_STATUS_NO_MERGES_CLI_FLOOR` (`src/shared/version.ts`), which no
+    // release names yet, so it is passed to no child today -- the row carries it
+    // because the argv is the design's, and `assertArgvFlags` refuses a word
+    // that is not on `SPAWN_FLAGS`. `--gcp-project` and `--region` are flags of
+    // the CLI's cloud group that this console never emits: neither is on
+    // `SPAWN_FLAGS`, so `assertArgvFlags` would refuse an argv carrying one.
     operation: 'plan.status',
     words: ['plan', 'status', '--json'],
     takesProject: true,
-    args: [{ key: 'all', flag: '--all', kind: 'boolean' }],
+    args: [
+      { key: 'all', flag: '--all', kind: 'boolean' },
+      { key: 'noMerges', flag: '--no-merges', kind: 'boolean' },
+    ],
     dirFlag: false,
   },
   {

@@ -184,6 +184,12 @@ func userOffboard(cmd *cobra.Command, o cloudOptions, email string) error {
 	if err != nil {
 		return err
 	}
+	// Before the database is opened: on a linked member a person is taken off
+	// the workspace, not off this project alone, and the workspace's door is
+	// `fugaro workspace user rm` (WU10, D2813, R11, R12).
+	if err := installationMemberRefusal(ctx, lc, "offboarded", installationMemberDoor("offboard")); err != nil {
+		return err
+	}
 	lc, db, err := budgetDBFor(ctx, lc)
 	if err != nil {
 		return err
@@ -325,7 +331,7 @@ func offboardWriteRoster(ctx context.Context, db *rtdb.Client, lc *localcfg.Conf
 		if dropped == 0 {
 			return 0, nil
 		}
-		if err := offboardNoAdminLeft(lc.Name, member, node.Grants, next); err != nil {
+		if err := offboardNoAdminLeft(lc.Name, member, node.Grants, next, false); err != nil {
 			return 0, err
 		}
 		err := accesslib.WriteIfMatch(ctx, db, next, node.ETag)
@@ -363,12 +369,22 @@ func offboardWriteRoster(ctx context.Context, db *rtdb.Client, lc *localcfg.Conf
 // offboardDropRoster) -- because the rule is the roster format's and not
 // either command's taste: name is the installation or the member project the
 // roster belongs to, which is the name the refusal cites.
-func offboardNoAdminLeft(name, member string, before, after []accesslib.Grant) error {
+// Which door the remedy names is the roster's, not this file's: `fugaro update
+// --admin` is the installation's, and a MEMBER's roster (memberRoster, WU9's
+// offboarding of a person the workspace holds) is written through
+// `fugaro workspace user grant` — a linked member refuses the installation-level
+// door (WU10, D2813, R12), so naming it there would name a refusal.
+func offboardNoAdminLeft(name, member string, before, after []accesslib.Grant, memberRoster bool) error {
 	if len(accesslib.Admins(before)) == 0 || len(accesslib.Admins(after)) > 0 {
 		return nil
 	}
-	return userErr("nothing was offboarded: offboarding %s would leave %s's roster with no project-scope admin grant, and the admin list the next `%s update` publishes from it would be empty — every admin binding would be dropped, and no stored grant would admit anybody to this command or to the intake's shared prefix (F17.2, D1940) — so a project Owner from outside the roster runs `%s update --admin` to put an admin on it first: nothing was written",
-		safetext.Field(member), safetext.Field(name), selfCommand(), selfCommand())
+	remedy := fmt.Sprintf("a project Owner from outside the roster runs `%s update --admin` to put an admin on it first", selfCommand())
+	if memberRoster {
+		remedy = fmt.Sprintf("a workspace admin puts the admin who is to take over on it with %s, and %s's own `%s update` applies it (D2813, R11)",
+			installationMemberDoor("grant"), safetext.Field(name), selfCommand())
+	}
+	return userErr("nothing was offboarded: offboarding %s would leave %s's roster with no project-scope admin grant, and the admin list the next `%s update` publishes from it would be empty — every admin binding would be dropped, and no stored grant would admit anybody to this command or to the intake's shared prefix (F17.2, D1940) — so %s: nothing was written",
+		safetext.Field(member), safetext.Field(name), selfCommand(), remedy)
 }
 
 // offboardSweep deletes the member's whole prefix through the installation's
