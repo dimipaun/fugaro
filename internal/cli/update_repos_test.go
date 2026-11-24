@@ -97,6 +97,65 @@ func TestHintFirstMovesOnlyHumanLines(t *testing.T) {
 	}
 }
 
+// TestUnreadRepoViewCarriesTheReasonAlone: the reader's two shapes are whole
+// ones. A repository it could not read comes back with its reason and nothing
+// else -- no branch, no head commit, no bytes, no parse, no extra files -- so
+// Read() alone tells a stage whether there is anything to plan from, and a
+// stage can never be handed a file the update must not act on. The read shape
+// is the complement: everything the reader read, and no reason.
+func TestUnreadRepoViewCarriesTheReasonAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{name: "no fugaro.yaml on the default branch", want: "no fugaro.yaml on the default branch"},
+		{name: "a fugaro.yaml that does not validate",
+			yaml: "version: 1\nproject: aurora\nnope: 1\n", want: "its fugaro.yaml is not valid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(repoCheckout(t, "https://github.com/acme/app.git", tc.yaml))
+
+			views, patterns := enrolledReposImpl(context.Background(), enrolledIn{})
+			if len(views) != 1 || len(patterns) != 0 {
+				t.Fatalf("the reader answered %d views and %d patterns, want the one checkout and none", len(views), len(patterns))
+			}
+			v := views[0]
+			if v.Read() {
+				t.Fatalf("the view reads as read, want unread: %q", tc.want)
+			}
+			if !strings.Contains(v.Unread, tc.want) {
+				t.Errorf("the reason came back as %q, want it to name %q", v.Unread, tc.want)
+			}
+			if v.Branch != "" || v.Head != "" {
+				t.Errorf("the unread view carries the branch %q at %q, want neither: an unread view carries the reason alone", v.Branch, v.Head)
+			}
+			if v.YAML != nil || v.Cfg != nil || len(v.Files) != 0 {
+				t.Errorf("the unread view carries bytes %q, a parse %+v and %d files, want none of them: a stage must not plan from a repository update cannot read", v.YAML, v.Cfg, len(v.Files))
+			}
+		})
+	}
+
+	t.Run("a repository that reads", func(t *testing.T) {
+		t.Chdir(repoCheckout(t, "https://github.com/acme/app.git", minimalAnchored))
+
+		views, _ := enrolledReposImpl(context.Background(), enrolledIn{})
+		if len(views) != 1 {
+			t.Fatalf("the reader answered %d views, want the one checkout", len(views))
+		}
+		v := views[0]
+		if !v.Read() {
+			t.Fatalf("the view reads as unread (%q), want read", v.Unread)
+		}
+		if v.Branch != "main" || v.Head == "" {
+			t.Errorf("the read view carries the branch %q at %q, want main and its commit", v.Branch, v.Head)
+		}
+		if len(v.YAML) == 0 || v.Cfg == nil {
+			t.Errorf("the read view carries %d bytes of fugaro.yaml and the parse %+v, want both", len(v.YAML), v.Cfg)
+		}
+	})
+}
+
 // TestNewRepoLineSanitises: a line about a repository can quote a branch name,
 // a path or a provider's own sentence, so the repository and the detail are
 // made safe for one line of a terminal and bounded in length before anything

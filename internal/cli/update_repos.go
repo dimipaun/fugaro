@@ -26,9 +26,11 @@ import (
 // repoView is one enrolled repository as a stage sees it: read at its default
 // branch, or unread with the one reason why.
 //
-// Exactly one of Unread and the files is the answer, as repofiles.Repo's is:
-// an unread view carries YAML nil, Cfg nil and no Files, and a stage must not
-// plan from one (R13).
+// Exactly one of Unread and the read shape is the answer, as repofiles.Repo's
+// is: an unread view carries Branch, Head, YAML, Cfg and Files empty -- the
+// reason alone, never half a repository -- and a stage must not plan from one
+// (R13). The reader answers one shape or the other whole, so a stage asks
+// Read() and not which fields it may use.
 type repoView struct {
 	// Repo is the canonical owner/name ("acme/app"), the spelling the
 	// project's lists and its output use.

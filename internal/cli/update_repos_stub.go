@@ -30,14 +30,11 @@ var enrolledReposImpl = func(ctx context.Context, in enrolledIn) ([]repoView, []
 	if !ok {
 		return nil, nil
 	}
+	v := repoView{Repo: oi.Repo, Provider: repoProviderOf(in.LC, oi.Repo)}
 	db := defaultBranchParse(ctx, root)
-	v := repoView{
-		Repo:     oi.Repo,
-		Provider: repoProviderOf(in.LC, oi.Repo),
-		Branch:   strings.TrimPrefix(db.ref, "origin/"),
-		YAML:     db.data,
-		Cfg:      db.cfg,
-	}
+	// The two shapes are whole ones (update_repos.go): a view that can be
+	// read gets all of the read shape and a view that cannot gets the reason
+	// alone, so a stage never holds half a repository.
 	switch {
 	case db.ref == "":
 		v.Unread = "no origin/HEAD, origin/main or origin/master here, so its default branch could not be read"
@@ -46,7 +43,10 @@ var enrolledReposImpl = func(ctx context.Context, in enrolledIn) ([]repoView, []
 	case db.cfg == nil:
 		v.Unread = "its fugaro.yaml is not valid: " + firstProblemText(db.problems)
 	default:
+		v.Branch = strings.TrimPrefix(db.ref, "origin/")
 		v.Head = headOfDefaultBranch(ctx, root, db.ref)
+		v.YAML = db.data
+		v.Cfg = db.cfg
 	}
 	return []repoView{v}, nil
 }
