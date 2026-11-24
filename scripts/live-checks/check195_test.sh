@@ -152,6 +152,13 @@ ALLOWED = {
     ("run", "services", "delete"): ("--project", "--region", "--quiet"),
     ("run", "services", "get-iam-policy"): ("--project", "--region", "--format"),
     ("run", "services", "add-iam-policy-binding"): ("--project", "--region", "--member", "--role", "--quiet"),
+    ("storage", "buckets", "create"): ("--project", "--location", "--uniform-bucket-level-access", "--labels", "--quiet"),
+    ("storage", "buckets", "list"): ("--project", "--format"),
+    ("storage", "buckets", "describe"): ("--format"),
+    ("storage", "buckets", "get-iam-policy"): ("--format"),
+    ("storage", "buckets", "add-iam-policy-binding"): ("--member", "--role", "--quiet"),
+    ("storage", "buckets", "delete"): ("--quiet"),
+    ("storage", "cat"): (),
 }
 
 # The modes whose build wrote NO log Cloud Logging can hand back: the empty body
@@ -174,7 +181,24 @@ NO_LOG = {
     # No roles/logging.logWriter in the project policy at all, which is why
     # there is no log: the build's step still ends with a code.
     "logwriter-ignored",
+    # The object CARRIED the line and the log did not: the case the object
+    # channel exists for.
+    "object-only",
+    # The log carried the step's own marker that the object was NOT written, and
+    # nothing else: a line with no status= in it, which the check may never read
+    # as the measurement.
+    "object-not-written",
 }
+
+# The modes whose step wrote nothing into the BUCKET either, so the object
+# channel is empty too and the reading falls to the build's own record. The two
+# grants are added seconds apart before the build (roles/logging.logWriter on the
+# project, roles/storage.objectCreator on the bucket), so a build that started
+# inside IAM's window lost both writes: that is the owner's run of 2026-11-24,
+# and the check must still name the answer without either. `object-missing` is
+# the other side of it — only the object is missing, and the line is read out of
+# the build's own log instead.
+NO_OBJECT = (NO_LOG - {"object-only"}) | {"object-missing"}
 
 positionals = [a for a in args if not a.startswith("-")]
 sub = None
@@ -205,6 +229,21 @@ def emit(*lines):
 def die(msg):
     sys.stderr.write("ERROR: (gcloud) %s\n" % msg)
     sys.exit(1)
+
+
+def step_line():
+    """The ONE line the step writes: the status the service answered and the
+    token's email claim per mode, never the token. It reaches the check from the
+    object the step wrote it into, and -- when that object is not there -- from
+    the build's own log, which is the same text with the prefix a Cloud Build log
+    entry carries."""
+    if mode == "call-refused":
+        return "CHK195 status=403 email=%s" % CALLER
+    if mode == "call-refused-401":
+        return "CHK195 status=401 email=%s" % CALLER
+    if mode == "wrong-email":
+        return "CHK195 status=200 email=somebody-else@fugaro-dev.iam.gserviceaccount.com"
+    return "CHK195 status=200 email=%s" % CALLER
 
 
 def tsv(*lines):
@@ -324,6 +363,55 @@ elif sub == ("projects", "add-iam-policy-binding"):
 elif sub == ("projects", "remove-iam-policy-binding"):
     state_set("loggrant", "0")
 
+# ---------------- the throwaway bucket the step writes its one line into, and
+# ---------------- the object in it. The bucket's NAME carries the moment the
+# ---------------- run started, so the fake takes whatever name it is given and
+# ---------------- keeps it; the label is what the check reads to tell its own
+# ---------------- bucket from a stranger's of the same name.
+elif sub == ("storage", "buckets", "create"):
+    if mode == "bucket-create-fails":
+        die("storage.buckets.create denied on resource")
+    if not has("--uniform-bucket-level-access"):
+        die("this check's bucket must not be public: --uniform-bucket-level-access")
+    state_set("bucket", positionals[3] if len(positionals) > 3 else "")
+    state_set("bucketlabel", flag("--labels").split("chk195=")[-1])
+elif sub == ("storage", "buckets", "list"):
+    if mode == "bucket-list-fails":
+        die("storage.buckets.list was refused: the session has expired")
+    if state_get("bucket") not in ("", "0"):
+        # The real CLI prints a resource name with the scheme by one version and
+        # without it by another, and the check looks for both forms.
+        emit(state_get("bucket") if mode != "bucket-name-bare" else state_get("bucket").replace("gs://", ""))
+elif sub == ("storage", "buckets", "describe"):
+    if mode == "bucket-other-label":
+        emit("somebody-elses-nonce")
+    else:
+        emit(state_get("bucketlabel") if state_get("bucketlabel") != "0" else "")
+elif sub == ("storage", "buckets", "get-iam-policy"):
+    if mode == "bucket-policy-unreadable":
+        die("storage.buckets.getIamPolicy was refused: the session has expired")
+    member = state_get("bucketgrant")
+    emit(policy_json(["serviceAccount:" + member] if member and member != "0" else []))
+elif sub == ("storage", "buckets", "add-iam-policy-binding"):
+    if mode == "objectcreator-fails":
+        die("storage.buckets.setIamPolicy denied on resource")
+    if flag("--role") != "roles/storage.objectCreator":
+        die("this check grants roles/storage.objectCreator on its own bucket and nothing else")
+    if mode != "objectcreator-ignored":
+        state_set("bucketgrant", flag("--member").split("serviceAccount:")[-1])
+elif sub == ("storage", "buckets", "delete"):
+    if mode == "bucket-delete-fails":
+        die("storage.buckets.delete failed")
+    state_set("bucket", "0")
+    state_set("bucketgrant", "0")
+elif sub == ("storage", "cat"):
+    # The object the step wrote its one line into, read back with the one command
+    # the reading is. A mode in NO_OBJECT is a step whose write never landed, and
+    # a cat that finds nothing is what the real CLI does then.
+    if mode in NO_OBJECT:
+        die("No URLs matched")
+    emit(step_line())
+
 # ---------------- the build
 elif sub == ("builds", "submit"):
     if not has("--no-source"):
@@ -415,16 +503,17 @@ elif sub == ("logging", "read"):
     # whose log Cloud Logging never handed back -- an empty body, which is what
     # the owner's run of 2026-11-24 got -- and the reading then comes from the
     # build's own record instead.
-    if mode not in NO_LOG:
+    if mode == "object-not-written":
+        # The one line this log carries is the step's own marker that its write
+        # into the object did not land. It holds no status=, so it is not the
+        # measurement and the check may not read it as one.
+        tsv("Step #0: CHK195-OBJECT-NOT-WRITTEN fugaro-dev-chk195-x/chk195-line.txt")
+    elif mode not in NO_LOG:
         if mode == "call-refused":
-            tsv("Step #0: CHK195 status=403 email=%s" % CALLER,
+            tsv("Step #0: " + step_line(),
                 "Step #0: Authorization: Bearer FAKE-BUILD-LOG-TOKEN")
-        elif mode == "call-refused-401":
-            tsv("Step #0: CHK195 status=401 email=%s" % CALLER)
-        elif mode == "wrong-email":
-            tsv("Step #0: CHK195 status=200 email=somebody-else@fugaro-dev.iam.gserviceaccount.com")
         else:
-            tsv("Step #0: CHK195 status=200 email=%s" % CALLER)
+            tsv("Step #0: " + step_line())
 GCLOUD_EOF
   chmod +x "$1/bin/gcloud"
 }
@@ -501,6 +590,15 @@ identity for exit 15); and
 FAKE_STEP_FRONT is what the service's front end answers -- `admit` (the default:
 200 for this account's token for this URL, 401 for anything else), `granted` (200
 whatever the token says), `none` (no status at all) or the status itself.
+
+It also answers the two calls the step makes BESIDES the service: the metadata
+server's `/token` endpoint, which is where the step's access token for the
+bucket comes from, and the Cloud Storage upload endpoint the step posts its one
+line to. FAKE_STEP_UPLOAD is `ok` (the default: the line is written and kept in
+$FAKE_LOG_DIR/step-upload.txt), `refuse` (every upload fails, which is the write
+that never landed) or `refuse-once` (the first fails and the next lands, which is
+the retry the step is written with). No access token and no authorization header
+value is ever written to that file: only the body the step posted.
 """
 import base64, json, os, sys
 
@@ -561,6 +659,42 @@ def has_flag(letter, long):
             return True
     return False
 
+
+def body():
+    # --data-binary's argument: the ONE line the step measured. It is what the
+    # object the check reads back holds, and it is the whole point of this fake
+    # keeping it: no token is in it.
+    for i, a in enumerate(args):
+        if a == "--data-binary" or a.startswith("--data-binary="):
+            return args[i + 1] if a == "--data-binary" else a.split("=", 1)[1]
+    return ""
+
+
+if "metadata.google.internal" in url and "/token" in url:
+    # The metadata server's ACCESS token endpoint: what the step writes the
+    # object with, held in one shell variable for one command and never printed.
+    sys.stdout.write('{"access_token": "fake-access-token", "expires_in": 3599, "token_type": "Bearer"}')
+    sys.exit(0)
+
+if "storage.googleapis.com" in url:
+    # The upload: the JSON API's own media upload, which asks for
+    # storage.objects.create and nothing else -- the grant the check makes on the
+    # bucket is roles/storage.objectCreator alone.
+    if not any(h == "Authorization: Bearer fake-access-token" for h in headers()):
+        sys.exit(22)
+    upload = os.environ.get("FAKE_STEP_UPLOAD", "ok")
+    if upload == "refuse":
+        sys.exit(22)
+    if upload == "refuse-once":
+        marker = os.path.join(LOG, "step-upload-tries")
+        tries = int(open(marker).read().strip() or "0") if os.path.exists(marker) else 0
+        with open(marker, "w") as fh:
+            fh.write(str(tries + 1))
+        if tries == 0:
+            sys.exit(22)
+    with open(os.path.join(LOG, "step-upload.txt"), "a") as fh:
+        fh.write(body() + "\n")
+    sys.exit(0)
 
 if "metadata.google.internal" in url:
     if METADATA == "empty":
@@ -641,7 +775,8 @@ run195() { # dir extra-env...
     PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
     FAKE_LOG_DIR="$dir/logs" FAKE_GCLOUD_STATE="$dir/state" \
     CHECK195_GRANT_SECONDS=0 CHECK195_BUILD_WAIT_SECONDS=0 CHECK195_LOG_WAIT_SECONDS=0 \
-    CHECK195_LOGWRITER_WAIT_SECONDS=0 CHECK195_LOGWRITER_SETTLE_SECONDS=0 \
+    CHECK195_LINE_WAIT_SECONDS=0 CHECK195_LINE_RETRY_SECONDS=0 \
+    CHECK195_GRANTS_WAIT_SECONDS=0 CHECK195_GRANTS_SETTLE_SECONDS=0 \
     CHECK195_ACCOUNT_DELETE_RETRY_SECONDS=0 \
     ${1+"$@"} \
     "${runner[@]}" "$script" >"$dir/out" 2>"$dir/err" || status=$?
@@ -662,7 +797,8 @@ run_copy() { # dir script extra-env...: the same run against a mutated copy
     PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
     FAKE_LOG_DIR="$dir/logs" FAKE_GCLOUD_STATE="$dir/state" \
     CHECK195_GRANT_SECONDS=0 CHECK195_BUILD_WAIT_SECONDS=0 CHECK195_LOG_WAIT_SECONDS=0 \
-    CHECK195_LOGWRITER_WAIT_SECONDS=0 CHECK195_LOGWRITER_SETTLE_SECONDS=0 \
+    CHECK195_LINE_WAIT_SECONDS=0 CHECK195_LINE_RETRY_SECONDS=0 \
+    CHECK195_GRANTS_WAIT_SECONDS=0 CHECK195_GRANTS_SETTLE_SECONDS=0 \
     CHECK195_ACCOUNT_DELETE_RETRY_SECONDS=0 \
     ${1+"$@"} \
     bash "$copy" >"$dir/out" 2>"$dir/err" || status=$?
@@ -839,6 +975,62 @@ test_the_generated_step_mints_a_token_and_reads_its_own_email_claim() {
   expect_contains "$(cat "$dir/logs/step-curl.calls")" "metadata.google.internal" "the step: it mints its token from the metadata server"
   expect_contains "$(cat "$dir/logs/step-curl.calls")" "-H Metadata-Flavor: Google" "the step: the metadata call carries the header the metadata server requires"
   expect_contains "$(cat "$dir/logs/step-curl.calls")" "Authorization: Bearer " "the step: the call to the service carries the token as a bearer header"
+  # The object the check reads the line back out of: the step posts its own one
+  # line there, with an ACCESS token from the same metadata server, and the
+  # request asks for nothing the account's roles/storage.objectCreator does not
+  # cover (the JSON API's media upload, not `gcloud storage cp`, which would also
+  # need storage.buckets.get).
+  expect_contains "$(cat "$dir/logs/step-curl.calls")" "storage.googleapis.com/upload/storage/v1/b/fugaro-dev-chk195-" "the step: it writes into the bucket the check made"
+  expect_contains "$(cat "$dir/logs/step-curl.calls")" "uploadType=media&name=chk195-line.txt" "the step: the upload is the JSON media upload, which objectCreator alone covers"
+  expect_contains "$(cat "$dir/logs/step-curl.calls")" "service-accounts/default/token" "the step: the access token it writes the object with comes from the build's own metadata server"
+  expect_contains "$(cat "$dir/logs/step-curl.calls")" "Authorization: Bearer fake-access-token" "the step: the upload carries that token, and it is not the ID token"
+  expect_contains "$(cat "$dir/logs/step-upload.txt")" "CHK195 status=200 email=fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "the step: the body it wrote into the object is its own one line"
+  # The line is the whole body: no token, no header, nothing else.
+  [ "$(wc -l <"$dir/logs/step-upload.txt")" = 1 ] || fail "the step: the object holds exactly one line, and it holds $(wc -l <"$dir/logs/step-upload.txt")"
+  expect_absent "$(cat "$dir/logs/step-upload.txt")" "Bearer" "the step: no authorization header is written into the object"
+  expect_absent "$(cat "$dir/logs/step-upload.txt")" "fake-signature" "the step: no token is written into the object"
+}
+
+# The step retries its write into the object, for the same reason the check
+# re-reads the policies before the build: IAM is eventually consistent and a step
+# that starts inside the window of the roles/storage.objectCreator binding is
+# refused the write. The first attempt is refused here and the second lands.
+test_the_step_retries_the_write_into_the_object() {
+  local dir=$work/stepretry
+  prepare "$dir"
+  run195 "$dir"
+  expect_status "$status" 0 "the write retry: the run that generates the step"
+  local step=$dir/step.sh
+  lift_step_script "$dir/logs/cloudbuild.yaml" "$step" || {
+    fail "the write retry: no script could be lifted out of the generated build config"
+    return 0
+  }
+  write_fake_curl_for_the_step "$dir/stepbin"
+  status=0
+  env PATH="$dir/stepbin:$PATH" FAKE_LOG_DIR="$dir/logs" FAKE_STEP_UPLOAD=refuse-once \
+    bash "$step" >"$dir/step.out" 2>"$dir/step.err" || status=$?
+  expect_status "$status" 0 "the write retry: the step still ends with its own outcome code"
+  expect_contains "$(cat "$dir/logs/step-upload.txt")" "CHK195 status=200" "the write retry: the line landed on the retry"
+  local tries
+  tries=$(cat "$dir/logs/step-upload-tries")
+  [ "$tries" = 2 ] || fail "the write retry: the upload was attempted $tries time(s), expected 2 (the refusal, then the retry that landed)"
+
+  # And the write that never lands changes NOTHING about the reading: the step
+  # still prints its line and still ends with the exit code that carries the same
+  # verdict, which is where the check reads a build whose log and object are both
+  # empty from.
+  rm -f "$dir/logs/step-upload-tries"
+  status=0
+  env PATH="$dir/stepbin:$PATH" FAKE_LOG_DIR="$dir/logs" FAKE_STEP_UPLOAD=refuse \
+    FAKE_STEP_FRONT=403 bash "$step" >"$dir/step2.out" 2>"$dir/step2.err" || status=$?
+  expect_status "$status" 12 "the write that never lands: the step's own outcome code is unchanged"
+  expect_contains "$(cat "$dir/step2.out")" "CHK195 status=403 email=fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "the write that never lands: the step still prints the line it measured"
+  expect_contains "$(cat "$dir/step2.out")" "CHK195-OBJECT-NOT-WRITTEN" "the write that never lands: the step says the object was not written"
+  # And that marker is NOT the line: it carries no `status=`, so the check reads
+  # past it to the line the step measured (or to the exit code when the log
+  # itself is empty).
+  expect_absent "$(cat "$dir/step2.out")" "CHK195 line-not-written" "the write that never lands: the marker cannot be mistaken for the measurement"
+  expect_absent "$(cat "$dir/step2.out")" "fake-signature" "the write that never lands: no arm of it prints the token"
 }
 
 # THE MAPPING ITSELF, read where it is written. Every verdict the check now takes
@@ -918,11 +1110,13 @@ test_happy_path() {
   expect_contains "$out" "FACT iam-policy: PASS" "happy path: the service's own policy"
   expect_contains "$out" "FACT unauthenticated-request: PASS — an unauthenticated GET on the service's own URL was refused with 401" "happy path: the probe"
   expect_contains "$out" "FACT invoker-grant: PASS" "happy path: the grant, read back"
-  # The logWriter binding is what lets the build write the line the email claim
-  # is read out of, and the row says how long it was waited for and that the wait
-  # is bounded.
-  expect_contains "$out" "FACT logwriter-wait: PASS" "happy path: the logWriter grant was read back"
-  expect_contains "$out" "bounded at 0 s by CHECK195_LOGWRITER_WAIT_SECONDS" "happy path: the wait is bounded and the row says so"
+  # The two bindings the build's own writes need — logWriter on the project,
+  # objectCreator on the bucket — are read back from the policies that hold them,
+  # and the row says how long it was waited for and that the wait is bounded.
+  expect_contains "$out" "FACT write-grants: PASS" "happy path: both write grants were read back"
+  expect_contains "$out" "named fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com 0 s after the roles/logging.logWriter binding was added" "happy path: the project policy was read back for the logWriter grant"
+  expect_contains "$out" "the bucket's own policy named fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com 0 s after the roles/storage.objectCreator binding was added" "happy path: the bucket's own policy was read back for the objectCreator grant"
+  expect_contains "$out" "bounded at 0 s by CHECK195_GRANTS_WAIT_SECONDS" "happy path: the wait is bounded and the row says so"
   expect_contains "$out" "FACT build: PASS" "happy path: the build"
   # The build's own record reports the account it ran as as a resource name; the
   # row says which one, so a reader can check the reading by hand.
@@ -945,7 +1139,19 @@ test_happy_path() {
   expect_contains "$deploy" "--no-allow-unauthenticated" "happy path: the deploy requires IAM"
   expect_contains "$deploy" "--project=fugaro-dev --region=us-east5" "happy path: the deploy is in the installation's project and region"
   expect_absent "$calls" "artifacts" "happy path: no registry, so no image of the check's own"
-  expect_absent "$calls" "storage" "happy path: no bucket is created or touched"
+  # The throwaway bucket the step writes its one line into: created by this run,
+  # granted roles/storage.objectCreator alone, read back out of, deleted again.
+  expect_contains "$calls" "storage buckets create gs://fugaro-dev-chk195-" "happy path: the throwaway bucket is created"
+  expect_contains "$calls" "--uniform-bucket-level-access --labels=chk195=" "happy path: the bucket carries this run's own label and is not public"
+  expect_absent "$calls" "--predefined-acl" "happy path: no ACL the bucket-level policy cannot see"
+  expect_contains "$calls" "storage buckets add-iam-policy-binding gs://fugaro-dev-chk195-" "happy path: the grant is on the bucket itself"
+  expect_contains "$calls" "--member=serviceAccount:fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com --role=roles/storage.objectCreator" "happy path: objectCreator, on the bucket, for the throwaway account"
+  expect_contains "$calls" "storage cat gs://fugaro-dev-chk195-" "happy path: the step's own line is read out of the object"
+  expect_contains "$calls" "storage buckets delete gs://fugaro-dev-chk195-" "happy path: the bucket is deleted again"
+  expect_contains "$out" "FACT line-bucket: PASS" "happy path: the bucket row"
+  expect_contains "$out" "FACT line-object: PASS" "happy path: the line came out of the object"
+  expect_contains "$out" "gcloud storage cat gs://fugaro-dev-chk195-" "happy path: the row names the one command the reading is"
+  expect_contains "$out" "FACT bucket-deleted: PASS" "happy path: the bucket is gone"
   # The one grant this check is about, and it is on the service, not the project.
   expect_contains "$calls" "run services add-iam-policy-binding fugaro-chk195 --project=fugaro-dev --region=us-east5 --member=serviceAccount:fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com --role=roles/run.invoker" "happy path: invoker on the check's own service"
   expect_contains "$calls" "projects add-iam-policy-binding fugaro-dev --member=serviceAccount:fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com --role=roles/logging.logWriter --condition=None" "happy path: logWriter on the project, which Cloud Build requires of a build's own account"
@@ -961,7 +1167,10 @@ test_happy_path() {
   expect_contains "$(cat "$dir/logs/cloudbuild.yaml")" "audience=https://fugaro-chk195-fake-ue.a.run.app&format=full" "happy path: the token's audience is the deployed service's own URL"
   expect_contains "$(cat "$dir/logs/cloudbuild.yaml")" "fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "happy path: the step names the throwaway account"
   expect_contains "$calls" "builds describe fake-build-1" "happy path: the build's status was read back"
-  expect_contains "$calls" "logging read resource.type=\"build\" resource.labels.build_id=\"fake-build-1\"" "happy path: the build's own lines were read"
+  # The line came out of the object, so the log was not read at all: that is the
+  # point of the object channel — the reading does not wait on Cloud Logging.
+  expect_contains "$calls" "storage cat gs://fugaro-dev-chk195-" "happy path: the line was read out of the object"
+  expect_absent "$calls" "logging read" "happy path: Cloud Logging is not read when the object carried the line"
   # Everything this run created was deleted again.
   expect_contains "$calls" "run services delete fugaro-chk195 --project=fugaro-dev --region=us-east5" "happy path: the service deleted"
   expect_contains "$calls" "projects remove-iam-policy-binding fugaro-dev --member=serviceAccount:fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com --role=roles/logging.logWriter --condition=None" "happy path: the project binding removed"
@@ -1171,7 +1380,9 @@ test_a_build_whose_step_exited_zero_is_a_pass_without_the_log() {
   expect_contains "$out" "Cloud Build omits a zero exit code" "exit 0 with no log: the row names the omission as the reason the column is empty"
   expect_absent "$out" "the build's own record says its step exited 0" "exit 0 with no log: the row does not claim a code the record does not carry"
   expect_contains "$out" "the token's email claim is fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "exit 0 with no log: what code 0 asserts about the claim"
-  expect_contains "$out" "it did not arrive in Cloud Logging within 0 s" "exit 0 with no log: the row says the line was not read"
+  expect_contains "$out" "the step's own line was read from NEITHER place" "exit 0 with no log: the row says the line was not read"
+  expect_contains "$out" "gcloud storage cat gs://fugaro-dev-chk195-" "exit 0 with no log: the row names the object read that came back empty"
+  expect_contains "$out" "FACT line-object: INFO" "exit 0 with no log: the object row says where the line would have been"
   # The reading came out of the build's own record: the check asks for the step's
   # exit code, which is not a Cloud Logging read at all.
   expect_contains "$(cat "$dir/logs/gcloud.calls")" "builds describe fake-build-1 --project=fugaro-dev --format=value(steps[0].exitCode)" "exit 0 with no log: the exit code is read from the build's record"
@@ -1237,20 +1448,86 @@ test_a_build_with_no_step_exit_code_and_no_log_is_a_failure() {
   expect_contains "$out" "FACT account-deleted: PASS" "no exit code: the account is still deleted"
 }
 
-# The other half of the same rule: when the line DOES arrive it is the reading,
-# unchanged — it carries the status and the claim as text, and the exit code is
-# not consulted for the row. The step's record says 11 here; the row is the
-# log's.
-test_a_call_the_service_refuses_with_the_log_present_reads_the_log() {
+# The other half of the same rule: when the line DOES arrive — out of the object
+# the step wrote — it is the reading, unchanged. It carries the status and the
+# claim as text, and the exit code is not consulted for the row. The step's
+# record says 11 here; the row is the object's.
+test_a_call_the_service_refuses_with_the_object_present_reads_the_object() {
   local dir=$work/refused401
   prepare "$dir"
   run195 "$dir" FAKE_GCLOUD_MODE=call-refused-401
-  expect_status "$status" 1 "401 with the log: the verdict"
-  expect_contains "$out" "FACT call: FAIL" "401 with the log: the row"
-  expect_contains "$out" "was answered 401" "401 with the log: the status the step got"
-  expect_contains "$out" "the token's email claim: fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "401 with the log: the claim the line printed"
-  expect_absent "$out" "the build's own record says its step exited" "401 with the log: the row is the log's reading, not the exit code's"
-  expect_contains "$out" "Its step's exit code, read out of the build's own record, is 11" "401 with the log: the build row still carries the code"
+  expect_status "$status" 1 "401 with the object: the verdict"
+  expect_contains "$out" "FACT call: FAIL" "401 with the object: the row"
+  expect_contains "$out" "was answered 401" "401 with the object: the status the step got"
+  expect_contains "$out" "the token's email claim: fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "401 with the object: the claim the line printed"
+  expect_absent "$out" "the build's own record says its step exited" "401 with the object: the row is the line's reading, not the exit code's"
+  expect_contains "$out" "Its step's exit code, read out of the build's own record, is 11" "401 with the object: the build row still carries the code"
+  expect_contains "$out" "FACT line-object: PASS" "401 with the object: the line came out of the object"
+}
+
+# THE OWNER'S CASE, and the reading the brief asks for: a build whose log came
+# back empty and whose object DID carry the line. The object is what makes the
+# check's answer independent of Cloud Logging: Cloud Storage hands an object back
+# the moment it is written, while the log a CLOUD_LOGGING_ONLY build writes with
+# its own service account's credentials is a pipeline that can carry nothing at
+# all. Here the log is empty and the reading is complete: the status, the email
+# claim as text, and the verdict.
+test_a_build_whose_log_is_empty_is_measured_out_of_the_object() {
+  local dir=$work/objectonly
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=object-only
+  expect_status "$status" 0 "object-only: the verdict"
+  expect_contains "$out" "FACT line-object: PASS" "object-only: the line was read out of the object"
+  expect_contains "$out" "No Cloud Logging was involved in this reading" "object-only: the row says so"
+  expect_contains "$out" "FACT call: PASS" "object-only: the call is measured"
+  expect_contains "$out" "was answered 200 by the IAM-only service" "object-only: the status the service answered"
+  expect_contains "$out" "the token's email claim is fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "object-only: the claim as text, not as an exit code"
+  # The exit code was NOT the reading here: the object carried the line, so the
+  # row is the line's and the fallback row is not printed.
+  expect_absent "$out" "the build's own record says its step exited" "object-only: the row is not the exit code's"
+  expect_absent "$out" "the build ended SUCCESS with no steps[0].exitCode" "object-only: the zero-omitted fallback is not used"
+  # The log is still read when the object did not carry the line, and it did here,
+  # so the reading never depended on it.
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "storage cat gs://fugaro-dev-chk195-" "object-only: the object was read"
+  expect_contains "$out" "FACT restore: PASS" "object-only: everything is still restored"
+}
+
+# The other side of the object channel: the step's write never landed (the
+# roles/storage.objectCreator binding had not propagated when the build started),
+# so the object is empty — and the line is then read out of the build's own log,
+# which is what the check did before the object existed. The row says which of
+# the two places answered, and names the command to read the object by hand.
+test_an_object_that_never_landed_falls_back_on_the_log() {
+  local dir=$work/objectmissing
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=object-missing
+  expect_status "$status" 0 "object missing: the verdict (the build passed; only the write to the bucket is missing)"
+  expect_contains "$out" "FACT line-object: INFO" "object missing: the object row"
+  expect_contains "$out" "carried nothing this reading could take" "object missing: the object was empty"
+  expect_contains "$out" "gcloud storage cat gs://fugaro-dev-chk195-" "object missing: the row names the exact command to read it by hand"
+  expect_contains "$out" "read out of the build's own log instead" "object missing: where the line came from"
+  expect_contains "$out" "was answered 200 by the IAM-only service" "object missing: the log's reading is the row"
+  expect_absent "$out" "the step's own line was read from NEITHER place" "object missing: the log did carry it, so this is not the neither case"
+}
+
+# Both writes lost and the log carrying the step's own marker that its write into
+# the object did not land — a line with no status= in it. The marker is a note
+# about the write, never the measurement: read as the line, it would report the
+# service's answer as `status=none`, and Cloud Logging returns the newest entry
+# first, so it is the one line the log does hand back. The check must read past
+# it, to the build's own record, and name the answer from there.
+test_the_steps_own_not_written_marker_is_never_read_as_the_line() {
+  local dir=$work/objmarker
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=object-not-written
+  expect_status "$status" 0 "the marker: the verdict"
+  expect_contains "$out" "FACT line-object: INFO" "the marker: the line row"
+  expect_contains "$out" "could not be read from EITHER place" "the marker: neither place carried it"
+  expect_contains "$out" "it carried 'Step #0: CHK195-OBJECT-NOT-WRITTEN" "the marker: the row quotes what the log did carry"
+  expect_contains "$out" "gcloud storage cat gs://fugaro-dev-chk195-" "the marker: the row names the command to read the object by hand"
+  expect_contains "$out" "the build ended SUCCESS with no steps[0].exitCode" "the marker: the reading is the build's own record, not the marker"
+  expect_contains "$out" "the service answered 200 and the token's email claim is fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "the marker: the answer is still named"
+  expect_absent "$out" "status=none" "the marker: the marker was not read as the line"
 }
 
 # The owner's run of 2026-11-24, end to end: a build that FAILED, no log, and a
@@ -1274,18 +1551,21 @@ test_a_delete_that_fails_once_is_retried() {
   [ "$deletes" = 2 ] || fail "the retry: the account delete was attempted $deletes time(s), expected 2 (the refusal, then the retry that landed)"
 }
 
-# The wait the log needs, and what happens when the grant it waits for never
-# lands. The row has to say the wait is bounded — a wait with no bound is a run
-# that hangs — and the build goes on anyway: the reading no longer rests on the
-# log the roles/logging.logWriter grant buys.
+# The wait the build's own WRITES need, and what happens when the grant it waits
+# for never lands. The row has to say the wait is bounded — a wait with no bound
+# is a run that hangs — and the build goes on anyway: the reading no longer rests
+# on the log the roles/logging.logWriter grant buys, or on the object the
+# roles/storage.objectCreator grant does.
 test_a_logwriter_grant_that_does_not_land_is_reported() {
   local dir=$work/nologwriter
   prepare "$dir"
   run195 "$dir" FAKE_GCLOUD_MODE=logwriter-ignored
   expect_status "$status" 1 "no logWriter: the verdict"
-  expect_contains "$out" "FACT logwriter-wait: FAIL" "no logWriter: the row"
+  expect_contains "$out" "FACT write-grants: FAIL" "no logWriter: the row"
   expect_contains "$out" "names fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com in no binding" "no logWriter: what the policy read said"
-  expect_contains "$out" "bounded at 0 s by CHECK195_LOGWRITER_WAIT_SECONDS" "no logWriter: the wait is bounded and the row says so"
+  expect_contains "$out" "bounded at 0 s by CHECK195_GRANTS_WAIT_SECONDS" "no logWriter: the wait is bounded and the row says so"
+  expect_contains "$out" "gcloud projects get-iam-policy fugaro-dev --format=json" "no logWriter: the row names how to read the project policy by hand"
+  expect_contains "$out" "FACT line-object: INFO" "no logWriter: neither the object nor the log carried the line"
   expect_contains "$out" "FACT build: PASS" "no logWriter: the build still ran"
   expect_contains "$out" "FACT call: PASS" "no logWriter: the call is still measured, out of the exit code"
   expect_contains "$out" "the build ended SUCCESS with no steps[0].exitCode in its record, and that empty column IS the code 0" "no logWriter: the reading came from the record and the build's own SUCCESS"
@@ -1419,6 +1699,7 @@ t test_a_service_that_answers_unauthenticated_calls_stops_the_run
 t test_every_advertised_knob_is_read
 t test_the_generated_step_mints_a_token_and_reads_its_own_email_claim
 t test_the_step_ends_with_one_exit_code_per_outcome
+t test_the_step_retries_the_write_into_the_object
 t test_happy_path
 t test_a_service_already_there_is_a_hard_stop
 t test_an_account_already_there_is_a_hard_stop
@@ -1436,7 +1717,10 @@ t test_a_build_whose_step_exited_zero_is_a_pass_without_the_log
 t test_each_step_exit_code_names_the_cause_without_the_log
 t test_a_step_exit_code_this_check_never_writes_is_a_failure
 t test_a_build_with_no_step_exit_code_and_no_log_is_a_failure
-t test_a_call_the_service_refuses_with_the_log_present_reads_the_log
+t test_a_call_the_service_refuses_with_the_object_present_reads_the_object
+t test_a_build_whose_log_is_empty_is_measured_out_of_the_object
+t test_an_object_that_never_landed_falls_back_on_the_log
+t test_the_steps_own_not_written_marker_is_never_read_as_the_line
 t test_a_delete_that_fails_once_is_retried
 t test_a_logwriter_grant_that_does_not_land_is_reported
 t test_a_grant_for_a_not_yet_visible_account_is_retried

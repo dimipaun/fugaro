@@ -1064,7 +1064,6 @@ steps:
         meta="http://metadata.google.internal/computeMetadata/v1/instance/service-accounts"
         upload="https://storage.googleapis.com/upload/storage/v1/b/__BUCKET__/o?uploadType=media&name=__OBJECT__"
         atok=""
-
         # put_line: the ONE line this step measured, into the object the check
         # created for it — the reading that does not go through Cloud Logging at
         # all. The upload is the JSON API's own media upload with the metadata
@@ -1094,7 +1093,6 @@ steps:
           done
           return 1
         }
-
         tok="$$(curl -f -sS -H 'Metadata-Flavor: Google' "$${meta}/default/identity?audience=__AUDIENCE__&format=full" 2>/dev/null || true)"
         if [ -z "$${tok}" ]; then
           tok="$$(curl -f -sS -H 'Metadata-Flavor: Google' "$${meta}/__ACCOUNT__/identity?audience=__AUDIENCE__&format=full" 2>/dev/null || true)"
@@ -1102,14 +1100,14 @@ steps:
         if [ -z "$${tok}" ]; then
           line="CHK195 status=notoken email=unread"
           echo "$${line}"
-          put_line "$${line}" || echo "CHK195 line-not-written to __BUCKET__/__OBJECT__"
+          put_line "$${line}" || echo "CHK195-OBJECT-NOT-WRITTEN __BUCKET__/__OBJECT__"
           exit 14
         fi
         code="$$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $${tok}" "$${url}" 2>/dev/null || true)"
         email="$$(printf '%s' "$${tok}" | python3 -c 'import base64,json,sys; p=sys.stdin.read().strip().split(".")[1]; p+="="*(-len(p)%4); print(json.loads(base64.urlsafe_b64decode(p)).get("email",""))' 2>/dev/null || true)"
         line="CHK195 status=$${code:-none} email=$${email:-unread}"
         echo "$${line}"
-        put_line "$${line}" || echo "CHK195 line-not-written to __BUCKET__/__OBJECT__"
+        put_line "$${line}" || echo "CHK195-OBJECT-NOT-WRITTEN __BUCKET__/__OBJECT__"
         case "$${code}" in
         401) exit 11 ;;
         403) exit 12 ;;
@@ -1128,6 +1126,15 @@ CONFIG_EOF
     || stop "the build config could not be written into the scratch directory"
 }
 
+# step_line_in FILE: the step's own line, out of a file that may hold other lines
+# around it — the build's own log holds the step's whole output, and one of those
+# lines says the object could not be written. A line without `status=` is not the
+# measurement: the step prints exactly one line that has it, and it is the one
+# this reading is.
+step_line_in() {
+  sed -n 's/.*CHK195 //p' "$1" 2>/dev/null | grep -m1 'status=' || true
+}
+
 # build_log: the build's own lines, retried while Cloud Logging catches up —
 # ingestion lags the request by seconds, and a reading taken immediately is an
 # empty answer about a build that did report. Reads BOTH payload shapes a Cloud
@@ -1140,7 +1147,7 @@ build_log() { # build_log ID
   while :; do
     gcloud logging read "$filter" --project="${P:?}" --freshness="$LOG_AGE" \
       --limit="$LOG_LIMIT" --format='value(textPayload,jsonPayload.message)' >"$SCRATCH/build-log.txt" 2>"$SCRATCH/build-log.err" || true
-    if grep -q 'CHK195 ' "$SCRATCH/build-log.txt" 2>/dev/null; then return 0; fi
+    if grep -q 'CHK195 status=' "$SCRATCH/build-log.txt" 2>/dev/null; then return 0; fi
     if [ "$waited" -ge "$LOG_WAIT_SECONDS" ]; then return 1; fi
     sleep "$READ_POLL_SECONDS"
     waited=$((waited + READ_POLL_SECONDS))
@@ -1159,7 +1166,7 @@ line_object() {
   local waited=0
   while :; do
     if gcloud storage cat "${LINE_URI:?}" >"$SCRATCH/line-object.txt" 2>"$SCRATCH/line-object.err" \
-      && grep -q 'CHK195 ' "$SCRATCH/line-object.txt" 2>/dev/null; then
+      && grep -q 'CHK195 status=' "$SCRATCH/line-object.txt" 2>/dev/null; then
       return 0
     fi
     if [ "$waited" -ge "$LINE_WAIT_SECONDS" ]; then return 1; fi
@@ -1262,16 +1269,16 @@ step_build() {
   # and the exit code read above is under both.
   local got=""
   if line_object; then
-    got=$(sed -n 's/.*CHK195 //p' "$SCRATCH/line-object.txt" | head -n 1)
+    got=$(step_line_in "$SCRATCH/line-object.txt")
     fact line-object PASS "the step's own line was read OUT OF the object it wrote: gcloud storage cat ${LINE_URI} printed '$(printf '%s' "$got" | redact | cut -c1-200)' (the step's own words, redacted and cut short like every other line this block prints). No Cloud Logging was involved in this reading"
   else
     local obj_why
     obj_why=$(last_lines "$SCRATCH/line-object.err")
     if build_log "$BUILD_ID"; then
-      got=$(sed -n 's/.*CHK195 //p' "$SCRATCH/build-log.txt" | head -n 1)
-      fact line-object INFO "the object the step writes its one line into carried nothing this reading could take: gcloud storage cat ${LINE_URI} answered '${obj_why}' within ${LINE_WAIT_SECONDS} s. The line was read out of the build's own log instead, so the step's WRITE to the bucket is what to look at rather than this reading: the account holds roles/storage.objectCreator on that bucket alone (the write-grants row says whether that binding was read back from the bucket's own policy) and the step retries the write ${LINE_TRIES} times, ${LINE_RETRY_SECONDS} s apart. Read the object by hand with gcloud storage cat ${LINE_URI}"
+      got=$(step_line_in "$SCRATCH/build-log.txt")
+      fact line-object INFO "the object the step writes its one line into carried nothing this reading could take: gcloud storage cat ${LINE_URI} answered '${obj_why}' within ${LINE_WAIT_SECONDS} s. The line was read out of the build's own log instead — the step says there when its write into the object did not land — so the step's WRITE to the bucket is what to look at rather than this reading: the account holds roles/storage.objectCreator on that bucket alone (the write-grants row says whether that binding was read back from the bucket's own policy) and the step retries the write ${LINE_TRIES} times, ${LINE_RETRY_SECONDS} s apart. Read the object by hand with gcloud storage cat ${LINE_URI}"
     else
-      fact line-object INFO "the step's own line could not be read from EITHER place: neither the object it writes it into — gcloud storage cat ${LINE_URI}, answered '${obj_why}' within ${LINE_WAIT_SECONDS} s — nor the build's own log, which carried nothing within ${LOG_WAIT_SECONDS} s ($(last_lines "$SCRATCH/build-log.err")). Read it by hand with gcloud storage cat ${LINE_URI}, and read the build's lines with gcloud builds log ${BUILD_ID} --project=${P}. The reading below is the step's own exit code, out of the build's own record, which goes through neither"
+      fact line-object INFO "the step's own line could not be read from EITHER place: neither the object it writes it into — gcloud storage cat ${LINE_URI}, answered '${obj_why}' within ${LINE_WAIT_SECONDS} s — nor the build's own log, which within ${LOG_WAIT_SECONDS} s carried no line with status= in it (it carried '$(last_lines "$SCRATCH/build-log.txt")', and the command answered $(last_lines "$SCRATCH/build-log.err")). Read it by hand with gcloud storage cat ${LINE_URI}, and read the build's lines with gcloud builds log ${BUILD_ID} --project=${P}: the step says there when its write into the object did not land. The reading below is the step's own exit code, out of the build's own record, which goes through neither"
     fi
   fi
   local code email
@@ -1339,7 +1346,7 @@ call_from_step_exit_code() {
   # Cloud Logging) and the build's own log, with the exact command to read each
   # by hand. Every row below is a code that was read WITHOUT the line, so every
   # one of them carries this.
-  local nowhere="the step's own line was read from NEITHER place: not out of the object it writes it into (gcloud storage cat ${LINE_URI} answered '$(last_lines "$SCRATCH/line-object.err")' within ${LINE_WAIT_SECONDS} s) and not out of the build's log (which carried nothing within ${LOG_WAIT_SECONDS} s, $(last_lines "$SCRATCH/build-log.err")) — read the object by hand with gcloud storage cat ${LINE_URI} and the build's lines with gcloud builds log ${BUILD_ID} --project=${P}"
+  local nowhere="the step's own line was read from NEITHER place: not out of the object it writes it into (gcloud storage cat ${LINE_URI} answered '$(last_lines "$SCRATCH/line-object.err")' within ${LINE_WAIT_SECONDS} s) and not out of the build's own log, which within ${LOG_WAIT_SECONDS} s carried no line with status= in it (it carried '$(last_lines "$SCRATCH/build-log.txt")', and the command answered $(last_lines "$SCRATCH/build-log.err")) — the step says in that log when its write did not land. Read the object by hand with gcloud storage cat ${LINE_URI} and the build's lines with gcloud builds log ${BUILD_ID} --project=${P}"
   case "$code" in
   0)
     local read_as="the build's own record says its step exited 0"
