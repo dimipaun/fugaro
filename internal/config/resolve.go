@@ -43,6 +43,13 @@ type Resolution struct {
 	LayerSHA256 string
 	// ConfigSHA256 is the resolved config's (Config.SHA256).
 	ConfigSHA256 string
+	// Lifted is every lifted key the repository's file wrote, in path order,
+	// each with the sentence a person reads (config.LiftedKeys): the keys
+	// release A drops and names rather than refuses. The drop is in every
+	// resolution, both arms and every ref, so this is where a caller finds what
+	// the repository wrote and a run no longer honours (S2, S5); a key here is
+	// in no Sources entry, because a dropped key is set by no layer.
+	Lifted []RetiredKeyNote
 }
 
 // listIndexRE is a list index in a path (cache[0].key).
@@ -100,6 +107,22 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	if len(ps) > 0 {
 		return nil, nil, ps
 	}
+	// The lifted keys go before anything reads the tree, in both arms: the
+	// merge, the repository's own flags below and the config a run carries see
+	// a file without them, and the notes of what was dropped travel in the
+	// resolution (R2, contract-lift-keys.md). The file itself is read as
+	// written and stays read as written — release A reads a lifted key and does
+	// not honour it, so a repository is never refused for one until release B
+	// (spec §4) — which is why the config the layerless arm validates below is
+	// the file's own decode, and why the flags it hands back come from the
+	// dropped one.
+	lifted := dropLiftedKeys(tree)
+	dropped := repo
+	if len(lifted) > 0 {
+		if dropped, ps = decodeTree(tree); len(ps) > 0 {
+			return nil, nil, ps
+		}
+	}
 	if l == nil {
 		if ps := layerlessProblems(repo); len(ps) > 0 {
 			return nil, nil, ps
@@ -108,32 +131,34 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		if ps := Validate(repo); len(ps) > 0 {
 			return nil, nil, noLayerHint(repo, ps)
 		}
-		repo.RepoRigor = repo.Rigor
-		repo.RepoRigorSet = setsRigor(tree)
-		repo.RepoRigorLevelSet = setsRigorLevel(tree)
-		repo.RepoRigorScalarSet = setsRigorScalar(tree)
-		repo.RepoGovernanceSet = setsGovernance(tree)
-		repo.RepoGitAuthorSet = setsGitAuthor(tree)
-		repo.RepoSecuritySet = setsSecurity(tree)
-		repo.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
-		repo.RepoPlanningSet = setsPlanning(tree)
-		repo.RepoStopFractionSet = setsStopFraction(tree)
-		repo.RepoWorkspaceBeatSet = setsWorkspaceBeat(tree)
-		repo.RepoTriageSet = setsTriage(tree)
-		repo.RepoReviewAgainstTaskSet = setsReviewAgainstTask(tree)
-		repo.RepoModelGradesSet = setsModelGrades(tree)
-		repo.RepoVisionSet = setsVision(tree)
-		repo.RepoMergeJudgeCraftSet = setsMergeJudgeCraft(tree)
-		repo.RepoWorkflowABSet = setsWorkflowAB(tree)
-		res := &Resolution{Sources: map[string]string{}}
+		out := dropped
+		applyDefaults(out)
+		out.RepoRigor = out.Rigor
+		out.RepoRigorSet = setsRigor(tree)
+		out.RepoRigorLevelSet = setsRigorLevel(tree)
+		out.RepoRigorScalarSet = setsRigorScalar(tree)
+		out.RepoGovernanceSet = setsGovernance(tree)
+		out.RepoGitAuthorSet = setsGitAuthor(tree)
+		out.RepoSecuritySet = setsSecurity(tree)
+		out.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
+		out.RepoPlanningSet = setsPlanning(tree)
+		out.RepoStopFractionSet = setsStopFraction(tree)
+		out.RepoWorkspaceBeatSet = setsWorkspaceBeat(tree)
+		out.RepoTriageSet = setsTriage(tree)
+		out.RepoReviewAgainstTaskSet = setsReviewAgainstTask(tree)
+		out.RepoModelGradesSet = setsModelGrades(tree)
+		out.RepoVisionSet = setsVision(tree)
+		out.RepoMergeJudgeCraftSet = setsMergeJudgeCraft(tree)
+		out.RepoWorkflowABSet = setsWorkflowAB(tree)
+		res := &Resolution{Sources: map[string]string{}, Lifted: lifted}
 		markLeaves(tree, "", SourceRepo, res.Sources)
-		res.ConfigSHA256 = repo.SHA256()
-		return repo, res, nil
+		res.ConfigSHA256 = out.SHA256()
+		return out, res, nil
 	}
 	if ps := anchorProblems(repo, l); len(ps) > 0 {
 		return nil, nil, ps
 	}
-	res := &Resolution{Sources: map[string]string{}, LayerSHA256: l.SHA256}
+	res := &Resolution{Sources: map[string]string{}, LayerSHA256: l.SHA256, Lifted: lifted}
 	merged := map[string]any{}
 	if d, ok := l.tree["defaults"].(map[string]any); ok {
 		overlay(merged, d, "", SourceProject, res.Sources)
@@ -167,8 +192,10 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	// The repository's own rigor: block, kept beside the merged one: the
 	// project layer's area rules stay in effect next to the repository's
 	// rather than being replaced by them (D20c), so a consumer that resolves
-	// a mode needs both (Config.RigorConfig).
-	c.RepoRigor = repo.Rigor
+	// a mode needs both (Config.RigorConfig). It is the block the drop left —
+	// a repository's rigor.areas is the project's now — so what stands beside
+	// the merged block is no lifted key (R2).
+	c.RepoRigor = dropped.Rigor
 	c.RepoRigorSet = setsRigor(tree)
 	c.RepoRigorLevelSet = setsRigorLevel(tree)
 	c.RepoRigorScalarSet = setsRigorScalar(tree)
