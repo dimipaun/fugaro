@@ -10,19 +10,25 @@ package credsvc
 // reads it by that exact name — never by a listing, and never by building one
 // (D1931, G2, G12).
 //
-// The fence around this read is IAM's and not this file's, and it is NOT on this
-// tree yet. The service's account holds one unconditioned accessor, on the
-// bundle's container alone (Q6, modules/installation/credentials.tf, which
-// TestCredentialsServiceGrantsAreTheOneBundle keeps true), and the
-// prefix-conditioned accessor over the grammar's two prefixes is DS2.2's task —
-// one that also deploys the intake that writes these containers, and that is
-// gated on the owner's own live check (DS0.3). So nothing on this tree serves a
-// per-secret container's value: a read is either refused, which is a permission
-// failure and the class below (the call fails closed), or answered as an
-// absence, which is R7's fall to the bundle's entry — and no candidate list
-// carries a per-secret name at all until the slip's own does (DS1.6). The two
-// land together; until then a per-secret name behaves exactly as it did before
-// this file existed (G7, G12).
+// The fence around this read is IAM's, and it is on this tree. The service's
+// account holds one unconditioned accessor on the bundle's container (Q6,
+// modules/installation/credentials.tf, which
+// TestCredentialsServiceGrantsAreTheOneBundle keeps true) and one conditioned
+// accessor over the grammar's two prefixes (credentials_prefix_accessor:
+// roles/secretmanager.secretAccessor under intake.tf's
+// dynamic_secret_names_condition, resource names beginning with fugaro_u_ or
+// fugaro_p_). A per-secret name is therefore read by its exact ID, and a name
+// outside the grammar is refused by the project's own policy as well as by
+// secretname.Parse. The account's third grant is the lister (credentials_lister:
+// the fugaroSecretLister role's secretmanager.secrets.list, unconditioned),
+// which is what the workflow-secret MARKER is read through (F18, G2): the
+// marker is a label, and no resource-name condition can carry a list.
+//
+// No candidate list carries a per-secret name until the slip's own does
+// (DS1.6), so a per-secret name behaves as it always did (G7, G12) and what
+// reaches this file is a name the caller supplied and the slip admitted. It
+// reads that name and no other: there is no listing of the grammar here and no
+// search.
 //
 // R6: what THIS SERVICE does moves nothing. It resolves a credential in order —
 // it reads, it never writes, and no value it reads is carried anywhere but into
@@ -79,6 +85,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/secretname"
@@ -147,6 +154,49 @@ func personalTokenName(n secretname.Name) bool {
 	return !n.Shared() && n.Name == creds.PersonTokenName
 }
 
+// ErrWorkflowSecretContainer is a candidate whose container carries the intake's
+// workflow-secret marker (F18, G2): it holds a workflow secret, and the half of
+// the resolution below serves model credentials.
+//
+// **It is refused and not fallen from.** The bundle's entry under the same name
+// is a different credential — the marker exists because `fugaro_p_` is also the
+// grammar of the project's model keys, so a name can be both a workflow secret's
+// and an entry the operator wrote — and serving that entry for a candidate whose
+// container is marked would be exactly the shadowing the marker keeps apart, in
+// the other direction. The value is never read: the marker is checked first, so
+// a workflow secret's value does not enter this process on this path at all.
+var ErrWorkflowSecretContainer = errors.New("the container this credential names holds a workflow secret, and no model credential is served from one")
+
+// WorkflowSecretMarkers answers whether one container carries the intake's
+// workflow-secret marker (F18, G2). It is an interface of its own beside
+// PerSecretSource because it is a second question about the same container, read
+// through a different grant, and because a source that reads no metadata simply
+// cannot answer it — which the callers treat as a read that failed rather than
+// as "no marker".
+type WorkflowSecretMarkers interface {
+	// Marked reports whether the container with this secret ID carries the
+	// intake's workflow-secret marker. err is a read that failed, which fails
+	// the call closed: a container whose labels could not be listed is not one
+	// this service may serve a workflow secret from.
+	Marked(ctx context.Context, secretID string) (bool, error)
+}
+
+// markedContainer answers whether the source's container with this secret ID
+// carries the intake's marker.
+//
+// A source that cannot answer — none at all, or one that reads no metadata — is
+// an ERROR and never a false: "the marker could not be read" and "the container
+// carries no marker" are two states with two different fixes, and answering the
+// second for the first would send an operator to rewrite a container that is
+// already right.
+func markedContainer(ctx context.Context, src PerSecretSource, secretID string) (bool, error) {
+	m, ok := src.(WorkflowSecretMarkers)
+	if !ok {
+		return false, fmt.Errorf("%w: this service has no reader for the workflow-secret marker", ErrPerSecretUnreadable)
+	}
+	return m.Marked(ctx, secretID)
+}
+
 // PerSecretSource reads one per-secret container. It is an interface so a test
 // can answer one without a cloud call (Convention 9), and
 // SecretManagerPerSecrets is the only implementation the service deploys.
@@ -165,10 +215,10 @@ type PerSecretSource interface {
 // the API — no listing, no write, no version named. It is the same client and
 // the same project the bundle is read with.
 //
-// What that account may reach is IAM's and is DS2.2's: until the
-// prefix-conditioned accessor lands, the account holds no grant on any container
-// but the bundle's, so a per-secret read answers a permission failure (the class
-// below) or an absence, and serves no value (the file's header).
+// What that account may reach is IAM's and is DS2.2's: the
+// prefix-conditioned accessor covers the grammar's two prefixes and nothing
+// else, so a per-secret read answers a permission failure (the class below) or
+// an absence, and serves no value (the file's header).
 type SecretManagerPerSecrets struct {
 	// Project is the GCP project the containers live in.
 	Project string
@@ -221,6 +271,46 @@ func (s SecretManagerPerSecrets) Value(ctx context.Context, secretID string) (st
 	}
 	return value, true, nil
 }
+
+// Marked reports whether one container carries the intake's workflow-secret
+// marker (F18, G2), read through the account's lister grant.
+//
+// It is a LIST narrowed by name and never a secrets.get: the account holds no
+// get on the grammar, and the marker is a label — which no resource-name
+// condition can carry, so the lister is unconditioned and this read is the
+// reason it exists. The filter is a narrowing the API applies and not the
+// answer: the entries are matched on the exact ID their resource name ends
+// with, so a container whose name merely BEGINS with this one's —
+// fugaro_p_deploy-token beside fugaro_p_deploy-token-2 — is not read as it.
+//
+// A container that is not there answers false: a name with no container is not
+// a marked one, and every caller of this already refuses on its own terms.
+func (s SecretManagerPerSecrets) Marked(ctx context.Context, secretID string) (bool, error) {
+	if s.Service == nil || s.Project == "" || secretID == "" {
+		return false, fmt.Errorf("%w: the service has no Secret Manager client and no container to read a marker from", ErrPerSecretUnreadable)
+	}
+	parent := "projects/" + s.Project
+	marked := false
+	err := s.Service.Projects.Secrets.List(parent).
+		Filter("name:"+parent+"/secrets/"+secretID).
+		Pages(ctx, func(p *secretmanager.ListSecretsResponse) error {
+			for _, sec := range p.Secrets {
+				if sec != nil && lastSegment(sec.Name) == secretID && sec.Labels[workflowSecretLabel] == workflowSecretMarker {
+					marked = true
+				}
+			}
+			return nil
+		})
+	if err != nil {
+		return false, fmt.Errorf("%w: the container's labels could not be listed", ErrPerSecretUnreadable)
+	}
+	return marked, nil
+}
+
+// lastSegment is the last "/" separated segment of a resource name: a container
+// name's ID (internal/backend/gcp's helper of the same name, for this package's
+// two readers of a Secret Manager resource name).
+func lastSegment(name string) string { return name[strings.LastIndex(name, "/")+1:] }
 
 // DynamicSecrets is the per-secret half of the resolution: the read of one
 // container, in R6's order relative to the bundle.
@@ -283,6 +373,19 @@ func (d *DynamicSecrets) read(ctx context.Context, c creds.Credential) (Entry, b
 			return Entry{}, false, "", ErrPersonalTokenAbsent
 		}
 		return Entry{}, false, parsed.Name, nil
+	}
+	// The marker FIRST, before the value is read at all (F18, G2): a container
+	// the intake wrote a workflow secret into is not one this half may serve,
+	// and reading it before asking would put a workflow secret's value into
+	// this process for a call that is refused. A marker that could not be read
+	// is the failure class, because a container this service cannot classify is
+	// one it must not serve.
+	marked, err := markedContainer(ctx, d.Source, c.Name)
+	if err != nil {
+		return Entry{}, false, "", err
+	}
+	if marked {
+		return Entry{}, false, "", ErrWorkflowSecretContainer
 	}
 	value, found, err := d.Source.Value(ctx, c.Name)
 	if err != nil {

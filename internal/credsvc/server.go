@@ -650,6 +650,15 @@ type Config struct {
 	// predates this release has no record to read and is a service this build
 	// still starts.
 	WorkflowSecrets WorkflowSecretRecords
+	// ProjectSecrets reads the project record that says which repositories may
+	// fetch a project-shared workflow secret by name (IS3, D3328, D3333): a
+	// version-2 workflow-secrets call and a build's read of a `fugaro_p_`
+	// container are both admitted by it, and by it alone. It may be nil, and
+	// nil is a service that serves no workflow secret by name — the routes
+	// refuse rather than reading an absent record as "every repository is
+	// allowed" (fail closed, G19). *RTDBProjectSecrets is the implementation a
+	// deployment wires (internal/cli/credentials_serve.go).
+	ProjectSecrets ProjectSecretRecords
 	// AuditLog is where the service's audited acts are written (C1.13): every
 	// line this service writes, the mint's (C2.1) and the probe's (C1.12)
 	// included. There is one writer and one handler — Server.audit is the ONLY

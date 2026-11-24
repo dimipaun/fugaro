@@ -136,6 +136,18 @@ const (
 	// readSecret is the per-secret container read that resolves a candidate's
 	// value ahead of the bundle's entry (R6's first half).
 	readSecret = "secret_read"
+	// readMarker is the workflow-secret marker read: the lister's list of one
+	// container's labels, which is what tells a workflow secret's container
+	// from a model credential's (F18, G2). It is a read of its own and not
+	// readSecret, because the two are two calls to two different APIs and an
+	// operator acts on them differently: one is a version's payload, the other
+	// is the container's own metadata.
+	readMarker = "secret_marker"
+	// readProjectSecrets is the project record the shared-credential allow-list
+	// lives in (creds.PathProjectSecrets), read on every version-2
+	// workflow-secrets call and on a build's read of a grammar container
+	// (D3328, D3333).
+	readProjectSecrets = "project_secrets"
 	// readUpstream is the call to the upstream itself (forward.go's send).
 	readUpstream = "upstream_send"
 )

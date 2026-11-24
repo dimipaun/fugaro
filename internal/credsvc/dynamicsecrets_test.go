@@ -52,6 +52,18 @@ type dynReader struct {
 	// what makes "read once, by the candidate's own name" a fact and not an
 	// inference.
 	reads []string
+	// marked is the containers that carry the intake's workflow-secret marker
+	// (F18, G2). A name the map does not hold is UNMARKED, which is the
+	// ordinary case here: every container these tests read is a model
+	// credential's, and the marker is what says a container is not one.
+	marked map[string]bool
+	// markerErr is what Marked answers while it is set, so a marker read that
+	// failed needs no cloud and no transport.
+	markerErr error
+	// markerReads is every secret ID this fixture was asked about a marker for,
+	// in order, which is what makes "the marker is checked before the value is
+	// read" a fact (the two lists are separate on purpose).
+	markerReads []string
 }
 
 func (d *dynReader) Latest(context.Context) ([]byte, error) { return d.doc, nil }
@@ -63,6 +75,14 @@ func (d *dynReader) Value(_ context.Context, secretID string) (string, bool, err
 	}
 	v, ok := d.values[secretID]
 	return v, ok, nil
+}
+
+func (d *dynReader) Marked(_ context.Context, secretID string) (bool, error) {
+	d.markerReads = append(d.markerReads, secretID)
+	if d.markerErr != nil {
+		return false, d.markerErr
+	}
+	return d.marked[secretID], nil
 }
 
 // docOnly is a source that reads no containers: it is a BundleSource and not a
