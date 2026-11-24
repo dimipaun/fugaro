@@ -250,6 +250,7 @@ ALLOWED = {
     ("run", "jobs", "list"): ("--project", "--region", "--format"),
     ("run", "jobs", "describe"): ("--project", "--region", "--format"),
     ("run", "jobs", "executions", "describe"): ("--project", "--region", "--format"),
+    ("run", "services", "get-iam-policy"): ("--project", "--region", "--format"),
     ("logging", "read"): ("--project", "--freshness", "--limit", "--format"),
 }
 sub = None
@@ -305,12 +306,26 @@ def secret_id(slug, logical):
     return "fugaro-%s-%s-%s" % (readable, logical, h)
 
 
+def job_account(repo):
+    """The account a repository's job runs as, as the deployment writes it: the
+    service account's own EMAIL, which is the member the credentials service's
+    invoker grant names (modules/workflow/sa.tf: google_service_account.job.member
+    is `serviceAccount:<email>` and the job template carries the bare email)."""
+    return "fugaro-%s@fugaro-dev.iam.gserviceaccount.com" % job_name(repo)
+
+
 def job_doc(repo):
+    """One repository's own job, as `gcloud run jobs list` answers it. A
+    PER-REPOSITORY job template carries no FUGARO_CREDENTIALS_SERVICE_URL: the
+    launcher writes that on each run's execution (internal/cli/run.go's
+    credentialsServiceLaunchEnv), which is why the switch row can never be read
+    off it — `job-url` is the other shape, a SHARED project job's, where
+    internal/infra's projectJobEnv bakes the address in the template."""
     envs = [{"name": "FUGARO_REMOTE", "value": "https://bitbucket.org/%s.git" % repo}]
-    if mode != "no-url":
+    if mode == "job-url":
         envs.append({"name": "FUGARO_CREDENTIALS_SERVICE_URL",
                      "value": "https://fugaro-credentials-fake-ue.a.run.app"})
-    if mode == "mounted" and repo == (repos[1] if len(repos) > 1 else ""):
+    if mode in ("mounted", "unswitched") and repo == (repos[1] if len(repos) > 1 else ""):
         # The mount the flip exists to take off: the container the paid key is
         # served from, as the deployment mounts it (config.ModelSecretEnvs and
         # the derived Secret Manager ID behind it — never the logical name,
@@ -328,6 +343,16 @@ def job_doc(repo):
                      "valueSource": {"secretKeyRef": {
                          "secret": secret_id(job_name(repo), "claude-oauth-token-work"),
                          "version": "latest"}}})
+    if mode == "stage-account" and repo == (repos[1] if len(repos) > 1 else ""):
+        # A MIXED stage account, which is the one mount a switched job keeps: the
+        # stage's own Claude token and R12's second fact
+        # (config.StageAccountServedEnv) saying the container is served the
+        # stage's credential and not the run's (D2072's is_stage_account_token).
+        envs.append({"name": "FUGARO_STAGE_ACCOUNT_SERVED", "value": "1"})
+        envs.append({"name": "CLAUDE_CODE_OAUTH_TOKEN",
+                     "valueSource": {"secretKeyRef": {
+                         "secret": secret_id(job_name(repo), "claude-oauth-token-work"),
+                         "version": "latest"}}})
     if mode == "provider-key":
         envs.append({"name": "FUGARO_PROVIDER_KEY_OPENROUTER",
                      "valueSource": {"secretKeyRef": {"secret": "openrouter-key-abcdef", "key": "latest"}}})
@@ -340,7 +365,34 @@ def job_doc(repo):
             "metadata": {"name": name, "labels": labels, "updateTime": UPDATE},
             "spec": {"template": {"spec": {"template": {"spec": {
                 "containers": [{"name": "workflow", "env": envs}],
-                "serviceAccountName": "fugaro-" + name}}}}}}
+                "serviceAccountName": job_account(repo)}}}}}}
+
+
+def service_iam_doc():
+    """The credentials service's own IAM policy, as `gcloud run services
+    get-iam-policy fugaro-credentials --format=json` answers it: the members of
+    its roles/run.invoker binding are the job accounts of the repositories whose
+    root was applied with the credentials service on (modules/workflow/sa.tf's
+    google_cloud_run_v2_service_iam_member.credentials, D135) — the half of the
+    per-repository switch the job template cannot show.
+
+    `no-invoker` is the state the switch row exists to catch: the root was
+    applied with the service off, so no grant was written. `svciam-invoker-other`
+    grants the invoker role to an account that is nobody's job — a row that read
+    any member of any binding as the grant would pass on it. The
+    secretAccessor binding is the service's own account reading the containers it
+    serves: a member of a binding that is NOT roles/run.invoker is never a
+    caller."""
+    members = ["serviceAccount:" + job_account(r) for r in repos]
+    if mode in ("no-invoker", "unswitched"):
+        members = []
+    if mode == "svciam-invoker-other":
+        members = ["serviceAccount:some-other-job@fugaro-dev.iam.gserviceaccount.com"]
+    return {"etag": "BwYXfake", "version": 3,
+            "bindings": [
+                {"role": "roles/run.invoker", "members": members},
+                {"role": "roles/secretmanager.secretAccessor",
+                 "members": ["serviceAccount:fugaro-credentials@fugaro-dev.iam.gserviceaccount.com"]}]}
 
 
 def execution_doc(repo, name):
@@ -380,6 +432,20 @@ elif sub == ("run", "jobs", "list"):
         sys.exit(1)
     docs = [] if mode == "no-jobs" else [job_doc(r) for r in repos]
     print(json.dumps(docs))
+elif sub == ("run", "services", "get-iam-policy"):
+    # The credentials service's own policy, which is the per-repository half of
+    # the switch the job template cannot show (the job account's
+    # roles/run.invoker). A read that did not answer is NOT a policy without the
+    # grant: `svciam-refused` is the refusal an owner without
+    # run.services.getIamPolicy meets, and `svciam-null` a `get-iam-policy`
+    # whose output carries no policy at all.
+    if mode == "svciam-refused":
+        sys.stderr.write("ERROR: (gcloud) PERMISSION_DENIED: Permission 'run.services.getIamPolicy' denied on resource 'namespaces/fugaro-dev/services/fugaro-credentials'\n")
+        sys.exit(1)
+    if mode == "svciam-null":
+        print("null")
+    else:
+        print(json.dumps(service_iam_doc()))
 elif sub == ("run", "jobs", "describe"):
     want = positionals[3] if len(positionals) > 3 else ""
     for r in repos:
@@ -682,6 +748,8 @@ test_dry_run() {
   expect_contains "$err" "creds/repoauth/<slug>.json" "dry run: the plan names the record it would read"
   expect_contains "$err" "fugaro run --repo" "dry run: the plan names the runs it would launch"
   expect_contains "$err" "gcloud run jobs list --project=fugaro-dev --region=us-east5" "dry run: the plan carries the hard-coded project and region"
+  expect_contains "$err" "gcloud run services get-iam-policy fugaro-credentials --project=fugaro-dev --region=us-east5 --format=json" \
+    "dry run: the plan names the read that carries the invoker half of the switch"
 
   local calls
   calls=$(cat "$dir/logs/gcloud.calls" "$dir/logs/fugaro.calls" "$dir/logs/curl.calls")
@@ -755,19 +823,146 @@ test_the_repos_guard() {
   done
 }
 
-# A repository whose jobs carry no credentials service URL is OFF the switch:
-# its runs are served by nothing, so every row below it would be a row about a
-# repository this check is not about. It must stop before a run is launched —
-# the runs are the expensive part, and a FAIL that costs two of them is worse
-# than one that costs none.
+# The switch row is read off what the APPLY changes, per repository, and never
+# off FUGARO_CREDENTIALS_SERVICE_URL: a per-repository job template never carries
+# that variable at all (job_doc above writes none, and no module under
+# deploy/terraform/gcp/modules/workflow puts one on the template — the launcher
+# writes the address on each run's EXECUTION, internal/cli/run.go's
+# credentialsServiceLaunchEnv), so a row read off the template's URL calls every
+# switched per-repository job off the switch whatever the apply did. What a
+# switched job really carries is the two facts the plan writes: no model
+# credential on it (dropModelMounts, D2072/G17) and its own account granted
+# roles/run.invoker on the credentials service (modules/workflow/sa.tf, D135 —
+# the same switch, infra.CredentialsServiceServes, that makes the launcher write
+# the address at all).
+#
+# A repository whose job still mounts the credential the service serves and
+# whose account holds no invoker grant is OFF the switch: its runs are served by
+# nothing, so every row below it would be a row about a repository this check is
+# not about. It must stop before a run is launched — the runs are the expensive
+# part, and a FAIL that costs two of them is worse than one that costs none —
+# and it names BOTH causes, because an owner who read only one of them would
+# take the row for a finding about the other.
 test_a_repository_off_the_switch_is_a_failure() {
   local dir=$work/offswitch
   prepare "$dir"
-  run193 "$dir" FAKE_GCLOUD_MODE=no-url
+  run193 "$dir" FAKE_GCLOUD_MODE=unswitched
   expect_status "$status" 1 "off the switch: the verdict"
   expect_contains "$out" "FACT switch: FAIL" "off the switch: the row"
   expect_contains "$out" "OFF the credentials-service switch" "off the switch: the row says why"
+  expect_contains "$out" "on=no why=no-mount+no-invoker" "off the switch: the row names the job, why it is off, and no more than why"
+  expect_contains "$out" "acme-sandbox-api-0123456789abcdef" "off the switch: the row names the job"
+  expect_contains "$out" "fugaro-acme-sandbox-api-0123456789abcdef@fugaro-dev.iam.gserviceaccount.com" \
+    "off the switch: and the account that holds no grant"
+  expect_contains "$out" "fugaro update --repo" "off the switch: the row names the fix"
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "off the switch: no run was launched"
+}
+
+# The mount half on its own, with the grant in place: the row is a FAIL all the
+# same, and the whole of it is the credential the flip exists to take off the
+# job — the URL is not asked for, because a per-repository job has none.
+test_a_job_that_still_mounts_the_model_credential_is_off_the_switch() {
+  local dir=$work/switchmount
+  prepare "$dir"
+  run193 "$dir" FAKE_GCLOUD_MODE=mounted
+  expect_status "$status" 1 "still mounted: the verdict"
+  expect_contains "$out" "FACT switch: FAIL" "still mounted: the row"
+  expect_contains "$out" "on=no why=mounts:fugaro-acme-sandbox-oauth-anthropic-api-key-" \
+    "still mounted: the job is named with the container its env is fed from"
+  expect_contains "$out" "carries no FUGARO_CREDENTIALS_SERVICE_URL at all" \
+    "still mounted: the row says where the address really is"
+  expect_contains "$out" "fugaro update --repo" "still mounted: the row names the fix"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "still mounted: no run was launched"
+}
+
+# The grant half on its own: the jobs mount nothing, and their accounts were
+# never granted the service — the state of a repository root applied with the
+# service off, or one whose apply stopped between the mounts and the grant. Every
+# run of it would halt at the service's door (D143), so it stops here.
+test_a_job_account_without_the_invoker_grant_is_off_the_switch() {
+  local dir=$work/switchgrant
+  prepare "$dir"
+  run193 "$dir" FAKE_GCLOUD_MODE=no-invoker
+  expect_status "$status" 1 "no grant: the verdict"
+  expect_contains "$out" "FACT switch: FAIL" "no grant: the row"
+  expect_contains "$out" "on=no why=no-mount+no-invoker" "no grant: the unmounted job is off on the grant alone"
+  expect_contains "$out" "roles/run.invoker on fugaro-credentials" "no grant: the row names the role and the service"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "no grant: no run was launched"
+}
+
+# An invoker grant is a grant to THAT job's account and to no one else
+# (modules/workflow/sa.tf writes one member): a binding whose members are other
+# accounts is not this job's grant, and a row that read "any member of
+# roles/run.invoker" as the grant would pass a repository whose runs cannot
+# reach the service at all.
+test_an_invoker_grant_to_another_account_is_not_this_jobs_grant() {
+  local dir=$work/switchother
+  prepare "$dir"
+  run193 "$dir" FAKE_GCLOUD_MODE=svciam-invoker-other
+  expect_status "$status" 1 "another account's grant: the verdict"
+  expect_contains "$out" "FACT switch: FAIL" "another account's grant: the row"
+  expect_contains "$out" "no-invoker" "another account's grant: the job's own account holds none"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "another account's grant: no run was launched"
+}
+
+# The one shape in which a job template DOES carry the address is the shared
+# project job's (internal/infra's projectJobEnv bakes it, and modules/project's
+# sa.tf grants that job's account the invoker role in the same plan), so the URL
+# settles the unmounted half on its own there — and it stays the reading for that
+# shape, which is Check 197's subject and not this one's.
+test_a_job_whose_template_carries_the_url_is_on_the_switch() {
+  local dir=$work/switchurl
+  prepare "$dir"
+  run193 "$dir" FAKE_GCLOUD_MODE=job-url
+  expect_status "$status" 0 "the baked URL: the verdict"
+  expect_contains "$out" "FACT switch: PASS" "the baked URL: the row"
+  expect_contains "$err" "acme/sandbox-oauth: 1 of 1 job(s) on the credentials-service switch" \
+    "the baked URL: the job is read as switched, on the address its template carries"
+}
+
+# The one mount a switched job KEEPS: a mixed stage account's own Claude token,
+# which is the STAGE's credential and not the run's, and which the job declares
+# by carrying R12's second fact (FUGARO_STAGE_ACCOUNT_SERVED=1,
+# config.StageAccountServedEnv, D2072's is_stage_account_token). A row that read
+# every mount as one the service serves would fail a repository that is switched
+# and correct — which is why the exception is read and never guessed.
+test_a_stage_accounts_own_token_is_not_a_reason_to_call_a_job_off_the_switch() {
+  local dir=$work/switchstage
+  prepare "$dir"
+  run193 "$dir" FAKE_GCLOUD_MODE=stage-account
+  expect_status "$status" 0 "the stage account: the verdict"
+  expect_contains "$out" "FACT switch: PASS" "the stage account: the row"
+  expect_contains "$err" "acme/sandbox-oauth: 1 of 1 job(s) on the credentials-service switch" \
+    "the stage account: the job is on the switch despite the token it keeps"
+}
+
+# A get-iam-policy that did not answer is not a policy without the grant: the
+# half of the switch it carries is unmeasured, the runs wait, and the row names
+# the permission the owner needs to read it themselves.
+test_an_iam_read_that_failed_leaves_the_switch_unmeasured() {
+  local dir=$work/switchiam
+  prepare "$dir"
+  run193 "$dir" FAKE_GCLOUD_MODE=svciam-refused
+  expect_status "$status" 2 "a refused IAM read: the check could not measure"
+  expect_contains "$out" "FACT switch: FAIL — 'gcloud run services get-iam-policy fugaro-credentials" \
+    "a refused IAM read: the row carries the reason itself"
+  expect_contains "$out" "run.services.getIamPolicy" "a refused IAM read: the row names the permission"
+  expect_absent "$out" "FACT switch: PASS" "a refused IAM read: the leg is never a pass"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "a refused IAM read: no run was launched"
+}
+
+# The same read one step further in: `get-iam-policy` answered, and the document
+# carries no policy at all. That is not a policy without the grant either, and a
+# repository called off the switch on it would stop two runs for nothing.
+test_an_iam_answer_that_is_no_policy_leaves_the_switch_unmeasured() {
+  local dir=$work/switchiamnull
+  prepare "$dir"
+  run193 "$dir" FAKE_GCLOUD_MODE=svciam-null
+  expect_status "$status" 2 "no policy at all: the check could not measure"
+  expect_contains "$out" "FACT switch: FAIL" "no policy at all: the row is a FAIL and never a pass"
+  expect_contains "$out" "no policy at all" "no policy at all: the row says what it read"
+  expect_absent "$out" "FACT switch: PASS" "no policy at all: the leg is never a pass"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "no policy at all: no run was launched"
 }
 
 # `fugaro project policy show --json` failing is not a policy that carries a
@@ -1153,9 +1348,10 @@ test_after_flip_passes_when_no_job_mounts_a_model_credential() {
 }
 
 # The service's own lines for a run in flight across the re-apply are NOT the
-# reading: the flip takes the MOUNTS and keeps FUGARO_CREDENTIALS_SERVICE_URL on
-# the repository (D2072), and a switched run reaches the service on that URL
-# alone (internal/runner's serviceSwitched), so a run that behaved correctly
+# reading: the flip takes the MOUNTS (D2072) and a switched run reaches the
+# service on the FUGARO_CREDENTIALS_SERVICE_URL the LAUNCHER writes on its
+# execution (internal/cli/run.go's credentialsServiceLaunchEnv; no
+# per-repository job template ever carries it), so a run that behaved correctly
 # before the flip has lines of its own. The mount is the reading, and it is on
 # the execution's own spec.
 test_an_inflight_run_the_service_answered_still_keeps_its_mount() {
@@ -1341,6 +1537,13 @@ t test_project_guard
 t test_xtrace_is_refused
 t test_the_repos_guard
 t test_a_repository_off_the_switch_is_a_failure
+t test_a_job_that_still_mounts_the_model_credential_is_off_the_switch
+t test_a_job_account_without_the_invoker_grant_is_off_the_switch
+t test_an_invoker_grant_to_another_account_is_not_this_jobs_grant
+t test_a_job_whose_template_carries_the_url_is_on_the_switch
+t test_a_stage_accounts_own_token_is_not_a_reason_to_call_a_job_off_the_switch
+t test_an_iam_read_that_failed_leaves_the_switch_unmeasured
+t test_an_iam_answer_that_is_no_policy_leaves_the_switch_unmeasured
 t test_a_policy_that_could_not_be_read_leaves_the_switch_unmeasured
 t test_a_policy_with_no_budget_mode_leaves_the_switch_unmeasured
 t test_a_pair_that_is_not_one_api_key_and_one_oauth_stops
