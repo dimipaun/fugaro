@@ -245,6 +245,40 @@ func (s *Server) serveVertex(ctx context.Context, w http.ResponseWriter, id Iden
 			err.Error(), labelRead(readUpstream, err))
 		return true, Tried{}
 	}
+	// A Gemini answer is Vertex's Google-publisher wire — a
+	// GenerateContentResponse, not a Messages answer — so it is read here, whole
+	// and once, and translated before anything else looks at it (GV2). Two facts
+	// put the read here rather than beside the answer: the translation is
+	// whole-answer by construction (a stream is accumulated across its chunks
+	// before a byte is written, which is what makes "never a half-translated
+	// stream" true), and a quota refusal can arrive under any status, so the
+	// bytes must be in hand before the marks below are decided.
+	gemini := publisher == pricing.VertexPublisherGoogle
+	var geminiRaw []byte
+	if gemini {
+		held, err := io.ReadAll(io.LimitReader(ans.resp.Body, vertexGeminiMaxAnswer+1))
+		ans.resp.Body.Close()
+		ans.resp.Body = http.NoBody
+		if err != nil || len(held) > vertexGeminiMaxAnswer {
+			// The call went out and may have been billed, and nothing about
+			// this answer is readable: a nil usage settles the reservation at
+			// what it holds, which is the direction a cap must fail in.
+			if fail := s.settleCall(ctx, cl, nil); fail != nil {
+				s.refuseMeter(ctx, w, id, PurposeForward, fail)
+				return true, Tried{}
+			}
+			s.refuseCall(ctx, w, id, PurposeForward, name, tier, StatusUnavailable, ErrorStateUnavailable,
+				"the answer Vertex gave for this model could not be read whole, so it could not be translated into the answer the agent reads: a streamed answer is translated as one answer, and a prefix of one is not an answer")
+			return true, Tried{}
+		}
+		geminiRaw = held
+	}
+	// A quota refusal is a limit on the project's Vertex whatever status carried
+	// it: Google answers RESOURCE_EXHAUSTED with a 429 and, for a project over
+	// its quota, with a 403 (vertexGeminiQuota). Both mark the source and move
+	// the chain on, which is what a Gemini 403 must not be read as — a
+	// permission error would reach the agent as a refusal of its own call.
+	quota := gemini && vertexGeminiQuota(geminiRaw)
 	switch status := ans.resp.StatusCode; {
 	case unauthorizedStatus(status):
 		// A 401 marks the source, and the walk moves on or answers exhausted
@@ -262,9 +296,10 @@ func (s *Server) serveVertex(ctx context.Context, w http.ResponseWriter, id Iden
 			return true, Tried{}
 		}
 		return false, Tried{Name: name, Tier: tier, Reason: ReasonBroken}
-	case usageLimitStatus(status):
+	case usageLimitStatus(status) || quota:
 		// A Vertex 429 is a limit on the project's Vertex as much as a key's
-		// 429 is a limit on the key. Nothing has been streamed, so the walk may
+		// 429 is a limit on the key, and Google's own quota refusal is the same
+		// fact under another status. Nothing has been streamed, so the walk may
 		// move to its next source, and the mark carries whatever reset the
 		// answer named.
 		reset := usageLimitReset(ans.resp.Header, s.now())
@@ -279,6 +314,49 @@ func (s *Server) serveVertex(ctx context.Context, w http.ResponseWriter, id Iden
 			return true, Tried{}
 		}
 		return false, Tried{Name: name, Tier: tier, Reason: ReasonExhausted}
+	}
+	// The answer is translated into the shape the agent reads (GV2): the
+	// Messages answer or the token count for a 2xx, and Google's error named in
+	// Anthropic's own vocabulary for anything else, which is the shape the
+	// harness switches on. The translated bytes replace the upstream body, so
+	// everything downstream — the workspace's meter, the usage-limit scan, the
+	// pump — reads the answer the agent reads, and the media type says which of
+	// the two it is (a translated stream is an event stream, and the answer path
+	// reads it as one).
+	if gemini {
+		out, ctype := geminiRaw, contentTypeJSON
+		if ans.resp.StatusCode >= 200 && ans.resp.StatusCode <= 299 {
+			var err error
+			out, ctype, err = vertexGeminiTranslated(cl.path, vertexStreams(cl.body), geminiRaw, requested)
+			if err != nil {
+				// The call reached the source and the source answered something
+				// this wire has no translation for: the call ends here, and the
+				// reservation stands rather than being released — the answer was
+				// billed and its usage is exactly what could not be read. The
+				// typed reason names the member and reaches the service's own log
+				// line; the sentence the run reads names the source's failure and
+				// not the caller's request, which was well-formed and reached
+				// Vertex.
+				if fail := s.settleCall(ctx, cl, nil); fail != nil {
+					s.refuseMeter(ctx, w, id, PurposeForward, fail)
+					return true, Tried{}
+				}
+				reason, typed := vertexAnswerRefusal(err)
+				if !typed {
+					reason = "the answer Vertex gave for this model is not the JSON this service translates, so the call could not be answered: the source answered something this translation cannot read"
+				}
+				s.refuseCallCause(ctx, w, id, PurposeForward, name, tier, StatusUnavailable, ErrorStateUnavailable, reason, err)
+				return true, Tried{}
+			}
+		} else {
+			out = vertexGeminiError(ans.resp.StatusCode, geminiRaw)
+		}
+		ans.resp.Body = io.NopCloser(bytes.NewReader(out))
+		ans.resp.Header.Set("Content-Type", ctype)
+		// What is handed on is this service's own JSON or event stream and never
+		// whatever encoding the upstream labelled its bytes with.
+		ans.resp.Header.Del("Content-Encoding")
+		ans.resp.ContentLength = int64(len(out))
 	}
 	// Everything else is the caller's answer, exactly as it came: a 2xx, a 400
 	// for a request Vertex refused, an overloaded_error, a 500. It is answered
