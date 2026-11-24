@@ -770,13 +770,13 @@ func userMobileRemoval(ctx context.Context, out io.Writer, lc *localcfg.Config, 
 	}
 	removal, err := pairRemoveMember(ctx, lc, db, address)
 	if err != nil {
-		return userErr("the pair is revoked and %s is off project %s's roster, but their mobile access could not be removed completely: %v. The roster refuses the address at its next refresh either way; delete what is left by hand", safetext.Field(address), safetext.Field(lc.Name), err)
+		return userErr("the pair is revoked and %s is off the roster, but their mobile access could not be removed: %v; delete what is left by hand", safetext.Field(address), err)
 	}
 	if len(removal.Devices) == 0 {
-		fmt.Fprintf(out, "that was the address's last pair, so its mobile access goes with it: deleted the member record %s, and the address held no paired device\n", safetext.Field(removal.Member))
+		fmt.Fprintf(out, "that was the address's last pair, so its mobile access went with it: deleted the member record %s; the address held no paired device\n", safetext.Field(removal.Member))
 		return nil
 	}
-	fmt.Fprintf(out, "that was the address's last pair, so its mobile access goes with it: deleted the member record %s and %d paired device(s) (%s) with their refresh families, so no phone of the address can refresh again\n",
+	fmt.Fprintf(out, "that was the address's last pair, so its mobile access went with it: deleted the member record %s and %d paired device(s) (%s) with their refresh families\n",
 		safetext.Field(removal.Member), len(removal.Devices), safetext.FieldListLine(removal.Devices))
 	return nil
 }
