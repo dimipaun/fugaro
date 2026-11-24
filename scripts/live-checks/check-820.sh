@@ -492,7 +492,7 @@ except Exception:
     print("%s\tREAD_ERROR\tnot JSON" % name)
     sys.exit(0)
 rep = (doc.get("replication") or {})
-if rep.get("automatic"):
+if "automatic" in rep:
     print("%s\tautomatic\t" % name)
     sys.exit(0)
 um = rep.get("userManaged") or {}
@@ -680,7 +680,7 @@ step_buckets() {
       continue
     fi
     loc=$(one_line "$READ_OUT")
-    if in_eu "$loc"; then
+    if ! in_eu "$loc"; then
       outside="${outside}${outside:+, }${name} ${loc}"
     fi
   done <<EOF
