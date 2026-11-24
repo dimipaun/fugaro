@@ -561,7 +561,7 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 // reach the service is refused before the build is paid for.
 func checkServiceURL(raw string) error {
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
 		return fmt.Errorf("the credentials service %q is not the https URL the installation serves it on, with no path, query or fragment: the credential step's identity token is minted for exactly that address", raw)
 	}
 	return nil

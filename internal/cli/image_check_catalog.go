@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/imagebake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
@@ -482,6 +483,18 @@ func (t *catalogCheckTarget) submit(ctx context.Context, e config.Entry, r catal
 	if err != nil {
 		return "", "", err
 	}
+	// The address is read once, before the request is built: a job whose
+	// environment names one that is not the service's own URL has nothing to
+	// submit, and neither has one that names none. The sentence for the
+	// absent one names the command that puts it there, because the job's own
+	// environment is written by an apply and not by a person (IS8, D3330).
+	service, on, err := checkServiceURL()
+	if err != nil {
+		return "", "", err
+	}
+	if !on {
+		return "", "", fmt.Errorf("this job's environment names no credentials service (%s), and a catalog entry's build clones its source through it: the request names no secret of its own any more, so a rebuild submitted without the address would hold no credential at all. Run %s at the installation's own checkout — that records the service's address and re-deploys this job — and then let the next tick rebuild the entry", providers.EnvCredentialsServiceURL, selfCommand()+" update")
+	}
 	// An entry that names a context is built at the commit the copy staged it
 	// from — the definition is read there too, since the copy wrote both from
 	// that one commit — and carries the staged context with it. An entry that
@@ -495,6 +508,13 @@ func (t *catalogCheckTarget) submit(ctx context.Context, e config.Entry, r catal
 		Definition:     gcp.CatalogDefinition{SourceCommit: commit, Generation: ev.definitionGeneration, SHA256: ev.definitionSHA256},
 		ServiceAccount: gcp.BuildIdentityEmail(t.gcpProject), MachineType: t.spec.MachineType,
 		Bucket: "gs://" + t.bucket.GCSName,
+		// The entry's credential step asks the installation's credentials
+		// service for the git credential it clones with (IS8, D3330), exactly
+		// as the repository this job checks asks for its own (imagecheck.go's
+		// rebuildSubmission): the address is the job's own environment's, and a
+		// job that names none submits no rebuild — the spec is refused before
+		// the build is paid for.
+		CredentialsServiceURL: service,
 		// The rebuild records the template it ran, which is this job's own: the
 		// entry it rebuilds stops firing the template trigger (F33, D1402).
 		TemplateSalt: gcp.TemplateSalt(Version),
