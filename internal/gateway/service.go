@@ -1330,7 +1330,7 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 			"fugaro: the credentials service has no credential available before "+ex.ResetAt.UTC().Format(time.RFC3339))
 		return http.StatusServiceUnavailable, true, "", nil
 	case ErrorStateUnavailable:
-		if s.wsModel && s.workspaceSlipHeld() {
+		if s.wsModel && s.workspaceSlipHeld() && wsRefusal == "" {
 			// R3, D2983: the workspace's service re-reads its roster on every
 			// call under its slip, and a roster it could not read is refused as
 			// the service being unable to read the state it must read — never as
@@ -1343,6 +1343,14 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 			// workspace that holds no slip made no roster read for this call to
 			// fail, so its refusal is the state the service could not read, the
 			// halt it always was, and the wait is not extended to it.
+			//
+			// An answer the workspace MARKED is not this refusal at all, and it
+			// halts below as it always did (workspace_refusal.go): the
+			// workspace's own cap, stop and settle reach a member as this same
+			// 503 state_unavailable, and each is a verdict about the call and
+			// not an outage. Waited for, one would spend the bound on a service
+			// that answered and then halt naming the roster with no marker on
+			// it — losing the fact the halt is read for (D2022's O19).
 			//
 			// The clock is put back, because this refusal is the outage itself
 			// and not an answer that ends it: a bound re-armed by every refusal
