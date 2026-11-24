@@ -287,6 +287,27 @@ func TestPlanRigor(t *testing.T) {
 		}
 	})
 
+	t.Run("an empty block lowers a project-wide area", func(t *testing.T) {
+		// The entry the empty block leaves behind is the project's own answer
+		// for this repository, and D3294 reads it above a rule that is in
+		// effect for every repository through its Match alone — where the block
+		// set no level at all and that rule decided. The paths the rule covers
+		// therefore move down to the level the entry carries, and R5 owes them
+		// a line: the probe has to look at the project-wide globs too.
+		got := planRigor(t, Project{Layer: layerTree(t, `defaults:
+  rigor:
+    default: startup
+    areas:
+      - name: docs
+        match: docs/**
+        level: critical
+`)}, []Repo{repoWith(t, "acme/app", "rigor:\n")})
+		wantLine(t, got, "acme/app: docs/** critical -> startup")
+		if n := len(got.Lines); n != 2 {
+			t.Errorf("Lines = %v, want the move and the one path whose level it changes", got.Lines)
+		}
+	})
+
 	t.Run("a raise named", func(t *testing.T) {
 		// The moved rule and an existing project area naming this repository
 		// now sit at one rank, where the strictest wins: the path rises from

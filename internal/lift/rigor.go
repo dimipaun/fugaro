@@ -423,10 +423,11 @@ const probePath = "fugaro-lift-probe"
 //
 // The paths compared are the ones that can decide differently, one per rule
 // that can be in effect for this repository: a path inside each moved rule's
-// match, a path inside each glob a project area names this repository at, and
-// one probe for the paths no rule covers. Nothing else can move: a
-// project-wide area is read at the same rank before and after, and every rule
-// of the repository's own file is one of the moved ones.
+// match, a path inside each glob a project area names this repository at, a
+// path inside each project-wide rule's match — an entry this item writes
+// outranks it, where the repository's own file outranked it before — and one
+// probe for the paths no rule covers. Nothing else can move: every rule of the
+// repository's own file is one of the moved ones.
 func levelChangeLines(repo string, before, after rigor.Config, projectAreas, moved []rigor.Area) []string {
 	var out []string
 	for _, p := range probePaths(repo, projectAreas, moved) {
@@ -598,6 +599,14 @@ func probePaths(repo string, projectAreas, moved []rigor.Area) []probe {
 		add(a.Match, []string{samplePath(a.Match)})
 	}
 	for _, a := range projectAreas {
+		// A rule's Match is in effect for every repository of the project, this
+		// one included (LD4), and it keeps a rank below the project's entry for
+		// the repository: a path it covers decides differently once the entry
+		// is there, which is what an empty block's entry is — the block set no
+		// level at all, and the rule decided.
+		if m := a.Match; strings.TrimSpace(m) != "" {
+			add(m, []string{samplePath(m)})
+		}
 		for _, m := range a.Members {
 			if m.Repo != repo {
 				continue
