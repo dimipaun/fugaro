@@ -383,6 +383,11 @@ elif sub == ("storage", "buckets", "list"):
         # without it by another, and the check looks for both forms.
         emit(state_get("bucket") if mode != "bucket-name-bare" else state_get("bucket").replace("gs://", ""))
 elif sub == ("storage", "buckets", "describe"):
+    if mode == "bucket-describe-fails":
+        # A describe fails the same way for a bucket that is gone and for a
+        # session that expired, which is why the check may read it as neither
+        # "mine" nor "somebody else's".
+        die("storage.buckets.get was refused: the session has expired")
     if mode == "bucket-other-label":
         emit("somebody-elses-nonce")
     else:
@@ -1148,6 +1153,15 @@ test_happy_path() {
   expect_contains "$calls" "--member=serviceAccount:fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com --role=roles/storage.objectCreator" "happy path: objectCreator, on the bucket, for the throwaway account"
   expect_contains "$calls" "storage cat gs://fugaro-dev-chk195-" "happy path: the step's own line is read out of the object"
   expect_contains "$calls" "storage buckets delete gs://fugaro-dev-chk195-" "happy path: the bucket is deleted again"
+  # ... and only after its label is read: the record of creating it is written
+  # before the create returns, so the Restore may not go by the record alone.
+  local label_line bucket_delete_line
+  label_line=$(grep -n 'storage buckets describe' "$dir/logs/gcloud.calls" | head -n 1 | cut -d: -f1)
+  bucket_delete_line=$(grep -n 'storage buckets delete' "$dir/logs/gcloud.calls" | head -n 1 | cut -d: -f1)
+  [ -n "$label_line" ] && [ -n "$bucket_delete_line" ] && [ "$label_line" -lt "$bucket_delete_line" ] \
+    || fail "happy path: the bucket's label must be read before it is deleted (label at $label_line, delete at $bucket_delete_line)"
+  expect_contains "$calls" "storage buckets describe gs://fugaro-dev-chk195-" "happy path: the bucket's own label is read out of a describe"
+  expect_contains "$calls" "--format=value(labels.chk195)" "happy path: the label read is this run's own label"
   expect_contains "$out" "FACT line-bucket: PASS" "happy path: the bucket row"
   expect_contains "$out" "FACT line-object: PASS" "happy path: the line came out of the object"
   expect_contains "$out" "gcloud storage cat gs://fugaro-dev-chk195-" "happy path: the row names the one command the reading is"
@@ -1612,6 +1626,44 @@ test_a_service_that_cannot_be_deleted_is_a_failure() {
   if [ -d "$scratch" ]; then fail "leftover: the scratch directory survived"; fi
 }
 
+# The label is the Restore's gate, and not only the failed-create path's: the
+# record of creating the bucket is written before the create returns, so an
+# interrupt in that window leaves a record with no bucket of this run's behind it
+# — and a bucket of that NAME can be somebody else's. Here the bucket does not
+# carry this run's label, so the Restore must leave it alone, say so, and not tell
+# the owner to delete a stranger's bucket.
+test_a_bucket_that_is_not_this_runs_is_left_alone() {
+  local dir=$work/bucketother
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=bucket-other-label
+  expect_status "$status" 0 "not this run's bucket: the verdict (nothing of this check's is left)"
+  expect_contains "$out" "FACT line-bucket: PASS" "not this run's bucket: the check's own bucket row"
+  expect_contains "$out" "FACT bucket-deleted: PASS" "not this run's bucket: the row"
+  expect_contains "$out" "does not carry this run's own label chk195=" "not this run's bucket: why it was left"
+  expect_contains "$out" "this check deletes only its own" "not this run's bucket: the rule"
+  expect_absent "$out" "delete it by hand with gcloud storage buckets delete" "not this run's bucket: the owner is never told to delete somebody else's bucket"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "storage buckets delete" "not this run's bucket: no delete was issued at all"
+  expect_contains "$out" "FACT restore: PASS" "not this run's bucket: the Restore row"
+  expect_absent "$out" "everything this check created was deleted and READ BACK: the service (and the invoker binding with it), the bucket" "not this run's bucket: the Restore row does not claim the bucket was deleted"
+  expect_contains "$out" "was NOT deleted and is not this check's" "not this run's bucket: the Restore row says which one was left"
+}
+
+# And the third state: a describe that FAILED is not the answer "it is not mine".
+# Read as `other`, the bucket would be left behind silently and reported as
+# somebody else's; the row has to FAIL and name the by-hand check instead.
+test_a_bucket_whose_label_cannot_be_read_is_not_deleted() {
+  local dir=$work/bucketunread
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=bucket-describe-fails
+  expect_status "$status" 1 "unreadable label: the verdict"
+  expect_contains "$out" "FACT bucket-deleted: FAIL" "unreadable label: the row"
+  expect_contains "$out" "carries this run's own label chk195=" "unreadable label: what could not be read"
+  expect_contains "$out" "gcloud storage buckets describe gs://fugaro-dev-chk195-" "unreadable label: how to read it by hand"
+  expect_contains "$out" "delete the bucket yourself only if it carries that label" "unreadable label: the by-hand delete is guarded by the label"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "storage buckets delete" "unreadable label: no delete was issued at all"
+  expect_contains "$out" "FACT restore: FAIL" "unreadable label: the Restore row"
+}
+
 # The other half of the same rule: the project-level binding has to be removed
 # BEFORE the account is deleted, because a binding that outlives its member reads
 # back as deleted:serviceAccount:... and can never be removed again.
@@ -1726,6 +1778,8 @@ t test_a_logwriter_grant_that_does_not_land_is_reported
 t test_a_grant_for_a_not_yet_visible_account_is_retried
 t test_a_grant_that_fails_stops_before_the_build
 t test_a_service_that_cannot_be_deleted_is_a_failure
+t test_a_bucket_that_is_not_this_runs_is_left_alone
+t test_a_bucket_whose_label_cannot_be_read_is_not_deleted
 t test_an_account_that_cannot_be_deleted_is_a_failure
 t test_never_belong
 

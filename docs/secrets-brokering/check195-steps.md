@@ -147,7 +147,11 @@ worth knowing by name:
   `restore`) — every one of the four is **read back**, and a FAILed row names what is left, what the last refusal
   said and the exact command to remove it. The bucket is deleted **before** the account, and the
   project-level binding **before** it too, on purpose: a binding that outlives its member reads back
-  as `deleted:serviceAccount:…` and can never be removed again. Those two writes are ordered and IAM's consistency can still put them out of
+  as `deleted:serviceAccount:…` and can never be removed again. The bucket is deleted only when its
+  own `chk195=<nonce>` label says it is this run's — the Restore reads that label itself, because the
+  record of creating the bucket is written before the create call returns — so a bucket of that name
+  that is not this run's is left alone (row `bucket-deleted: PASS`, saying so), and one whose label
+  cannot be read is left alone **and FAILed**, with the label read to run by hand. Those two writes are ordered and IAM's consistency can still put them out of
   order, so the account deletion re-reads the policy and is **retried** (up to six times). The owner's
   run of 2026-11-24 came back with the account still there, and **what its refusal said was not
   captured**: either cause fits, a delete refused as *still referenced by a policy binding* in the

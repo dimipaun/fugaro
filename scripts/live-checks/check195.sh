@@ -350,8 +350,11 @@ delete_account_retrying() {
 # removed BEFORE the account, because a binding that outlives its member reads
 # back as `deleted:serviceAccount:...` and could never be removed again. It runs
 # from the exit trap too, so a Ctrl-C in the middle still leaves nothing behind.
-# The bucket is deleted only when this run's own record of creating it is there,
-# and the record is only kept when the bucket carries this run's own label.
+# The bucket is deleted only when this run's own record of creating it is there
+# AND the bucket's own label says it is this run's: the record is written before
+# the create returns, so an interrupt in that window leaves a record beside a
+# bucket of that NAME that can be somebody else's. A bucket whose label cannot be
+# read is left alone and reported, never read as somebody else's.
 restore_run() {
   if [ ! -f "$SERVICE_MINE" ] && [ ! -f "$ACCOUNT_MINE" ] && [ ! -f "$BUCKET_MINE" ]; then
     fact restore PASS "nothing of this check's was created, so there is nothing to delete"
@@ -370,13 +373,30 @@ restore_run() {
   if [ -f "$SERVICE_MINE" ]; then
     gcloud run services delete "${SVC:?}" --project="${P:?}" --region="${L:?}" --quiet >&2 || true
   fi
+  local bucket_own="" bucket_deleted=no
   if [ -f "$BUCKET_MINE" ]; then
-    # Deleted BEFORE the account below, so the bucket's own
-    # roles/storage.objectCreator binding goes with it: a binding that outlives its
-    # member reads back as deleted:serviceAccount:... and could never be removed.
-    # The object the step wrote — the whole reason the bucket existed — goes with
-    # the bucket.
-    gcloud storage buckets delete "gs://${BUCKET:?}" --quiet >&2 || true
+    # The label is read HERE as well as after a failed create: the record is
+    # written before the create call returns, so an interrupt in that window
+    # leaves a record with no bucket of this run's behind it — and a bucket of
+    # that NAME can be somebody else's. Only a bucket carrying this run's own
+    # label is ever deleted, whatever the record says. Deleted BEFORE the account
+    # below, so the bucket's own roles/storage.objectCreator binding goes with it:
+    # a binding that outlives its member reads back as deleted:serviceAccount:...
+    # and could never be removed. The object the step wrote — the whole reason the
+    # bucket existed — goes with the bucket.
+    bucket_own=$(bucket_owner_state)
+    case "$bucket_own" in
+    mine)
+      gcloud storage buckets delete "gs://${BUCKET:?}" --quiet >&2 || true
+      bucket_deleted=yes
+      ;;
+    other)
+      owner "not deleting gs://${BUCKET}: it does not carry this run's own label chk195=${BUCKET_NONCE}, so it is not this run's bucket"
+      ;;
+    *)
+      owner "not deleting gs://${BUCKET}: whether it carries this run's own label chk195=${BUCKET_NONCE} could not be read"
+      ;;
+    esac
   fi
   # Attempted whenever this run created anything at all, and NOT only when the
   # grant call came back: a Ctrl-C during that call reaches gcloud too, so a
@@ -408,6 +428,13 @@ restore_run() {
   fi
   if [ ! -f "$BUCKET_MINE" ]; then
     fact bucket-deleted PASS "this run created no bucket, so there is none to delete"
+  elif [ "$bucket_deleted" != yes ]; then
+    if [ "$bucket_own" = other ]; then
+      fact bucket-deleted PASS "gs://${BUCKET} was NOT deleted, and deliberately: it does not carry this run's own label chk195=${BUCKET_NONCE}, so it is not this run's bucket — a create that was refused because somebody else holds that name leaves this run's record behind with no bucket of its own, and this check deletes only its own. Nothing of this check's is in it"
+    else
+      left="$left whether the bucket gs://${BUCKET} is this run's;"
+      fact bucket-deleted FAIL "whether gs://${BUCKET} carries this run's own label chk195=${BUCKET_NONCE} could not be read — the describe failed with $(last_lines "$SCRATCH/bucket-owner.err") — so it was NOT deleted and nothing is claimed about it: read the label with gcloud storage buckets describe gs://${BUCKET} --format=value(labels.chk195) and delete the bucket yourself only if it carries that label"
+    fi
   elif [ "$bst" = not-there ]; then
     fact bucket-deleted PASS "gs://${BUCKET}, the line the step wrote into it and the roles/storage.objectCreator binding beside it are gone (read back by a listing)"
   elif [ "$bst" = there ]; then
@@ -440,7 +467,14 @@ restore_run() {
     ;;
   esac
   if [ -z "$left" ]; then
-    fact restore PASS "everything this check created was deleted and READ BACK: the service (and the invoker binding with it), the bucket (and with it the object the step wrote its one line into and the bucket-level roles/storage.objectCreator binding), the project-level roles/logging.logWriter binding, and the account. The only thing this run leaves in ${P} is the build's own RECORD, in Cloud Build's history: it is the project's log of what ran, not a resource this check made"
+    local gone="the service (and the invoker binding with it), the project-level roles/logging.logWriter binding, and the account"
+    local kept=""
+    if [ "$bucket_deleted" = yes ]; then
+      gone="the service (and the invoker binding with it), the bucket (and with it the object the step wrote its one line into and the bucket-level roles/storage.objectCreator binding), the project-level roles/logging.logWriter binding, and the account"
+    elif [ -f "$BUCKET_MINE" ]; then
+      kept=" gs://${BUCKET} was NOT deleted and is not this check's: it does not carry this run's own label, and this check deletes only its own bucket"
+    fi
+    fact restore PASS "everything this check created was deleted and READ BACK: ${gone}.${kept} The only thing this run leaves in ${P} is the build's own RECORD, in Cloud Build's history: it is the project's log of what ran, not a resource this check made"
   else
     fact restore FAIL "the Restore did not finish:$left delete it by hand from one of the rows above. (The build's own record in Cloud Build's history is left on purpose: it is the project's log of what ran)"
   fi
@@ -636,15 +670,24 @@ bucket_state() {
   fi
 }
 
-# bucket_owner_state: who the bucket this run created says it belongs to — the
-# label this run wrote at creation, or `other` for a bucket of the same name that
-# does not carry it. A bucket name is global, so a create that reported failure can
-# have been refused because SOMEBODY ELSE holds that name: the label is what keeps
-# the Restore from deleting a stranger's bucket.
+# bucket_owner_state: who the bucket this run created says it belongs to — `mine`
+# for the label this run wrote at creation, `other` for a bucket of the same name
+# that does not carry it, and `unreadable` for a describe that FAILED. A bucket
+# name is global, so a create that reported failure can have been refused because
+# SOMEBODY ELSE holds that name: the label is what keeps the Restore from deleting
+# a stranger's bucket, and it is read there as well as after a failed create. The
+# third state is the one the two probes above already have, and for the same
+# reason: a failed call is not the answer "it is not mine". Read as `other`, it
+# would leave this run's own bucket behind and report it as somebody else's — the
+# mirror image of deleting a stranger's.
 bucket_owner_state() {
-  local out
-  out=$(gcloud storage buckets describe "gs://${BUCKET:?}" --format='value(labels.chk195)' 2>/dev/null \
-    | tr -d '\r' | grep -v '^$' | head -n 1 || true)
+  local out rc=0
+  out=$(gcloud storage buckets describe "gs://${BUCKET:?}" --format='value(labels.chk195)' 2>"$SCRATCH/bucket-owner.err") || rc=$?
+  if [ "$rc" != 0 ]; then
+    printf 'unreadable'
+    return 0
+  fi
+  out=$(printf '%s' "$out" | tr -d '\r' | grep -v '^$' | head -n 1 || true)
   if [ "$out" = "$BUCKET_NONCE" ]; then printf 'mine'; else printf 'other'; fi
 }
 
@@ -664,6 +707,9 @@ step_line_bucket() {
     case "$(bucket_owner_state)" in
     mine)
       stop "the bucket create reported failure, but gs://${BUCKET} IS there with this run's own label ${BUCKET_NONCE}, so it is this check's: the record says so and this run's Restore deletes it. Nothing else ran. What gcloud said: $(last_lines "$create_err")"
+      ;;
+    unreadable)
+      stop "the bucket create reported failure and whether gs://${BUCKET} is this run's cannot be read (the label describe failed) — and a create that reported failure may still have created it, so the record of it is KEPT: this run's Restore reads the label again and deletes only a bucket that carries chk195=${BUCKET_NONCE}. Check it by hand with 'gcloud storage buckets describe gs://${BUCKET} --format=value(labels.chk195)' and delete it yourself only if it carries that label. What gcloud said: $(last_lines "$create_err")"
       ;;
     *)
       # Either no bucket of that name at all — the ordinary refusal — or one that
