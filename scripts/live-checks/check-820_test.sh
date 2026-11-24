@@ -19,7 +19,9 @@
 #     file — and the three Realtime Database hosts' answers (U8).
 #   * FUGARO as the installation's own commands: `setup --location eu` (the run
 #     this check is about), `doctor --json`'s locations row (the record's only
-#     reader), `run`, `runs ls` and `budget show`, each with the flags the real
+#     reader), `run` (which records the directory it was called in, so a case
+#     says the launch is made from the checkout and not from wherever the check
+#     was started), `runs ls` and `budget show`, each with the flags the real
 #     command has and nothing else.
 #
 # The cases are the readings bent one at a time: a project that is not there,
@@ -32,8 +34,11 @@
 # read, a registry that is empty or elsewhere, a container replicated
 # automatically or outside the region or not readable, a log bucket that is not
 # there or not in the region, a host that answers something the key service
-# cannot read, a launch that refuses, a run the runs bucket does not hold, a
-# budget read that fails, and every guard.
+# cannot read — a status it does not recognise, and a body that only mentions a
+# missing entity, which its wording does not cover — and a host whose body is
+# one of the two phrases it does, on a status that is neither 401/403 nor 404,
+# a checkout the launch is made from, a launch that refuses, a run the runs
+# bucket does not hold, a budget read that fails, and every guard.
 #
 # Usage: bash scripts/live-checks/check-820_test.sh
 set -euo pipefail
@@ -336,7 +341,7 @@ esac
 case "$key" in
 setup) val="--location --gcp-project --name --rigor"; boolf="--bake-repos" ;;
 doctor) val="--project"; boolf="--json" ;;
-run) val="--project --title --task-file"; boolf="--json" ;;
+run) val="--repo --project --title --task-file"; boolf="--json" ;;
 "runs ls") val="--project --limit"; boolf="--json" ;;
 "budget show") val="--project"; boolf="--json" ;;
 *)
@@ -398,6 +403,7 @@ doctor)
   ;;
 run)
   must run.status run
+  printf '%s' "$PWD" >"$dir/run.cwd"
   cat "$dir/run.json"
   ;;
 "runs ls")
@@ -504,7 +510,8 @@ test_the_happy_path() {
   # The run the check is about, and the four reads it makes of it.
   expect_count "$dir/CALLS" "fugaro setup --location eu --gcp-project chk820p --name chk820 --rigor poc --bake-repos" 1 "the happy path"
   expect_count "$dir/CALLS" "fugaro doctor --json --project chk820" 1 "the happy path"
-  expect_count "$dir/CALLS" "fugaro run --project chk820 --title Check 820: a first EU installation --task-file" 1 "the happy path"
+  expect_count "$dir/CALLS" "fugaro run --repo $PWD --project chk820 --title Check 820: a first EU installation --task-file" 1 "the happy path"
+  [ "$(cat "$dir/run.cwd" 2>/dev/null)" = "$PWD" ] || fail "the happy path: 'fugaro run' was launched from '$(cat "$dir/run.cwd" 2>/dev/null)' and not from the checkout '$PWD'"
   expect_count "$dir/CALLS" "fugaro runs ls --json --project chk820 --limit 5" 1 "the happy path"
   expect_count "$dir/CALLS" "fugaro budget show --json --project chk820" 1 "the happy path"
   # Every located thing is read from the cloud itself, not only from the record.
@@ -883,6 +890,47 @@ test_a_host_that_answers_nothing_the_key_service_reads_is_a_finding() {
   expect_contains "$out" "default-rtdb.europe-west1.firebasedatabase.app answered 500" "a host that answers 500"
 }
 
+test_a_body_that_only_mentions_a_missing_entity_is_a_finding() {
+  case_dir host_not_found
+  # The key service reads this answer as a host that did NOT answer: its
+  # "missing database" wording is the database's own two phrases, and a body
+  # that merely says an entity was not found is neither of them.
+  printf '{"error":{"code":404,"message":"Requested entity was not found."}}\n' \
+    >"$dir/host.chk820p-default-rtdb.europe-west1.firebasedatabase.app"
+  printf '200' >"$dir/host.chk820p-default-rtdb.europe-west1.firebasedatabase.app.code"
+  run820
+  expect_status "$status" 1 "a body that only mentions a missing entity"
+  expect_row "$out" hosts FAIL "a body that only mentions a missing entity"
+  expect_contains "$out" 'default-rtdb.europe-west1.firebasedatabase.app answered 200 ({"error":{"code":404,"message":"Requested entity was not found."}})' "a body that only mentions a missing entity"
+  expect_contains "$out" "a host that DID NOT ANSWER" "a body that only mentions a missing entity"
+}
+
+test_a_body_saying_no_such_database_is_no_database() {
+  case_dir host_no_such
+  # The fallback LP15's read has beside the status code: the phrase, on a
+  # status that is neither 401/403 nor 404.
+  printf '{"error":"no such database"}\n' >"$dir/host.chk820p-default-rtdb.asia-southeast1.firebasedatabase.app"
+  printf '400' >"$dir/host.chk820p-default-rtdb.asia-southeast1.firebasedatabase.app.code"
+  run820
+  expect_status "$status" 0 "a body saying no such database"
+  expect_row "$out" hosts PASS "a body saying no such database"
+  expect_contains "$out" 'default-rtdb.asia-southeast1.firebasedatabase.app: no database at this host ({"error":"no such database"})' "a body saying no such database"
+}
+
+test_the_run_launches_from_the_checkout() {
+  case_dir run_repo
+  mkdir -p "$dir/repo"
+  run820 --repo "$dir/repo"
+  expect_status "$status" 0 "the run launches from the checkout"
+  expect_row "$out" run PASS "the run launches from the checkout"
+  # The checkout the owner named is the one the launch is made from, and the
+  # one it names: `fugaro run` resolves the repository from where it is
+  # called.
+  expect_count "$dir/CALLS" "fugaro run --repo $dir/repo --project chk820 --title Check 820: a first EU installation --task-file" 1 "the run launches from the checkout"
+  [ "$(cat "$dir/run.cwd" 2>/dev/null)" = "$dir/repo" ] ||
+    fail "the run launches from the checkout: 'fugaro run' ran in '$(cat "$dir/run.cwd" 2>/dev/null)' and not in '$dir/repo'"
+}
+
 test_a_launch_that_refuses_is_a_finding() {
   case_dir launch_refused
   printf '1' >"$dir/run.status"
@@ -1015,6 +1063,9 @@ t test_a_container_whose_replication_cannot_be_read_is_a_finding
 t test_a_log_bucket_that_is_not_there_is_unverified
 t test_a_log_bucket_in_the_wrong_place_is_a_finding
 t test_a_host_that_answers_nothing_the_key_service_reads_is_a_finding
+t test_a_body_that_only_mentions_a_missing_entity_is_a_finding
+t test_a_body_saying_no_such_database_is_no_database
+t test_the_run_launches_from_the_checkout
 t test_a_launch_that_refuses_is_a_finding
 t test_a_runs_read_that_fails_is_a_finding
 t test_a_run_the_bucket_does_not_hold_is_a_finding

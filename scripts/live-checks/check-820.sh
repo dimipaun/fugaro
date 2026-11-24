@@ -287,7 +287,7 @@ What it would do, in order:
                host, europe-west1's and asia-southeast1's
                -> U8: each answer is recorded, and only an answer the key service could read as neither
                an installation nor an absence of one is a finding.
-  run          fugaro run --project $NAME --title <title> --task-file <scratch task> --json
+  run          (cd $REPO && fugaro run --repo $REPO --project $NAME --title <title> --task-file <scratch task> --json)
                fugaro runs ls --json --project $NAME --limit 5
                fugaro budget show --json --project $NAME
                fugaro runs show <run> --json --project $NAME
@@ -510,18 +510,31 @@ probe_host() { # probe_host <url> <body-file>
   curl -sS --max-time 20 -o "$2" -w '%{http_code}' "$1" 2>"$2.err" || printf '000'
 }
 
-# answer_shape BODY STATUS prints the shape of one host's answer in the words
-# LP15's read uses, and nothing for an answer it does not recognise.
+# answer_shape BODY STATUS prints the shape of one host's answer in the exact
+# words LP15's read uses, and nothing for an answer it does not recognise: a
+# locked database (401/403) is an installation, a 404 or the database's own
+# "no such database" / "database not found" is this host holding none, and
+# anything else is a host that did NOT answer — the service reads it as
+# errProbeUnreachable and the whole probe fails (ee/keyservice/workspaces.go).
+# Nothing wider is matched: a body that merely mentions a missing entity is
+# still an answer the service cannot read.
 answer_shape() { # answer_shape <body-file> <status>
-  local said
+  local said low
   said=$(printf '%s' "$(head -c 400 "$1" 2>/dev/null)" | tr '\n\r\t' '   ')
+  low=$(printf '%s' "$said" | tr 'A-Z' 'a-z')
   case "$2" in
-  401 | 403) printf 'a locked database (an installation answers here)' ;;
-  404) printf 'no database at this host' ;;
-  *)
-    if printf '%s' "$said" | grep -qi 'not find\|no such\|does not exist\|not exist'; then
-      printf 'no database at this host (%s)' "$(one_line "$said")"
-    fi
+  401 | 403)
+    printf 'a locked database (an installation answers here)'
+    return 0
+    ;;
+  404)
+    printf 'no database at this host'
+    return 0
+    ;;
+  esac
+  case "$low" in
+  *"no such database"* | *"database not found"*)
+    printf 'no database at this host (%s)' "$(one_line "$said")"
     ;;
   esac
 }
@@ -803,9 +816,10 @@ step_logbucket() {
 
 # step_hosts is U8's own reading: what each of the three Realtime Database
 # hosts answers for a database that lives in the EU. LP15's read treats a
-# locked database (401/403) as an installation, "no such database" as this host
-# holding none, and anything else as a host that did not answer — so an answer
-# of the last kind is a finding, and every answer is recorded either way.
+# locked database (401/403) as an installation, a 404 or the body's own "no
+# such database" / "database not found" as this host holding none, and anything
+# else as a host that did not answer — so an answer of the last kind is a
+# finding, and every answer is recorded either way.
 step_hosts() {
   say "reading the three Realtime Database hosts (hosts)"
   local hosts host url status body shape shapes="" bad=""
@@ -845,7 +859,11 @@ Do not edit any file: there is nothing to change, and this run exists to prove
 that a first EU installation launches, leases budget and writes its history.
 TASK
   local rc=0 doc="$SCRATCH/run.json" run_id="" status=""
-  fugaro run --project "$NAME" --title 'Check 820: a first EU installation' --task-file "$task" --json >"$doc" 2>"$SCRATCH/run.err" || rc=$?
+  # Launched from the checkout the owner named: `fugaro run` resolves the
+  # repository from where it is called (and takes the path here too), so a run
+  # launched from wherever the check happened to be started would not be a run
+  # of the checkout the installation is onboarded to.
+  (cd "$REPO" && fugaro run --repo "$REPO" --project "$NAME" --title 'Check 820: a first EU installation' --task-file "$task" --json) >"$doc" 2>"$SCRATCH/run.err" || rc=$?
   run_id=$(jget "$doc" run_id)
   status=$(jget "$doc" status)
   if [ "$rc" -ne 0 ] || [ -z "$run_id" ]; then
