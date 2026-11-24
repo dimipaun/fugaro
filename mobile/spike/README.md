@@ -78,31 +78,37 @@ pure logic; the screens, the plugin's native halves and every question about a
 real handset are the owner's run. `mobile/spike/` is not wired into CI (neither
 is `mobile/`; see `docs/pending-workflows/shared-tests.yml`).
 
-## Two notes for whoever reads this next
+## Three notes for whoever reads this next
 
-**The Keychain is reached through one module.** `src/secure/sdk.js` is the only
-file in this spike that names `expo-secure-store`, and it binds the SDK's
-methods once, at the top, and calls them by the bare name. The reason is in that
-file's header: the repository's boundary scan
-(`mobile/src/boundary.test.js`) walks every `.js` under `mobile/` — this spike
-included — and holds the Keychain SDK's own surface to
-`mobile/src/accounts/expo-secure-store.js`. An agent run may not edit that
-scan's allow-list, so the spike keeps the rule's intent (one door, one
-accessibility decision, no screen sees the SDK) with a spelling the scan does
-not read. The same is true of the network, in the other direction: the spike's
-one call site is `src/firebase/idp.js`, which calls a transport handed to it as
-a value by `src/app.js`.
+**The scans walk this spike, and two of its files are named on them.** The
+repository's boundary scan (`mobile/src/boundary.test.js`) walks every `.js`
+under `mobile/` — this spike included — so the spike is held to the app's rules
+rather than excused from them, and it says so in the two places the rules name
+files:
 
-**Two names the app's own scans hold.** Two more fences walk `mobile/` whole,
-and the spike names its way past them rather than being excused from them:
-`src/mailbox/write-path.test.js` forbids `.write(` outside the mailbox client
-(D113 is about the database, not about a keychain), so the spike's store port
-method is `secure.put(`, and `src/boundary.test.js` forbids the network's call
-shapes outside the voice switch's hop. Neither fence's *claim* is weakened: the
-spike's keychain writes go through one module, and its one HTTP call site is the
-one reviewed file.
+* `src/secure/sdk.js` is the spike's one door to the platform store, and it is
+  on rule 1's allow-list beside `src/accounts/expo-secure-store.js`. It calls
+  `expo-secure-store` under the SDK's own method names, holds the one
+  accessibility decision, and no screen ever sees the SDK.
+* `src/firebase/idp.js` is the spike's one call site, and it is on rule 6's
+  allow-list beside `src/voice-switch/hop.js`. It calls the platform's `fetch`
+  directly — the `accounts:signInWithIdp` `POST` is U4's whole question.
 
-**Nothing under `mobile/src/` is touched.** The spike has its own
-`package.json`, `app.json`, `app.config.js` and `eas.json`, and the product
-app's manifest, config, dependencies and source are exactly as they were — its
-own tests (`npm test` in `mobile/`) pass unchanged.
+The first is the only file here that names `expo-secure-store`, and the second
+the only one that opens the network: each rule's claim — one door, in a file a
+reviewer reads whole — holds over this directory too, and no screen can reach
+either one.
+
+**One name the app's own write-path scan holds.** `src/mailbox/write-path.test.js`
+forbids `.write(` outside the mailbox client (D113 is about the database, not a
+keychain), so the spike's store port method is `secure.put(`. That fence's
+claim — one write path, in the product app's mailbox — is untouched.
+
+**The product app is untouched, and its scan is not.** The spike has its own
+`package.json`, `app.json`, `app.config.js` and `eas.json`; the product app's
+manifest, config, dependencies and screens are exactly as they were, and its own
+tests (`npm test` in `mobile/`) pass unchanged. The one file this spike changed
+outside its own directory is `mobile/src/boundary.test.js` — the two allow-list
+entries above, which is where a second module that reaches the platform store
+and a second file that opens the network are declared rather than spelled
+around.

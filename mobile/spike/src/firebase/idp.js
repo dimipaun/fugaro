@@ -36,6 +36,15 @@
 //  names the project and the rules decide), but it is the owner's project, so
 //  it is typed into the app's own settings field at run time, held in memory
 //  and never committed -- `README.md`, "What you type into the app".
+//
+//  **The one call site.** `signInWithIdp` below calls the platform's own
+//  `fetch`, and this file is the spike's only file that does: the repo's
+//  network rule (`mobile/src/boundary.test.js`, rule 6) walks every `.js` under
+//  `mobile/` and may open the network from `src/voice-switch/hop.js` and nowhere
+//  else, so this path is named on that allow-list rather than reached through a
+//  spelling the pattern does not read. The rule's claim is unchanged -- one
+//  file that talks to a third party is a file a reviewer reads whole -- and the
+//  list now carries the two.
 
 /** The endpoint, and the project the key in the query names is the identity project (D2781). */
 export const IDP_ENDPOINT =
@@ -156,15 +165,16 @@ function safeJson(text) {
 }
 
 /**
- * The exchange, over a transport the caller hands in (`http(url, init)`), so a
- * test drives the whole path with a fake and no device. The transport's throw
- * -- no network, a DNS failure -- is answered as a reading too, because "the
- * phone had no route to Firebase" is a thing Check 733 must be able to record.
+ * The exchange, over the platform's own `fetch` -- the call site the header
+ * names, which a test drives by replacing `globalThis.fetch` with a fake. The
+ * call's throw -- no network, a DNS failure -- is answered as a reading too,
+ * because "the phone had no route to Firebase" is a thing Check 733 must be
+ * able to record.
  */
-export async function signInWithIdp(http, request) {
+export async function signInWithIdp(request) {
   let response;
   try {
-    response = await http(request.url, { method: request.method, headers: request.headers, body: request.body });
+    response = await fetch(request.url, { method: request.method, headers: request.headers, body: request.body });
   } catch (error) {
     return { ok: false, httpStatus: null, error: { code: null, message: `the request could not be made: ${plainError(error)}` } };
   }

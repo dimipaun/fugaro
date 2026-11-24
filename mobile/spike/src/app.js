@@ -1,19 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
-// The spike's shell: four question tabs, one settings tab, and the two things
-// every screen is handed -- the settings in memory, and the network transport
-// (task M0; Check 733).
+// The spike's shell: five tabs, and the two things a screen is handed -- the
+// settings in memory, and the store port over the platform keychain (task M0;
+// Check 733).
 //
-// **The transport, and why it is a value.** The spike's one egress is the
-// `accounts:signInWithIdp` exchange in `src/firebase/idp.js`: `signInWithIdp`
-// takes the transport as its first argument and calls it, and this file is
-// where the platform's own is read off the global object and handed over. That
-// is deliberate on two counts. It is what makes the exchange testable with no
-// network at all -- the tests hand it a fake and a dead one -- and it is what
-// keeps the spike inside the repo's boundary rule for the app's network, whose
-// allow-list names `src/voice-switch/hop.js` and cannot be edited from a run:
-// the spike's single call site is the reviewed module that holds the one
-// endpoint, and no screen can open a second one. `README.md` says so too.
+// **The one egress.** The spike's only network call is the
+// `accounts:signInWithIdp` exchange, and it lives in `src/firebase/idp.js`,
+// which calls the platform's own `fetch`. That file is the spike's single call
+// site and is named on the repo's network rule for exactly that reason
+// (`mobile/src/boundary.test.js`), so no screen can open a second one.
 //
 // **No navigation dependency.** Five tabs are a piece of state and a row of
 // buttons, and a spike that added a router to draw them would be a spike whose
@@ -79,7 +74,7 @@ export function App() {
       </View>
       <View style={styles.body}>
         {tab === 'settings' ? <SettingsScreen settings={settings} onChange={setSettings} /> : null}
-        {tab === 'u4' ? <U4Screen settings={settings} http={globalThis.fetch} /> : null}
+        {tab === 'u4' ? <U4Screen settings={settings} /> : null}
         {tab === 'u5' ? <U5Screen settings={settings} secure={secure} /> : null}
         {tab === 'u7' ? <U7Screen settings={settings} /> : null}
         {tab === 'u10' ? <U10Screen settings={settings} secure={secure} /> : null}

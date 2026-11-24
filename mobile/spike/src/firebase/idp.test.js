@@ -109,21 +109,31 @@ test('a status that is not 200 is a refusal even with a clean body', () => {
   assert.equal(answer.error.message, '<html>forbidden</html>');
 });
 
-test('the exchange runs over the transport it is handed, and a dead network is a reading', async () => {
+test('the exchange runs over the platform fetch, and a dead network is a reading', async (t) => {
   const seen = [];
-  const http = async (url, init) => {
+  const real = globalThis.fetch;
+  // The call site is the platform's own `fetch` (`idp.js`, and the network
+  // rule's allow-list), so the fake is the global it calls.
+  t.after(() => {
+    globalThis.fetch = real;
+  });
+
+  globalThis.fetch = async (url, init) => {
     seen.push({ url, init });
     return { status: 200, text: async () => JSON.stringify({ providerId: 'microsoft.com', email: 'a@b.invalid' }) };
   };
-  const answer = await signInWithIdp(http, buildSignInWithIdp({ apiKey: KEY, provider: 'microsoft', idToken: TOKEN }));
+  const answer = await signInWithIdp(buildSignInWithIdp({ apiKey: KEY, provider: 'microsoft', idToken: TOKEN }));
   assert.equal(answer.ok, true);
   assert.equal(answer.providerId, 'microsoft.com');
   assert.equal(seen.length, 1);
   assert.equal(seen[0].url, `${IDP_ENDPOINT}?key=${KEY}`);
 
-  // ... and a transport that throws says so on the screen rather than taking
-  // the app down: an unreachable Firebase is a thing Check 733 records.
-  const dead = await signInWithIdp(async () => { throw new Error('Network request failed'); }, buildSignInWithIdp({ apiKey: KEY, provider: 'google', idToken: TOKEN }));
+  // ... and a fetch that throws says so on the screen rather than taking the
+  // app down: an unreachable Firebase is a thing Check 733 records.
+  globalThis.fetch = async () => {
+    throw new Error('Network request failed');
+  };
+  const dead = await signInWithIdp(buildSignInWithIdp({ apiKey: KEY, provider: 'google', idToken: TOKEN }));
   assert.equal(dead.ok, false);
   assert.equal(dead.httpStatus, null);
   assert.equal(dead.error.message, 'the request could not be made: Network request failed');

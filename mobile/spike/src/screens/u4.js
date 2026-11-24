@@ -66,7 +66,7 @@ function outcomeLine(result) {
   return `REFUSED (HTTP ${result.httpStatus ?? 'no answer'}): ${result.error?.message ?? 'no error text'}`;
 }
 
-export function U4Screen({ settings, http }) {
+export function U4Screen({ settings }) {
   const { clientIds } = settings;
   const [results, setResults] = useState({});
   const [held, setHeld] = useState([]);
@@ -94,7 +94,7 @@ export function U4Screen({ settings, http }) {
   }
 
   /**
-   * The exchange itself, over the transport the shell handed in. Every way it
+   * The exchange itself, over the platform fetch `idp.js` calls. Every way it
    * can fail -- no API key typed, no token, a dead network, a refusal -- lands
    * in the provider's own reading, so a screen never shows a pass it did not
    * get.
@@ -106,7 +106,6 @@ export function U4Screen({ settings, http }) {
     }
     try {
       const answer = await signInWithIdp(
-        http,
         buildSignInWithIdp({ apiKey: settings.apiKey, provider, idToken: token.idToken, nonce: token.nonce }),
       );
       record(provider, { ...answer, claims: token.claims, provider });
