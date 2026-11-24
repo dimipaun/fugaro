@@ -212,11 +212,18 @@ func (o *WorkspaceMemberOps) ReadMirror(ctx context.Context, m workspace.MemberT
 	return doc, nil
 }
 
-// WriteMirror writes the member's mirror document, conditional on doc.ETag. An
-// empty `people` list is a DELETE of the node (see this file's own doc): a member
-// this workspace no longer mirrors into.
+// WriteMirror writes the member's mirror document, conditional on doc.ETag. The
+// empty JSON object is the document that REMOVES the mirror — the write replaces
+// the whole node and the database prunes an empty one, so the node reads as the
+// absent key a member the workspace does not mirror into has (`workspace project
+// rm` writes it) — and everything else is read with the mirror's own reader
+// first, so a writer cannot store a document its own reader refuses.
 func (o *WorkspaceMemberOps) WriteMirror(ctx context.Context, m workspace.MemberTarget, doc workspace.MemberDoc, raw []byte) error {
-	if _, err := DecodeMemberMirror(raw); err != nil {
+	fields, err := mirrorObject(raw)
+	if err == nil && len(fields) > 0 {
+		_, err = DecodeMemberMirror(raw)
+	}
+	if err != nil {
 		return userErr("the mirror written to member project %s is not the document this writer reads at %s: %v. Nothing was written: the write replaces the whole node, and the member's own admins read it as the member list", safetext.Field(m.Project), workspace.PathMemberMirror, err)
 	}
 	db, err := o.memberDatabase(ctx, m)

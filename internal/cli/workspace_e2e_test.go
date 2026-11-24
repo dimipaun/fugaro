@@ -162,9 +162,18 @@ func wu21New(t *testing.T) *wu21World {
 	// The layer read of a selection opens the project's bucket; no test reaches a
 	// real one (TestMain refuses it) and nothing here publishes a layer.
 	settingsBucketAt(t)
+	// The save a `project rm` makes pushes with the owner's own git and GitHub
+	// CLI (D2807), so the two are the test's own on PATH, as WU15's tests put
+	// them: nothing of Fugaro's holds a token and no test reaches a host.
+	wu15FakeGit(t)
+	wu15FakeGH(t, "PRIVATE")
 
 	w.owner = w.writeConfig(t, wu21Workspace, wu21Workspace, w.wsdb.URL, "")
-	w.member = w.writeConfig(t, wu21Member, wu21Member, w.mbdb.URL, wu21Membership())
+	// The member's own config, which is the config the save before a removal is
+	// built from (WU15's writerFor loads the snapshot's own project's config):
+	// its membership, and the repository it designates for committed reports,
+	// which is what a save has to have somewhere to push to (D2750, D2824).
+	w.member = w.writeConfig(t, wu21Member, wu21Member, w.mbdb.URL, wu21Membership()+wu21CommitReports())
 
 	w.crm.AddOrganization(wu21Org)
 	w.crm.AddProject(wu21Workspace, 900000000001)
@@ -206,6 +215,12 @@ func wu21Membership() string {
 		"  issuer: " + localcfg.WorkspaceIssuer(wu21Workspace) + "\n" +
 		"  assertion_key: wu21-not-a-real-assertion-key\n" +
 		"  service_account: " + wu21WorkspaceSA + "\n"
+}
+
+// wu21CommitReports is the member's designation of a repository for committed
+// reports, which the save before its removal pushes the snapshot into.
+func wu21CommitReports() string {
+	return "reports_commit:\n  repo: acme/state\n  dir: docs/state\n"
 }
 
 // wu21RunsBucket is the member's own runs bucket, where its `fugaro update`

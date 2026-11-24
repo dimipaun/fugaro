@@ -929,8 +929,8 @@ func TestRmAdminRemovesBindingsAndQueuesGrants(t *testing.T) {
 	w.must("workspace", "user", "rm", "ada@example.com", "--admin", "--workspace", "workspace-alpha")
 
 	// The binding goes at once, and once.
-	if len(w.authority.removed) != 1 || w.authority.removed[0] != "ada@example.com" {
-		t.Fatalf("the bindings removed are %v, want ada@example.com once", w.authority.removed)
+	if len(w.authority.removed) != 1 || w.authority.removed[0] != "user:ada@example.com" {
+		t.Fatalf("the bindings removed are %v, want ada@example.com's own member once", w.authority.removed)
 	}
 	if len(w.authority.added) != 0 {
 		t.Errorf("the removal bound somebody: %v", w.authority.added)
@@ -1078,8 +1078,8 @@ func TestUserRmSelfAdminLeavesNoUnbackedEntry(t *testing.T) {
 			t.Errorf("the roster names %s as a workspace admin, and no live binding backs that entry", admin)
 		}
 	}
-	if len(w.authority.removed) != 1 || w.authority.removed[0] != "founder@example.com" {
-		t.Errorf("the bindings removed are %v, want the caller's own once", w.authority.removed)
+	if len(w.authority.removed) != 1 || w.authority.removed[0] != "user:founder@example.com" {
+		t.Errorf("the bindings removed are %v, want the caller's own member once", w.authority.removed)
 	}
 	if strings.Join(w.members.offboarded, "|") != "aurora founder@example.com" {
 		t.Errorf("the members offboarded are %v, want every one the workspace holds", w.members.offboarded)
