@@ -74,7 +74,12 @@ import type { SpawnLogWriter } from '../main/spawnlog'
 import type { OperationName, ValidatedArguments } from '../main/ipc'
 import { graphScopeIsNamed } from '../main/ipc'
 import { MAX_TEXT_INPUT_LENGTH } from '../shared/sanitize'
-import { licenceKeySupported, noApplySupported, orchestratorMapSupported } from '../shared/version'
+import {
+  licenceKeySupported,
+  noApplySupported,
+  orchestratorMapSupported,
+  planStatusNoMergesSupported,
+} from '../shared/version'
 import {
   SourceRefusal,
   refusalFrom,
@@ -83,6 +88,7 @@ import {
   NO_NAMED_SCOPE,
   NO_ORCHESTRATOR_MAP,
   NO_PLAN_CHECKOUT,
+  NO_PLAN_NO_MERGES,
   NO_ROADMAP_NODE,
   NO_ROADMAP_READ,
   NO_ROADMAP_RELEASE,
@@ -1977,12 +1983,24 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * directory is `src/main/ipc.ts`'s guarantee, stated there; this is the
      * other half, where the console refuses to guess one.
      *
+     * **The second precondition is the version floor on `--no-merges`** (IR4):
+     * the flag is newer than the oldest CLI this console supports, so an
+     * installation below `PLAN_STATUS_NO_MERGES_CLI_FLOOR` is refused with
+     * `NO_PLAN_NO_MERGES` before `resolve`, on `orchestratorMap`'s terms -- an
+     * older CLI handed the word answers `unknown flag: --no-merges` and fails
+     * the whole read, which is a failure the operator can do nothing about.
+     * `merges_read: false` is the contract's own answer for the read, so serving
+     * the merges-included document under this argument would be a screen told
+     * the merges were not read when they were.
+     *
      * The cadence is `PLAN_STATUS_MIN_INTERVAL_MS`, keyed by the binding *and*
      * the argv the arguments become (`--all` is a different document, not a
-     * wider one; `all: false` is the same argv as no `all`). The entry is the
-     * read itself, **in flight** as well as answered, so calls that arrive while
-     * the child runs share it rather than each spawning one, and a refused read
-     * holds the floor like an answered one. The `at` recorded is the clock
+     * wider one; `all: false` is the same argv as no `all`, and `--no-merges` is
+     * a third document -- the same canvas with no merge state read -- so it must
+     * not be served the merges-included read for up to a minute). The entry is
+     * the read itself, **in flight** as well as answered, so calls that arrive
+     * while the child runs share it rather than each spawning one, and a refused
+     * read holds the floor like an answered one. The `at` recorded is the clock
      * reading **after** the child finished, so the interval is a floor on the
      * time between two spawns rather than on the time between a spawn and the
      * next request.
@@ -1991,7 +2009,11 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
       const installation = deps.installation()
       if (installation === null) throw noInstallation()
       if (installation.checkout === undefined) throw new SourceRefusal(NO_PLAN_CHECKOUT)
-      const key = `${bindingKey(installation)}\u0000${args['all'] === true ? '--all' : ''}`
+      if (args['noMerges'] === true && !planStatusNoMergesSupported(installation.version ?? '')) {
+        throw new SourceRefusal(NO_PLAN_NO_MERGES)
+      }
+      const words = `${args['all'] === true ? '--all' : ''}\u0000${args['noMerges'] === true ? '--no-merges' : ''}`
+      const key = `${bindingKey(installation)}\u0000${words}`
       const cached = planReads.get(key)
       if (cached !== undefined && (cached.at === null || nowMs() - cached.at < PLAN_STATUS_MIN_INTERVAL_MS)) {
         return cached.reading

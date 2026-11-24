@@ -51,6 +51,7 @@ import {
   NO_APPLY_CLI_FLOOR,
   NOTICE_REASONS,
   ORCHESTRATOR_MAP_CLI_FLOOR,
+  PLAN_STATUS_NO_MERGES_CLI_FLOOR,
   RECIPES_CLI_FLOOR,
   REDUCED_VIEWS,
   RUNS_LIST_PAGE_CLI_FLOOR,
@@ -70,6 +71,7 @@ import {
   noApplySupported,
   orchestratorMapSupported,
   parseCliVersion,
+  planStatusNoMergesSupported,
   renderVersionSkew,
   runsListPageSupported,
   SEATS_CLI_FLOOR,
@@ -673,6 +675,47 @@ describe('orchestratorMapSupported', () => {
     }
     for (const line of ['0.32.0', '0.32.1', '0.33.0', '1.0.0', '0.32.0+build.7']) {
       expect(orchestratorMapSupported(line, floor), line).toBe(true)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The plan's `--no-merges` floor (the console-fixes plan's IR4, D3217 as
+// amended).
+// ---------------------------------------------------------------------------
+
+describe('planStatusNoMergesSupported', () => {
+  it('names no release, because no release carries `plan status --no-merges` yet', () => {
+    // **The same idiom as the orchestrator map's floor above**: the flag is on
+    // this tree -- IR2 of the indexed-reads plan added it
+    // (`internal/cli/plan_status.go`) and it is in no tag -- so the constant is
+    // `null`, and what a `null` means to a reader is the single read the console
+    // has always made rather than a version this console guessed at. A release
+    // that ships the flag sets this constant to its own version in a one-line
+    // pull request, and this case fails then, which is the point: the line that
+    // changes is the line a reviewer reads.
+    expect(PLAN_STATUS_NO_MERGES_CLI_FLOOR).toBeNull()
+    const source = readFileSync(join(__dirname, '..', '..', 'src', 'shared', 'version.ts'), 'utf8')
+    expect(source).toContain('export const PLAN_STATUS_NO_MERGES_CLI_FLOOR: string | null = null')
+  })
+
+  it('answers no for every version while the constant is unset, and is the patch comparison once one names itself', () => {
+    // The state this console is in: the Graph's first paint passes no
+    // `--no-merges` at all and the source refuses the argument, so an
+    // installation gets today's single read whatever its CLI is.
+    for (const line of ['0.30.0', '0.31.0', '1.0.0', 'dev', '']) {
+      expect(planStatusNoMergesSupported(line), line).toBe(false)
+    }
+    // ...and the branch a release takes: the constant becomes the version whose
+    // flag lands, and the comparison is `meetsCliFloor`'s -- below the floor is
+    // not supported however close, the floor itself and everything above it are,
+    // and a line that cannot be placed at all is not.
+    const floor = '0.33.0'
+    for (const line of ['0.32.9', '0.33.0-rc.1', 'dev', '']) {
+      expect(planStatusNoMergesSupported(line, floor), line).toBe(false)
+    }
+    for (const line of ['0.33.0', '0.33.1', '0.34.0', '1.0.0', '0.33.0+build.7']) {
+      expect(planStatusNoMergesSupported(line, floor), line).toBe(true)
     }
   })
 })

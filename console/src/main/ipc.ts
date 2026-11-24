@@ -1175,13 +1175,20 @@ export const CONSOLE_OPERATIONS = [
   // path"). `argvFor` builds every word of the argv from the spawn table, and no
   // row can emit `--dir` for this command.
   //
-  // **`all` and nothing else.** `--all` is the screen's own control: it lists
-  // the closed tasks (merged and cancelled) that the read otherwise counts per
-  // release. It is a boolean and never a string, so a payload cannot spell a
-  // flag with it, and the cloud flags (`--project`, `--config`) are the
-  // installation's, exactly as `runs ls` carries them -- never `--gcp-project`
-  // or `--region`, which are no part of this surface. There is no positional
-  // argument: `newPlanStatusCmd` is cobra's `NoArgs`.
+  // **`all` and `noMerges`, and nothing else.** `--all` is the screen's own
+  // control: it lists the closed tasks (merged and cancelled) that the read
+  // otherwise counts per release. `--no-merges` is the Graph tab's first paint
+  // (IR4 of the console-fixes plan, D3217 as amended): the read spawns no `gh`
+  // and answers `merges_read: false`, so the canvas does not wait for up to
+  // thirty-two forge lookups -- and it is held behind
+  // `PLAN_STATUS_NO_MERGES_CLI_FLOOR` (`src/shared/version.ts`), which no
+  // release names yet, so the source refuses the argument below it rather than
+  // handing an older CLI a flag it answers `unknown flag` for. Both are
+  // booleans and never strings, so a payload cannot spell a flag with either,
+  // and the cloud flags (`--project`, `--config`) are the installation's,
+  // exactly as `runs ls` carries them -- never `--gcp-project` or `--region`,
+  // which are no part of this surface. There is no positional argument:
+  // `newPlanStatusCmd` is cobra's `NoArgs`.
   {
     name: 'plan.status',
     method: 'planStatus',
@@ -1193,7 +1200,13 @@ export const CONSOLE_OPERATIONS = [
         key: 'all',
         kind: 'flag',
         required: false,
-        why: '`newPlanStatusCmd` has this flag, and it is the screen’s own control: it lists the tasks the read otherwise counts per release, which is narrower than the count the screen already has. It is the one argument this operation declares, and the design’s §5.1 table has not carried a row for the command yet.',
+        why: '`newPlanStatusCmd` has this flag, and it is the screen’s own control: it lists the tasks the read otherwise counts per release, which is narrower than the count the screen already has. The design’s §5.1 table has carried a row for the command since IR4.',
+      },
+      {
+        key: 'noMerges',
+        kind: 'flag',
+        required: false,
+        why: '`newPlanStatusCmd` has this flag (IR2 of the indexed-reads plan), and the Graph tab’s first paint is its one caller: the canvas is drawn from the read that spawns no `gh`, and the plain read follows as its own section to decorate the merged nodes. Below `PLAN_STATUS_NO_MERGES_CLI_FLOOR` the argument reaches no child at all.',
       },
     ],
   },

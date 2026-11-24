@@ -268,6 +268,7 @@ import {
   launchSupported,
   modelsListSupported,
   orchestratorMapSupported,
+  planStatusNoMergesSupported,
   runsListPageSupported,
   runsSummarySupported,
   seatsSupported,
@@ -3731,6 +3732,22 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * in-flight flag: the two are different reads of the same tab, and the
      * decoration must not hold up the plan's cadence. */
     decorating: boolean
+    /** merging is the merge section's own busy state (IR4): whether the plain
+     * `plan status --json --all` -- the same canvas, read with its merge state
+     * -- is outstanding. It is `decorating`'s rule for the third read of this
+     * tab: a flag of its own rather than the plan's, so the canvas is never held
+     * up by the merge lookups and a second merge read never starts over the
+     * first. **Nothing is marked on the panel for it**: the canvas is already
+     * painted and true, and its state changes colour when the answer lands. */
+    merging: boolean
+    /** mergeNotice is the sentence the merge read was refused with, kept apart
+     * from `notice` because the two are different states of this tab: `notice`
+     * is a **scope**'s refusal, drawn with the figures of the scope that
+     * answered, and this one is about the merge state of the plan scope's own
+     * canvas. A successful canvas read clears it (the merge read follows and
+     * says its own sentence, or none), and a successful merge read clears it
+     * too -- while the scope's sentence is not this read's to take down. */
+    mergeNotice: string | null
     /** watching is whether the console has a graph feed it must stop: it is set
      * at the subscribe and cleared when the stop is sent, so a tab that is left
      * does not send one stop per tick -- and, more to the point, so a feed that
@@ -3777,6 +3794,8 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     queuedToken: null,
     runs: [],
     decorating: false,
+    merging: false,
+    mergeNotice: null,
     watching: false,
     feedInFlight: false,
     scope: GRAPH_SCOPE_PLAN,
@@ -4036,6 +4055,33 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   }
 
   /**
+   * graphCanvasArgs is the argv the canvas is read with (IR4 of the
+   * console-fixes plan, D3217 as amended): `--all --no-merges` above
+   * `PLAN_STATUS_NO_MERGES_CLI_FLOOR`, and the single `--all` read below it.
+   *
+   * **The floor is asked before the read goes out**, the way `modelsTooOld` and
+   * the Coordinator's map floor are: `plan status --no-merges` is newer than the
+   * oldest CLI this console supports, and an older binary answers the word with
+   * `unknown flag: --no-merges`, which fails the whole read -- a failure the
+   * operator can do nothing about. Below the floor the console makes the one
+   * read it has always made, and the canvas is the same graph: `--all` lists the
+   * same tasks either way, and what `--no-merges` changes is the merge state of
+   * a task whose run recorded a ready pull request. **The merge section is
+   * therefore not read at all below the floor**: the canvas document already
+   * carries merge state, and a second read of the same command would be the same
+   * document read twice.
+   */
+  const graphCanvasArgs = (): Readonly<Record<string, unknown>> =>
+    mergesWanted() ? { all: true, noMerges: true } : { all: true }
+
+  /** mergesWanted is whether this installation's CLI may be asked for the plan
+   * **without** merge state -- the one question the canvas's argv and the merge
+   * section's existence are both decided by, asked through one function so the
+   * two can never disagree. */
+  const mergesWanted = (): boolean =>
+    planStatusNoMergesSupported(gate.compatibility.cliVersion ?? '')
+
+  /**
    * readGraph makes one `plan.status` read and draws it.
    *
    * **At most one call in flight**, the rule every other read here keeps: the
@@ -4069,7 +4115,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // picture that is already true.
     if (token !== null) markGraph(token, GRAPH_BUSY)
     try {
-      const plan = documentOf(await bridge.planStatus({ all: true }))
+      const plan = documentOf(await bridge.planStatus(graphCanvasArgs()))
       // The section's token is settled before the refusal is drawn, for the
       // reason every other screen gives: the mark must come down for the
       // operator's own read, and a read an earlier press started must not take
@@ -4119,6 +4165,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // is drawn into every reading of the scope it was refused for: it says
       // which read the console cannot make (`graph.read`), and the plan scope's
       // own figures are what it is drawn over.
+      //
+      // **A merge refusal goes with the canvas that replaces it**: the sentence
+      // was about the merge state of the document this read has just replaced,
+      // and the merge read below says its own.
+      graph.mergeNotice = null
       const drawn = await graphScreenNow().load(decoded.value, graph.runs, graph.notice)
       if (stale(mine) || drawn === null) return
       // A read names no gesture: the keyboard stays where it was, and a reader
@@ -4128,6 +4179,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       redraw(drawn, stopNow())
       graphViews.put(graphKey(), { document: decoded.value, runs: graph.runs }, Date.now())
       void decorateRuns(mine, decoded.value)
+      // **And the merge state follows the canvas** (IR4, D3217 as amended). It
+      // is a separate read of the same command without `--no-merges`, started
+      // **after** the canvas has painted rather than in parallel with it: it
+      // decorates a canvas, so it has nothing to draw from until the canvas
+      // exists, and its whole point is that the canvas did not wait for it. It
+      // is not started at all below the floor, where this document already
+      // carries its merge state.
+      if (mergesWanted()) void decorateMerges(mine)
     } catch {
       // `readBridgeFrom` answers `null` rather than rejecting, so reaching here
       // is a throw this file did not expect -- `graphScreenNow` building its
@@ -4356,17 +4415,97 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // replace a view the operator has moved to.
       if (stale(mine) || !listed.ok) return
       const runs = runIdsIn(listed.data)
-      const drawn = graphScreenNow().decorate(runs)
+      const screen = graphScreenNow()
+      const drawn = screen.decorate(runs)
       if (stale(mine) || drawn === null) return
       graph.runs = runs
       redraw(drawn, stopNow())
-      graphViews.put(graphKey(), { document, runs }, Date.now())
+      // The document cached is the one the drawing really holds, which is not
+      // necessarily the one this read was handed: the merge section may have
+      // replaced it while this read was out, and caching the canvas document
+      // back over the merge-inclusive one would make the next visit's first
+      // paint the older of the two.
+      graphViews.put(graphKey(), { document: screen.planInHand ?? document, runs }, Date.now())
     } catch {
       // As above: a bridge that threw where it should not have leaves the
       // doors as they were, which is the same drawing a refused read makes.
     } finally {
       graph.decorating = false
     }
+  }
+
+  /**
+   * decorateMerges reads the plan **again, with its merge state** -- the plain
+   * `plan status --json --all`, which is the same canvas and up to thirty-two
+   * forge lookups more -- and attaches what it says to the picture on screen
+   * (IR4 of the console-fixes plan, D3217 as amended).
+   *
+   * **It is the canvas's own section read the same way `decorateRuns` is the
+   * canvas's own runs read**: a read of its own, with its own busy state
+   * (`graph.merging`) and its own refusal, started after the canvas has painted
+   * and awaited by nothing. The canvas is drawn from the read that spawns no
+   * `gh` (`graphCanvasArgs`), so the first paint costs no forge lookup at all;
+   * this read is what turns a merged task's `done`/`merge unknown` into the
+   * merged state the plain read knows, and a node changes colour in the drawing
+   * the operator is already reading rather than arriving late as a second
+   * picture.
+   *
+   * **Its refusal is a sentence in the drawing and never a refusal screen.** The
+   * canvas on screen is true -- it is the plan, read without merge state -- and
+   * taking it down because the merge lookups failed would throw away a graph the
+   * operator can read for a fact about a colour. `noticed` keeps the figures and
+   * writes the sentence into them, which is the same door a refused scope uses,
+   * and `graph.mergeNotice` is what keeps the sentence across a redraw (a tab, a
+   * selection, a zoom) until a read answers. The document on screen is
+   * unchanged: the read that did not answer is not a read that said the canvas
+   * is wrong.
+   *
+   * The source holds its own cadence per argv (`PLAN_STATUS_MIN_INTERVAL_MS`),
+   * so a canvas read and this one within the same minute are two documents from
+   * two children and a repeat of either is served rather than respawned.
+   */
+  const decorateMerges = async (mine: number): Promise<void> => {
+    if (graph.merging) return
+    graph.merging = true
+    try {
+      const plan = documentOf(await bridge.planStatus({ all: true }))
+      // The generation is checked after the read, on `decorateRuns`'s terms: a
+      // decoration nobody is waiting for must not replace a view the operator
+      // has moved to.
+      if (stale(mine)) return
+      if (!plan.ok) {
+        refuseMerges(plan.sentence)
+        return
+      }
+      const decoded = decodePlanStatus(plan.data, 'plan.status')
+      if (!decoded.ok) {
+        refuseMerges(decoded.skew.because)
+        return
+      }
+      const drawn = await graphScreenNow().decorateMerges(decoded.value)
+      if (stale(mine) || drawn === null) return
+      graph.mergeNotice = null
+      redraw(drawn, stopNow())
+      // The cache holds the **merge-inclusive** document from here on, which is
+      // a strict gain for the next visit's first paint: the same canvas with more
+      // of it known.
+      graphViews.put(graphKey(), { document: decoded.value, runs: graph.runs }, Date.now())
+    } catch {
+      // As `decorateRuns`: a bridge that threw where it should not have leaves
+      // the canvas as it was.
+    } finally {
+      graph.merging = false
+    }
+  }
+
+  /** refuseMerges is the merge section's refusal: the sentence, in the drawing,
+   * over the canvas that answered. It is drawn only where there is a drawing to
+   * put it in -- a console with none is showing a refusal or a card, and those
+   * already say what is wrong. */
+  const refuseMerges = (sentence: string): void => {
+    graph.mergeNotice = sentence
+    const drawn = graph.screen?.noticed(sentence) ?? null
+    if (drawn !== null) redraw(drawn, stopNow())
   }
 
   /** refuseGraph is the refusal screen and the forgetting together: a plan the
@@ -4543,12 +4682,20 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // without a message to the worker. It is stamped `as of HH:MM` with the
       // door to read it again, and a view older than `CACHE_FRESH_MS` is read
       // again at once **as well** -- never served silently.
-      const drawn = await graphScreenNow().load(held.value.document, held.value.runs)
+      const drawn = await graphScreenNow().load(held.value.document, held.value.runs, graph.mergeNotice ?? graph.notice)
       if (stale(mine) || drawn === null) return
       graph.runs = held.value.runs
       redraw(drawn, stopNow())
       stampGraph(held.at)
       if (Date.now() - held.at >= CACHE_FRESH_MS) void readGraph(mine, graphRead.start())
+      // **A canvas served from memory is still a canvas the merge section
+      // decorates.** The cached document is the one a read put there, and a
+      // merge read that was refused -- or one that had not landed when the
+      // operator left -- leaves it without merge state; a fresh view is not
+      // re-read, so without this the colour a merged node wears would be the
+      // last read's for as long as the cache is fresh. The source's own cadence
+      // makes a repeat within the minute a document rather than a second child.
+      else if (mergesWanted()) void decorateMerges(mine)
       return
     }
     const last = graph.screen?.redraw() ?? null
@@ -8043,9 +8190,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * (`showGraph`), so half a Graph -- a canvas with no doors, cached out of a run
    * list that was refused -- would be a picture the operator's own visit draws
    * and does not correct.
+   *
+   * **It reads the canvas's own argv** (`graphCanvasArgs`, IR4): what the queue
+   * warms must be what a visit draws, or the warm paint would be a document the
+   * visit's own read never makes -- a merges-inclusive plan cached out of a read
+   * the first paint exists to avoid, and a merge section with nothing to do.
    */
   const prewarmGraph = async (still: () => boolean): Promise<void> => {
-    const plan = documentOf(await bridge.planStatus({ all: true }))
+    const plan = documentOf(await bridge.planStatus(graphCanvasArgs()))
     if (!plan.ok) return
     const decoded = decodePlanStatus(plan.data, 'plan.status')
     if (!decoded.ok) return
