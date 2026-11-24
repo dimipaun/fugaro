@@ -1355,7 +1355,7 @@ func TestBillingLeftForTheAdminAndTheRerunResumes(t *testing.T) {
 	// amount is dropped with the one line that says what adds it, rather than
 	// reaching the installation's Terraform, whose own rule refuses a budget
 	// with no billing account.
-	if !strings.Contains(all, questionFor("--budget").what) {
+	if !strings.Contains(all, questionFor("--budget").label) {
 		t.Errorf("the resumed creation never asked the budget question:\n%s", all)
 	}
 	if !strings.Contains(all, fmt.Sprintf(budgetNoAccount, resumedBudgetAmount)) {
