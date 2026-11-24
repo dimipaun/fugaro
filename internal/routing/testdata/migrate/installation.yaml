@@ -1,0 +1,45 @@
+# The installation's own config, as MG1's fixture: what a project holds once,
+# independent of any repository. The repositories are the files under repos/.
+project: acme/widgets
+# Every account the installation names, in the order the accounts block lists
+# them (D3183: the shared pool takes them in this order), each with the
+# repositories its own allow_data_to consents to. That consent is the whole of
+# the shared pool's admission — a pool carries none of its own (D3182, R20) — so
+# every repository that goes out on an account is listed by it and no other
+# repository is: acme/api is on the paid key and no account consents to it.
+accounts:
+  # The default account too: a repository that names none, acme/batch, goes out
+  # on it.
+  - name: ada
+    allow_data_to: [acme/mixed, acme/batch]
+  - name: grace
+    allow_data_to: [acme/web, acme/mixed]
+  - name: hopper
+    allow_data_to: [acme/mixed-key]
+# The account a repository that names none goes out on: the retired walk's
+# `default_claude_account`, then the unsuffixed `default`.
+default_account: ada
+providers:
+  # The provider route D1a added: a Claude model the switch names goes here,
+  # and only repositories in allow_data_to may send it code.
+  - name: openrouter
+    allow_data_to: [acme/web]
+  # A provider key with no allow_data_to written: every repository may use it.
+  - name: dashscope
+pools:
+  # A pool the installation already carries: kept as it is, served by the rule
+  # its strategy means, with every member a person wrote beside them carried
+  # through — here the owner and the users it is served to besides them (D1936,
+  # R10). It states no `principal` (PL1's member): a pool written before that
+  # member existed has none, and the migration states none for it rather than
+  # answering the project, which would make a pool a person wrote the project's.
+  - name: pair
+    members: [ada, grace]
+    strategy: round-robin
+    owner: ada@example.test
+    allowed_users: [grace@example.test]
+subscription_spread: false
+fallback_auto: true
+via: openrouter
+via_models: [claude-sonnet-5-5]
+vertex_spelled: [gemini-3-pro]

@@ -1634,6 +1634,19 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		publishedMobile = old.Mobile
 	}
 	pol.Mobile = projectpolicy.MobileForPublish(publishedMobile)
+	// The app's crash-report switch is a top-level key BESIDE the block and not
+	// a member of it (policy.go's Policy.MobileCrashReports), and a publish keeps
+	// and fills it the way it keeps the block: a node that carries the key holds
+	// the project's own answer — the owner's hand-written false included (O13) —
+	// and a node published before the key existed is written the default on.
+	// Without that fill the reader's fail-safe (an absent key answers off) would
+	// leave every installation at the release behind sending nothing for ever
+	// (D731, D734, D738).
+	var publishedCrashReports *bool
+	if old != nil {
+		publishedCrashReports = old.MobileCrashReports
+	}
+	pol.MobileCrashReports = projectpolicy.MobileCrashReportsForPublish(publishedCrashReports)
 	// The crafts' credentials, their pools and the crafts that choose among
 	// them are the operator's own blocks from this release on (docs/model-crafts
 	// §1–3, MC18, D1667): the local config is their carrier, and this publish
@@ -1768,6 +1781,14 @@ func publishedCraftPools(lc *localcfg.Config, old *projectpolicy.Policy, creds [
 		}
 		q, held := craftPoolNamed(old, p.Name)
 		pub := p
+		// A pool's rule, principal and threshold are the config's three new
+		// members (PL1, R21) and the node's craft_pools may not carry them: that
+		// block is decoded strictly by every job image of the installation, so a
+		// release behind this one refuses the whole node for a key it does not
+		// know. The pools in their new shape travel under the policy's
+		// `model_routing` key instead (RT4), and what the node holds here is the
+		// pool as the readers of craft_pools have always read it.
+		pub.Rule, pub.Principal, pub.Threshold = "", nil, nil
 		// The marker is never the config's (D2608), so it starts cleared and is
 		// taken from the node alone, and only while nothing else answers for the
 		// pool: a pool that names an owner now is not one that predates owners.
@@ -3056,6 +3077,16 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	if old != nil && old.Mobile != nil {
 		fmt.Fprintf(out, "  mobile kept: %s\n", mobileText(new.Mobile))
 	}
+	// The app's crash-report switch is kept too, and the line is the mobile
+	// block's one above: no key of this machine's config states it, so a key the
+	// node carries is unchanged and no +/- line above mentions it — and a person
+	// who turned the reports off by hand (O13) would read that silence as "they
+	// are on again". A node that carries no key is written the default on, and
+	// that is the diff's own row above: `kept` would be false of a switch this
+	// publish has just written.
+	if old != nil && old.MobileCrashReports != nil {
+		fmt.Fprintf(out, "  %s kept: %v\n", projectpolicy.MobileCrashReportsKey, *new.MobileCrashReports)
+	}
 	// The crafts, their credentials and their pools are the operator's own
 	// blocks (docs/model-crafts §1–3, MC18, D1667), so a publish that writes
 	// them names them: a credential by its name and its type, a pool by its
@@ -3223,6 +3254,11 @@ func issueSyncText(b *projectpolicy.IssueSync) string {
 // (projectpolicy's accessors), so the line says what the pairing route will do
 // and not what a node happens to spell — an absent `enabled` inside a written
 // block is on, and an absent `accepted_providers` is the default four.
+//
+// The app's crash-report switch is not a member of this block and is not printed
+// here: it is a top-level key beside it, with a line of its own
+// (projectpolicy.MobileCrashReportsKey in policyLines), because a member inside
+// this block would be refused by every reader of the release behind.
 func mobileText(b *projectpolicy.Mobile) string {
 	if b == nil {
 		return "none"
@@ -3716,6 +3752,17 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 	if p.Mobile != nil {
 		out["mobile"] = mobileText(p.Mobile)
 	}
+	// The app's crash-report switch is a row of its own, beside the block and
+	// never inside it (D731, D738): a publish writes the node's value where it
+	// carries one and the default on where it does not
+	// (projectpolicy.MobileCrashReportsForPublish), so the row is the switch as
+	// written — the diff prints it as the key a publish adds to a node published
+	// before it existed. A row is left out where the policy carries none, for
+	// the block's own reason one line up: "none" would read as a key this
+	// publish had taken away, which no publish does.
+	if p.MobileCrashReports != nil {
+		out[projectpolicy.MobileCrashReportsKey] = fmt.Sprintf("%v", *p.MobileCrashReports)
+	}
 	return out
 }
 
@@ -3877,19 +3924,38 @@ func policyRepoChildren(ctx context.Context, db *rtdb.Client, lc *localcfg.Confi
 	return slices.Sorted(maps.Keys(m)), nil
 }
 
-// runsInFlight counts the runs the registry still holds: a run's entry is
-// written when it starts and removed when it ends, which is the same source
-// `fugaro budget show` lists as running.
-func runsInFlight(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (int, error) {
+// inFlightRegistry is the registry's own document: one entry per running run,
+// keyed by repository then by run ID. It is one read rather than a count and a
+// second read beside it, because the two questions asked of it — how many runs
+// are running, and which of them the update's note is about — are asked by the
+// same reader in the same breath, and the read is the expensive one on an
+// installation with many runs.
+func inFlightRegistry(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (map[string]map[string]budget.AgentEntry, error) {
 	var agents map[string]map[string]budget.AgentEntry
 	if _, err := db.Get(ctx, "agents", &agents); err != nil {
-		return 0, dbErr(lc, err, false)
+		return nil, dbErr(lc, err, false)
 	}
+	return agents, nil
+}
+
+// runsCount is how many runs one registry document holds.
+func runsCount(agents map[string]map[string]budget.AgentEntry) int {
 	n := 0
 	for _, runs := range agents {
 		n += len(runs)
 	}
-	return n, nil
+	return n
+}
+
+// runsInFlight counts the runs the registry still holds: a run's entry is
+// written when it starts and removed when it ends, which is the same source
+// `fugaro budget show` lists as running.
+func runsInFlight(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (int, error) {
+	agents, err := inFlightRegistry(ctx, db, lc)
+	if err != nil {
+		return 0, err
+	}
+	return runsCount(agents), nil
 }
 
 // confirmRemovalStrict asks for the project's name before an un-enrollment,

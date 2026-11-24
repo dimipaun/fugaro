@@ -254,6 +254,11 @@ var retirementText = []string{
 	"internal/cli/restore_test.go",
 	"internal/cli/docs_release_notes_test.go",
 	"internal/cli/docs_compute_backend_test.go",
+	// T3's fence, whose exemption table is keyed by command path: the
+	// tombstone's path is a key in that table, so the mention is the key rather
+	// than a sentence about the command, and renaming it out would delete the
+	// exemption that keeps the tombstone answering below a stamp.
+	"internal/cli/required_cli.go",
 }
 
 // liveRoots is what the census walks. Every top-level entry that names the
@@ -387,7 +392,7 @@ const censusRoot = "../.."
 // implementation-plan.md, so that class is seven files under four folders now.
 // That is why `datedRecords` above carries fourteen roots and says so.
 //
-// Eight name the command by design, and they are `retirementText` above --
+// Nine name the command by design, and they are `retirementText` above --
 // W0.2's three, W1.2's relay case and the four this task added: the tombstone
 // and its test, this file, the relay case whose input IS the retired command
 // line, the two must-not-contain guards whose pattern IS the retired word
@@ -395,7 +400,11 @@ const censusRoot = "../.."
 // internal/cli/restore_test.go), and the two pins of dated records
 // (internal/cli/docs_release_notes_test.go and
 // internal/cli/docs_compute_backend_test.go) whose quoted spelling is frozen
-// with the record they read.
+// with the record they read. The ninth is T3's fence
+// (internal/cli/required_cli.go), and it is here by that same rule: its
+// exemption table is keyed by command path, the tombstone's path is the retired
+// word, and taking the key out would delete the exemption that keeps `fugaro
+// init` answering instead of being refused below a stamp.
 //
 // The plan's "anything else the red step prints is a file a rename task missed
 // and belongs to that task, not to this one" was written for a residue of one,

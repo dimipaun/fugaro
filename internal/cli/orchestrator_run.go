@@ -1572,6 +1572,14 @@ func (f *launchInFlight) busy() bool {
 // a cycle that is still going and not an item nobody can move again, as long as
 // the platform agrees the run is still going: a run the platform has already
 // ended is one that died without writing anything, which executionOver reads.
+//
+// A run that ended paused is the other case of a run that is not going and is
+// not over: the chain is in flight and this daemon is what resumes it (D3185,
+// R15), so its item stays running and its ended execution means nothing —
+// ending the execution is what a pause is (R12). The one thing that ends such a
+// run for this view is the launcher's own cancellation of the pause (D3197),
+// which the service writes on the node and this view reads through the
+// database the daemon already holds (db, orchestrator_cmd.openBudget).
 type orchestratorRunView struct {
 	bucket *blob.Bucket
 	env    *cloudEnv
@@ -1583,6 +1591,12 @@ type orchestratorRunView struct {
 }
 
 func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orchestrator.RunReport, error) {
+	// One lookup for the whole cycle, over the daemon's own client: the node is
+	// read for a record that says paused and for nothing else, and a cycle that
+	// holds none reads no node at all.
+	pauses := pauseLookupWith(ctx, v.db, func(format string, a ...any) {
+		fmt.Fprintf(v.warn, format, a...)
+	})
 	reports := make([]orchestrator.RunReport, 0, len(runIDs))
 	for _, id := range runIDs {
 		slug, run, err := runstore.Locate(ctx, v.bucket, id)
@@ -1652,40 +1666,71 @@ func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orch
 			}
 			rep.WorkspaceRefusal = rec.Halt.WorkspaceRefusal
 		}
-		if done, outcome := orchestratorOutcome(rec); done {
+		// A record that says paused is the one case where the platform's word
+		// on the execution is worth nothing: a pause ends the execution by
+		// design (R12), so folding on it would read every suspended chain as a
+		// run that died without reporting — and a cancelled pause's chain is
+		// over, which is the cancellation its launcher made and not a failure a
+		// standing approval may retry (D3197).
+		suspended, cancelled := false, false
+		if rec != nil && rec.Status == runstore.StatusPaused {
+			suspended = true
+			if pauses != nil {
+				if f, ok := pauses(slug, run); ok {
+					cancelled = f.cancelled
+				}
+			}
+		}
+		switch done, outcome := orchestratorOutcome(rec); {
+		case cancelled:
+			// The one thing that ends a suspended run for this view: the
+			// launcher cancelled the pause, so nothing will resume the chain and
+			// the item is done with. It is folded as a cancellation, which is
+			// the outcome no standing approval retries (orchestratorOutcome's
+			// own rule for a cancelled run).
+			rep.Finished, rep.Outcome = true, orchestrator.OutcomeCancelled
+		case suspended:
+			// In flight: the daemon resumes this chain at the instant the node
+			// names (D3185), so the item stays running and the attempt is not
+			// closed. This is the whole of "the orchestrator's own view counts
+			// it" (F64): before this, a paused record fell to the failure below
+			// and the item was closed on the run the pause is holding open.
+		case done:
 			rep.Finished, rep.Outcome = true, outcome
-		} else if state, over := v.executionOver(ctx, slug, run, launch); rep.Started && over {
-			// The record said the run was still going when it was read, and
-			// the platform says the execution is over. The runner may have
-			// written its last record in between: result.json is the runner's
-			// last act and the execution ends with it, so a run that succeeded
-			// a moment after this read is a run whose record says so, and
-			// folding the ended execution over the stale read would close a
-			// successful attempt as failed — and the same cycle would start a
-			// retry under the standing approval, a second execution and a
-			// second pull request for work that is already done. So the record
-			// is read again, and only a record that still says running (or one
-			// that is gone) is the run that died without reporting.
-			fresh, err := s.ReadRecord(ctx)
-			switch {
-			case errors.Is(err, runstore.ErrNotFound):
-				fresh = nil
-			case err != nil:
-				return nil, err
+		default:
+			if state, over := v.executionOver(ctx, slug, run, launch); rep.Started && over {
+				// The record said the run was still going when it was read, and
+				// the platform says the execution is over. The runner may have
+				// written its last record in between: result.json is the runner's
+				// last act and the execution ends with it, so a run that succeeded
+				// a moment after this read is a run whose record says so, and
+				// folding the ended execution over the stale read would close a
+				// successful attempt as failed — and the same cycle would start a
+				// retry under the standing approval, a second execution and a
+				// second pull request for work that is already done. So the record
+				// is read again, and only a record that still says running (or one
+				// that is gone) is the run that died without reporting.
+				fresh, err := s.ReadRecord(ctx)
+				switch {
+				case errors.Is(err, runstore.ErrNotFound):
+					fresh = nil
+				case err != nil:
+					return nil, err
+				}
+				// The state the platform reported, which is what a run whose
+				// record still says running leaves as its only word: a
+				// cancellation is a person's own act and never retried, a
+				// failure is what a retry is for (executionOver's comment is
+				// the why).
+				outcome := orchestrator.OutcomeFailed
+				if state == backend.StateCancelled {
+					outcome = orchestrator.OutcomeCancelled
+				}
+				if done, o := orchestratorOutcome(fresh); done {
+					outcome = o
+				}
+				rep.Finished, rep.Outcome = true, outcome
 			}
-			// The state the platform reported, which is what a run whose
-			// record still says running leaves as its only word: a
-			// cancellation is a person's own act and never retried, a
-			// failure is what a retry is for (executionOver's comment is
-			// the why).
-			outcome := orchestrator.OutcomeFailed
-			if state == backend.StateCancelled {
-				outcome = orchestrator.OutcomeCancelled
-			}
-			if done, o := orchestratorOutcome(fresh); done {
-				outcome = o
-			}
-			rep.Finished, rep.Outcome = true, outcome
 		}
 		reports = append(reports, rep)
 	}
@@ -1805,19 +1850,28 @@ func (v *orchestratorRunView) executionOver(ctx context.Context, slug, runID str
 // finished failure: the attempt is over and the item must not stay running for
 // ever, and a failed attempt is the one a person looks at.
 //
-// A halted run is the exception, and it is the one case where the two outcomes
-// differ in what happens next: a spend cap, the kill switch or a governance
-// tripwire stopped a run that started, which is a refusal and not a failure
-// (G4), and a refusal is never retried. Folded as failed it would be: the
-// attempt would be one a person's standing approval still covers, so the very
-// next cycle would relaunch work that was refused, and it would only stop when
-// it ran out of allowance.
+// A paused run is not a finished one, and it is the second exception: the run
+// suspended itself and this daemon resumes the chain at the instant the pause
+// names (D3185, R15), so the item it belongs to is one still going and the
+// attempt must not be closed (F64). It is the record alone that decides here —
+// whether the pause still stands or was cancelled is written on the service's
+// node (D3197), and the view reads that beside this answer rather than in it.
+//
+// A halted run is the other exception, and it is the one case where the two
+// outcomes differ in what happens next: a spend cap, the kill switch or a
+// governance tripwire stopped a run that started, which is a refusal and not a
+// failure (G4), and a refusal is never retried. Folded as failed it would be:
+// the attempt would be one a person's standing approval still covers, so the
+// very next cycle would relaunch work that was refused, and it would only stop
+// when it ran out of allowance.
 func orchestratorOutcome(rec *runstore.Record) (bool, orchestrator.Outcome) {
 	if rec == nil {
 		return false, ""
 	}
 	switch rec.Status {
 	case runstore.StatusRunning:
+		return false, ""
+	case runstore.StatusPaused:
 		return false, ""
 	case runstore.StatusSucceeded:
 		return true, orchestrator.OutcomeSucceeded
