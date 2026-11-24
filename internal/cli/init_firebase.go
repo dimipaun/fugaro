@@ -370,7 +370,7 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 			fmt.Fprintf(r.w, "Firestore step of the Firebase project %s: not planned, it cannot be read yet (%v)\n", fp, err)
 		}
 	} else if r.o.planOnly {
-		fmt.Fprintf(r.w, "Firestore step of the Firebase project %s (only after you confirm, never in --plan-only):\n", fp)
+		fmt.Fprintf(r.w, "Firestore step of the Firebase project %s (applied by the run that applies, never in --plan-only):\n", fp)
 		for _, l := range lines {
 			fmt.Fprintf(r.w, "  %s\n", l)
 		}
