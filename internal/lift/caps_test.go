@@ -95,6 +95,34 @@ func TestPlanCaps(t *testing.T) {
 		}
 	})
 
+	t.Run("a node exactly at its ceiling stands", func(t *testing.T) {
+		// The guard is "above", not "at": a node the node already meets is not
+		// lowered, or every later update would print a line and plan a write for
+		// a figure that did not move, and a second run would change something.
+		// Both kinds of ceiling, since the comparison is the same one.
+		slug := slugOf(t, "github", "acme/app")
+		for _, tc := range []struct {
+			name string
+			caps Caps
+		}{
+			{"the default repository cap", Caps{
+				Defaults: &budget.DefaultCaps{RepoDailyMicros: capMicros(20_000_000), RepoPerRunMicros: capMicros(10_000_000)},
+			}},
+			{"the global cap", Caps{
+				Global: &budget.GlobalCaps{DailyMicros: capMicros(20_000_000), PerRunMicros: capMicros(10_000_000)},
+			}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				caps := tc.caps
+				caps.Repos = map[string]budget.RepoCaps{slug: capNode("acme/app", 20_000_000, 10_000_000)}
+				got := planCaps(t, Project{Caps: caps}, repoAt(t, "acme/app", ""))
+				if !got.Empty() {
+					t.Errorf("a node at its ceiling changed something: %+v", got)
+				}
+			})
+		}
+	})
+
 	t.Run("no ceiling leaves the node standing", func(t *testing.T) {
 		// Neither a global nor a default cap: there is nothing above the node
 		// to lower it to (spec §5.6).
