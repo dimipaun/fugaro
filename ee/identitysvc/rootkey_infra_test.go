@@ -24,6 +24,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -370,30 +371,76 @@ func TestRootKeyInfraTheSignerRoleIsTheNarrowestThatSigns(t *testing.T) {
 }
 
 // TestRootKeyInfraTheOwnerIdentityIsTheOwnerAndNotAnAccount: the member O15 gives
-// as a variable has no default and its validation refuses everything but a
-// person's or a group's identity.
+// as a variable has no default, and its validation accepts one person's `user:`
+// identity and refuses every other form — a service account, a domain, a
+// federated principal and a group.
+//
+// The rule is evaluated rather than described: the condition's own regular
+// expression is compiled here and run against each form, so what this check
+// holds is what an apply holds. A group is the form that matters here — it is
+// one Cloud IAM member whose membership is managed outside this root and outside
+// review, so a person added to it later, the owner's own laptop login included,
+// signs without a word changing in this tree, and O15 asks for one separate
+// identity of the owner's own rather than a set that grows behind the apply.
 //
 // The mutations this fails on: a default (which is a signing grant made by an
 // apply nobody thought about, and the finding Check 737 is built around), a
-// validation that accepts a service account, a domain or a federated principal,
-// and the variable itself gone — the last of which is why the block is read
-// rather than the default alone.
+// validation that accepts a service account, a group, a domain or a federated
+// principal, a second expression beside the rule, and the variable itself gone —
+// the last of which is why the block is read rather than the default alone.
 func TestRootKeyInfraTheOwnerIdentityIsTheOwnerAndNotAnAccount(t *testing.T) {
 	if got := rkVarDefault(t, "owner_member"); got != "" {
 		t.Errorf("owner_member has the default %s: a default is a signing grant this root makes without the owner naming the identity it is for, and the whole point of O15 is that the member is the owner's own choice (A4, O15)", got)
 	}
-	block := rkVarBlock(t, "owner_member")
-	validation := tfNested(t, block, "validation")
-	compact := tfCompact(validation)
-	if !strings.Contains(compact, `(user|group):`) {
-		t.Errorf("owner_member's validation does not hold the member to a user: or group: identity:\n%s\na validation that accepts anything is a service account the day someone writes one, and a robot that can sign a key set is the failure this root exists to prevent (A4, O15)", strings.TrimSpace(validation))
+	validation := tfNested(t, rkVarBlock(t, "owner_member"), "validation")
+	condition, ok := tfAttr(validation, "condition")
+	if !ok {
+		t.Fatalf("owner_member's validation writes no condition:\n%s\nthe form this variable accepts is the whole of who may sign a key set, so the validation is the rule and not a note beside it (A4, O15)", strings.TrimSpace(validation))
 	}
-	if !strings.Contains(compact, "serviceAccount") {
-		t.Errorf("owner_member's validation does not refuse a service account:\n%s\nthe acceptance is that signing is granted to no service account, and a rule the apply enforces is worth more than a sentence in a comment (A4, O15)", strings.TrimSpace(validation))
+	pattern := rkMemberPattern(t, condition)
+	member, err := regexp.Compile(pattern)
+	if err != nil {
+		t.Fatalf("owner_member's validation pattern %q does not compile, so the apply refuses the variable whatever the owner writes: %v", pattern, err)
+	}
+	if want := `can(regex("` + pattern + `", var.owner_member))`; tfCompact(condition) != tfCompact(want) {
+		t.Errorf("owner_member's validation condition is %s: the rule this check evaluates is one regular expression over the variable, and a second expression beside it is a member form no reading here measures (A4, O15)", tfCompact(condition))
+	}
+	if accepted := "user:owner@example.com"; !member.MatchString(accepted) {
+		t.Errorf("owner_member's validation refuses %s, and that single person's identity is exactly what O15 gives this variable", accepted)
+	}
+	for _, refused := range []struct{ form, member string }{
+		{"a group, whose membership is managed outside this root and outside review", "group:owners@example.com"},
+		{"a service account, which is the robot that can sign a key set", "serviceAccount:signer@fugaro.iam.gserviceaccount.com"},
+		{"a domain, which grants signing to everyone in it", "domain:example.com"},
+		{"a federated principal, which is an identity no IAM member form names", "principal://iam.googleapis.com/locations/global/workforcePools/pool/subject/someone"},
+		{"a bare address with no member type at all", "owner@example.com"},
+	} {
+		if member.MatchString(refused.member) {
+			t.Errorf("owner_member's validation accepts %s (%s): signing is granted to one person's own identity, and every other form is an identity O15 does not give — a group most of all, because its members are added outside this tree and Check 737's reading is that every login but the owner's is refused (A4, O7, O15)", refused.form, refused.member)
+		}
 	}
 	if got := rkVarDefault(t, "project"); got != "" {
 		t.Errorf("project has the default %s: this root is applied in the owner's own project and never creates one, so a default here is a project id written into the tree that an apply in the wrong directory would use without a word (A4, O7)", got)
 	}
+}
+
+// rkMemberPattern answers the regular expression owner_member's validation holds
+// the member to, read out of the condition itself, so the check above runs the
+// apply's own rule against each member form instead of a second copy of the rule
+// written in this file.
+func rkMemberPattern(t *testing.T, condition string) string {
+	t.Helper()
+	const open = `regex("`
+	start := strings.Index(condition, open)
+	if start < 0 {
+		t.Fatalf("owner_member's validation condition %q holds no regex(): the form the variable accepts is the whole of who may sign (A4, O15)", condition)
+	}
+	rest := condition[start+len(open):]
+	end := strings.Index(rest, `"`)
+	if end < 0 {
+		t.Fatalf("owner_member's validation condition %q holds a regex() whose pattern is not closed", condition)
+	}
+	return rest[:end]
 }
 
 // TestRootKeyInfraTheCommandSignsWithTheVersionTheRootNames: the root prints the

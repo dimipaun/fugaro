@@ -26,9 +26,11 @@
 # the ring gains, and a project-level one reaches every key the project ever holds
 # — and the custom role is the two permissions the ceremony needs: sign, and read
 # the public half to print and pin. `var.owner_member` is the separate owner
-# identity O15 asks for, it has no default and its validation refuses a service
-# account, so "no service account can sign" is a rule the apply enforces rather
-# than a sentence this comment makes. The owner's everyday login is deliberately
+# identity O15 asks for, it has no default and its validation accepts one
+# person's `user:` identity and nothing else — no service account, and no group,
+# whose membership is managed outside this root and outside review — so "one
+# identity can sign" is a rule the apply enforces rather than a sentence this
+# comment makes. The owner's everyday login is deliberately
 # not it: Check 737's reading is that the laptop's default login is refused.
 #
 # **Rotation is a new key version, and a deliberate one.** Every version of the
@@ -154,16 +156,20 @@ variable "region" {
 }
 
 variable "owner_member" {
-  description = "The separate owner identity that may sign with the root key (O15), in Cloud IAM's member form: `user:owner@example.com` or `group:owners@example.com`. It is the owner's own identity and not the login their laptop defaults to, and it is not a service account."
+  description = "The separate owner identity that may sign with the root key (O15), in Cloud IAM's member form for one person: `user:owner@example.com`. It is the owner's own identity and not the login their laptop defaults to, and it is neither a service account nor a group."
   type        = string
 
   # No default, and the reason is the finding Check 737 is built around: a
   # project-level default would be a signing grant made by an apply nobody
   # thought about, and an empty one would grant signing to nobody while looking
-  # applied. A service account here would be a robot that can sign a key set.
+  # applied. A service account here would be a robot that can sign a key set, and
+  # a group would be whoever its membership holds by the time it signs — its
+  # members are added outside this root and outside review, so a group is how an
+  # identity O15 never named, the owner's laptop login included, ends up able to
+  # sign.
   validation {
-    condition     = can(regex("^(user|group):", var.owner_member))
-    error_message = "owner_member must be a user: or group: member, and never a serviceAccount, a domain, or a federated principal: signing the root key is a person's act at their own terminal (O15)."
+    condition     = can(regex("^user:", var.owner_member))
+    error_message = "owner_member must be the user: member of the one person who signs, such as user:owner@example.com, and never a group, a serviceAccount, a domain, or a federated principal: signing the root key is one person's act at their own terminal (O15)."
   }
 }
 
