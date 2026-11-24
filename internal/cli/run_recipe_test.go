@@ -84,9 +84,12 @@ func TestRunRecipeRefusedOnOldImage(t *testing.T) {
 	wantRefused(t, f, "release 0.4.1", "run", "--repo", "acme/app", "--recipe", "solo", "x")
 }
 
+// TestRunUnknownRecipeFailsBeforeCloudWork: a name nothing holds is refused
+// before any cloud work. The refusal names the project and the catalog and no
+// longer the checkout's folder, which no launch reads (D3237).
 func TestRunUnknownRecipeFailsBeforeCloudWork(t *testing.T) {
 	f := newCloudFixture(t)
-	wantRefused(t, f, "recipe nope is not in .fugaro/recipes", "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "nope", "x")
+	wantRefused(t, f, "recipe nope is not in project aurora (fugaro recipes ls) and not in the catalog", "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "nope", "x")
 	if _, err := os.Stat(filepath.Join(f.dir, "runs", "runs", appSlug, "20261007-100000-abcd", "task.json")); err == nil {
 		t.Fatal("a task.json was written for a refused recipe")
 	}
@@ -268,9 +271,15 @@ func TestRunClonedWorkflowRefusedBelowCloneSince(t *testing.T) {
 	}
 }
 
+// TestRunRepoRecipeFromCheckout: a repository's own recipe is the project's
+// copy of it now, and the launch embeds that copy (D3303, R7). The checkout's
+// folder is a leftover no launch reads (D3237), so the file is left where it
+// is: it is the same text the store holds, and the task carries the store's.
 func TestRunRepoRecipeFromCheckout(t *testing.T) {
 	f := newCloudFixture(t)
-	recipeCheckout(t, f, "", map[string]string{".fugaro/recipes/mine.yaml": "version: 1\nname: mine\nsteps:\n  - review: { max_rounds: 1 }\n"})
+	projectRecipesFixture(t, f, nil)
+	copied := publishCopy(t, f, "acme/other", "mine", repoRecipe)
+	recipeCheckout(t, f, "", map[string]string{recipe.RepoPath("mine"): repoRecipe})
 	other := mustSlug("github", "acme/other")
 	writeBuildRecord(t, f, other, "svc", releaseSeal)
 	if _, _, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "--recipe", "mine", "A task"); err != nil {
@@ -282,7 +291,8 @@ func TestRunRepoRecipeFromCheckout(t *testing.T) {
 	}
 	defer b.Close()
 	spec, err := runstore.Open(b, other, "20261007-100000-abcd").ReadTask(t.Context())
-	if err != nil || spec.Recipe == nil || *spec.Recipe != (task.Recipe{Name: "mine", Source: "repo"}) {
+	want := strings.Replace(repoRecipe, "name: mine", "name: "+copied, 1)
+	if err != nil || spec.Recipe == nil || spec.Recipe.Name != copied || spec.Recipe.Source != string(recipe.SourceProject) || spec.Recipe.YAML != want {
 		t.Fatalf("task = %+v, %v", spec, err)
 	}
 }
@@ -515,9 +525,14 @@ func TestRunNoteOnlyForExplicitNonDefault(t *testing.T) {
 	}
 }
 
+// TestRunRepoRecipeRefusedOnOldImage: the image gate judges the recipe the
+// launch resolved, which is the project's copy of the repository's own — the
+// folder beside it is a leftover no launch reads (D3237).
 func TestRunRepoRecipeRefusedOnOldImage(t *testing.T) {
 	f := newCloudFixture(t)
-	recipeCheckout(t, f, "", map[string]string{".fugaro/recipes/mine.yaml": "version: 1\nname: mine\nsteps:\n  - review: { max_rounds: 1 }\n"})
+	projectRecipesFixture(t, f, nil)
+	publishCopy(t, f, "acme/other", "mine", repoRecipe)
+	recipeCheckout(t, f, "", map[string]string{recipe.RepoPath("mine"): repoRecipe})
 	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:0.4.1")
 	_, _, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "--recipe", "mine", "A task")
 	if err == nil || !strings.Contains(err.Error(), "release 0.4.1") {
@@ -613,13 +628,20 @@ func TestRunPRKeepsChosenRecipeAndSaysItChanged(t *testing.T) {
 	}
 }
 
+// TestRunPRKeepsChosenRepoRecipeByName: the record names a repository recipe
+// — the shape a pre-L8 run wrote — and the follow-up keeps it by resolving the
+// name where it resolves now and embedding what it finds (D3303, R7), rather
+// than carrying a name the runner would refuse a job later (D3304).
 func TestRunPRKeepsChosenRepoRecipeByName(t *testing.T) {
 	f := newCloudFixture(t)
+	projectRecipesFixture(t, f, nil)
+	copied := publishCopy(t, f, "acme/app", "mine", repoRecipe)
 	seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "mine", Source: "repo", SHA256: strings.Repeat("a", 64)})
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x"); err != nil {
 		t.Fatal(err)
 	}
-	if got := readSpec(t, f, fuID).Recipe; got == nil || *got != (task.Recipe{Name: "mine", Source: "repo"}) {
+	want := strings.Replace(repoRecipe, "name: mine", "name: "+copied, 1)
+	if got := readSpec(t, f, fuID).Recipe; got == nil || got.Name != copied || got.Source != string(recipe.SourceProject) || got.YAML != want {
 		t.Fatalf("follow-up recipe = %+v", got)
 	}
 }

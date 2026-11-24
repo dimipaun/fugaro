@@ -249,11 +249,12 @@ func TestAnArtifactRecipeOnACloneWorkflowGatesOnTheCloneImage(t *testing.T) {
 	})
 }
 
-// appRepoCheckout is a working directory whose origin is acme/app: the
-// checkout a follow-up is launched FROM, and the only place the launcher can
-// read a repository recipe it inherits by name (the runner reads it at the
-// task's base, in the cloud, where the launcher cannot look). It is
-// secrets_test.go's appCheckout with files of the caller's own.
+// appRepoCheckout is a working directory whose origin is acme/app, with files
+// of the caller's own: a launcher to be run from a checkout of that
+// repository. It is secrets_test.go's appCheckout with extra files. It is no
+// longer where a repository recipe is read — the launch reads the project's
+// copy of one (D3237) — so a test that wants a recipe in play publishes it
+// (projectRecipesFixture, publishCopy).
 func appRepoCheckout(t *testing.T, files map[string]string) {
 	t.Helper()
 	testutil.IsolateGit(t)
@@ -269,28 +270,27 @@ func appRepoCheckout(t *testing.T, files map[string]string) {
 }
 
 // TestAFollowUpLaunchRefusesAModeItInheritsByRepoName: a follow-up does not
-// choose its recipe, it keeps the previous run's, and a REPOSITORY recipe is
-// kept as a name with no text (taskRecipe, recipes_resolve.go), so neither
-// follow-up refusal that reads recipe text can judge it. Left there, the
-// launch carries a name whose mode only the runner sees — the runner refuses
-// it (internal/runner/runner.go), but not before a job starts and clones.
-// The two modes a follow-up cannot run are mode: artifact (nothing to
+// choose its recipe, it keeps the previous run's, and a repository recipe is
+// inherited as a NAME — the previous task's task.Recipe, or the record of the
+// recipe the runner chose, both of which the follow-up resolves and embeds
+// (D3303, R7). The resolution is the launcher's, so the refusal judges the copy
+// the project holds rather than leaving the mode to the runner: the runner
+// refuses it too (internal/runner/runner.go), but not before a job starts and
+// clones. The two modes a follow-up cannot run are mode: artifact (nothing to
 // continue) and mode: review (a review run never continues one either). Three
-// arms: the two inheritance paths that carry a name that way — the previous
-// task's own recipe, and the recipe the runner chose for it
-// (carryChosenRecipe) — and the second refusal, which shares the path. The
-// launcher reads the name from the working directory's checkout when there is
-// one; the runner stays the backstop for a launch made from outside a
-// checkout, or for a base whose file differs from this working tree's.
+// arms: the two inheritance paths that inherit a name — the previous task's own
+// recipe, and the recipe the runner chose for it (carryChosenRecipe) — and the
+// second refusal, which shares the path.
 //
 // Mutation (drop the `else if rcp != nil` branch of newFollowUpSpec): the
-// first arm launches a job; mutation (drop the refuseFollowUpRepoRecipe call
-// from carryChosenRecipe): the second arm launches one. Both fail
-// wantRefused on the execution count as well as the missing refusal.
+// first arm launches a job; mutation (drop the followUpRecipeOfName call from
+// carryChosenRecipe): the second arm launches one. Both fail wantRefused on the
+// execution count as well as the missing refusal.
 func TestAFollowUpLaunchRefusesAModeItInheritsByRepoName(t *testing.T) {
 	t.Run("the previous task's recipe", func(t *testing.T) {
 		f := newCloudFixture(t)
-		appRepoCheckout(t, map[string]string{recipe.RepoPath("sizzle"): projectSizzle})
+		projectRecipesFixture(t, f, nil)
+		publishCopy(t, f, "acme/app", "sizzle", projectSizzle)
 		writeBuildRecord(t, f, appSlug, "web", release080)
 		root := firstRunSpec(rootID)
 		root.Recipe = &task.Recipe{Name: "sizzle", Source: string(recipe.SourceRepo)}
@@ -302,13 +302,15 @@ func TestAFollowUpLaunchRefusesAModeItInheritsByRepoName(t *testing.T) {
 	})
 	t.Run("the recipe the runner chose", func(t *testing.T) {
 		f := newCloudFixture(t)
-		appRepoCheckout(t, map[string]string{recipe.RepoPath("sizzle"): projectSizzle})
+		projectRecipesFixture(t, f, nil)
+		publishCopy(t, f, "acme/app", "sizzle", projectSizzle)
 		seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "sizzle", Source: string(recipe.SourceRepo)})
 		wantRefused(t, f, "it takes no --pr", "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "Render the bundle")
 	})
 	t.Run("a mode: review recipe", func(t *testing.T) {
 		f := newCloudFixture(t)
-		appRepoCheckout(t, map[string]string{recipe.RepoPath("peek"): "version: 1\nname: peek\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n"})
+		projectRecipesFixture(t, f, nil)
+		publishCopy(t, f, "acme/app", "peek", "version: 1\nname: peek\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n")
 		writeBuildRecord(t, f, appSlug, "web", release080)
 		root := firstRunSpec(rootID)
 		root.Recipe = &task.Recipe{Name: "peek", Source: string(recipe.SourceRepo)}
