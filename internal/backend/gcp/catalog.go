@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"path"
 	"regexp"
 	"slices"
@@ -20,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The steps a catalog build adds to the ones images/derived/cloudbuild.yaml
@@ -217,15 +219,14 @@ type CatalogBuildSpec struct {
 	GitSecretID string
 	GitUser     string
 	GitHubAppID string
-	// CredentialsServiceURL is the installation's credentials service, "" for
-	// every catalog build there is (B4.5): the credential step of a catalog
-	// build runs as the project's build identity (BuildIdentityEmail), which
-	// the service's build route does not admit — that route serves one
-	// repository to the account bound to it (D2076) — so a catalog build has
-	// nothing to fetch there and keeps the credential its request mounts. It is
-	// the derived build's field reached from this path, tested as BuildSpec's
-	// is, and a caller that set it would submit a build whose credential step
-	// the service refuses.
+	// CredentialsServiceURL is the installation's credentials service, which
+	// the credential step asks for the one git credential this build clones
+	// with (IS8, D3330): the route it calls is the entry route
+	// (credsvc.BuildTokenPath), whose caller is the project's build identity
+	// (BuildIdentityEmail) — the account every catalog build runs as — and
+	// which answers the credential of the entry's own repositories and no
+	// others. It is required: a request that names no service is refused
+	// before the build is paid for, because such a build would clone nothing.
 	CredentialsServiceURL string
 	// Base is the fugaro base image the entry's image is built FROM. A
 	// prebuilt entry is built from nothing, so it names none.
@@ -395,9 +396,10 @@ var catalogCommitRE = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // gate, record), plus the catalog build's own (PIC3's read of the copy, the
 // pin, the content tag and the record) — or, for a spec whose entry is a
 // prebuilt image, the smoke-only run catalogPrebuiltRequest builds. Its
-// substitutions are only the ones its steps reference, and each workflow
-// secret is added to availableSecrets and to the build step's secretEnv and
-// nowhere else. It makes no calls.
+// substitutions are only the ones its steps reference, and it names no secret
+// at all: the credential the clone step reads is the installation's service's
+// answer, which the credential step fetches as the project's build identity
+// (IS8, D3330). It makes no calls.
 func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build, error) {
 	if s.Prebuilt != "" {
 		if err := s.checkPrebuilt(project); err != nil {
@@ -409,6 +411,10 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 	if err != nil {
 		return nil, err
 	}
+	// The template still declares the one availableSecret the swap below used
+	// to fill, and this refuses a template that stopped: the mount is what
+	// this request takes out, and a template it cannot read is one whose
+	// credential step is not the step being replaced.
 	if b.AvailableSecrets == nil || len(b.AvailableSecrets.SecretManager) != 1 || b.AvailableSecrets.SecretManager[0].Env != gitTokenEnv {
 		return nil, errNoGitTokenSecret
 	}
@@ -441,6 +447,13 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrBadBuildSpec, err)
 	}
+	// The repositories the request names for the credential: the one this build
+	// clones, in the canonical spelling the service's image map keys an entry's
+	// repositories by (rule 8, config.ValidImageMap).
+	repos, err := catalogEntryRepos(s)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrBadBuildSpec, err)
+	}
 	own := map[string]*cloudbuild.BuildStep{
 		catalogDockerfileStepID: read,
 		catalogCloneStepID:      clone,
@@ -464,11 +477,16 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 		b.Steps = slices.DeleteFunc(b.Steps, func(st *cloudbuild.BuildStep) bool { return st.Id == "smoke" })
 	}
 
-	version := func(id string) string { return "projects/" + project + "/secrets/" + id + "/versions/latest" }
-	b.AvailableSecrets.SecretManager[0].Env = credentialSecretEnv[s.GitProvider]
-	b.AvailableSecrets.SecretManager[0].VersionName = version(s.GitSecretID)
-	cred.SecretEnv = []string{credentialSecretEnv[s.GitProvider]}
-	cred.Env = slices.Clone(credentialEnv[s.GitProvider])
+	// The mount goes, whole (IS8, D3330): no availableSecret, no step's
+	// secretEnv, and the credential step's env and argv replaced by the entry
+	// mode's. Cloud Build serves a secretEnv only out of availableSecrets, so
+	// the two leave together, and the accessor the installation granted the
+	// build identity for that secret leaves with them
+	// (deploy/terraform/gcp/modules/installation/build_identity.tf).
+	b.AvailableSecrets = nil
+	if err := catalogCredentialStep(s, cred); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrBadBuildSpec, err)
+	}
 	// Cloud Build refuses a substitution the request doesn't reference, so
 	// each provider sends only its own.
 	b.Substitutions = map[string]string{
@@ -476,13 +494,14 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 		"_BASE_BRANCH": s.BaseBranch,
 		"_FUGARO_BASE": s.Base,
 		"_IMAGE":       s.Image,
-		// The credential step's own three, empty: the step a catalog build
-		// reuses reads the workflow it would fetch at the service and the
-		// address it would fetch from, and this build fetches neither — its
-		// identity is not one the route admits — so what it sends is the empty
-		// value the step reads as "there is no service here" (CredentialsServiceURL).
-		"_WORKFLOW":                "",
+		// The credential step's own three: the address of the service it asks
+		// for this build's credential, the entry it is the build of, and the
+		// repositories the request names for it. They reach the step as its env
+		// and never in its argv, so a name a config left in a list is data and
+		// not shell next to the credential (catalogCredentialStep).
 		"_CREDENTIALS_SERVICE_URL": s.CredentialsServiceURL,
+		"_ENTRY":                   s.Entry,
+		"_CATALOG_REPOS":           repos[0],
 		// Empty, always: the template's build step mounts the variables this
 		// names as BuildKit file secrets, and it names none for a catalog
 		// entry. The repository's own workflow secrets reached a catalog
@@ -515,8 +534,6 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 		b.Substitutions[name] = value
 	}
 	switch s.GitProvider {
-	case gitprov.KindBitbucket:
-		b.Substitutions["_GIT_USER"] = s.GitUser
 	case gitprov.KindGitHub:
 		b.Substitutions["_GITHUB_APP_ID"] = s.GitHubAppID
 	}
@@ -533,6 +550,88 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 	b.Timeout = "3600s"
 	b.QueueTtl = "3600s"
 	return b, nil
+}
+
+// checkServiceURL refuses an address the credential step must not send this
+// build's own identity token to. The token is a bearer credential minted for
+// the installation's service and for no other host, so the URL is that service's
+// own: https, with no path, query, fragment or credentials of its own. It is the
+// same rule the step applies before it sends anything (internal/cli's
+// checkBuildServiceURL), asked here so that a request whose step could never
+// reach the service is refused before the build is paid for.
+func checkServiceURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("the credentials service %q is not the https URL the installation serves it on, with no path, query or fragment: the credential step's identity token is minted for exactly that address", raw)
+	}
+	return nil
+}
+
+// catalogCredentialTTLSeconds is the lifetime the credential step asks the
+// service for. It is the build's own timeout, which is what the step needs: the
+// credential it writes is spent by the clone step later in the same build, so a
+// shorter ask would be a credential that expires between the two. The service
+// caps the ask at its own maximum either way (credsvc's buildTokenMaxTTL), so
+// this names the need and not the grant.
+const catalogCredentialTTLSeconds = 3600
+
+// catalogEntryRepos is the repositories a catalog build names for its
+// credential: the one its source is, which is the only repository this build
+// clones (catalogCloneStep). The name is task.CanonicalRepo's spelling and not
+// the URL's, because that is the service's key space — the published image map
+// keys an entry's repositories by it (config.ValidImageMap), and it is what the
+// route compares the request against before it mints anything (D1906).
+//
+// It is one name and not the entry's whole map: what a build asks for has to be
+// what the build really clones, and the route answers a repository the request
+// did not name by leaving it out of the token.
+func catalogEntryRepos(s CatalogBuildSpec) ([]string, error) {
+	_, p, ok := gitprov.SplitRemote(s.RepoURL)
+	if !ok {
+		return nil, fmt.Errorf("the repository URL %s does not name a repository", RedactURL(s.RepoURL))
+	}
+	canonical, err := task.CanonicalRepo(strings.TrimSuffix(gitprov.TrimRepoPath(p), ".git"))
+	if err != nil {
+		return nil, fmt.Errorf("the repository URL %s is not a repository this installation can name: the credential is asked for it by its canonical owner/name", RedactURL(s.RepoURL))
+	}
+	return []string{canonical}, nil
+}
+
+// catalogCredentialStep makes the template's credential step the entry mode's
+// (IS8, D3330): one request for the entry being built — asked of the
+// installation's credentials service, as the project's build identity the build
+// runs as, which is the caller the entry route admits — and one credential
+// written where the clone step reads it, the store file both of them know by
+// the same path (/creds/git-credentials).
+//
+// It replaces the step's env and its argv whole rather than adding to them: the
+// one-repository mode reads the provider's secret out of its environment, and a
+// variable left in it, or a flag left in the argv, is a way for a later step to
+// read a secret this build no longer has. Every value the entry mode reads is
+// the step's own environment and never its argv, which is why the entry, the
+// repositories and the build id are substitutions reached through env (the
+// template's own rule for this step: what a shell substitutes is not shell
+// itself).
+//
+// The build id is Cloud Build's own $BUILD_ID, which is the id this build runs
+// under — the service keys a Bitbucket pairing on it beside the identity.
+func catalogCredentialStep(s CatalogBuildSpec, cred *cloudbuild.BuildStep) error {
+	cred.SecretEnv = nil
+	cred.Env = []string{
+		"PROVIDER=" + s.GitProvider,
+		"ENTRY=${_ENTRY}",
+		"CATALOG_REPOS=${_CATALOG_REPOS}",
+		"FUGARO_CREDENTIALS_SERVICE_URL=${_CREDENTIALS_SERVICE_URL}",
+		"BUILD_ID=$BUILD_ID",
+	}
+	if s.GitProvider == gitprov.KindGitHub {
+		// The GitHub installation token is minted as the App, and the App's id
+		// is the one thing this build holds and the service's bundle does not
+		// (the bundle holds the key). It is not a secret.
+		cred.Env = append(cred.Env, "GITHUB_APP_ID=${_GITHUB_APP_ID}")
+	}
+	cred.Args = []string{"-c", `exec fugaro image git-credential --entry "$$ENTRY" --build-id "$$BUILD_ID" --provider "$$PROVIDER" --repos "$$CATALOG_REPOS" --ttl-seconds ` + strconv.Itoa(catalogCredentialTTLSeconds) + ` --out ` + catalogCloneCredential}
+	return nil
 }
 
 // SubmitCatalog starts the build of s and returns it as queued: the catalog
@@ -959,11 +1058,19 @@ func (s CatalogBuildSpec) check(project string) error {
 		{"catalog entry", s.Entry}, {"repository slug", s.Slug}, {"repository URL", s.RepoURL},
 		{"base branch", s.BaseBranch}, {"base image", s.Base}, {"image", s.Image},
 		{"git credential secret", s.GitSecretID}, {"build identity", s.ServiceAccount},
-		{"runs bucket", s.Bucket},
+		{"runs bucket", s.Bucket}, {"credentials service", s.CredentialsServiceURL},
 	} {
 		if f.v == "" {
 			return fmt.Errorf("the Cloud Build request has no %s", f.name)
 		}
+	}
+	// The credential step asks the installation's service for this build's git
+	// credential, so the address it is given is the one the step's own identity
+	// token is minted for and reaches no other host: it is the service's URL and
+	// nothing else, the shape the deployment writes and the client refuses to
+	// leave (internal/cli's checkBuildServiceURL, the same rule at the step).
+	if err := checkServiceURL(s.CredentialsServiceURL); err != nil {
+		return err
 	}
 	// The record step composes its JSON with printf and no escaping, on the
 	// claim that every value it carries is constrained; the base is the one
