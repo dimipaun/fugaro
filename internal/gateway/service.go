@@ -213,14 +213,18 @@ const (
 	// run halts (D143) with the removal named — and it moves to no other
 	// credential, which is what makes it a halt rather than a switch.
 	//
-	// It is written by the workspace's scope, which is WC4's half, and this
-	// release carries the READER and not the writer: the gateway is built
-	// before the service that spells it, and a type its switch did not name
-	// would halt the run with the unreadable-answer sentence instead of the
-	// one that names the removal. The spelling is therefore this package's
-	// until WC4 answers the same word, and a scope that writes another word is
-	// a change to this test — exactly the shape ErrorRepositoryNotListed
-	// already has (TestARemovedOwnersRunHaltsNamingTheRemoval holds it).
+	// The word is the workspace's scope's to write — it is mirrored here the
+	// way every other type of this contract is, because this package cannot
+	// import the service's half — and the scope that landed (WC4) answers a
+	// removed owner with the one refusal it gives its record:
+	// credsvc's verifyPersonCallSlip reads the roster on every call and
+	// answers unverified_run_identity — "the slip is not this run's, or not
+	// this account's, or is no longer live" — so a caller cannot tell
+	// "removed" from "not yours". A removed owner's run therefore halts
+	// through the identity arm below, with that arm's detail, where plan row
+	// 61, the threat model and D3146 all expect the removal named; the
+	// sentence in slipOwnerRemovedDetail waits for the service's side to write
+	// this word.
 	ErrorSlipOwnerRemoved = "slip_owner_removed"
 )
 
