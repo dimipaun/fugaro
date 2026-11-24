@@ -481,7 +481,12 @@ func poolStrategyText(s string) string {
 // repository's `failover` beside a project's `strategy: round-robin` is dropped
 // as a widening although the pool is served round-robin, and its `round-robin`
 // is recorded as a value that lost to an effective failover although the pool
-// is not served failover. Its answer is never "".
+// is not served failover.
+//
+// A pool that names neither member answers "" — the D1632 default — and that
+// answer is not a hole: poolStrategyRank ranks it with failover, the tightness
+// a pool that names nothing is served at, and poolStrategyText prints it as
+// failover.
 func ruleInForce(p CraftPool) string {
 	if p.Rule != "" {
 		return p.Rule

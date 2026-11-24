@@ -362,10 +362,12 @@ const (
 //
 // PL1 of docs/model-credentials-routing/ is the last mover after it, by four
 // rows and by none: a pool's `rule`, its `principal.kind` and `principal.id`
-// (R21, D3181) and its optional `threshold` (D3178) are the config's, read from
-// the repository's own `fugaro.yaml` and the project layer, and the allowlist's
-// `pools.*.members` and `pools.*.strategy` names reach none of them — the four
-// join the rows with no generic writer.
+// (R21, D3181) and its optional `threshold` (D3178) are rows of the local
+// project config (`internal/localcfg/localcfg.go:298`) and of no other layer —
+// not the repository's `fugaro.yaml` and not the published policy node, the
+// same block RT2 above calls the local config's — and the allowlist's
+// `pools.*.members` and `pools.*.strategy` names reach none of them, so the
+// four join the rows with no generic writer.
 const (
 	cfmRegistryRows   = 540
 	cfmAllowlistNamed = 121
