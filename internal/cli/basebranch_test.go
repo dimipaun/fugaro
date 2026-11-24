@@ -432,7 +432,10 @@ func TestBaseBranchOnAFollowUp(t *testing.T) {
 	root := firstRunSpec(rootID)
 	root.Ref, root.BaseBranch = "master", "master"
 	seedSpec(t, f, root, false)
-	seedTitleAwareImage(t, f)
+	// The field is the image's: a launcher on an older one drops it rather
+	// than refusing the task (baseBranchSkew), so a fixture that asserts what
+	// the follow-up carries has to hand it an image that knows the field.
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+baseBranchSince)
 	rec := prRecord(rootID, "", 7, 1)
 	rec.StartedAt = time.Now().Add(-72 * time.Hour)
 	writeRecord(t, f, rootID, rec)
