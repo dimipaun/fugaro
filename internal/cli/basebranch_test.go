@@ -429,9 +429,21 @@ func appendProjectConfig(t *testing.T, path, yaml string) {
 // the file this follow-up reads sets nothing.
 func TestBaseBranchOnAFollowUp(t *testing.T) {
 	f := newCloudFixture(t)
+	// The field is carried only for a job image whose runner reads it
+	// (baseBranchSince, 0.12.1): an older one has baseBranchSkew drop the
+	// field before the task is written, and the follow-up would be gated on
+	// the title it inherits before that. One image past both is what this
+	// test is about — the base the run it continues recorded.
+	writeBuildRecord(t, f, appSlug, "web", release0160)
 	root := firstRunSpec(rootID)
 	root.Ref, root.BaseBranch = "master", "master"
 	seedSpec(t, f, root, false)
+	// The image is one whose runner reads both the title the follow-up inherits
+	// from its chain (titlesSince) and the base branch this test is about
+	// (baseBranchSince): on an older one the launch is refused, or the base is
+	// dropped as a field the image would ignore, and neither is a base branch
+	// that was not carried.
+	writeBuildRecord(t, f, appSlug, "web", release0160)
 	rec := prRecord(rootID, "", 7, 1)
 	rec.StartedAt = time.Now().Add(-72 * time.Hour)
 	writeRecord(t, f, rootID, rec)

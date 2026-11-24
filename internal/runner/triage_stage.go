@@ -88,7 +88,7 @@ func (r *run) triageOn() bool {
 	if r.policy.TriageOff() {
 		return false
 	}
-	if !r.rigorCfg.Configured() {
+	if !r.rigorCfg.Configured(r.spec.Repo) {
 		return false
 	}
 	if r.baseCfg == nil {

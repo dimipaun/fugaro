@@ -1540,8 +1540,10 @@ describe('the by-person read the entry wires', () => {
     notes: [],
   }
 
-  /** spendWithPeople boots the dashboard, opens Spend and turns the person
-   * knob on, with `statsRuns` answering `stats`. */
+  /** spendWithPeople boots the dashboard and opens Spend, with `statsRuns`
+   * answering `stats`. The person knob is on without a press: that is the
+   * default (D3214, amending D15), and the read this suite is about is the one
+   * the visit makes on its own. */
   async function spendWithPeople(stats: AReply) {
     const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
     const fake = fakeBridge({
@@ -1556,13 +1558,15 @@ describe('the by-person read the entry wires', () => {
     const panel = panelOf(document)
     buttonFor(document, 'spend').click()
     await flush()
-    // The knob off is no by-person read at all (D15).
-    expect(fake.calls.filter((call) => call.name === 'statsRuns')).toEqual([])
+    await flush()
+    // The knob on is one by-person read, made by the visit itself.
+    expect(
+      fake.calls.filter((call) => call.name === 'statsRuns'),
+      'the opening visit made no by-person read',
+    ).toHaveLength(1)
     const knob = classed(panel, 'spend-persons')[0]
     expect(knob, 'the spend screen drew no person knob: the case proves nothing').toBeDefined()
-    knob?.click()
-    await flush()
-    await flush()
+    expect(knob?.attributes.get('data-enabled'), 'the knob does not open on').toBe('true')
     return { panel, calls: fake.calls }
   }
 
@@ -1771,7 +1775,16 @@ describe('the launch the entry wires', () => {
     // `SETTINGS_EDIT_UNBUILT` rather than reaching a half-built flow -- and the
     // surface's `settings.editor.open` reads it at message time.
     expect(index).toContain('let settingsEditorRunner: SettingsEditorRunner = DECLINING_SETTINGS_EDITOR_FLOW')
-    expect(withoutComments(index)).toContain("'settings.editor.open': (args) => settingsEditorRunner.open(args)")
+    // **The row itself is I-OPS's** (`src/main/handlers.ts`), so the two halves
+    // are pinned in the two files: this entry hands the runner over as a reader
+    // (`settingsEditor: () => settingsEditorRunner`), and the handlers module is
+    // where the row that reads it at message time is built. A declaration of the
+    // row here would now be a second, unreachable one.
+    expect(withoutComments(index)).toContain('settingsEditor: () => settingsEditorRunner')
+    const handlers = withoutComments(
+      readFileSync(join(CONSOLE_ROOT, 'src', 'main', 'handlers.ts'), 'utf8'),
+    )
+    expect(handlers).toContain("'settings.editor.open': (args) => deps.settingsEditor().open(args)")
 
     // Both places the entry learns an installation moved cancel the launch its
     // project has in flight: the choose -- "re-chosen" is that installation
@@ -4767,29 +4780,21 @@ describe('the sections Spend fills as their own reads land', () => {
   })
 
   it('reads the by-person runs only after the report it belongs to has landed, and with `since`', async () => {
-    const people = holding()
+    const report = holding()
     const fake = spendBridge({
-      runReport: (args) =>
-        (args as { readonly by?: unknown }).by === 'person'
-          ? people.reply()
-          : { ok: true, data: { document: reportDoc('2026-10-01') } },
+      runReport: () => report.reply(),
       statsRuns: () => ({ ok: true, data: { document: { rows: [], totals: [], notes: [] } } }),
     })
-    const document = await openSpend(fake.bridge)
+    await openSpend(fake.bridge)
+    // The report is still out, and the aggregate that belongs to it has not been
+    // asked for: it is read from the report's answer, not beside it -- whatever
+    // the knob's default says (D3214).
     expect(
       fake.calls.filter((call) => call.name === 'statsRuns'),
-      'the knob is off: no runs read is made',
+      'the runs read was made beside the report rather than after it',
     ).toEqual([])
 
-    const knob = classed(panelOf(document), 'spend-persons')[0]
-    expect(knob, 'the spend screen drew no person knob: the case proves nothing').toBeDefined()
-    knob?.click()
-    await flush()
-    // The person report is still out, and the aggregate that belongs to it has
-    // not been asked for: it is read from the report's answer, not beside it.
-    expect(fake.calls.filter((call) => call.name === 'statsRuns')).toEqual([])
-
-    people.release({ ok: true, data: { document: reportDoc('2026-10-01', 'person') } })
+    report.release({ ok: true, data: { document: reportDoc('2026-10-01') } })
     await flush()
     const stats = fake.calls.filter((call) => call.name === 'statsRuns')
     expect(stats).toHaveLength(1)
@@ -6346,8 +6351,8 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
 
   it('draws the operation’s own gap sentence for a bridge that cannot answer, and no claim about a write', async () => {
     // `newOpsFrom` turns a bridge with no member for the operation into the
-    // contract's own `not-available` gap (`new-ops.ts`): a console whose
-    // operation is unregistered -- AL's stub, until I-OPS swaps it -- draws a
+    // contract's own `not-available` gap (`new-ops.ts`): a console whose row is
+    // not there -- an older preload, a build with no such operation -- draws a
     // read this build cannot make, and the row never says a write happened.
     const { bridge, calls } = fakeBridge({
       replies: {
