@@ -1370,7 +1370,7 @@ added or removed without this sentence moving fails there:
     privacy statement is the page the App Store and Play listings link as a privacy policy,
     so it carries the software as well as the site and is the one page that is not the
     site's pitch; the number is that page's own count on the gates' own build — **1869
-    words** — plus 25 %, rounded up, which is **2337**. The count moved seventeen times since
+    words** — plus 25 %, rounded up, which is **2337**. The count moved sixteen times since
     G2.3: the campaign section took the page 988 → 1030, the owner's ruling of 2026-10-29 on
     the banner's wording — one question, worded for everything the site may load, with the
     refusal's reach stated in the consent card — took it 1030 → 1144, G2.4's sentence
