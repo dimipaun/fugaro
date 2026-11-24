@@ -1049,8 +1049,8 @@ map_phrase() { # map_phrase REPO ENTRY MATCH
   fi
   case "$IMAGE_MAP_READ" in
   none)
-    printf 'the builds whose _REPO_URL is its own clone URL (the project %s names no entry for %s, so the map did not select them%s)' \
-      "image_map" "$repo" "${IMAGE_MAP_ERR:+; $IMAGE_MAP_ERR}"
+    printf 'the builds whose _REPO_URL is its own clone URL (the project image_map names no entry for %s, so the map did not select them%s)' \
+      "$repo" "${IMAGE_MAP_ERR:+; $IMAGE_MAP_ERR}"
     ;;
   *)
     printf 'the builds whose _REPO_URL is its own clone URL (the project image_map does not name an entry for %s)' "$repo"
@@ -1268,7 +1268,7 @@ step_service() {
 step_repo() { # step_repo LABEL REPO PROVIDER
   local label=$1 repo=$2 provider=$3 ans
   ans=$(build_read "$repo" "$label")
-  local found id status account entry image source match containers url slug cenv
+  local found id status account entry image src_repo match containers url slug cenv
   found=$(field_of found "$ans")
   if [ "$found" != yes ]; then
     unmeasured "build-$label" "no CATALOG-ENTRY build of ${repo} is among the ${L} region's last ${BUILDS} builds, so the image this repository runs could not be read. $(no_build_remedy "$repo")"
@@ -1281,7 +1281,7 @@ step_repo() { # step_repo LABEL REPO PROVIDER
   account=$(field_of account "$ans")
   entry=$(field_of entry "$ans")
   image=$(field_of image "$ans")
-  source=$(field_of source "$ans")
+  src_repo=$(field_of source "$ans")
   match=$(field_of match "$ans")
   containers=$(field_of containers "$ans")
   url=$(field_of url "$ans")
@@ -1298,11 +1298,11 @@ step_repo() { # step_repo LABEL REPO PROVIDER
   # catalog build (B4.5), and the credential is the one the request mounts (the
   # row below reads it).
   if [ "$status" != SUCCESS ]; then
-    fact "build-$label" FAIL "the newest catalog build of ${repo} (${id}, the entry ${entry:-unknown}'s image, found by $(map_phrase "$repo" "$entry" "$match")) ended ${status}, not SUCCESS: $(read_audit_said "$slug") . Read it with 'gcloud builds log ${id} --project=${P} --region=${L}'. A catalog entry's build clones with the credential its request mounts as availableSecrets and bakes from the entry's source repository (${source:-unknown}), so a build that cannot finish is that mount, the entry's definition or that checkout"
+    fact "build-$label" FAIL "the newest catalog build of ${repo} (${id}, the entry ${entry:-unknown}'s image, found by $(map_phrase "$repo" "$entry" "$match")) ended ${status}, not SUCCESS: $(read_audit_said "$slug") . Read it with 'gcloud builds log ${id} --project=${P} --region=${L}'. A catalog entry's build clones with the credential its request mounts as availableSecrets and bakes from the entry's source repository (${src_repo:-unknown}), so a build that cannot finish is that mount, the entry's definition or that checkout"
   elif ! is_build_identity "$account"; then
     fact "build-$label" FAIL "the newest catalog build of ${repo} (${id}, entry ${entry}) ended SUCCESS but its own record says it ran as ${account:-nobody this reading can name}, not as the installation's build identity (${BUILD_IDENTITY_ID}@${P}.iam.gserviceaccount.com): a catalog entry's build runs as the project's build identity and never as a repository's build account, and a build that ran as another identity is not a statement about this installation's entry builds"
   else
-    fact "build-$label" PASS "the newest build of ${repo} is the CATALOG ENTRY ${entry}'s image (${image}, build ${id}, found by $(map_phrase "$repo" "$entry" "$match")): it ended SUCCESS and ran as ${account}, the installation's build identity — so the image this repository runs really is the entry its image_map names, baked from that entry's source repository (${source:-unknown}), and the account is the one gcp.CatalogBuildSpec.check admits. Its request names NO credentials service: _CREDENTIALS_SERVICE_URL is empty for every catalog build (B4.5), because the build's identity is not one the build-credentials route admits and it clones with the credential its request mounts instead"
+    fact "build-$label" PASS "the newest build of ${repo} is the CATALOG ENTRY ${entry}'s image (${image}, build ${id}, found by $(map_phrase "$repo" "$entry" "$match")): it ended SUCCESS and ran as ${account}, the installation's build identity — so the image this repository runs really is the entry its image_map names, baked from that entry's source repository (${src_repo:-unknown}), and the account is the one gcp.CatalogBuildSpec.check admits. Its request names NO credentials service: _CREDENTIALS_SERVICE_URL is empty for every catalog build (B4.5), because the build's identity is not one the build-credentials route admits and it clones with the credential its request mounts instead"
   fi
 
   # mounts-LABEL: what a catalog build clones with. The request mounts exactly
@@ -1578,12 +1578,12 @@ step_flip_repo() { # step_flip_repo LABEL REPO PROVIDER
     unmeasured "noaccessor-$label" "no catalog-entry build of ${repo} was read"
     return 0
   fi
-  local id status account entry source match slug url containers envcount
+  local id status account entry src_repo match slug url containers envcount
   id=$(field_of id "$ans")
   status=$(field_of status "$ans")
   account=$(field_of account "$ans")
   entry=$(field_of entry "$ans")
-  source=$(field_of source "$ans")
+  src_repo=$(field_of source "$ans")
   match=$(field_of match "$ans")
   url=$(field_of url "$ans")
   containers=$(field_of containers "$ans")
@@ -1623,7 +1623,7 @@ step_flip_repo() { # step_flip_repo LABEL REPO PROVIDER
   if [ "$status" = SUCCESS ] && is_build_identity "$account"; then
     fact "build-flip-$label" PASS "the newest build of ${repo} is the CATALOG ENTRY ${entry}'s image (${id}, found by $(map_phrase "$repo" "$entry" "$match")): it ended SUCCESS and ran as ${account}, the installation's build identity, with the credential its request mounts — so the image this repository runs still bakes, and nothing the flip took was a path this build used"
   else
-    fact "build-flip-$label" FAIL "the newest catalog build of ${repo} (${id}, entry ${entry:-unknown}) did not read as a success of a catalog build: status ${status}, account ${account:-none}, service ${url}. A catalog entry's build runs as the installation's build identity (${BUILD_IDENTITY_ID}@${P}.iam.gserviceaccount.com) and clones with the credential its request mounts, so a build that could not finish is that mount, the entry's definition or the entry's source repository (${source:-unknown}) having broken"
+    fact "build-flip-$label" FAIL "the newest catalog build of ${repo} (${id}, entry ${entry:-unknown}) did not read as a success of a catalog build: status ${status}, account ${account:-none}, service ${url}. A catalog entry's build runs as the installation's build identity (${BUILD_IDENTITY_ID}@${P}.iam.gserviceaccount.com) and clones with the credential its request mounts, so a build that could not finish is that mount, the entry's definition or the entry's source repository (${src_repo:-unknown}) having broken"
   fi
 
   # served-flip-LABEL: the service's own lines for that build.
