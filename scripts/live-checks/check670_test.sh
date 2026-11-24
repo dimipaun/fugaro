@@ -44,6 +44,7 @@
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$here/lib}
 script=$here/check670.sh
 work=$(mktemp -d)
 cleanup_all() {
@@ -126,6 +127,8 @@ write_fake_fugaro() { # dir
 # marker file.
 set -euo pipefail
 state=${FAKE670_DIR:-}
+. "$LIVE_CHECK_LIB/strict.sh"
+strict_fugaro_verify "$@" || exit $?
 printf 'fugaro %s (in %s, ide-marker=%s)\n' "$*" "$PWD" "${CLAUDE_CODE_SSE_PORT:-none}" >>"$state/logs/fugaro.calls"
 
 knob() { # knob NAME [DEFAULT]
@@ -529,6 +532,8 @@ write_fake_gcloud() { # dir
   mkdir -p "$1/bin"
   cat >"$1/bin/gcloud" <<'GCLOUD_EOF'
 #!/usr/bin/env bash
+. "$LIVE_CHECK_LIB/strict.sh"
+strict_gcloud_verify "$LIVE_CHECK_LIB/allow/check670.gcloud" "$@" || exit $?
 # A stand-in for `gcloud`, for scripts/live-checks/check670_test.sh only: it
 # holds the three things Check 670 reads after the removal — the built image in
 # Artifact Registry, the github-app-key container with an enabled version, and
@@ -563,6 +568,8 @@ write_fake_gh() { # dir
   mkdir -p "$1/bin"
   cat >"$1/bin/gh" <<'GH_EOF'
 #!/usr/bin/env bash
+. "$LIVE_CHECK_LIB/strict.sh"
+strict_gh_verify "$LIVE_CHECK_LIB/allow/check670.gh" "$@" || exit $?
 # A stand-in for `gh`, for scripts/live-checks/check670_test.sh only: it holds
 # the two facts only the provider holds — the App's installation on the
 # repository, which the removal must never uninstall, and the pull request a run
@@ -652,6 +659,7 @@ run_check() { # run_check DIR ENV... [-- ARGS...]
   # marker again, and a variable given as an argument wins over `env -u`.
   env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE -u CURSOR_AGENT -u AI_AGENT \
     PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    LIVE_CHECK_LIB="$LIVE_CHECK_LIB" \
     FAKE670_DIR="$dir/state" \
     CHECK670_RUN_SECONDS=6 CHECK670_POLL_SECONDS=1 \
     CHECK670_LAUNCH_SECONDS=10 CHECK670_CLI_TIMEOUT_SECONDS=10 CHECK670_CLONE_SECONDS=10 \

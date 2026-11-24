@@ -23469,8 +23469,11 @@ and none can: it writes a pool on the owner's own installation and converges it 
 bash scripts/live-checks/check630.sh --sandbox <the sandbox repository checkout>
 ```
 
-`--dry-run` makes every guard and prints every command it would run, calling nothing; `--help` prints the
-header above. The script asks the write door for **one** pool, which must refuse it, and then runs
+`--dry-run` makes every guard and prints every command it would run, calling nothing; `--preflight` makes
+the check's own **reads** and evaluates every precondition before anything is written or launched —
+the installation, the published node, the crossing members and the pool the write door is asked for —
+prints every blocker at once with the command that clears it, and writes and launches nothing; `--help`
+prints the header above. The script asks the write door for **one** pool, which must refuse it, and then runs
 `fugaro update`, which is the acceptance's own verb. It prints ONE block on **stdout** headed
 `CHECK 630 RESULT`, ending `CHECK 630 RESULT END (exit N)`: exit **0** when every criterion held, **1** when
 one did not or a guard stopped the run, **2** when the check could not measure — a tool is missing, the
@@ -23482,7 +23485,8 @@ a key the run never reached reads `FAIL — not reached`.
 is asked to declare), `CHECK630_OPENROUTER_MEMBER` and `CHECK630_ANTHROPIC_MEMBER` (the pair it hands it,
 each defaulting to the first credential of that kind the installation declares),
 `CHECK630_CLI_TIMEOUT_SECONDS` (180), `CHECK630_DOCTOR_TIMEOUT_SECONDS` (300),
-`CHECK630_UPDATE_TIMEOUT_SECONDS` (1800), `CHECK630_DRY_RUN` and `CHECK630_KEEP_SCRATCH`.
+`CHECK630_UPDATE_TIMEOUT_SECONDS` (1800), `CHECK630_DRY_RUN`, `CHECK630_PREFLIGHT` and
+`CHECK630_KEEP_SCRATCH`.
 
 **Reading the `CHECK 630 RESULT` block.** One block of `FACT <key>: PASS|FAIL|INFO — <what it read>` lines,
 in this order, one per criterion above: `fugaro-version`, `xtrace`, `agent-session`, `belong`,

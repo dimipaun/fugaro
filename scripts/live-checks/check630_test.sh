@@ -23,6 +23,7 @@
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$here/lib}
 script=$here/check630.sh
 work=$(mktemp -d)
 cleanup_all() {
@@ -395,7 +396,7 @@ run_check() { # run_check DIR ENV... [-- ARGS...]
   # marker again, and a variable given as an argument wins over `env -u`.
   env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE -u CURSOR_AGENT -u AI_AGENT \
     PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
-    LIVE_CHECK_LIB="$here/lib" \
+    LIVE_CHECK_LIB="$LIVE_CHECK_LIB" \
     FAKE_LOG_DIR="$dir/logs" FAKE_JSON_DIR="$dir/json" FAKE_STATE="$dir/state" \
     FAKE_RUNNER="$runner_member" FAKE_CREDSVCC="$credsvc_member" FAKE_POOL="$crossed_pool" \
     CHECK630_SANDBOX="$dir/sandbox" \

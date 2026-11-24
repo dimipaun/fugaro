@@ -13,6 +13,7 @@
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$here/lib}
 script=$here/check196.sh
 work=$(mktemp -d)
 kept=()
@@ -50,6 +51,8 @@ write_fake_fugaro() { # dir
 #!/usr/bin/env bash
 # A stand-in for `fugaro`, for scripts/live-checks/check196.sh's test only.
 set -euo pipefail
+. "$LIVE_CHECK_LIB/strict.sh"
+strict_fugaro_verify "$@" || exit $?
 printf 'fugaro %s\n' "$*" >>"$FAKE_LOG_DIR/fugaro.calls"
 case "${1:-}" in
 version)
@@ -129,17 +132,24 @@ def flag(name, default=""):
     return default
 
 
-# Like the real CLI, a flag a subcommand does not have is an error: every
-# subcommand this check calls is listed with the flags it may pass, so a
-# misspelled or invented flag cannot hide in any call.
-ALLOWED = {
-    ("builds", "list"): ("--project", "--limit", "--format"),
-    ("run", "jobs", "list"): ("--project", "--region", "--format"),
-    ("run", "jobs", "executions", "list"): ("--project", "--region", "--job", "--limit", "--format"),
-    ("logging", "read"): ("--project", "--freshness", "--limit", "--format"),
-    ("run", "services", "get-iam-policy"): ("--project", "--region", "--format"),
-    ("run", "services", "describe"): ("--project", "--region", "--format"),
-}
+# Like the real CLI, a flag a subcommand does not have is an error: the
+# subcommands this check may call, and the flags each may pass, are the short
+# allow-list kept beside this test (scripts/live-checks/lib/allow/
+# check196.gcloud), so a misspelled or invented flag cannot hide in any call.
+BASE_FLAGS = {"--help", "-h", "--quiet", "--project", "--format", "--account",
+              "--verbosity", "--log-http"}
+ALLOWED = {}
+ALLOWED_FLAGS = set()
+with open(os.path.join(os.environ["LIVE_CHECK_LIB"], "allow", "check196.gcloud")) as fh:
+    for line in fh:
+        line = line.rstrip("\n")
+        if not line or line.startswith("#"):
+            continue
+        kind, _, rest = line.partition("\t")
+        if kind == "cmd":
+            ALLOWED[tuple(rest.split())] = True
+        elif kind == "flag":
+            ALLOWED_FLAGS.add(rest.strip())
 positionals = [a for a in args if not a.startswith("-")]
 sub = None
 for n in (4, 3, 2):
@@ -150,7 +160,7 @@ if sub is None:
     sys.stderr.write("ERROR: (gcloud) unknown command: %s\n" % " ".join(args))
     sys.exit(2)
 for a in args:
-    if a.startswith("--") and a.split("=")[0] not in ALLOWED[sub]:
+    if a.startswith("--") and a.split("=")[0] not in ALLOWED_FLAGS | BASE_FLAGS:
         sys.stderr.write("ERROR: (gcloud) unrecognized argument: %s\n" % a)
         sys.exit(2)
 
@@ -389,6 +399,7 @@ run196() { # dir mode — the script's own arguments are in run_args, extra env 
   status=0
   env \
     PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    LIVE_CHECK_LIB="$LIVE_CHECK_LIB" \
     FAKE_LOG_DIR="$dir/logs" FAKE_GCLOUD_MODE="$mode" \
     CHECK196_REPO=acme/sandbox CHECK196_BITBUCKET=acme/bb-sandbox \
     CHECK196_LOG_WAIT_SECONDS=0 CHECK196_LOG_POLL_SECONDS=0 \

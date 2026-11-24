@@ -18,6 +18,7 @@
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$here/lib}
 script=$here/check96.sh
 # The PHYSICAL path, so a path this test compares and a path a child reports
 # are spelled the same way.
@@ -100,6 +101,8 @@ write_fakes() { # dir
   mkdir -p "$1/bin"
   cat >"$1/bin/gcloud" <<'GCLOUD_EOF'
 #!/usr/bin/env bash
+. "$LIVE_CHECK_LIB/strict.sh"
+strict_gcloud_verify "$LIVE_CHECK_LIB/allow/check96.gcloud" "$@" || exit $?
 # A fake gcloud for check96.sh's test: every answer comes from $FAKE96_DIR and
 # nothing is reached. The whole argv of every call is recorded.
 set -euo pipefail
@@ -279,6 +282,8 @@ GCLOUD_EOF
 # A fake fugaro for check96.sh's test: doctor's answer and the stored budget
 # come from $FAKE96_DIR.
 set -euo pipefail
+. "$LIVE_CHECK_LIB/strict.sh"
+strict_fugaro_verify "$@" || exit $?
 printf 'fugaro %s\n' "$*" >>"$FAKE96_DIR/calls"
 case "${1:-}" in
 doctor)
@@ -720,6 +725,7 @@ run96() {
   [ "${RUN96_UNNAMED:-no}" = yes ] && named=()
   out=$(env TMPDIR="$dir/tmp" FAKE96_DIR="$dir/state" FUGARO_CONFIG="$dir/state/fugaro.yaml" \
     PATH="${RUN96_PATH:+$RUN96_PATH:}$dir/bin:$PATH" \
+    LIVE_CHECK_LIB="$LIVE_CHECK_LIB" \
     ${RUN96_ENV[@]+"${RUN96_ENV[@]}"} \
     bash "$script" ${RUN96_ARGS[@]+"${RUN96_ARGS[@]}"} ${named[@]+"${named[@]}"} "$@" 2>"$dir/err") || status=$?
   printf '%s' "$out" >"$dir/out"
@@ -1012,7 +1018,7 @@ test_the_workflow_flag_is_what_selects_the_job() {
   grep -q ': "\$2"' "$copy" || fail "the mutation: the copy does not ignore the flag (the sed found no place to put it)"
   status=0
   out=$(env TMPDIR="$dir/tmp" FAKE96_DIR="$dir/state" FUGARO_CONFIG="$dir/state/fugaro.yaml" \
-    PATH="$dir/bin:$PATH" bash "$copy" --workflow second "$SANDBOX_REPO" 2>"$dir/err") || status=$?
+    LIVE_CHECK_LIB="$LIVE_CHECK_LIB" PATH="$dir/bin:$PATH" bash "$copy" --workflow second "$SANDBOX_REPO" 2>"$dir/err") || status=$?
   printf '%s' "$out" >"$dir/out"
   expect_status "$status" 2 "the mutation"
   expect_absent "$out" "FACT job: PASS" \
@@ -1729,7 +1735,7 @@ test_xtrace_is_refused() {
   setup_case xtrace
   status=0
   out=$(env TMPDIR="$dir/tmp" FAKE96_DIR="$dir/state" FUGARO_CONFIG="$dir/state/fugaro.yaml" \
-    PATH="$dir/bin:$PATH" bash -x "$script" 2>"$dir/err") || status=$?
+    LIVE_CHECK_LIB="$LIVE_CHECK_LIB" PATH="$dir/bin:$PATH" bash -x "$script" 2>"$dir/err") || status=$?
   printf '%s' "$out" >"$dir/out"
   expect_status "$status" 2 "xtrace"
   expect_contains "$out" "FACT xtrace: FAIL — " "xtrace: the row"

@@ -29,6 +29,7 @@
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$here/lib}
 script=$here/check631.sh
 work=$(mktemp -d)
 cleanup_all() {
@@ -83,6 +84,8 @@ write_fake_fugaro() { # dir
 # credential it was asked for, and `accounts rm` takes it away again (unless the
 # mode says the removal does not stick).
 set -euo pipefail
+. "$LIVE_CHECK_LIB/strict.sh"
+strict_fugaro_verify "$@" || exit $?
 printf 'fugaro %s (in %s)\n' "$*" "$PWD" >>"$FAKE_LOG_DIR/fugaro.calls"
 mode=${FAKE_MODE:-default}
 state=${FAKE_STATE:?}
@@ -304,6 +307,8 @@ write_fake_gcloud() { # dir
   mkdir -p "$1/bin"
   cat >"$1/bin/gcloud" <<'GCLOUD_EOF'
 #!/usr/bin/env bash
+. "$LIVE_CHECK_LIB/strict.sh"
+strict_gcloud_verify "$LIVE_CHECK_LIB/allow/check631.gcloud" "$@" || exit $?
 # A stand-in for `gcloud`, for scripts/live-checks/check631.sh's test only: the
 # account the check reads for the pool's owner, the run's own record out of the
 # runs bucket, and the credentials service's audit lines. Every call is logged.
@@ -500,6 +505,7 @@ run_check() { # run_check DIR ENV... [-- ARGS...]
   # command it runs.
   env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE -u CURSOR_AGENT -u AI_AGENT \
     PATH="$dir/bin:$PATH" HOME="$dir/home" XDG_CONFIG_HOME= TMPDIR="$dir/tmp" HISTFILE= \
+    LIVE_CHECK_LIB="$LIVE_CHECK_LIB" \
     FAKE_LOG_DIR="$dir/logs" FAKE_JSON_DIR="$dir/json" FAKE_STATE="$dir/state" \
     FAKE_ANTHROPIC="$anthropic" FAKE_OPENROUTER="$openrouter" FAKE_POOL="$pool" \
     FAKE_CRAFT="$craft" FAKE_INSTALLATION="$installation" FAKE_ACCOUNT="$owner" \

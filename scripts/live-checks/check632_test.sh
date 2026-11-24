@@ -21,6 +21,7 @@
 set -uo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$here/lib}
 script=$here/check632.sh
 work=$(mktemp -d)
 cleanup_all() {
@@ -64,6 +65,8 @@ write_fake_gcloud() { # dir
   mkdir -p "$1/bin"
   cat >"$1/bin/gcloud" <<'GCLOUD_EOF'
 #!/usr/bin/env bash
+. "$LIVE_CHECK_LIB/strict.sh"
+strict_gcloud_verify "$LIVE_CHECK_LIB/allow/check632.gcloud" "$@" || exit $?
 # A stand-in for `gcloud`, for scripts/live-checks/check632.sh's test only. It
 # answers the run's record read and nothing else. Nothing here reaches a real
 # project.
@@ -97,6 +100,8 @@ write_fake_fugaro() { # dir
 # the chain and the launch all come from files the case wrote; the update writes
 # the state marker that switches the later reads to the converged answers.
 set -u
+. "$LIVE_CHECK_LIB/strict.sh"
+strict_fugaro_verify "$@" || exit $?
 printf 'fugaro %s (in %s)\n' "$*" "$PWD" >>"$FAKE_LOG_DIR/fugaro.calls"
 mode=${FAKE_MODE:-default}
 updated=no
@@ -484,6 +489,7 @@ run_check() { # run_check DIR ENV... [-- ARGS...]
   # marker again, and a variable given as an argument wins over `env -u`.
   env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE -u CURSOR_AGENT -u AI_AGENT \
     PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    LIVE_CHECK_LIB="$LIVE_CHECK_LIB" \
     FAKE_LOG_DIR="$dir/logs" FAKE_JSON_DIR="$dir/json" FAKE_STATE="$dir/state" \
     FAKE_RUN_ID="$run_id" FAKE_TITLE="$title" FAKE_MODEL="$model" \
     FAKE_INSTALLATION="$installation" \

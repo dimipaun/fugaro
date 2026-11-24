@@ -590,10 +590,12 @@ step_agent_refusal() {
     unmeasured agent-refusal "there is no installation to run the CLI against: the row above says why"
     return 0
   fi
-  local pflag=()
-  [ -z "$PROJECT_ARG" ] || pflag=(--project "$PROJECT_ARG")
+  # `fugaro accounts add` takes no --project: the installation is chosen by the
+  # checkout it runs from, or by FUGARO_PROJECT.
+  local penv=()
+  [ -z "$PROJECT_ARG" ] || penv=(FUGARO_PROJECT="$PROJECT_ARG")
   say "reading what a coding agent's session is told: CLAUDECODE=1 fugaro accounts add ${ANTHROPIC} --type anthropic"
-  run_bounded "$CLI_TIMEOUT" add-refused "$SANDBOX" env CLAUDECODE=1 "$FUGARO_BIN" accounts add "$ANTHROPIC" --type anthropic ${pflag[@]+"${pflag[@]}"}
+  run_bounded "$CLI_TIMEOUT" add-refused "$SANDBOX" env CLAUDECODE=1 ${penv[@]+"${penv[@]}"} "$FUGARO_BIN" accounts add "$ANTHROPIC" --type anthropic
   local out
   out=$(cat "$SCRATCH/add-refused.out" "$SCRATCH/add-refused.err" 2>/dev/null || true)
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then

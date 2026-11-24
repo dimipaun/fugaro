@@ -123,10 +123,10 @@ on_error() {
 }
 
 # The shared `--preflight` driver (scripts/live-checks/lib/preflight.sh).
-CHECK630_LIB=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib
-LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$CHECK630_LIB}
+live_check_lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$live_check_lib_dir}
 # shellcheck source=lib/preflight.sh
-. "$CHECK630_LIB/preflight.sh"
+. "$LIVE_CHECK_LIB/preflight.sh"
 PREFLIGHT_TOOL=check630
 
 need_tools() {
