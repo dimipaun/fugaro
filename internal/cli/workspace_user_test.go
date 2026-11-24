@@ -286,7 +286,11 @@ func (a *wu7Authority) AddAdmin(_ context.Context, admin string) error {
 		return a.addErr
 	}
 	a.added = append(a.added, admin)
-	a.bound = append(a.bound, "user:"+admin)
+	// The command hands the authority the member form the live binding is
+	// written in (`user:<address>`, accesslib.Member), which is what a real
+	// mechanism binds and what AdminBindings answers: the fake records it as
+	// given rather than prefixing it a second time.
+	a.bound = append(a.bound, admin)
 	return nil
 }
 
@@ -294,7 +298,7 @@ func (a *wu7Authority) RemoveAdmin(_ context.Context, admin string) error {
 	a.removed = append(a.removed, admin)
 	kept := make([]string, 0, len(a.bound))
 	for _, b := range a.bound {
-		if b != "user:"+admin {
+		if b != admin {
 			kept = append(kept, b)
 		}
 	}
