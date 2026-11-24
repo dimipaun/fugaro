@@ -25,14 +25,19 @@
 # (fugaro-build-identity@<project>.iam.gserviceaccount.com, B6/D2301) and never
 # as the repository's own `fugaro-b-…` build account; its request names the
 # entry in `_IMAGE` (`<region>-docker.pkg.dev/<project>/<shared-registry>/catalog-<entry>`)
-# and the checkout it was submitted from in `_REPO_URL`, and carries NO `_SLUG`,
-# no `_WORKFLOW` and no `_SECRET_ENVS`; and it carries `_CREDENTIALS_SERVICE_URL`
-# EMPTY, because a catalog build clones with the provider git credential its
-# request MOUNTS as `availableSecrets` (gcp.CatalogBuildSpec.AvailableSecrets).
-# B4.9's flip does not reach it — the build-credentials route serves one
-# repository to the account bound to that repository, and the project's build
-# identity is not that account (docs/secrets-brokering's build classes note) —
-# so a catalog build keeps its mounts before and after the flip. This check
+# and the checkout it bakes in `_REPO_URL` (the entry's SOURCE repository, which
+# is the served repository only where the entry is sourced from it), and carries
+# NO `_SLUG`, no `_WORKFLOW` and no `_SECRET_ENVS`.
+# AND IT CARRIES NO SECRET AT ALL (IS8, D3330): the request names no
+# `availableSecrets` and no step names a `secretEnv`, and it names the
+# installation's credentials service in `_CREDENTIALS_SERVICE_URL` instead —
+# which its submission REFUSES to leave empty (internal/cli/image_build_catalog.go)
+# — because its credential step asks that service's entry route for the git
+# credential of the entry it is building, as the project's build identity, which
+# is the caller that route admits (credsvc.BuildTokenPath). A build with no
+# mount and NO address is the shape that holds no credential at all and is the
+# FAIL; a build that still carries a mount is one from before IS8, which the
+# build identity no longer holds an accessor for, and is a FAIL too. This check
 # reads what a build really carries and says so, rather than requiring a shape
 # no build of this installation has.
 # A FAIL in the switch mode stops S4 and returns to the owner as a decision
@@ -42,8 +47,8 @@
 #             bash scripts/live-checks/check196.sh --dry-run      (prints the
 #             plan and calls NOTHING: no gcloud, no fugaro)
 #             bash scripts/live-checks/check196.sh --after-flip   (Check 196's
-#             second half: the accessor and availableSecrets gone, a build that
-#             still succeeds)
+#             second half: the check job's accessor and availableSecrets gone, a
+#             build that still succeeds)
 # Needs:      bash, mktemp, python3, gcloud (authenticated as you: list the
 #             REGION's own builds and read each repository's own catalog builds
 #             out of them, read the credentials service itself and ONE of its
@@ -567,22 +572,6 @@ def repourl_of(b):
     return str(((b.get("substitutions") or {}).get("_REPO_URL")) or "")
 
 
-def provider_of_url(url):
-    """The provider a repository URL names, by its host. A CATALOG build's
-    provider is the ENTRY SOURCE repository's and never the served repository's
-    when one entry serves several: the request's GitProvider and RepoURL are the
-    entry's own source repository (internal/cli/image_build_catalog.go sets both
-    off that entry), which is the checkout the build clones and the credential
-    its request mounts. "" for a host neither provider serves, which is the one
-    thing this reading cannot answer."""
-    host = url.split("//", 1)[-1].split("/", 1)[0].strip().lower()
-    if host == "github.com":
-        return "github"
-    if host == "bitbucket.org":
-        return "bitbucket"
-    return ""
-
-
 def builds_of(path, repo, entry=""):
     """Every CATALOG-ENTRY build of one repository, newest first, and which of
     the two answers selected them.
@@ -727,7 +716,6 @@ if cmd == "builds":
         subs = b.get("substitutions") or {}
         print("match=%s" % match)
         print("source=%s" % word(repourl_of(b), 200))
-        print("source_provider=%s" % word(provider_of_url(repourl_of(b)), 40))
         print("id=%s" % word(b.get("id"), 60))
         print("status=%s" % word(b.get("status"), 40))
         print("account=%s" % word(account_address(b.get("serviceAccount")), 160))
@@ -1214,21 +1202,6 @@ git_env_name() { # git_env_name PROVIDER
   esac
 }
 
-# mint_env_name PROVIDER — the env a CATALOG build's request feeds its own
-# provider git credential into, which is what a catalog build clones with: the
-# request mounts the credential the BUILD IDENTITY holds the accessor for
-# (gcp.CatalogBuildSpec.AvailableSecrets, `credentialSecretEnv` in
-# internal/backend/gcp/build.go). It is NOT the job's reserved name above: the
-# job's mount lands in FUGARO_GITHUB_APP_PRIVATE_KEY / FUGARO_BITBUCKET_TOKEN,
-# while a build asks Cloud Build for the secret under GITHUB_APP_KEY / GIT_TOKEN.
-mint_env_name() { # mint_env_name PROVIDER
-  case "$1" in
-  github) printf '%s\n' GITHUB_APP_KEY ;;
-  bitbucket) printf '%s\n' GIT_TOKEN ;;
-  *) return 1 ;;
-  esac
-}
-
 # audit_read SLUG — the service's own `credsvc: audit` and `credsvc: refused`
 # lines for ONE repository, retried while Cloud Logging catches up. Ingestion
 # lags the call by seconds, and a reading taken immediately is an empty answer
@@ -1262,8 +1235,8 @@ audit_read() { # audit_read SLUG
 # is deployed and that Cloud Run serves it at an address. It is read off the
 # service and off nothing else, deliberately: this row is the one part of the
 # reading that is independent of every build, so a project whose last builds
-# hold no catalog build still measures it (and a build that names no service —
-# which is every catalog build, B4.5 — cannot make it FAIL).
+# hold no catalog build still measures it (and a build's own address — which
+# every catalog build names since IS8 — cannot make it FAIL).
 step_service() {
   local ans name url
   if ! read_service; then
@@ -1283,7 +1256,7 @@ step_service() {
     return 0
   fi
   SERVICE_URL=$url
-  fact service PASS "the credentials service is at ${url} (Cloud Run service ${name:-$SVC} in ${P}/${L}, read off the service itself and not off any build): it is deployed and reachable, which is the address every caller mints its Google ID token for. Whether a build names it is a separate row: a catalog entry's build names none by design (_CREDENTIALS_SERVICE_URL is empty for every catalog build, B4.5) and clones with the credential its request mounts"
+  fact service PASS "the credentials service is at ${url} (Cloud Run service ${name:-$SVC} in ${P}/${L}, read off the service itself and not off any build): it is deployed and reachable, which is the address every caller mints its Google ID token for. Whether a build names it is a separate row: a catalog entry's build names it too, as the address its credential step asks for the git credential of the entry it bakes (IS8, D3330), and a build that carries no mount and names no address holds no credential at all"
 }
 
 # step_repo LABEL REPO PROVIDER — the image one sandbox repository builds (the
@@ -1292,12 +1265,11 @@ step_service() {
 step_repo() { # step_repo LABEL REPO PROVIDER
   local label=$1 repo=$2 provider=$3 ans
   ans=$(build_read "$repo" "$label")
-  local found id status account entry image src_repo match containers url slug cenv
-  local src_prov
+  local found id status account entry image src_repo match containers url slug
   found=$(field_of found "$ans")
   if [ "$found" != yes ]; then
     unmeasured "build-$label" "no CATALOG-ENTRY build of ${repo} is among the ${L} region's last ${BUILDS} builds, so the image this repository runs could not be read. $(no_build_remedy "$repo")"
-    unmeasured "mounts-$label" "no catalog-entry build of ${repo} was read, so the credential its request mounts could not be measured"
+    unmeasured "mounts-$label" "no catalog-entry build of ${repo} was read, so the secrets its request carries could not be measured"
     unmeasured "served-$label" "no catalog-entry build of ${repo} was read, so the service's own lines for it could not be measured"
     return 0
   fi
@@ -1307,73 +1279,71 @@ step_repo() { # step_repo LABEL REPO PROVIDER
   entry=$(field_of entry "$ans")
   image=$(field_of image "$ans")
   src_repo=$(field_of source "$ans")
-  src_prov=$(field_of source_provider "$ans")
   match=$(field_of match "$ans")
   containers=$(field_of containers "$ans")
+  envcount=$(field_of secretenv "$ans")
   url=$(field_of url "$ans")
+  url_value=$(field_of url_value "$ans")
   slug=$(repo_slug "$(field_of slug "$ans")" "$label" "$repo")
-  # The provider whose credential the request mounts is the ENTRY SOURCE
-  # repository's, read off `_REPO_URL` — not this repository's: the request's
-  # provider comes off the entry (gcp.CatalogBuildSpec's GitProvider), and one
-  # entry may serve several repositories, so a GitHub repository whose entry is
-  # sourced from a Bitbucket one mounts GIT_TOKEN and not GITHUB_APP_KEY. A host
-  # neither provider serves leaves the credential unnamed rather than guessed.
-  cenv=""
-  case "$src_prov" in github | bitbucket) cenv=$(mint_env_name "$src_prov") ;; esac
 
   # build-LABEL: the image this repository really runs — the CATALOG ENTRY its
   # image_map names, baked from the ENTRY's source repository (the checkout the
-  # build was submitted from, which is not the served repository when one entry
-  # serves several) — ended SUCCESS and ran as the installation's build identity,
-  # which is the account a catalog build runs as and the only one
-  # gcp.CatalogBuildSpec.check admits (B6/D2301). It names no credentials
-  # service, and that is not a failure: the substitution is empty for every
-  # catalog build (B4.5), and the credential is the one the request mounts (the
-  # row below reads it).
+  # build bakes, which is the served repository only where the entry is sourced
+  # from it) — ended SUCCESS and ran as the installation's build identity, which
+  # is the account a catalog build runs as and the only one
+  # gcp.CatalogBuildSpec.check admits (B6/D2301). Its request names the
+  # credentials service, and that is the shape since IS8: the entry's git
+  # credential is what its credential step asks that service for (D3330).
   if [ "$status" != SUCCESS ]; then
-    fact "build-$label" FAIL "the newest catalog build of ${repo} (${id}, the entry ${entry:-unknown}'s image, found by $(map_phrase "$repo" "$entry" "$match")) ended ${status}, not SUCCESS: $(read_audit_said "$slug") . Read it with 'gcloud builds log ${id} --project=${P} --region=${L}'. A catalog entry's build clones with the credential its request mounts as availableSecrets and bakes from the entry's source repository (${src_repo:-unknown}), so a build that cannot finish is that mount, the entry's definition or that checkout"
+    fact "build-$label" FAIL "the newest catalog build of ${repo} (${id}, the entry ${entry:-unknown}'s image, found by $(map_phrase "$repo" "$entry" "$match")) ended ${status}, not SUCCESS: $(read_audit_said "$slug") . Read it with 'gcloud builds log ${id} --project=${P} --region=${L}'. A catalog entry's build bakes from the entry's source repository (${src_repo:-unknown}) and asks the credentials service (${url_value:-no address}) for that entry's git credential, so a build that cannot finish is that call, the entry's definition or that checkout"
   elif ! is_build_identity "$account"; then
-    fact "build-$label" FAIL "the newest catalog build of ${repo} (${id}, entry ${entry}) ended SUCCESS but its own record says it ran as ${account:-nobody this reading can name}, not as the installation's build identity (${BUILD_IDENTITY_ID}@${P}.iam.gserviceaccount.com): a catalog entry's build runs as the project's build identity and never as a repository's build account, and a build that ran as another identity is not a statement about this installation's entry builds"
+    fact "build-$label" FAIL "the newest catalog build of ${repo} (${id}, entry ${entry}) ended SUCCESS but its own record says it ran as ${account:-nobody this reading can name}, not as the installation's build identity (${BUILD_IDENTITY_ID}@${P}.iam.gserviceaccount.com): a catalog entry's build runs as the project's build identity — which is the caller the service's entry route admits — and never as a repository's build account, and a build that ran as another identity is not a statement about this installation's entry builds"
   else
-    fact "build-$label" PASS "the newest build of ${repo} is the CATALOG ENTRY ${entry}'s image (${image}, build ${id}, found by $(map_phrase "$repo" "$entry" "$match")): it ended SUCCESS and ran as ${account}, the installation's build identity — so the image this repository runs really is the entry its image_map names, baked from that entry's source repository (${src_repo:-unknown}), and the account is the one gcp.CatalogBuildSpec.check admits. Its request names NO credentials service: _CREDENTIALS_SERVICE_URL is empty for every catalog build (B4.5), because the build's identity is not one the build-credentials route admits and it clones with the credential its request mounts instead"
+    fact "build-$label" PASS "the newest build of ${repo} is the CATALOG ENTRY ${entry}'s image (${image}, build ${id}, found by $(map_phrase "$repo" "$entry" "$match")): it ended SUCCESS and ran as ${account}, the installation's build identity — so the image this repository runs really is the entry its image_map names, baked from that entry's source repository (${src_repo:-unknown}), and the account is the one gcp.CatalogBuildSpec.check admits. Its request names the credentials service (${url_value:-none}) and carries no secret of its own: the credential step asks that service for the entry's git credential, as the project's build identity, which is the caller the entry route admits (IS8, D3330)"
   fi
 
-  # mounts-LABEL: what a catalog build clones with. The request mounts exactly
-  # one Secret Manager container — the git credential of the ENTRY's SOURCE
-  # repository, which is the checkout the build clones and not the served
-  # repository when one entry serves several — and feeds it to the build step as
-  # GITHUB_APP_KEY (GitHub) or GIT_TOKEN (Bitbucket)
-  # (gcp.CatalogBuildSpec.AvailableSecrets). It is the one credential this build
-  # has, and B4.9's flip does not take it away: the build runs as the project's
-  # build identity, which the build-credentials route does not admit, so its
-  # accessor and its mount stay (docs/secrets-brokering's build classes note).
-  case "$containers" in
-  "" | *[!0-9]*) unmeasured "mounts-$label" "the reader did not answer how many containers the build's availableSecrets names: $(last_lines "$SCRATCH/builds-$label.err")" ;;
-  0)
-    fact "mounts-$label" FAIL "the newest catalog build of ${repo} (${id}) carries no availableSecrets and names no credentials service: it holds no credential at all, so its clone can only fail — a catalog build clones with the provider credential its request MOUNTS, and a request with neither a mount nor a service is one no submitter of this installation writes. Submit the entry again with 'fugaro image build ${entry}' (or 'fugaro apply')"
+  # mounts-LABEL: the secrets a catalog build carries. Since IS8 (D3330) the
+  # request names NO availableSecrets and no step names a secretEnv: the
+  # credential comes from the service's entry route instead, and the build
+  # identity's accessor on the git secret went with the mount
+  # (deploy/terraform/gcp/modules/installation/build_identity.tf). So 0
+  # containers and 0 secretEnv beside the service's address is the good shape,
+  # and both halves of the FAIL are real: a mount the build identity can no
+  # longer read, and no address beside no mount, which is a build with no
+  # credential of any kind. Each count is held to being a number on its own: a
+  # `case` over "$a:$b" would read the separator as a non-digit.
+  case "$containers" in "" | *[!0-9]*) containers=unreadable ;; esac
+  case "$envcount" in "" | *[!0-9]*) envcount=unreadable ;; esac
+  case "$containers:$envcount" in
+  *unreadable*) unmeasured "mounts-$label" "the reader did not answer how many containers and secretEnv entries the build's request names: $(last_lines "$SCRATCH/builds-$label.err")" ;;
+  0:0)
+    if [ "$url" = present ]; then
+      fact "mounts-$label" PASS "the newest catalog build of ${repo} (${id}, entry ${entry}) carries 0 availableSecrets and 0 secretEnv entries and names the credentials service (${url_value}): the request asks Cloud Build for no secret at all — IS8 (D3330) took the mount with the build identity's accessor on it — and the credential step fetches the entry's git credential from the service instead, which is the one credential path a catalog build has"
+    else
+      fact "mounts-$label" FAIL "the newest catalog build of ${repo} (${id}) carries no availableSecrets and no secretEnv entry and names no credentials service either: the build holds no credential of any kind, so its clone can only fail. Submit the entry again with 'fugaro image build ${entry}' (or 'fugaro apply')"
+    fi
     ;;
   *)
-    if [ -z "$cenv" ]; then
-      unmeasured "mounts-$label" "the entry's source repository cannot be told from the build's _REPO_URL (${src_repo:-unknown}), so the provider credential its request mounts cannot be named and this row cannot be measured"
-    elif printf '%s\n' "$ans" | grep -q "^container=${cenv}|"; then
-      fact "mounts-$label" PASS "the newest catalog build of ${repo} (${id}, entry ${entry}) carries ${containers} availableSecrets entry(ies) and one of them is the ${src_prov} clone credential of the ENTRY's SOURCE repository (${src_repo:-unknown}), fed to the build step as ${cenv} ($(printf '%s\n' "$ans" | sed -n "s/^container=${cenv}|//p" | head -n 1)): a catalog entry's build clones that repository and mounts its ${src_prov} credential — the served repository's only where the entry is sourced from it — and its identity is not one the build-credentials route admits, so B4.9's flip leaves this mount in place"
-    else
-      fact "mounts-$label" FAIL "the newest catalog build of ${repo} (${id}) carries ${containers} availableSecrets entry(ies) and none of them is the credential the build clones with — the ${src_prov} one of the ENTRY's SOURCE repository (${cenv}, ${src_repo:-unknown}): the mounts it does carry read $(printf '%s\n' "$ans" | sed -n 's/^container=/&/p' | tr '\n' ' '). A catalog entry's build mounts exactly its source repository's provider git credential (gcp.CatalogBuildSpec.AvailableSecrets)"
-    fi
+    fact "mounts-$label" FAIL "the newest catalog build of ${repo} (${id}, entry ${entry}) still carries ${containers} availableSecrets entry(ies) and ${envcount} secretEnv entry(ies): a catalog entry's request names no secret at all since IS8 (D3330) — the mount went with the build identity's accessor on it — so this is a build from before that change or one nobody of this installation submitted. Submit the entry again with 'fugaro image build ${entry}' (or 'fugaro apply')"
     ;;
   esac
 
-  # served-LABEL: the service's own lines for this repository. A build of a
-  # SERVED repository asks the build route once, and the line names the caller
-  # the service VERIFIED (the account Cloud Run minted the build's ID token for,
-  # G20 — the one field a call cannot claim for itself), the credential it was
-  # served and the purpose. A catalog build is not served and asks nothing, so
-  # the row reads what the service wrote and says which of the two it is rather
-  # than calling the absence a failure.
+  # served-LABEL: the service's own lines for this repository. The build route's
+  # lines name the caller the service VERIFIED (the account Cloud Run minted the
+  # build's ID token for, G20 — the one field a call cannot claim for itself),
+  # the credential it was served and the repository. A CATALOG build is answered
+  # by the service's ENTRY route instead (credsvc's PurposeBuildToken for the
+  # GitHub half, PurposeBuildGrant for the Bitbucket proxy), whose lines name the
+  # project's build identity and NO repository: one token covers the entry's
+  # repositories, so a line naming one of them would say the mint was for that
+  # one. The row therefore cannot find a catalog build's call under a
+  # repository's slug, and it reads what the service wrote for the repository's
+  # OWN builds and says which of the two shapes it is rather than calling the
+  # absence a failure.
   if [ -z "$slug" ] || [ "$slug" = "-" ]; then
     unmeasured "served-$label" "the repository's slug could not be read — neither from the build's _SLUG substitution (a catalog build carries none) nor from the fugaro_repo label of its daily check job — so the repository the service's own lines name cannot be looked up"
   else
-    step_served "served-$label" "$repo" "$slug" "$account" "$provider" "$url"
+    step_served "served-$label" "$repo" "$slug" "$account" "$provider"
   fi
 }
 
@@ -1396,17 +1366,18 @@ read_audit_said() { # read_audit_said SLUG
   reader audit "$SCRATCH/audit-$1.json" 2>/dev/null | sed -n 's/^refused=[^|]*|//p' | head -n 1 | redact | cut -c1-300
 }
 
-# step_served KEY REPO SLUG ACCOUNT PROVIDER URL — the service's own lines. The
+# step_served KEY REPO SLUG ACCOUNT PROVIDER — the service's own lines. The
 # credential a line must name is the provider's GIT credential and nothing else
 # (PurposeBuild): `github-app-key`, the App key a GitHub build signs with, or a
 # `bitbucket-token…` — the installation's bundle token, whose name carries which
 # token of the family it is (bbtokens.Name), so the reading takes the family
 # rather than one spelling of it and a typed token is not read as a wrong one.
-# URL is the build's own `_CREDENTIALS_SERVICE_URL` reading, which decides how
-# an empty answer is read: a build that names no service is expected to have no
-# line (INFO), and one that names the service and still has none is a failure.
+# These are the lines of a REPOSITORY's own build (purpose `build`, keyed by the
+# repository's slug); a catalog build's are the entry route's, which name no
+# repository at all, and an empty answer for a catalog build is therefore the
+# shape this installation predicts and not a failure.
 step_served() {
-  local key=$1 repo=$2 slug=$3 account=$4 provider=$5 url=$6 ans lines
+  local key=$1 repo=$2 slug=$3 account=$4 provider=$5 ans lines
   local cred
   if [ "$provider" = github ]; then cred=github-app-key; else cred="bitbucket-token…"; fi
   if ! ans=$(audit_read "$slug"); then
@@ -1417,18 +1388,24 @@ step_served() {
   if [ "${lines:-0}" -eq 0 ]; then
     local refused
     refused=$(printf '%s\n' "$ans" | sed -n 's/^refused=[^|]*|//p' | head -n 1 | redact | cut -c1-300)
-    if [ "$url" != present ] && [ -z "$refused" ]; then
-      # The build the row is about is a CATALOG entry's: it names no credentials
-      # service (B4.5) and asks the service for nothing, so no line is the
-      # answer this installation's shape predicts, and a FAIL here would end the
-      # switch mode on a working installation. What the row still settles is
-      # that nothing was refused — a `credsvc: refused` line under this
-      # repository's slug is the service's own statement and is a FAIL above —
-      # and that no call of this repository's was answered.
-      fact "$key" INFO "the newest build of ${repo} is a catalog entry's, and the service wrote no 'credsvc: audit' line of purpose build for it (slug ${slug}) — which is what this installation's shape predicts: a catalog build names NO credentials service (_CREDENTIALS_SERVICE_URL is empty, B4.5) and clones with the credential its request mounts, so it never asks the build route at all, and the route serves one repository to the account bound to that repository — never the project's build identity a catalog build runs as (D2301).${refused:+ A refused line of this repository does read: ${refused}.} Read the lines with 'gcloud logging read \"resource.labels.service_name=${SVC} jsonPayload.repository=${slug}\" --project=${P}'"
+    if [ -n "$refused" ]; then
+      # The service refused a call that named this repository. Nothing of this
+      # installation's does: its catalog builds are answered by the entry route,
+      # which names no repository, and a repository-level build is disabled
+      # (D1900/IS2). So the refusal is the finding, in the service's own words.
+      fact "$key" FAIL "the service refused a call for ${repo} (slug ${slug}), and served it no 'credsvc: audit' line of purpose build: ${refused}. A catalog build's own call is answered by the service's entry route and names no repository (IS8/D3330), so a refusal under this repository's slug is not one of this installation's builds. Read the lines by hand with 'gcloud logging read \"resource.labels.service_name=${SVC} jsonPayload.repository=${slug}\" --project=${P}'"
       return 0
     fi
-    fact "$key" FAIL "the service wrote no 'credsvc: audit' line of purpose build for ${repo} (slug ${slug}) although the build's own request names the service: the build's credential was answered by something else, or the build's calls were refused.${refused:+ Its own refusal line reads: ${refused}.} Read the service's lines with 'gcloud logging read \"resource.labels.service_name=${SVC} jsonPayload.repository=${slug}\" --project=${P}'"
+    # No line and no refusal: the build the row is about is a CATALOG entry's —
+    # every build this check reads is — and a catalog build is answered by the
+    # service's ENTRY route (IS8/D3330), whose lines name the project's build
+    # identity and NO repository, because one token covers the entry's
+    # repositories and a line naming one of them would say the mint was for that
+    # one. So no line under a repository's slug is this installation's own shape,
+    # and a FAIL here would end the switch mode on a working installation. What
+    # the row settles is that the service wrote this repository no build line and
+    # refused nothing of it.
+    fact "$key" INFO "the newest build of ${repo} is a catalog entry's, and the service wrote no 'credsvc: audit' line of purpose build for ${repo} (slug ${slug}) — which is what this installation's shape predicts: a catalog build asks the service's ENTRY route, whose lines name the project's build identity and no repository (one token covers the entry's repositories, IS8/D3330), so its call cannot appear under a repository's slug. Read a repository's own lines with 'gcloud logging read \"resource.labels.service_name=${SVC} jsonPayload.repository=${slug}\" --project=${P}', and the entry route's with the same minus the repository and jsonPayload.purpose=\\\"build_token\\\""
     return 0
   fi
   local got
@@ -1600,11 +1577,10 @@ step_boundary() {
 # whose image is a CATALOG ENTRY the build half of the flip does not apply, and
 # this mode reads that too rather than failing an installation that is right:
 # B4.9's class list takes the mounts off a repository's own build, and a catalog
-# build is not one — it runs as the project's build identity, which the
-# build-credentials route does not admit (D2301) — so it keeps the one mount it
-# clones with and names no service before and after. What the flip really
-# changes for such a repository is its daily check job, which is the
-# noaccessor-LABEL row below.
+# build is not one — it names no secret and asks the credentials service's entry
+# route for its credential, which is the shape IS8 (D3330) gave every catalog
+# build, before and after the flip. What the flip really changes for such a
+# repository is its daily check job, which is the noaccessor-LABEL row below.
 step_flip_repo() { # step_flip_repo LABEL REPO PROVIDER
   local label=$1 repo=$2 provider=$3 ans
   ans=$(build_read "$repo" "$label")
@@ -1623,51 +1599,50 @@ step_flip_repo() { # step_flip_repo LABEL REPO PROVIDER
   src_repo=$(field_of source "$ans")
   match=$(field_of match "$ans")
   url=$(field_of url "$ans")
+  url_value=$(field_of url_value "$ans")
   containers=$(field_of containers "$ans")
   envcount=$(field_of secretenv "$ans")
   slug=$(repo_slug "$(field_of slug "$ans")" "$label" "$repo")
 
-  # noavailable-LABEL: what the flip left on this repository's BUILD. A
-  # repository whose image is a catalog entry keeps its one mount: the flip's
-  # class list reaches a repository's OWN build, and this build is not one. A
-  # request that carries NEITHER a mount NOR a service is the shape no submitter
-  # of this installation writes (a build with no credential could only fail),
-  # and that is the FAIL. Each count is held to being a number on its own: a
-  # `case` over "$a:$b" would read the separator as a non-digit and call every
-  # answer unmeasured.
+  # noavailable-LABEL: what the flip left on this repository's BUILD. A catalog
+  # build carries no secret at all since IS8 (D3330) and takes its credential
+  # from the service's entry route, which the flip does not reach either — the
+  # flip's class list is a repository's OWN build, and this build is not one. So
+  # 0 containers and 0 secretEnv entries beside the service's address is the
+  # shape, before and after: a mount is a build from before IS8, whose secret the
+  # build identity no longer has an accessor for, and no address beside no mount
+  # is a build with no credential of any kind. Each count is held to being a
+  # number on its own: a `case` over "$a:$b" would read the separator as a
+  # non-digit and call every answer unmeasured.
   case "$containers" in "" | *[!0-9]*) containers=unreadable ;; esac
   case "$envcount" in "" | *[!0-9]*) envcount=unreadable ;; esac
   case "$containers:$envcount" in
   *unreadable*) unmeasured "noavailable-$label" "the reader did not answer how many containers and secretEnv entries the build carries: $(last_lines "$SCRATCH/builds-$label.err")" ;;
   0:0)
     if [ "$url" != present ]; then
-      fact "noavailable-$label" FAIL "the newest catalog build of ${repo} (${id}) carries no availableSecrets and names no credentials service either: a build with neither a mount nor a service has no credential at all and could only fail. A catalog entry's build clones with the credential its request mounts (gcp.CatalogBuildSpec.AvailableSecrets) — submit the entry again with 'fugaro image build ${entry}' (or 'fugaro apply')"
+      fact "noavailable-$label" FAIL "the newest catalog build of ${repo} (${id}) carries no availableSecrets and no secretEnv entry and names no credentials service either: a build with neither a secret nor an address has no credential at all and could only fail. A catalog entry's build takes its credential from the service's entry route, whose address its request always names (IS8, D3330) — submit the entry again with 'fugaro image build ${entry}' (or 'fugaro apply')"
     else
-      fact "noavailable-$label" PASS "the newest build of ${repo} (${id}) names the credentials service and carries 0 availableSecrets and 0 secretEnv entries: the request asks Cloud Build for no secret, whose accessor the build account has given up (B4.9, D2077)"
+      fact "noavailable-$label" PASS "the newest build of ${repo} (${id}) carries 0 availableSecrets and 0 secretEnv entries and names the credentials service: the request asks Cloud Build for no secret — the mount went with the build identity's accessor on it (IS8, D3330) — and the credential step fetches the entry's git credential from the service instead, which is the shape of every catalog build and not something the flip reaches"
     fi
     ;;
   *)
-    if [ "$url" = present ]; then
-      fact "noavailable-$label" FAIL "the newest build of ${repo} (${id}) names the credentials service and still carries ${containers} availableSecrets entries and ${envcount} secretEnv entries, so the request names the secrets the flip was to take away. The flip has not reached this repository's builds — check the class list (config.BuildServedSecretClasses) and re-apply the root"
-    else
-      fact "noavailable-$label" PASS "the newest build of ${repo} is the CATALOG ENTRY ${entry}'s image (${id}) and still carries ${containers} availableSecrets entry(ies) (${envcount} secretEnv) while naming no service: B4.9's flip does not reach a catalog entry's build — it runs as the project's build identity, which the build-credentials route does not admit (D2301) — so the one mount it clones with stays, before and after the flip, and this repository's own half of the flip is its daily check job (the noaccessor row below)"
-    fi
+    fact "noavailable-$label" FAIL "the newest build of ${repo} (${id}, entry ${entry}) still carries ${containers} availableSecrets entries and ${envcount} secretEnv entries beside the address ${url_value:-none}: a catalog entry's request names no secret at all since IS8 (D3330) — the mount went with the build identity's accessor on it — so this is a build from before that change or one nobody of this installation submitted. Check the class list (config.BuildServedSecretClasses) and submit the entry again with 'fugaro image build ${entry}' (or 'fugaro apply')"
     ;;
   esac
 
   # build-flip-LABEL: a build after the flip still succeeds and still runs as
   # the account a catalog build runs as.
   if [ "$status" = SUCCESS ] && is_build_identity "$account"; then
-    fact "build-flip-$label" PASS "the newest build of ${repo} is the CATALOG ENTRY ${entry}'s image (${id}, found by $(map_phrase "$repo" "$entry" "$match")): it ended SUCCESS and ran as ${account}, the installation's build identity, with the credential its request mounts — so the image this repository runs still bakes, and nothing the flip took was a path this build used"
+    fact "build-flip-$label" PASS "the newest build of ${repo} is the CATALOG ENTRY ${entry}'s image (${id}, found by $(map_phrase "$repo" "$entry" "$match")): it ended SUCCESS and ran as ${account}, the installation's build identity, taking its git credential from the service's entry route — so the image this repository runs still bakes, and nothing the flip took was a path this build used"
   else
-    fact "build-flip-$label" FAIL "the newest catalog build of ${repo} (${id}, entry ${entry:-unknown}) did not read as a success of a catalog build: status ${status}, account ${account:-none}, service ${url}. A catalog entry's build runs as the installation's build identity (${BUILD_IDENTITY_ID}@${P}.iam.gserviceaccount.com) and clones with the credential its request mounts, so a build that could not finish is that mount, the entry's definition or the entry's source repository (${src_repo:-unknown}) having broken"
+    fact "build-flip-$label" FAIL "the newest catalog build of ${repo} (${id}, entry ${entry:-unknown}) did not read as a success of a catalog build: status ${status}, account ${account:-none}, service ${url}. A catalog entry's build runs as the installation's build identity (${BUILD_IDENTITY_ID}@${P}.iam.gserviceaccount.com), which is the caller the service's entry route admits, so a build that could not finish is that call, the entry's definition or the entry's source repository (${src_repo:-unknown}) having broken"
   fi
 
   # served-flip-LABEL: the service's own lines for that build.
   if [ -z "$slug" ] || [ "$slug" = "-" ]; then
     unmeasured "served-$label-flip" "the repository's slug could not be read (a catalog build carries no _SLUG, and no check job label answered), so the service's own lines for it cannot be looked up"
   else
-    step_served "served-$label-flip" "$repo" "$slug" "$account" "$provider" "$url"
+    step_served "served-$label-flip" "$repo" "$slug" "$account" "$provider"
   fi
 
   # noaccessor-LABEL: the daily check job mounts nothing AND is handed the
@@ -1720,9 +1695,9 @@ print_plan() {
   say "  [network] gcloud run jobs executions list --job=<the check job> --project=${P} --region=${L} --format=json  (the daily check's newest execution)"
   say "  [network] gcloud run services get-iam-policy ${SVC} --project=${P} --region=${L} --format=json  (who may invoke the service: B4.4's grant to the build accounts, and no public member)"
   if [ "$MODE" = flip ]; then
-    say "and, for each repository, it would read its NEWEST catalog-entry build (that it still ended SUCCESS and still ran as the installation's build identity, and that it still carries the one mount it clones with — B4.9's flip does not reach a catalog entry's build, D2301), its check job (that it now mounts NOTHING and names the service's address instead — which is the flip's whole effect on such a repository) and the service's own lines for it."
+    say "and, for each repository, it would read its NEWEST catalog-entry build (that it still ended SUCCESS and still ran as the installation's build identity, and that it carries no secret at all and names the credentials service — the shape IS8/D3330 gave every catalog build, which the flip does not reach), its check job (that it now mounts NOTHING and names the service's address instead — which is the flip's whole effect on such a repository) and the service's own lines for it."
   else
-    say "and, for each repository, it would read its newest CATALOG-ENTRY build (status, the entry and image its _IMAGE names, the account it ran as — the installation's build identity, never a repository build account — and the availableSecrets it carries, which is the one provider git credential it clones with), the service's own lines for it, and its daily check job (found by its own clone URL and fugaro_repo label: that it runs as a repository build account, mounts the repository's git credential and carries NO service address — the pre-flip shape) with that job's newest execution."
+    say "and, for each repository, it would read its newest CATALOG-ENTRY build (status, the entry and image its _IMAGE names, the account it ran as — the installation's build identity, never a repository build account — and that it carries no availableSecrets and names the credentials service, which is where its credential step fetches the entry's git credential from since IS8/D3330), the service's own lines for it, and its daily check job (found by its own clone URL and fugaro_repo label: that it runs as a repository build account, mounts the repository's git credential and carries NO service address — the pre-flip shape) with that job's newest execution."
   fi
   say "This check creates nothing, submits no build and deletes nothing: its Restore removes the scratch directory and nothing else. The builds it reads are the catalog entries' own, which 'fugaro image build <entry>' (or 'fugaro apply') submitted; 'fugaro image refresh' is refused (D1900) and builds nothing."
 }

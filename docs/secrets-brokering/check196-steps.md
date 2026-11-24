@@ -97,23 +97,24 @@ start. This file is the three commands and what each row means.
   taken on trust), which is the account `gcp.CatalogBuildSpec.check` admits. A repository-level derived
   image is disabled (**D1900**), so this build is what `fugaro image build <entry>` or `fugaro apply`
   submits; `fugaro image refresh` is refused and builds nothing.
-- **`mounts-github`**, **`mounts-bitbucket`** — the catalog build carries exactly one git
-  credential, and it is the **entry's source repository's**, not the served repository's when one entry
-  serves several: it is the `availableSecrets` entry the build clones with (`GITHUB_APP_KEY` for a
-  GitHub-sourced entry, `GIT_TOKEN` for a Bitbucket-sourced one — the request's provider is the entry's
-  own, so a GitHub repository whose entry is sourced from a Bitbucket repository mounts `GIT_TOKEN`), and
-  the build names **no** credentials service: `_CREDENTIALS_SERVICE_URL` is empty
-  for every catalog build (**B4.5**), because the build-credentials route serves one repository to the
-  account bound to that repository and never the project's build identity (**D2301**). A build with
-  **no** mount and no service holds no credential at all and is a **FAIL**.
+- **`mounts-github`**, **`mounts-bitbucket`** — the catalog build's request carries **no secret at
+  all**: **0** `availableSecrets` entries and **0** `secretEnv` entries, and it **does** name the
+  credentials service (`_CREDENTIALS_SERVICE_URL`), because the mount went with the build identity's
+  accessor on it and the credential step asks that service's **entry** route for the git credential of
+  the entry it bakes, as the project's build identity — the caller that route admits (**IS8**, **D3330**;
+  a submission refuses an empty address). That credential is the entry's **source repository's**, which is
+  the checkout the build bakes and the served repository only where the entry is sourced from it. A build
+  that still carries a mount is one from before **IS8** and is a **FAIL**, and so is one with no mount
+  **and** no address: it holds no credential of any kind.
 - **`served-github`**, **`served-bitbucket`** — the service's **own** `credsvc: audit` line of purpose
   `build` for each repository, read out of Cloud Logging: where one exists it must name the account the
   build's own record says it ran as (**G20**, the one field a call cannot claim for itself), the
   provider's own git credential (the App key for GitHub, a `bitbucket-token…` for Bitbucket) and the
-  repository's own slug. A repository whose newest build is a catalog entry's reads **INFO** when there
-  is no line at all — a catalog build never asks the build route, so its absence is this installation's
-  own shape, and any refused line is printed beside it. **No line for a build that *does* name the
-  service is a FAIL**: that build's credential was answered by something else.
+  repository's own slug. A catalog build asks the **entry** route instead, whose lines name the project's
+  build identity and **no** repository (one token covers the entry's repositories), so the line such a
+  build's own call leaves cannot appear under a repository's slug and **no line is INFO**, with the reason
+  in the row. A **refused** line under the repository's slug is a **FAIL**: nothing of this installation's
+  names a repository on that route.
 - **`check-github`**, **`check-bitbucket`** — the repository's own daily check job runs as its build
   account, still **mounts** the repository's git credential (the platform's own reserved variable for the
   provider's git secret, `FUGARO_GITHUB_APP_PRIVATE_KEY` or `FUGARO_BITBUCKET_TOKEN`) and carries **no**
@@ -126,27 +127,25 @@ start. This file is the three commands and what each row means.
   repository-level image check is disabled with the repository-level images (**D1900**, IS2), so the
   installation emits none for a repository that has none.
 - **`boundary`** — the service's own IAM policy admits repository build accounts and names **no**
-  `allUsers` and **no** `allAuthenticatedUsers`. That, read beside the `served-*` rows — each build
-  served its own repository's credential and record — is how the route's boundary is read from the
-  owner's machine: a call that names another repository can only be made by a build **running as** that
-  other account, which is a throwaway build rather than a reading of the installation, and a
-  caller-identity reading is what Check 195 makes. **This is the one place this check is narrower than
-  the plan's one sentence** ("another repository's build account is refused"): report it as read rather
-  than as something the check constructed.
+  `allUsers` and **no** `allAuthenticatedUsers`. That, read beside the `served-*` rows — which settle
+  that no line of another repository's, and no refusal, is served under this slug — is how the route's
+  boundary is read from the owner's machine: a call that names another repository can only be made by a
+  build **running as** that other account, which is a throwaway build rather than a reading of the
+  installation, and a caller-identity reading is what Check 195 makes. **This is the one place this check
+  is narrower than the plan's one sentence** ("another repository's build account is refused"): report it
+  as read rather than as something the check constructed.
 - **`restore`**, **`scratch-removed`** — nothing was created, submitted or deleted; the scratch
   directory is gone (or kept, if you set `CHECK196_KEEP_SCRATCH`).
 
 ## What each row means (`--after-flip`)
 
-- **`noavailable-github`**, **`noavailable-bitbucket`** — for a derived image's build, the newest build
-  carries **0** `availableSecrets` entries and **0** `secretEnv` entries and does name the service: the
-  request asks Cloud Build for no secret whose accessor the build account has given up (**B4.9**,
-  **D2077**). For a **catalog entry's** build — what a repository builds today — the flip does not reach
-  it (**D2301**), so the row reads the build that **keeps** its provider credential and names no
-  service. A build that carries neither a mount nor a service is a **FAIL** either way.
+- **`noavailable-github`**, **`noavailable-bitbucket`** — the catalog build's request carries **0**
+  `availableSecrets` entries and **0** `secretEnv` entries and **does** name the service (**IS8**,
+  **D3330**): the shape of every catalog build, which the flip neither gives nor takes away. A build that
+  still carries a mount, or one with neither a mount nor an address, is a **FAIL**.
 - **`build-flip-github`**, **`build-flip-bitbucket`** — that build still ended `SUCCESS` and ran as the
-  installation's build identity, with the credential its request mounts: nothing the flip took was a
-  path this build used, and the image still bakes.
+  installation's build identity, taking its git credential from the service's entry route: nothing the
+  flip took was a path this build used, and the image still bakes.
 - **`served-github-flip`**, **`served-bitbucket-flip`** — the service's own line for that build, read
   exactly as the switch mode reads it.
 - **`noaccessor-github`**, **`noaccessor-bitbucket`** — the repository's daily check job mounts **0**
