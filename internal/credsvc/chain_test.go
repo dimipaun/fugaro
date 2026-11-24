@@ -675,3 +675,64 @@ func TestAnOlderLaunchersGrantIsNotWalkedByTheTable(t *testing.T) {
 		t.Errorf("the refusal is %d/%s, want %d/%s", cr.status, cr.typ, StatusUnavailable, ErrorStateUnavailable)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// 10. The run the bridge answers for is served by the bridge's record
+// ---------------------------------------------------------------------------
+
+// fakeLegacyBridge is the release-1 bridge with a record behind it, which the
+// stub this release ships never answers (chain_stub.go): MG3 owns the real one,
+// and what this test is about is the walk's reading of an answer, not the read.
+type fakeLegacyBridge struct {
+	sources []routing.Source
+	found   bool
+}
+
+func (f fakeLegacyBridge) OldSources(string) ([]routing.Source, bool) { return f.sources, f.found }
+
+// TestABridgedRecordIsServed: a run whose grant covers nothing of the table's
+// kinds — a launcher built before the table — is served by the bridge's own
+// record, and NOT refused. The grant is what the bridge stands in for here, so
+// reading the bridge's sources against it would drop every source the bridge
+// just named and refuse a call the record says how to serve; the release-1
+// record IS that release's answer about what the repository's runs go out on.
+//
+// The launcher's pool is the one kind a bridged record does not carry: its
+// whole content is the designation THIS run's grant holds (C2), which a record
+// read for a run it did not launch cannot answer, so it stays excluded.
+func TestABridgedRecordIsServed(t *testing.T) {
+	table := routing.Table{{Match: testModel, Chain: []routing.Source{chainKey()}}}
+	s := chainFixture(t, table)
+
+	bridge := func(t *testing.T, sources ...routing.Source) {
+		t.Helper()
+		prev := LegacyChain
+		LegacyChain = fakeLegacyBridge{sources: sources, found: true}
+		t.Cleanup(func() { LegacyChain = prev })
+	}
+
+	t.Run("a bridged key is served", func(t *testing.T) {
+		bridge(t, chainKey())
+		w := s.walk(t, callBody("bridged"), chainBinding(nil, ""))
+		if len(w.plan.sources) != 1 {
+			t.Fatalf("the bridge's record names one key and the plan holds %d sources: a grant that covers nothing "+
+				"of the table's kinds is the REASON the bridge is read, and it must not filter the bridge's own answer",
+				len(w.plan.sources))
+		}
+		got := w.picked(t)
+		if got.Tier != creds.TierB {
+			t.Errorf("the bridged call was served by %q (tier %s), want the repository's own key (tier b)",
+				got.Name, got.Tier)
+		}
+	})
+
+	t.Run("a bridged launcher's pool is not", func(t *testing.T) {
+		bridge(t, routing.Source{Kind: routing.KindLauncherPool, Pool: slipTestPoolName})
+		w := s.walk(t, callBody("bridged-pool"), chainBinding(nil, ""))
+		if len(w.plan.sources) != 0 {
+			t.Errorf("the bridged record names a launcher's pool and the plan holds %d sources, want none: the "+
+				"launcher's pool is the run's own designation (C2) and is never read out of an old record",
+				len(w.plan.sources))
+		}
+	})
+}

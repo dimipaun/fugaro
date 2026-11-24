@@ -438,7 +438,15 @@ func (s *Server) chainFor(ctx context.Context, cl *call, id Identity, canonical 
 					"on — relaunch the run with a current launcher, whose grant covers the table's sources",
 			}
 		}
-		return s.planSources(ctx, sources, "", id, canonical, shared, b, binding)
+		// The bridged sources are read against NO grant, and that is the point:
+		// this branch is reached BECAUSE the grant covers nothing of the table's
+		// kinds (it is a release behind the table), so filtering the bridge's own
+		// answer by it would drop every source the bridge just named and refuse
+		// the call as having nothing usable. The bridge IS that release's reading
+		// of what the repository's runs go out on, which is what the grant would
+		// have been; nil still excludes the launcher's pool, which no bridged
+		// record holds (grantCovers).
+		return s.planSources(ctx, sources, "", id, canonical, shared, b, binding, nil)
 	}
 	model, named := callModel(cl.body)
 	if !named {
@@ -466,14 +474,14 @@ func (s *Server) chainFor(ctx context.Context, cl *call, id Identity, canonical 
 		}
 		return nil, true, err
 	}
-	return s.planSources(ctx, entry.Chain, model, id, canonical, shared, b, binding)
+	return s.planSources(ctx, entry.Chain, model, id, canonical, shared, b, binding, grant)
 }
 
 // planSources builds a call's chain from a list of sources: the table's entry,
-// or the release-1 bridge's own answer about an old record.
-func (s *Server) planSources(ctx context.Context, sources []routing.Source, model string, id Identity, canonical string, shared *projectpolicy.Policy, b *Bundle, binding *slipBinding) (*chainPlan, bool, error) {
+// or the release-1 bridge's own answer about an old record — and the grant the
+// sources are read against, which the bridge path passes nil for (chainFor).
+func (s *Server) planSources(ctx context.Context, sources []routing.Source, model string, id Identity, canonical string, shared *projectpolicy.Policy, b *Bundle, binding *slipBinding, grant *creds.SlipChain) (*chainPlan, bool, error) {
 	plan := &chainPlan{model: model}
-	grant := grantOf(binding)
 	held := bundleTiers(b)
 	var admitted map[string]bool
 	for i, src := range sources {
