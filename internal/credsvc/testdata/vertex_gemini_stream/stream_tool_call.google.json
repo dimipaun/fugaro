@@ -1,0 +1,60 @@
+[
+  {
+    "candidates": [
+      {
+        "content": { "role": "model", "parts": [{ "text": "Reading " }] },
+        "index": 0
+      }
+    ],
+    "usageMetadata": { "promptTokenCount": 700, "totalTokenCount": 700 }
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "role": "model",
+          "parts": [
+            {
+              "functionCall": { "name": "read_file", "args": { "path": "a.txt" } },
+              "thoughtSignature": "dmVydGV4LWdlbWluaS0zLXRob3VnaHQtc2lnbmF0dXJlLTAwMDE="
+            }
+          ]
+        },
+        "index": 0
+      }
+    ]
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "role": "model",
+          "parts": [{ "functionCall": { "name": "read_file", "args": { "limit": 20 } } }]
+        },
+        "index": 0
+      }
+    ]
+  },
+  {
+    "candidates": [
+      {
+        "content": {
+          "role": "model",
+          "parts": [
+            { "functionCall": { "name": "read_file", "args": { "encoding": "utf-8" } } },
+            { "functionCall": { "name": "list_dir", "args": { "path": "." } } }
+          ]
+        },
+        "finishReason": "STOP",
+        "index": 0
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 700,
+      "candidatesTokenCount": 30,
+      "thoughtsTokenCount": 100,
+      "totalTokenCount": 830
+    },
+    "responseId": "aStreamedToolCall"
+  }
+]

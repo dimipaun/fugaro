@@ -451,13 +451,15 @@ type vertexGeminiPiece struct {
 // vertexGeminiCall is one function call the model answered with: the function's
 // name, its arguments as the JSON object the Messages wire's tool_use carries,
 // the thought signature the answer gave the call (standard base64, "" when it
-// gave none), the ID this translation minted for it, and the path it sits at in
-// the answer — which is what a refusal about its signature names.
+// gave none), the ID this translation gives it, its ordinal in the answer, and
+// the path it sits at in the answer — which is what a refusal about its
+// signature names.
 type vertexGeminiCall struct {
 	name      string
 	args      json.RawMessage
 	signature string
 	id        string
+	ordinal   int
 	where     string
 }
 
@@ -764,13 +766,14 @@ func vertexGeminiCallPiece(raw []byte, signature, at string, chunk int, said *ve
 		said.lastCallChunk = chunk
 		return nil
 	}
+	said.calls++
+	call.ordinal = said.calls
 	id, err := vertexGeminiCallID(call, at)
 	if err != nil {
 		return err
 	}
 	call.id = id
 	said.pieces = append(said.pieces, vertexGeminiPiece{call: call})
-	said.calls++
 	said.lastCallChunk = chunk
 	return nil
 }
@@ -832,6 +835,12 @@ func vertexGeminiMergeArgs(into, extra json.RawMessage, where string) (json.RawM
 // rather than carried as it came because an id is not a place for `+`, `/` or
 // `=`, and GV1 decodes exactly this form.
 //
+// A minted id is the call's ordinal in the answer and never its name: two calls
+// to the same function in one answer are two calls, and two blocks sharing one
+// id would leave the tool_result the harness sends back answering both. The id
+// is opaque to the harness — it echoes it — and GV1 reads the NAME off the call
+// for a functionResponse, so only its uniqueness matters.
+//
 // A signature that is not base64 is a typed refusal and not a call without one:
 // Gemini 3 checks the signature of a functionCall replayed to it, so an
 // unreadable one is a call the harness cannot send back, and refusing it here
@@ -839,7 +848,7 @@ func vertexGeminiMergeArgs(into, extra json.RawMessage, where string) (json.RawM
 // on.
 func vertexGeminiCallID(call *vertexGeminiCall, where string) (string, error) {
 	if call.signature == "" {
-		return vertexGeminiMintedCallID + strconv.Itoa(len(call.name)) + "_" + call.name, nil
+		return vertexGeminiMintedCallID + strconv.Itoa(call.ordinal), nil
 	}
 	raw, err := base64.StdEncoding.DecodeString(call.signature)
 	if err != nil || len(raw) == 0 {
