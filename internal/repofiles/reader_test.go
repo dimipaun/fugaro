@@ -563,7 +563,7 @@ func TestReadWithoutExtraPathsIsUnchanged(t *testing.T) {
 // fakeSHA is the commit the fake provider fixtures pin their default branch to.
 const fakeSHA = "0a2b4c6d8e0f1a3b5c7d9e0f2a4b6c8d0e1f3a5b"
 
-// readOne reads one repository through the reader and fails the test if the
+// readRepo reads one repository through the reader and fails the test if the
 // read did not happen, so a case can assert what one repository's answer holds.
 func readRepo(t *testing.T, ctx context.Context, repo, provider string, p gitprov.Provider, extra ...string) Repo {
 	t.Helper()
