@@ -95,15 +95,39 @@ func jsonChainRun(t *testing.T, f *cloudFixture, id, root, previous string, o ta
 	writeRecord(t, f, id, rec)
 }
 
-// jsonChain is the chain's three runs as their tasks and records alone, which
-// is every figure a budget-off chain has (D1046): 2.25 dollars of the limit's
-// 4 spent, 15m of its 45m and 2 of its 4 review rounds, with the token
-// dimension unmeasured (no run record carries a token total, D1051).
+// jsonChain is the chain's three runs as their tasks and records, plus the
+// ledger nodes their figures come from (jsonChainLedgers): 2.25 dollars of the
+// limit's 4 spent, 15m of its 45m and 2 of its 4 review rounds, and 550000 of
+// its 800000 tokens — the one dimension only the ledger holds, since no run
+// record carries a token total (D1046, D1051).
+//
+// The fixture is the minting one because a launch's chain read is the
+// ledger's: every launch of an installation with a database mints (AB4, F7),
+// so a launch that read this chain read these nodes. A chain whose figures are
+// the records' alone is a chain no launch can be in — an installation with no
+// database refuses the launch (budgetBackendOn) — and what reports one is
+// `fugaro runs show` (runs_show_test.go).
 func jsonChain(t *testing.T, f *cloudFixture) {
 	t.Helper()
 	jsonChainRun(t, f, jsonRoot, jsonRoot, "", jsonLimit(), 1.5, 1, 3)
 	jsonChainRun(t, f, jsonMid, jsonRoot, jsonRoot, task.Overrides{}, 0.5, 1, 2)
 	jsonChainRun(t, f, jsonTip, jsonRoot, jsonMid, task.Overrides{}, 0.25, 0, 1)
+	jsonChainLedgers(t, f)
+}
+
+// jsonChainLedgers writes jsonChain's three runs' ledger nodes: the money the
+// records state — a settled run holds what it did not release, so reserved less
+// released is the cost its record carries — and the token leaf, which is what
+// makes the token dimension a measured one here (D1051, F8).
+func jsonChainLedgers(t *testing.T, f *cloudFixture) {
+	t.Helper()
+	for id, l := range map[string]budget.RunLedger{
+		jsonRoot: {Reserved: 2_000_000, Released: 500_000, Tokens: 400_000},
+		jsonMid:  {Reserved: 1_000_000, Released: 500_000, Tokens: 100_000},
+		jsonTip:  {Reserved: 250_000, Released: 0, Tokens: 50_000},
+	} {
+		f.ledgerDB.Set(budget.PathRun(appSlug, id), l)
+	}
 }
 
 // jsonAgedChain is a chain whose first run the bucket no longer holds: the two
@@ -123,6 +147,14 @@ func jsonAgedChain(t *testing.T, f *cloudFixture) {
 // the run in the same chain, with nothing spent and no time behind it. The
 // reply is read as the run starts, so what the chain holds for this run is
 // nothing, and the chain runs show reads from it is the chain the reply names.
+//
+// The run's ledger node goes with the record, holding nothing: the runner's
+// registry creates it as the run starts, and a chain read measures a run whose
+// node is there — a node the database has not got is a ledger it cannot read,
+// charged the per-run cap or left unmeasured where the installation caps
+// nothing (D1049, AB4). The reply is read before the run's own node exists, and
+// reads the chain behind the link, so this is the state the two reads are the
+// same figures in.
 func jsonStartedRun(t *testing.T, f *cloudFixture) {
 	t.Helper()
 	rec := prRecord(jsonFu, "", jsonPR, 0)
@@ -131,6 +163,7 @@ func jsonStartedRun(t *testing.T, f *cloudFixture) {
 	rec.FinishedAt = &finished
 	rec.FollowUp = &runstore.FollowUp{PR: jsonPR, PreviousRun: jsonTip}
 	writeRecord(t, f, jsonFu, rec)
+	f.ledgerDB.Set(budget.PathRun(appSlug, jsonFu), budget.RunLedger{Exp: jsonStarted(0).Add(time.Hour).UnixMilli()})
 }
 
 // jsonLaunchReply is the reply as its consumer reads it: the members this work
@@ -182,8 +215,11 @@ func jsonRunsShow(t *testing.T, id string) jsonLaunchReply {
 // jsonLimitRows is the chain's limits as both documents must print them: the
 // four figures of the limit, what the three runs spent of each, and the chain
 // layer as every row's source (F4, D1055). The token row is the one dimension
-// the budget decides: with the budget off no run record carries a token total,
-// so it is reported unmeasured rather than approximated (D1051, F8).
+// only the budget decides: a chain no database can answer for has no token
+// figure anywhere — no run record carries a token total (D1051, F8) — and one
+// the ledger answers for has the ledger's own leaf, which is what the
+// measuredTokens arm prints (TestRunsShowJSONMarksAChainWithNoDatabaseUnenforced
+// is the first, every launch reply the second).
 func jsonLimitRows(measuredTokens bool) []ChainLimit {
 	usdLimit, usdUsed, usdLeft := runstore.Amount(4_000_000), runstore.Amount(2_250_000), runstore.Amount(1_750_000)
 	timeLimit, timeUsed, timeLeft := runstore.Amount(2700), runstore.Amount(900), runstore.Amount(1800)
@@ -222,7 +258,7 @@ func TestLaunchJSONCarriesTheChain(t *testing.T) {
 	if res.RunCount != 4 || !res.LimitsRead {
 		t.Errorf("reply = %+v, want the chain's three runs and the one this launch started, and its limit read", res)
 	}
-	if want := jsonLimitRows(false); !reflect.DeepEqual(res.Limits, want) {
+	if want := jsonLimitRows(true); !reflect.DeepEqual(res.Limits, want) {
 		t.Errorf("limits = %+v, want %+v", res.Limits, want)
 	}
 }
@@ -250,34 +286,30 @@ func TestLaunchJSONLimitsMatchRunsShow(t *testing.T) {
 		t.Errorf("the reply says chain %q of %d runs (ENFORCED %v, read %v) where runs show of %s says chain %q of %d (ENFORCED %v, read %v)",
 			res.Chain, res.RunCount, res.Enforced, res.LimitsRead, jsonFu, show.Chain, show.RunCount, show.Enforced, show.LimitsRead)
 	}
-	if want := jsonLimitRows(false); !reflect.DeepEqual(res.Limits, want) || !reflect.DeepEqual(show.Limits, want) {
+	if want := jsonLimitRows(true); !reflect.DeepEqual(res.Limits, want) || !reflect.DeepEqual(show.Limits, want) {
 		t.Errorf("limits = %+v and %+v, want %+v", res.Limits, show.Limits, want)
 	}
 }
 
-// TestLaunchJSONLimitsAreTheLedgers (D1046): with the budget on, what the chain
-// has spent is the budget database's, per run — reserved less released for the
-// money and the ledger's token leaf — and the token dimension is measured here
-// where a record states no token total at all.
+// TestLaunchJSONLimitsAreTheLedgers (D1046): what the chain has spent is the
+// budget database's, per run — reserved less released for the money and the
+// ledger's token leaf — and the token dimension is measured here where a record
+// states no token total at all. The nodes are the ones jsonChain writes, which
+// is what every launch here reads (AB4, F7); the reply and runs show are read
+// against the same figures because the document is the same one.
 //
 // The rows are the chain the reply read, which is the chain behind the link it
 // named: runs show of the run the launch continued reads the same three
-// ledgers. The run the launch started is not among them — nothing writes its
-// ledger until it starts spending — so what runs show of that run shares with
-// the reply is the chain itself: the run that began it, how many runs it has,
-// and whether its figures are the database's.
+// ledgers. The run the launch started is not among them — the reply reads the
+// chain behind the link, and the run's own node is created as the run starts,
+// after the reply is printed — so what runs show of that run shares with the
+// reply is the chain itself: the run that began it, how many runs it has, and
+// whether its figures are the database's.
 func TestLaunchJSONLimitsAreTheLedgers(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	limitsImage(t, f.cloudFixture)
 	limitsCheckout(t)
 	jsonChain(t, f.cloudFixture)
-	for id, l := range map[string]budget.RunLedger{
-		jsonRoot: {Reserved: 2_000_000, Released: 500_000, Tokens: 400_000},
-		jsonMid:  {Reserved: 1_000_000, Released: 500_000, Tokens: 100_000},
-		jsonTip:  {Reserved: 250_000, Released: 0, Tokens: 50_000},
-	} {
-		f.db.Set(budget.PathRun(appSlug, id), l)
-	}
 	res, _, _ := jsonReply(t, f.cloudFixture)
 	jsonStartedRun(t, f.cloudFixture)
 
@@ -373,32 +405,12 @@ func TestLaunchJSONOmitsTheChainForAFirstRun(t *testing.T) {
 	}
 }
 
-// TestLaunchJSONMarksAnUnenforcedChain (D1046): with the budget off there is no
-// ledger, so the chain's dollar figure is the records' own — which a launcher
-// can write (F21) — and the token dimension has no figure at all. The reply
-// marks the chain UNENFORCED, so a consumer does not read a report as a stop,
-// and the unmeasured dimension stays absent rather than becoming a zero the
-// chain never spent (D1051, F8, T10).
-func TestLaunchJSONMarksAnUnenforcedChain(t *testing.T) {
-	f := chainRig(t)
-	jsonChain(t, f)
-	res, _, _ := jsonReply(t, f)
-
-	if res.Enforced {
-		t.Errorf("reply = %+v, want a budget-off chain marked UNENFORCED", res)
-	}
-	if res.Chain != jsonRoot {
-		t.Errorf("chain = %q, want %q", res.Chain, jsonRoot)
-	}
-	if want := jsonLimitRows(false); !reflect.DeepEqual(res.Limits, want) {
-		t.Errorf("limits = %+v, want %+v", res.Limits, want)
-	}
-	for _, row := range res.Limits {
-		if row.Dimension == runstore.Tokens && (row.Used != nil || row.Remaining != nil) {
-			t.Errorf("the token row = %+v, want it unmeasured rather than a figure the records do not hold", row)
-		}
-	}
-}
+// The document an UNENFORCED chain is read out of is no longer a launch's: a
+// launch exists only on an installation with a database (AB4, F7), so a launch
+// reply is always ENFORCED and a chain whose figures are the records' alone is
+// read by `fugaro runs show` — the same document, from a command that does not
+// launch anything (TestRunsShowJSONMarksAChainWithNoDatabaseUnenforced,
+// runs_show_test.go, and the text it prints beside it).
 
 // TestLaunchJSONStaysReadableToAConsumerThatIgnoresTheAdditions: the members
 // this work adds are additions and nothing else (D1056, spec §7) — no member is
