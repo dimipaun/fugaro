@@ -39,6 +39,8 @@ import (
 
 	"github.com/dimipaun/fugaro/ee/identitysvc"
 	"github.com/dimipaun/fugaro/internal/agentenv"
+	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/mobilesession"
 )
 
@@ -320,6 +322,57 @@ func TestKeysetSignCommandRefusesASeqNotAboveTheLastSignedOne(t *testing.T) {
 	}
 	if second.signCalls != 1 {
 		t.Fatalf("the root key was asked to sign %d times for one set", second.signCalls)
+	}
+}
+
+// TestKeysetSignCommandRefusesADestinationItCannotRead: the guard the seq floor
+// rests on. The set being replaced is read out of the bucket the command is
+// about to write to, and a refused read must be a refusal — a 403 the owner
+// meets (their identity holds the object's name but not the prefix's listing) is
+// not the identity project's first set, and reading it as one signs a set over a
+// document this command could not read, which is the one shape the seq refusal
+// exists to prevent. Cloud KMS's answer to a missing object under a grant
+// conditioned on a prefix is 403 rather than 404, so "absent" and "unreadable"
+// are one line apart here and the whole floor hangs on the difference.
+func TestKeysetSignCommandRefusesADestinationItCannotRead(t *testing.T) {
+	ctx := context.Background()
+	const bucketName, object = "fugaro-identity-keyset", "keyset.json"
+
+	refused := gcpfake.NewGCS(t)
+	refused.AddBucket(bucketName, 1, nil)
+	refused.AnswerMissingAs403(bucketName, object)
+	document, err := readPreviousSet(ctx, refused.Bucket(t, bucketName), object)
+	if err == nil {
+		t.Fatal("a read of the destination this command was refused was taken for the identity project's first set")
+	}
+	if !errors.Is(err, blobx.ErrForbidden) {
+		t.Fatalf("the refusal does not carry what the bucket answered: %v", err)
+	}
+	if !strings.Contains(err.Error(), "reading the key set being replaced") {
+		t.Fatalf("the refusal does not say which read failed: %v", err)
+	}
+	if document != nil {
+		t.Fatalf("a refused read answered %d byte(s)", len(document))
+	}
+
+	// The same read where the bucket does answer with absence: the identity
+	// project's first set, which the command is meant to sign.
+	empty := gcpfake.NewGCS(t)
+	empty.AddBucket(bucketName, 1, nil)
+	emptyBucket := empty.Bucket(t, bucketName)
+	if document, err := readPreviousSet(ctx, emptyBucket, object); err != nil || document != nil {
+		t.Fatalf("an absent destination is the first set: %q, %v", document, err)
+	}
+
+	// And the read the guard exists for: the document already served, which is
+	// what the seq is compared against.
+	empty.Put(bucketName, object, []byte("the set that is served"))
+	document, err = readPreviousSet(ctx, emptyBucket, object)
+	if err != nil {
+		t.Fatalf("reading the set at the destination: %v", err)
+	}
+	if string(document) != "the set that is served" {
+		t.Fatalf("the destination answered %q", document)
 	}
 }
 
