@@ -11,10 +11,13 @@ import (
 
 	"github.com/spf13/cobra"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/testutil"
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
 // userCommand runs the user command tree on its own, so a case here drives one
@@ -898,5 +901,311 @@ func TestUserAddWritesWithAHeldDefaultProfile(t *testing.T) {
 	}
 	if !strings.Contains(all, "user:ops2@example.com") || !strings.Contains(all, "now an operator") {
 		t.Errorf("the command does not say what it did:\n%s", all)
+	}
+}
+
+// The linked-member refusals (WU10, D2813, R11, R12). This machine's own
+// installation-level doors -- add, rm, grant, revoke and offboard, and the
+// `--operator/--admin` fold of `fugaro setup|update` -- are the doors of a
+// project that is nobody's member. What "linked" is read from, and why this
+// side reads the member's own copy of the workspace's list rather than
+// Authority.Holds, is stated at user.go's installationMemberLinked.
+//
+// The mirror is the wu8FakeMemberOps of WU8's own test: C2's MemberOps is a
+// contract and the seam (installationMemberOps) is where a test hands its own
+// in, so nothing here reaches a cloud, and a case can say WHICH member and
+// whether the list was read at all.
+
+// wu10List is this machine's two lists in every case below: one member, on
+// both, so a refusal that wrote would be visible in a list the member is
+// already on.
+var wu10List = []string{"user:person-1@example.com"}
+
+// wu10Seams stands in for the two seams a linked-member case needs: how the
+// binary names itself in the sentence (selfCommand, which the released CLI
+// resolves from argv) and the member writer the mirror is read through. Both
+// are restored when the test ends.
+func wu10Seams(t *testing.T, ops workspace.MemberOps) {
+	t.Helper()
+	oldSelf, oldOps := selfCommand, installationMemberOps
+	selfCommand = func() string { return "fugaro" }
+	installationMemberOps = func(*localcfg.Config) workspace.MemberOps { return ops }
+	t.Cleanup(func() {
+		selfCommand, installationMemberOps = oldSelf, oldOps
+	})
+}
+
+// wu10MemberRig is this machine as a MEMBER of workspace-alpha: the membership
+// half `fugaro workspace project link` writes on the member owner's own machine
+// (the workspace key and the four values of its pin), which is what makes the
+// installation-level commands ask whether the workspace holds this project.
+func wu10MemberRig(t *testing.T, ops workspace.MemberOps) *userRig {
+	t.Helper()
+	r := userRigFor(t, wu10List, wu10List)
+	r.appendConfig(t, wu18Pin("workspace-alpha", "ws-project-alpha"))
+	// The file is what a refused command must leave alone, and it has just
+	// changed: userRigFor took its copy before the pin was appended.
+	r.before = r.configNow(t)
+	wu10Seams(t, ops)
+	return r
+}
+
+// wu10LinkedMirror is the entry every linked-member case mirrors into the
+// member's own database: a person the workspace admitted.
+func wu10LinkedMirror(t *testing.T) []workspace.MirrorEntry {
+	t.Helper()
+	return []workspace.MirrorEntry{{Address: "person-1@example.com", Kind: workspace.KindHuman}}
+}
+
+// TestUserCommandsRefuseOnALinkedMember: on a linked member (R11: the
+// membership half in this machine's config and the workspace's member list in
+// this project's own database) every installation-level door refuses with a
+// user error, names the workspace command that replaces it, and writes nothing
+// -- not the file, and not a grant (D2813, R11, R12).
+func TestUserCommandsRefuseOnALinkedMember(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		door string
+		args []string
+	}{
+		{"add", "fugaro workspace user add", []string{"add", "user:person-2@example.com", "--role", "operator"}},
+		{"rm", "fugaro workspace user rm", []string{"rm", "user:person-1@example.com", "--role", "operator"}},
+		{"grant", "fugaro workspace user grant", []string{"grant", "user:person-2@example.com", "--role", "operator", "--scope", "project"}},
+		{"revoke", "fugaro workspace user revoke", []string{"revoke", "user:person-1@example.com", "--role", "operator", "--scope", "project"}},
+		{"offboard", "fugaro workspace user rm", []string{"offboard", "person-1@example.com"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := wu10MemberRig(t, wu8Rig(t, wu10LinkedMirror(t)))
+			out, errOut, err := userCommand(t, tc.args...)
+			all := out + errOut
+			if err == nil {
+				t.Fatalf("fugaro user %s wrote on a linked member:\n%s", tc.name, all)
+			}
+			if code := exitCode(t, err); code != ExitUserError {
+				t.Errorf("the refusal exits %d, want %d (a user error, not a remote failure)", code, ExitUserError)
+			}
+			text := ErrorText(err)
+			for _, w := range []string{
+				tc.door,
+				"linked member of workspace workspace-alpha",
+				"D2813",
+				// D2822's lockout, named: this member's own unlink drops the
+				// authority and leaves the mirror, so the door keeps refusing
+				// until the workspace detaches the project -- and a refusal that
+				// named only a workspace door that refuses in turn would leave
+				// the person with no door at all.
+				"fugaro workspace project rm",
+				"D2822",
+			} {
+				if !strings.Contains(text, w) {
+					t.Errorf("the refusal does not say %q:\n%s", w, text)
+				}
+			}
+			// The refusal is a refusal and not a description of work half done:
+			// the two lists are byte for byte what they were.
+			r.unchanged(t)
+		})
+	}
+}
+
+// TestUserCommandsRefuseWhenTheMirrorIsUnreadable: the read that decides
+// whether this project is a linked member is what the doors above are refused
+// on, so a member whose own database will not answer is refused too — a remote
+// failure naming the member list that could not be read, and no door left open
+// (WU10, D2813, R11). Failing open here would hand a linked member's
+// `user add|rm|grant|revoke|offboard` back for the length of a database hiccup,
+// which is exactly the door the member's own copy of the list exists to close.
+func TestUserCommandsRefuseWhenTheMirrorIsUnreadable(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"add", []string{"add", "user:person-2@example.com", "--role", "operator"}},
+		{"rm", []string{"rm", "user:person-1@example.com", "--role", "operator"}},
+		{"grant", []string{"grant", "user:person-2@example.com", "--role", "operator", "--scope", "project"}},
+		{"revoke", []string{"revoke", "user:person-1@example.com", "--role", "operator", "--scope", "project"}},
+		{"offboard", []string{"offboard", "person-1@example.com"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ops := wu8Rig(t, wu10LinkedMirror(t))
+			ops.mirrorErr = rtdb.ErrPermission
+			r := wu10MemberRig(t, ops)
+			out, errOut, err := userCommand(t, tc.args...)
+			all := out + errOut
+			if err == nil {
+				t.Fatalf("fugaro user %s ran with the member's list unreadable:\n%s", tc.name, all)
+			}
+			if code := exitCode(t, err); code != ExitRemoteError {
+				t.Errorf("the refusal exits %d, want %d: the read failed, and that is not the person's to fix", code, ExitRemoteError)
+			}
+			for _, w := range []string{workspace.PathMemberMirror, "could not be read"} {
+				if !strings.Contains(ErrorText(err), w) {
+					t.Errorf("the refusal does not say %q:\n%s", w, ErrorText(err))
+				}
+			}
+			r.unchanged(t)
+		})
+	}
+}
+
+// TestMemberRosterHintsNameTheWorkspaceDoor: the two hints a MEMBER's roster
+// can reach — the refusal that would leave it with no project admin, and the
+// refusal of a write that member's own database did not allow — name the
+// workspace command that writes the member's record, and name no
+// installation-level door: `fugaro update --budget-admin` and
+// `fugaro update --admin` are doors a linked member refuses, so pointing at one
+// there would point at a refusal (WU10, D2813, R12). Both sentences are read
+// through `fugaro workspace user`, whose own tests (WU8's) judge what it writes
+// and not what it says.
+func TestMemberRosterHintsNameTheWorkspaceDoor(t *testing.T) {
+	// The member's roster with one project admin, the caller being them: the
+	// revoke is judged over the document that would be written (F17.2).
+	t.Run("the roster's last project admin", func(t *testing.T) {
+		ops := wu8Rig(t, []workspace.MirrorEntry{wu8Person(wu8Alice)},
+			wu8Stored(t, wu8Alice, accesslib.RoleAdmin, "project"))
+		all, err := wu8Run(t, ops, wu8As(t, wu8Alice), "revoke", wu8Alice, wu8Member, "admin")
+		if err == nil {
+			t.Fatalf("the member's last project admin revoked their own pair:\n%s", all)
+		}
+		memberRosterHint(t, all, "would hold no admin at project scope")
+	})
+	t.Run("a write the member's database refused", func(t *testing.T) {
+		ops := wu8Rig(t, []workspace.MirrorEntry{wu8Person(wu8Alice)})
+		ops.writeErr = rtdb.ErrPermission
+		all, err := wu8Run(t, ops, wu8Caller, "grant", wu8Alice, wu8Member, "operator")
+		if err == nil {
+			t.Fatalf("a write the member's database refused was reported as landed:\n%s", all)
+		}
+		memberRosterHint(t, all, "roles/firebasedatabase.admin")
+	})
+}
+
+// memberRosterHint is what both of those sentences owe the person reading them:
+// the rule they met (also), the workspace door, and no installation-level door
+// as the remedy.
+func memberRosterHint(t *testing.T, all, also string) {
+	t.Helper()
+	for _, w := range []string{also, installationMemberDoor("grant")} {
+		if !strings.Contains(all, w) {
+			t.Errorf("the refusal does not say %q:\n%s", w, all)
+		}
+	}
+	for _, w := range []string{"update --budget-admin", "update --admin"} {
+		if strings.Contains(all, w) {
+			t.Errorf("the refusal hands the person the installation-level door %q:\n%s", w, all)
+		}
+	}
+}
+
+// TestUserCommandsUnchangedOnAnUnlinkedMember: a member the workspace has not
+// mirrored into is not a linked one, and its installation-level doors are
+// exactly what they were (D2819's opt-in, R11). The mirror is still READ -- the
+// answer is "no list there" and not "do not ask" -- and the write lands.
+func TestUserCommandsUnchangedOnAnUnlinkedMember(t *testing.T) {
+	ops := wu8Unlinked(t)
+	r := wu10MemberRig(t, ops)
+	out, _, err := userCommand(t, "add", "user:person-2@example.com", "--role", "operator")
+	if err != nil {
+		t.Fatalf("a member that is not linked refused its own door: %v\n%s", err, out)
+	}
+	operators, _ := r.lists(t)
+	if !slices.Contains(operators, "user:person-2@example.com") {
+		t.Errorf("the member was not written: operators are %v", operators)
+	}
+	if strings.Contains(out, "workspace user") {
+		t.Errorf("the command pointed at the workspace on a member that is not linked:\n%s", out)
+	}
+	if len(ops.mirrorReads) == 0 {
+		t.Errorf("the member's list was not read: whether a member is linked is what the read answers")
+	}
+}
+
+// TestUserCommandsUnchangedOutsideWorkspace: a project whose config carries no
+// membership half is not a member at all, so the doors are unchanged AND the
+// member list is never read -- no cloud call, and no seam consulted, for a
+// project the workspace has nothing to do with.
+func TestUserCommandsUnchangedOutsideWorkspace(t *testing.T) {
+	r := userRigFor(t, wu10List, wu10List)
+	ops := wu8Unlinked(t)
+	wu10Seams(t, ops)
+	out, _, err := userCommand(t, "add", "user:person-2@example.com", "--role", "operator")
+	if err != nil {
+		t.Fatalf("a project that is no workspace member refused its own door: %v\n%s", err, out)
+	}
+	operators, _ := r.lists(t)
+	if !slices.Contains(operators, "user:person-2@example.com") {
+		t.Errorf("the member was not written: operators are %v", operators)
+	}
+	if reads := ops.mirrorReads; len(reads) != 0 {
+		t.Errorf("a project outside a workspace read a member list: %v", reads)
+	}
+}
+
+// TestOperatorFlagFoldRefusedOnALinkedMember: `fugaro update --operator` (the
+// fold the roles step makes into the roster, R12) refuses on a linked member
+// before anything is read, with a user error naming `fugaro workspace user
+// grant`; and on a member that is not linked the same run is not refused for
+// that reason, which is the "nothing changes" half of the task.
+func TestOperatorFlagFoldRefusedOnALinkedMember(t *testing.T) {
+	t.Run("linked", func(t *testing.T) {
+		r, _ := accessRig(t, wu10List, wu10List, wu10List, wu10List)
+		r.appendConfig(t, wu18Pin("workspace-alpha", "ws-project-alpha"))
+		wu10Seams(t, wu8Rig(t, wu10LinkedMirror(t)))
+		fakeTerminal(t)
+		out, errOut, err := executeStdin(t, "", "update", "--operator", "user:person-2@example.com")
+		all := accessOut(out, errOut, err)
+		if err == nil {
+			t.Fatalf("a linked member folded --operator into its own roster:\n%s", all)
+		}
+		if code := exitCode(t, err); code != ExitUserError {
+			t.Errorf("the refusal exits %d, want %d (a user error)", code, ExitUserError)
+		}
+		for _, w := range []string{"fugaro workspace user grant", "linked member of workspace workspace-alpha"} {
+			if !strings.Contains(ErrorText(err), w) {
+				t.Errorf("the refusal does not say %q:\n%s", w, all)
+			}
+		}
+	})
+	t.Run("not linked", func(t *testing.T) {
+		r, _ := accessRig(t, wu10List, wu10List, wu10List, wu10List)
+		r.appendConfig(t, wu18Pin("workspace-alpha", "ws-project-alpha"))
+		wu10Seams(t, wu8Unlinked(t))
+		fakeTerminal(t)
+		out, errOut, err := executeStdin(t, "", "update", "--operator", "user:person-2@example.com")
+		all := accessOut(out, errOut, err)
+		if err != nil && strings.Contains(ErrorText(err), "linked member") {
+			t.Errorf("a member that is not linked refused the fold as a linked one:\n%s", all)
+		}
+	})
+}
+
+// TestWorkspaceUserRmStillOffboards: WU10 refuses the installation-level doors
+// on a linked member, and `fugaro workspace user rm` is untouched by that -- it
+// still offboards through WU9's core, dropping the person's grants from every
+// member the workspace holds (D2802, D2813, WU9).
+func TestWorkspaceUserRmStillOffboards(t *testing.T) {
+	w := wu7Admin(t, workspace.Roster{
+		People: []workspace.Person{
+			{Address: "ada@example.com", Kind: workspace.KindHuman},
+			{Address: "founder@example.com", Kind: workspace.KindHuman},
+		},
+		Admins:  []string{"founder@example.com"},
+		Domains: []string{"example.com"},
+	})
+	w.linked = []workspace.MemberTarget{{Project: "aurora"}}
+	w.members.grants["aurora"] = []accesslib.Grant{
+		{User: "user:ada@example.com", Role: accesslib.RoleOperator, Scope: accesslib.Scope{Kind: accesslib.ScopeProject}},
+	}
+	w.must("workspace", "user", "rm", "ada@example.com", "--workspace", "workspace-alpha")
+	if got := strings.Join(w.members.offboarded, "|"); got != "aurora ada@example.com" {
+		t.Errorf("the members offboarded are %q, want the person taken off aurora", got)
+	}
+	for _, g := range w.members.grantsOf("aurora") {
+		if g.User == "user:ada@example.com" {
+			t.Errorf("aurora still holds a grant for ada@example.com: %+v", g)
+		}
+	}
+	if w.hasPerson("ada@example.com") {
+		t.Error("the workspace roster still names the person taken off it")
 	}
 }

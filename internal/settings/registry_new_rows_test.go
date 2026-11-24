@@ -21,6 +21,7 @@ var registryFieldExemptions = map[string]string{
 	"ab.exchange_rate":       "the project layer's alone (validateRepoAB), so the key a person can set is layer.ab.exchange_rate",
 	"ab.judge_model":         "the project layer's alone (validateRepoAB), so the key a person can set is layer.ab.judge_model",
 	"ab.max_pairs_per_day":   "the project layer's alone (validateRepoAB), so the key a person can set is layer.ab.max_pairs_per_day",
+	"ab.repos":               "the project layer's alone (validateRepoAB refuses it in a repository's file, D3297), so the key a person can set is layer.ab.repos",
 	"workflows.*.image_name": "the image catalog's key: `fugaro image promote` writes it into the checkout's fugaro.yaml (setWorkflowImageName), and no settings command reads or writes it — the configuration audit's C-not-S list carries it for that reason, and R1's row list does not name it",
 }
 

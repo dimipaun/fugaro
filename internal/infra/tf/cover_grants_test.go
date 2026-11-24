@@ -762,12 +762,19 @@ func TestCredentialsAccountIsItsOwnPrincipalKind(t *testing.T) {
 			// is what makes it exactly the grammar's containers.
 			"roles/secretmanager.secretAccessor": true,
 			customKey + SecretListerRole:         true,
+			// The service's Vertex role (CS11, D3174): the one call a chain
+			// whose models are served on Vertex makes as this account, and it
+			// is the account's because a job must not hold it — the release-1
+			// roles/aiplatform.user the jobs keep under observe is retired at
+			// X8. The role's own permission list is what keeps the reach to
+			// the predict and nothing of the platform (RolePermissions).
+			customKey + CredentialsVertexRole: true,
 		},
 	}
 	for typ, row := range grantRules {
 		for key, w := range row {
 			if (w&toCredentials != 0) != allowed[typ][key] {
-				t.Errorf("%s %s: toCredentials is %v, want %v — the service's account holds the bundle's accessor, its database role, the dynamic class's reader half and the issuer's own minter row, and no other role of the installation", typ, key, w&toCredentials != 0, allowed[typ][key])
+				t.Errorf("%s %s: toCredentials is %v, want %v — the service's account holds the bundle's accessor, its two custom roles, the dynamic class's reader half and the issuer's own minter row, and no other role of the installation", typ, key, w&toCredentials != 0, allowed[typ][key])
 			}
 		}
 	}

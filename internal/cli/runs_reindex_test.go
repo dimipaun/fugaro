@@ -17,7 +17,9 @@ import (
 //
 // firebase_project is added to the harness's budget block because the Firestore
 // client is built from it (reportcore.go): the config records which Firebase
-// project the index lives in, and the fake endpoint stands in for it.
+// project the index lives in, and the fake endpoint stands in for it. The
+// block ends on the signer account (testutil.Budget, AB4: every installation
+// with a database has one), which is where this rig writes the project in.
 func reindexRig(t *testing.T) (*cloudFixture, *gcpfake.Firestore) {
 	t.Helper()
 	fs := gcpfake.NewFirestore(t)

@@ -248,6 +248,14 @@ type pauseLookup func(slug, run string) (pauseFact, bool)
 // project's own client (budgetDBFor), opened on the first paused row it is
 // asked about, and one node read per paused run.
 //
+// One read per run, not per question: a listing asks a paused row's node twice
+// — once for the state of its pull request (markPRStates) and once for the
+// resume instant its own row shows (markPauses) — and the two are the same
+// node, so the answer is kept by row key and the second question is answered
+// from it. A read that failed is not kept: the row is asked again by the next
+// question, which is one more attempt at a node that may have been written
+// since, and the line about it is said once either way (warnOnce).
+//
 // Every failure answers the way a standing pause does and prints one line —
 // once, so a listing of a repository whose project has no pauses database is
 // not one line per paused row. It is not an error the caller returns: `runs ls`
@@ -261,6 +269,7 @@ func pauseFactsFor(ctx context.Context, env *cloudEnv, warn func(string, ...any)
 		opened bool
 		fail   error
 	)
+	read := map[string]pauseFact{}
 	return func(slug, run string) (pauseFact, bool) {
 		if !opened {
 			opened = true
@@ -275,9 +284,62 @@ func pauseFactsFor(ctx context.Context, env *cloudEnv, warn func(string, ...any)
 				safetext.Field(slug), task.ShortRun(oneLine(run)), safetext.OneLine(fail.Error()))
 			return pauseFact{}, false
 		}
-		return pauseNode(ctx, db, slug, run, warn)
+		key := pauseRowKey(slug, run)
+		if f, ok := read[key]; ok {
+			return f, true
+		}
+		f, ok := pauseNode(ctx, db, slug, run, warn)
+		if ok {
+			read[key] = f
+		}
+		return f, ok
 	}
 }
+
+// markPauses stamps each paused row with the pause it ended in (contract-pause
+// R15, D3195): the instant the orchestrator will resume its chain at, from the
+// service's own node, and the run that resumed it, from the resumer's own task.
+// It is the listing's counterpart of `internal/watch`'s MergePaused, and the
+// two read the same two facts: the node the credentials service writes and the
+// `resumes` member the resumer's task carries.
+//
+// resumers is the run that resumed each paused run, by the paused run's key
+// (pauseRowKey): the resumer's task names the paused run under `resumes`
+// (task.Spec.Resumes), and nothing on the paused run's own records does — a
+// chain is walked backwards, so a paused run's chain holds its ancestors and
+// never the run the orchestrator launched to pick it up.
+//
+// Only a row whose own status is `paused` is touched: a run that is not paused
+// is not one a pause is about, whatever a stale node under its id might say.
+// The two facts degrade independently and both degrade to absence: a node the
+// lookup could not read leaves ResumeAt unset, and a chain no run of the
+// listing resumed leaves ResumedBy empty, so the row reads `paused` and claims
+// nothing this read did not see.
+func markPauses(rows []runview.Row, resumers map[string]string, pauses pauseLookup) {
+	for i := range rows {
+		if rows[i].Status != string(runstore.StatusPaused) {
+			continue
+		}
+		slug := rowRef(rows[i]).Slug
+		if by := resumers[pauseRowKey(slug, rows[i].RunID)]; by != "" {
+			rows[i].ResumedBy = by
+		}
+		if pauses == nil {
+			continue
+		}
+		if f, ok := pauses(slug, rows[i].RunID); ok && !f.resumeAt.IsZero() {
+			at := f.resumeAt
+			rows[i].ResumeAt = &at
+		}
+	}
+}
+
+// pauseRowKey is the key a paused run is looked up by in the resumer map
+// (markPauses) and the key one node read is kept under (pauseFactsFor): the
+// repository's storage slug and the run's id, the pair rowRef splits out of
+// Row.Run. Neither half can hold the separator — a slug is a bucket key and a
+// run id is digits, dashes and hex — so the join names exactly one pair.
+func pauseRowKey(slug, run string) string { return slug + "\x00" + run }
 
 // pauseLookupWith is pauseFactsFor over a client the caller already holds: the
 // daemon's own, which is the same database the state node lives in

@@ -3,12 +3,14 @@ package watch
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/runview"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // PlainOptions tune RenderPlain.
@@ -84,9 +86,23 @@ func RenderPlain(w io.Writer, project string, v View, ready []ReadyRow, o PlainO
 			tw.Flush()
 		}
 		if len(r.Finished) > 0 {
+			// The RESUME column is the block's, not the frame's: a repository
+			// whose finished runs never suspended themselves shows no column
+			// for a fact none of them has (the conditional-column rule
+			// `runs ls` uses), and one paused run brings it back for the whole
+			// block rather than for its own row alone.
+			showResume := slices.ContainsFunc(r.Finished, func(f RunRow) bool { return f.Paused })
 			ftw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(ftw, "  FINISHED\tOUTCOME\tAGE\tBY\tPR")
+			if showResume {
+				fmt.Fprintln(ftw, "  FINISHED\tOUTCOME\tRESUME\tAGE\tBY\tPR")
+			} else {
+				fmt.Fprintln(ftw, "  FINISHED\tOUTCOME\tAGE\tBY\tPR")
+			}
 			for _, f := range r.Finished {
+				if showResume {
+					fmt.Fprintf(ftw, "  %s\t%s\t%s\t%s\t%s\t%s\n", table.ending(r.Slug, f.Run), finishedOutcomeText(f), pauseCell(f), ageText(f), launcherText(f), dashIfEmpty(f.PRURL))
+					continue
+				}
 				fmt.Fprintf(ftw, "  %s\t%s\t%s\t%s\t%s\n", table.ending(r.Slug, f.Run), finishedOutcomeText(f), ageText(f), launcherText(f), dashIfEmpty(f.PRURL))
 			}
 			ftw.Flush()
@@ -149,6 +165,27 @@ func finishedOutcomeText(f RunRow) string {
 		word = "ARTIFACTS, NO PR"
 	}
 	return word
+}
+
+// pauseCell is a finished row's RESUME cell: the instant its resume is due at
+// and the run that resumed it, in the words the interactive screen uses for the
+// same two facts. Either may be missing — the instant is the credentials
+// service's node for the pause and the resumer is another run's task — and what
+// is missing is not said, so a pause nothing recorded reads as the dash every
+// unrecorded cell reads as (the row's own OUTCOME still says PAUSED, which is
+// the run's record, the one thing a paused row always has).
+func pauseCell(f RunRow) string {
+	if !f.Paused {
+		return "-"
+	}
+	var parts []string
+	if f.ResumeAt > 0 {
+		parts = append(parts, stampText(f.ResumeAt))
+	}
+	if f.ResumedBy != "" {
+		parts = append(parts, "by "+task.ShortRun(f.ResumedBy))
+	}
+	return dashIfEmpty(strings.Join(parts, " "))
 }
 
 // ConnText is the connection as the header says it. warn is the warning

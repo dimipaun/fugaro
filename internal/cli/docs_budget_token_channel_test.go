@@ -242,9 +242,9 @@ func TestDocsBudgetTokenChannelAnswersTheBatchSeal(t *testing.T) {
 	if start < 0 {
 		t.Fatalf("internal/backend/batch/seal.go no longer builds the seal's refusal with %s: this test reads that message", opens)
 	}
-	end := strings.Index(code[start:], "full, kv.Name)")
+	end := strings.Index(code[start:], "full, entry)")
 	if end < 0 {
-		t.Fatalf("internal/backend/batch/seal.go's seal refusal no longer ends at `full, kv.Name)`: this test cannot find the message's end")
+		t.Fatalf("internal/backend/batch/seal.go's seal refusal no longer ends at `full, entry)`: this test cannot find the message's end")
 	}
 	message := code[start : start+end]
 	for _, want := range []string{
