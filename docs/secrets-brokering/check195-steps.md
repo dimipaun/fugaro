@@ -92,10 +92,12 @@ worth knowing by name:
   reads the policy back to prove it removed it again, and once its account is deleted that leftover can
   never be removed — and the stop prints the exact `remove-iam-policy-binding` to run by hand. A policy
   read that **failed** stops the run too, for the same reason a failed list does.
-- **The grant does not land** (`invoker-grant`) — the service's own policy is read back after the
-  binding and must name the throwaway account and nobody else. A binding that did not land is a stop
-  rather than a 403 the block would report as the account having been refused, which is a different
-  fact.
+- **A grant this check makes is refused** (`invoker-grant`) — the row covers all three: the service's
+  own policy is read back after the invoker binding and must name the throwaway account and nobody
+  else (a binding that did not land is a stop rather than a 403 the block would report as the account
+  having been refused, which is a different fact), and the project-level `roles/logging.logWriter` and
+  the bucket-level `roles/storage.objectCreator` writes are refused here too, the row naming which of
+  the three and what gcloud said.
 - **The build fails** (`build`) — the row carries Cloud Build's own failure detail, the step's own
   exit code out of the build's record, and the build's own last lines, redacted. The likeliest causes,
   in order: your account lacks `iam.serviceAccounts.actAs` on the throwaway account (so `gcloud builds

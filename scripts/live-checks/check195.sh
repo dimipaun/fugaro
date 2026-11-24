@@ -61,7 +61,9 @@
 #             it against fake tools only.
 # Cleanup:    always, including on a Ctrl-C: a build still running is cancelled
 #             first, then the service (which takes the invoker binding with it),
-#             the project-level binding, and the throwaway account — and that
+#             the bucket (which takes the object the step wrote and the
+#             bucket-level grant with it), the project-level binding, and the
+#             throwaway account — and that
 #             last one is RETRIED, because the binding removal and the account
 #             deletion are ordered IAM writes that IAM's own consistency can put
 #             out of order: the owner's run of 2026-11-24 ended with the binding
@@ -69,8 +71,8 @@
 #             still there — and what the refusal said was not captured, so the
 #             re-read covers both ways that happens: a delete refused as still
 #             referenced by a policy binding, and a delete that landed whose
-#             account the list had not stopped naming yet. The bucket goes last,
-#             and with it the object and the bucket-level grant. Each of the four
+#             account the list had not stopped naming yet. The bucket goes ahead
+#             of both, so its own binding never outlives its member. Each of the four
 #             is READ BACK rather than assumed — the `service-deleted`,
 #             `account-deleted`, `bucket-deleted` and `binding-removed` rows are
 #             that reading. The
