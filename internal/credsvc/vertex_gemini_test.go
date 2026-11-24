@@ -23,9 +23,10 @@ package credsvc
 // acceptance names — an image block, a tool that is not an ordinary function —
 // and the rest of the classes a call can carry that this wire has no form for.
 //
-// Two deliberate drops (cache_control, metadata.user_id) are the exception and
-// are argued in vertex_gemini.go; the pairs carry both, so the drop is asserted
-// by the translation that carries them and not by a sentence here.
+// The deliberate drops (cache_control, metadata.user_id, and a tool's own
+// `type: custom`) are the exception and are argued in vertex_gemini.go; the
+// pairs carry all three, so each drop is asserted by the translation that reads
+// the member and does not send it, rather than by a sentence here.
 
 import (
 	"context"
@@ -97,7 +98,11 @@ func geminiDoc(t *testing.T, raw []byte) any {
 // and refusing them is refusing every tool-bearing call the harness makes, which
 // is the call this whole file exists to serve. That pair is here so the shape is
 // one a reviewer can read, and so a translation that starts filtering schemas
-// again is red rather than silently narrow.
+// again is red rather than silently narrow. It also marks both tools
+// `type: custom` — the client tool's own mark, which the gateway in front of
+// this service is the one place that admits — and the Google side of the pair
+// carries no such member, so the accepted case is pinned where the other drops
+// are rather than only in a comment.
 //
 // Mutation (run, restore): carry `model`, `stream` or `anthropic_version` into
 // the body, map a role or a block onto the wrong member, or drop the signature

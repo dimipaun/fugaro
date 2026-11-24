@@ -5,6 +5,7 @@
   "tools": [
     {
       "name": "Bash",
+      "type": "custom",
       "description": "Run a shell command",
       "input_schema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -19,6 +20,7 @@
     },
     {
       "name": "Read",
+      "type": "custom",
       "description": "Read a file from the filesystem",
       "input_schema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",

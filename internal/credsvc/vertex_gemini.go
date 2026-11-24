@@ -62,11 +62,12 @@
 //
 // What this file does NOT do is GV2's: the answer Vertex sends back for a
 // Gemini model is a GenerateContentResponse and not a Messages answer, and
-// nothing here translates it. Until GV2 lands, a routing table that sends a
-// Gemini model to Vertex is refused before any call is made — RT3's checks
-// refuse a non-Claude model on Vertex until GV4 lifts that rule — so this
-// translation's only callers today are GV4's wiring and the tests below, and
-// the wire is exercised for real by the owner's Check 886.
+// nothing here translates it. Nothing here is reachable in production yet
+// either, and not because some guard holds it back (the routing checks that
+// would send a non-Claude model to Vertex are RT3's, an unlanded plan task, so
+// there is no such rule in this tree to lean on): serveVertex has no production
+// caller at all, and its only callers are GV4's wiring and the tests below. The
+// wire is exercised for real by the owner's Check 886.
 //
 // The round trip GV2 completes is anchored HERE, because the request is where
 // the signature lands: a tool call this file sends carries the THOUGHT SIGNATURE
@@ -118,6 +119,14 @@ const (
 	// characters a-z, A-Z, 0-9, underscores, dots or dashes with a maximum
 	// length of 64."
 	vertexGeminiMaxFunctionNameBytes = 64
+
+	// vertexGeminiClientToolType is the `type` a client tool is marked with, and
+	// the only value a tool reaching this service can carry: the gateway in front
+	// of it admits a tool with no `type` and one with this one, and refuses every
+	// other value with "the budget allows only client tools"
+	// (internal/gateway/forward.go). Anthropic's own server-side tools carry
+	// their own type names and never get this far.
+	vertexGeminiClientToolType = "custom"
 )
 
 // vertexGeminiThoughtSignatureID is the prefix a tool call's ID carries when
@@ -785,6 +794,16 @@ func vertexGeminiTools(raw json.RawMessage) ([]any, error) {
 			case "cache_control":
 				// Dropped; see vertexGeminiCacheHint.
 			case "type":
+				// A client tool marks itself `custom` — the only value the gateway
+				// in front of this service lets through (vertexGeminiClientToolType)
+				// — and the mark says nothing to a Gemini declaration, which offers
+				// every tool as an ordinary function. It is dropped, as
+				// `cache_control` is. Anything else IS a tool that is not an
+				// ordinary function: Anthropic's server tools name themselves here
+				// and have no declaration on this wire.
+				if kind, ok := vertexJSONString(m.Value); ok && kind == vertexGeminiClientToolType {
+					continue
+				}
 				return nil, untranslatableMember(where+".type",
 					"a tool that names a type is not an ordinary tool the model is offered as a function — it is one of Anthropic's own server-side tools, which this wire has no declaration for — and this translation will not invent one")
 			default:
