@@ -571,10 +571,13 @@ describe('renderRun: the review levels', () => {
     expect(all(tree, 'run-level')).toHaveLength(3)
     // The fill is the two figures the document carries, as a share: 3/3, 2/5 and
     // 1/2. The screen divides nothing it was not handed, and every level here
-    // has a cap, so every share is a measurement.
+    // has a cap, so every share is a measurement -- drawn as the bar's own text,
+    // with no state attribute anywhere on this screen (§2.9: Run writes no
+    // `data-state`), and no bar in the absent class.
     const bars = all(tree, 'run-level-bar')
-    expect(bars.map((bar) => bar.getAttribute('data-fill'))).toEqual(['100.0%', '40.0%', '50.0%'])
-    expect(bars.map((bar) => bar.getAttribute('data-state'))).toEqual(['measured', 'measured', 'measured'])
+    expect(bars.map((bar) => bar.getAttribute('data-state'))).toEqual([null, null, null])
+    expect(bars.map((bar) => bar.getAttribute('data-fill'))).toEqual([null, null, null])
+    expect(bars.filter((bar) => bar.classes.includes('run-level-bar-absent'))).toHaveLength(0)
     // The bar's text is that same share, so the bar is readable with the CSS
     // gone -- the rule every reading on this screen follows.
     expect(bars.map((bar) => bar.textContent)).toEqual(['100.0%', '40.0%', '50.0%'])
@@ -591,7 +594,8 @@ describe('renderRun: the review levels', () => {
     // the level used a budget nobody resolved.
     const tree = levelsTree([{ level: 'l2', rounds: 4, cap: null }])
     const bar = one(tree, 'run-level-bar')
-    expect(bar.getAttribute('data-state'), 'no cap is not a cap of zero').toBe('unavailable')
+    expect(bar.classes, 'no cap is not a cap of zero').toContain('run-level-bar-absent')
+    expect(bar.getAttribute('data-state'), 'and it is still no state attribute: the class paints, the text and the title say').toBeNull()
     expect(bar.textContent).toBe(UNAVAILABLE_MARK)
     expect(bar.getAttribute('title')).toContain('no cap')
     expect(one(tree, 'run-level-rounds').textContent, 'the rounds are the document\'s own figure and are still drawn').toBe('4')

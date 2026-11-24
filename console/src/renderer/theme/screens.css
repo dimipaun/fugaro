@@ -1123,6 +1123,14 @@ span.run-tolerated-fix-cost {
  * red at 100% (design section 6.1 rule 3, and the reason `span.run-stage-deadline`
  * is uncoloured too).
  *
+ * **The tone is the class and never a `data-state`**: this is the Run screen,
+ * where availability is the text and the reason in `title` and nothing else
+ * (design section 2.9), so `div.run-level-bar` carries the state as the word
+ * `run-level-bar-absent` names it rather than as an attribute -- the same
+ * spelling `p.run-split-absent` and `p.run-meta-absent` use for the absent case
+ * of their own figures, and the reason `bar()`'s `data-state` is not copied
+ * here.
+ *
  * **The cap's own edge on that scale is the mark beside the text**
  * (`run-level-cap-mark`), and it is drawn only where the document carries a cap:
  * a level whose cap nobody resolved has no edge to mark, which is the bar V1.3
@@ -1152,14 +1160,10 @@ div.run-level-bar {
   font-variant-numeric: tabular-nums;
   font-size: var(--font-size-sm);
   text-align: right;
-  border-bottom: 3px solid var(--surface-alt);
+  border-bottom: 3px solid var(--accent);
 }
 
-div.run-level-bar[data-state='measured'] {
-  border-bottom-color: var(--accent);
-}
-
-div.run-level-bar[data-state='unavailable'] {
+div.run-level-bar-absent {
   color: var(--text-muted);
   border-bottom-color: var(--stale);
 }
@@ -2175,6 +2179,16 @@ p.graph-empty {
 
   div.live-bar[data-state='unavailable'],
   li.live-burn-bar[data-state='gap'] {
+    border-color: GrayText;
+  }
+
+  /* The run's level bars are fills of the same kind, and their tone is the
+   * class rather than a state (design section 2.9). */
+  div.run-level-bar {
+    border-bottom-color: Highlight;
+  }
+
+  div.run-level-bar-absent {
     border-color: GrayText;
   }
 

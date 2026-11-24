@@ -229,7 +229,7 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 		row, has, because string
 	}{
 		{"| killed / halted |", "no attribute at all", "Run's halt is `div.run-halt`, and that screen sets no `data-killed`"},
-		{"| unavailable |", "Run writes one `data-state`, on `div.run-level-bar` alone", "V1.3's iterations bar is the one element of that screen carrying the attribute, and the row must name it rather than deny the attribute outright — every other number of Run goes through `putReading`, which writes text and, for a value with no number, a `title`"},
+		{"| unavailable |", "Run writes no `data-state` at all", "its numbers go through `putReading`, which writes text and, for a value with no number, a `title`"},
 		{"| notional / estimated |", "**Spend alone**", "`data-state=\"notional\"` / `\"estimated\"` is Spend's own point, on the notional and compute dimensions"},
 	} {
 		if row := mdRow(t, path, states, want.row); !strings.Contains(row, want.has) {

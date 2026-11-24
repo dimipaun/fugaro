@@ -914,16 +914,6 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
       reason:
         'the same coordinate for one tick: `positionOf` of a record\'s own stamp, clamped to the window, written as the tick line\'s `x1`/`x2`. Geometry, and the tick carries no text of its own',
     },
-    "formatReading(level.fill, 'percent')": {
-      within: 'levelsPanel',
-      reason:
-        '`formatReading` of a Reading: the console\'s own number formatting or its unavailable mark, the same value the cell beside the bar draws through `putReading`, written as the fill hook the stylesheet reads (V1.3)',
-    },
-    'level.fill.state': {
-      within: 'levelsPanel',
-      reason:
-        'a Reading\'s `state`, the closed `ReadingState` union the fill was built with (`measured` or `unavailable`, never a word from the document), which is the tone the bar is painted in',
-    },
   },
   '../../shared/notice.ts': {
     "classes.join(' ')": { within: 'cell', reason: 'the class list of the `cell` helper; every call site passes string-literal class names' },

@@ -79,7 +79,7 @@
 // with the class its wire key declares. Nothing here builds markup, sets a
 // navigating attribute or handles an event.
 
-import { UNAVAILABLE_MARK, formatReading, measured, notional, readNumber, unavailable } from '../../shared/availability'
+import { UNAVAILABLE_MARK, measured, notional, readNumber, unavailable } from '../../shared/availability'
 import type { Reading } from '../../shared/availability'
 import { ReplayBuffer, REPLAY_MAX_RECORDS, REPLAY_WINDOW_SECONDS } from '../../shared/replay'
 import type { ReplayArrival, ReplayDocument, ReplayRecord } from '../../shared/replay'
@@ -1860,10 +1860,8 @@ function levelsPanel(factory: ScreenFactory, levels: readonly RunLevel[]): Scree
   for (const level of levels) {
     const row = cell(list, factory, 'li', 'run-level')
     textCell(row, factory, 'span', level.level, 'label', 'review_levels[].level', 'run-level-name')
-    const bar = cell(row, factory, 'div', 'run-level-bar')
+    const bar = cell(row, factory, 'div', 'run-level-bar', ...(level.fill.state === 'unavailable' ? ['run-level-bar-absent'] : []))
     putReading(bar, level.fill, 'percent')
-    bar.setAttribute('data-fill', formatReading(level.fill, 'percent'))
-    bar.setAttribute('data-state', level.fill.state)
     if (level.cap.value !== null) {
       cell(bar, factory, 'span', 'run-level-cap-mark')
     }
