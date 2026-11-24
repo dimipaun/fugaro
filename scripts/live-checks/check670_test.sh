@@ -430,7 +430,10 @@ update_cmd() { # update_cmd ARGS...
 case "${1:-}" in
 version) printf 'fugaro v0.0.0-chk670 (fake)\n' ;;
 doctor)
-  [ -f "$state/doctor.exit" ] && exit "$(cat "$state/doctor.exit")"
+  if [ -f "$state/doctor.exit" ]; then
+    [ -f "$state/doctor.prints" ] && cat "$state/doctor.json"
+    exit "$(cat "$state/doctor.exit")"
+  fi
   cat "$state/doctor.json"
   ;;
 project)
@@ -899,6 +902,16 @@ test_a_doctor_that_does_not_answer_is_not_measured() {
   expect_absent "$(cat "$dir/state/logs/fugaro.calls")" "repos add" "a doctor that exits 1: nothing is enrolled"
 }
 
+test_a_doctor_that_finds_a_problem_but_prints_its_document_is_read() {
+  local dir=$work/doctor-exit1-document
+  prepare "$dir"
+  printf '1\n' >"$dir/state/doctor.exit"
+  : >"$dir/state/doctor.prints"
+  run_check "$dir"
+  expect_absent "$(cat "$dir/state/logs/fugaro.calls")" "no answer" "a doctor that exits 1 with its document: it is read"
+  expect_contains "$(cat "$dir/state/logs/fugaro.calls")" "repos add" "a doctor that exits 1 with its document: the check goes on to enrol"
+}
+
 test_a_doctor_with_no_project_is_not_measured() {
   local dir=$work/doctor-no-project
   prepare "$dir"
@@ -1355,6 +1368,7 @@ t test_a_key_file_that_is_not_a_pem_is_not_measured
 t test_a_checkout_without_a_fugaro_yaml_stops
 t test_a_clone_that_refuses_stops
 t test_a_doctor_that_does_not_answer_is_not_measured
+t test_a_doctor_that_finds_a_problem_but_prints_its_document_is_read
 t test_a_doctor_with_no_project_is_not_measured
 t test_a_checkout_of_another_installation_is_not_measured
 t test_a_gcp_project_that_is_not_the_checkouts_is_refused

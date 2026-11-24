@@ -246,21 +246,37 @@ func TestNoAuthoritativeIAM(t *testing.T) {
 // Secret access is granted per secret, never on the whole project. A plan
 // assertion can't enumerate every resource, so this is a text check.
 //
-// ONE grant of this tree is a project-level secretAccessor, and it is a
-// decision rather than an oversight: the dynamic class's prefix accessor
-// (D1931, DS2.2, credentials.tf). Its containers are named by the callers' own
-// subjects (fugaro_u_<sub>_<name>), so an installation cannot name them when it
-// plans and there is no per-secret grant to write; what bounds the read is the
-// class's one name-prefix condition, which the module takes from the local that
-// the intake's own write binding takes it from (TestServicePrefixAccessorIsConditioned
-// resolves both and holds them byte for byte). The member is the credentials
-// service's own account and the reader is listed (secret_readers_test.go, E23).
-// It is admitted here BY ADDRESS and not by shape: a second project-level
-// secretAccessor, this one renamed, or the same grant moved to another file is
-// refused, and so is this one once it stops carrying the class's condition.
+// TWO grants of this tree are project-level secretAccessors, and each is a
+// decision rather than an oversight. The first is the dynamic class's prefix
+// accessor (D1931, DS2.2, credentials.tf): its containers are named by the
+// callers' own subjects (fugaro_u_<sub>_<name>), so an installation cannot name
+// them when it plans and there is no per-secret grant to write; what bounds the
+// read is the class's one name-prefix condition, which the module takes from the
+// local that the intake's own write binding takes it from
+// (TestServicePrefixAccessorIsConditioned resolves both and holds them byte for
+// byte). The member is the credentials service's own account and the reader is
+// listed (secret_readers_test.go, E23).
+//
+// The second is the workspace root's person-token accessor (WC2, D2971, R6):
+// the same impossibility and the same answer — the container is one per person
+// and carries the verified token's own subject (fugaro_u_<sub>_claude-oauth-token,
+// internal/secretname), so the workspace's own account reads it through one
+// conditioned project grant, whose expression is stricter than the installation's
+// (the per-person prefix AND the one name the workspace serves, never the shared
+// fugaro_p_ class the intake's fence admits too), and whose reader is listed
+// (secret_readers_test.go, E32).
+//
+// Each is admitted here BY ADDRESS and not by shape: a third project-level
+// secretAccessor, one of these renamed, or either moved to another file is
+// refused, and so is either one once it stops carrying its own condition. The
+// workspace's is read out of its own block and compared to the Go constant that
+// internal/infra/tf's cover holds the plan to, so the two spellings of the fence
+// cannot drift.
 func TestNoProjectLevelSecretAccessor(t *testing.T) {
 	const allowedPath = "gcp/modules/installation/credentials.tf"
 	const allowedName = "google_project_iam_member.credentials_prefix_accessor"
+	const personPath = "gcp/roots/workspace/main.tf"
+	const personName = "google_project_iam_member.workspace_person_token"
 	walk(t, func(path string, b []byte) {
 		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_member") {
 			if !strings.Contains(blk.body, "secretmanager.secretAccessor") {
@@ -269,7 +285,12 @@ func TestNoProjectLevelSecretAccessor(t *testing.T) {
 			if path == allowedPath && blk.name == allowedName && strings.Contains(blk.body, "local.dynamic_secret_names_condition.expression") {
 				continue
 			}
-			t.Errorf("%s: %s grants secretmanager.secretAccessor on the project, which only the dynamic class's conditioned prefix accessor may do (%s's %s)", path, blk.name, allowedPath, allowedName)
+			if path == personPath && blk.name == personName &&
+				hasAttr(blk.body, "title", strconv.Quote(gcp.WorkspacePersonTokenConditionTitle)) &&
+				hasAttr(blk.body, "expression", strconv.Quote(gcp.WorkspacePersonTokenCondition())) {
+				continue
+			}
+			t.Errorf("%s: %s grants secretmanager.secretAccessor on the project, which only the dynamic class's conditioned prefix accessor (%s's %s) and the workspace's conditioned person-token accessor (%s's %s) may do", path, blk.name, allowedPath, allowedName, personPath, personName)
 		}
 	})
 }
@@ -1953,7 +1974,18 @@ var (
 	// every entry to a service account address, and internal/infra/tf's
 	// WorkspaceNotCovered refuses an invoke grant whose member is not one of
 	// the table's accounts.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake|build_identity|mobile)\[0\]\.member|google_service_account\.(catalog_check|reports|licence|voice)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{each\.value\}"|"serviceAccount:\$\{var\.(history_account|coordinator_account|mobile_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account|credentials_service\.account|issuer_account)\}"|"serviceAccount:\$\{var\.orchestrator\.account_id\}@\$\{var\.project\}\.iam\.gserviceaccount\.com")$`)
+	//
+	// "user:${each.value}" is that same root's PERSON invoke binding (WC2,
+	// D2971, R6): the workspace's roster arrives as the addresses the roster
+	// names — `fugaro update` renders each `human` of the workspace's own
+	// workspaceRosters/<name> node into this root's people list
+	// (internal/cli's workspace_create.go) — so the resource writes the `user:`
+	// prefix the roster does not. It is admitted by shape for the same reason:
+	// what bounds the member is the root rather than the expression, the
+	// variable's own validation holds every entry to an address, and
+	// internal/infra/tf's WorkspaceNotCovered refuses an invoke grant whose
+	// member is not one of the roster's own people.
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake|build_identity|mobile)\[0\]\.member|google_service_account\.(catalog_check|reports|licence|voice)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{each\.value\}"|"user:\$\{each\.value\}"|"serviceAccount:\$\{var\.(history_account|coordinator_account|mobile_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account|credentials_service\.account|issuer_account)\}"|"serviceAccount:\$\{var\.orchestrator\.account_id\}@\$\{var\.project\}\.iam\.gserviceaccount\.com")$`)
 
 	// workspaceRolePath and workspaceRoleType name the ONE custom role in this
 	// tree no module creates: the workspace root's own (W3 of the workspaces
@@ -6724,13 +6756,37 @@ func TestWorkspaceDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
 		t.Errorf("tf.FugaroRoles names %s: that table is the installation's modules' roles (each pinned in RolePermissions and covered by cover.go's grantRules), and the workspace root's role is covered by WorkspaceNotCovered instead — a row here would admit the role to an installation's plan", tf.WorkspaceDatabaseRoleID)
 	}
 
-	// The one grant: that role, on the workspace's own project, to the
-	// workspace's own account, with no condition and no second member.
+	// The root's TWO project grants, found by the role each names rather than
+	// by position. The first is that role, on the workspace's own project, to
+	// the workspace's own account, with no condition and no second member. The
+	// second is WC2's (D2971, R6): the one conditioned secretAccessor the same
+	// account holds on the personal token containers of the people the
+	// workspace's roster names. TestNoProjectLevelSecretAccessor is the
+	// tree-level half of that fence — it refuses a project-level accessor
+	// anywhere else, and this one unless it carries the condition byte for
+	// byte — and the assertions here are what says the same grant is gated on
+	// the one boolean, bound to the workspace's account and on the workspace's
+	// own project.
 	grants := resourceBlocks(t, workspaceRolePath, b, "google_project_iam_member")
-	if len(grants) != 1 {
-		t.Fatalf("%s declares %d project grants, want exactly one — the database role, to the workspace's own account", workspaceRolePath, len(grants))
+	if len(grants) != 2 {
+		t.Fatalf("%s declares %d project grants, want exactly two — the database role and the person-token accessor, both to the workspace's own account", workspaceRolePath, len(grants))
 	}
-	grant := squash(grants[0].body)
+	var dbGrant, accessor block
+	for _, g := range grants {
+		body := squash(g.body)
+		switch {
+		case strings.Contains(body, `role = "projects/${var.project}/roles/`+tf.WorkspaceDatabaseRoleID+`"`):
+			dbGrant = g
+		case strings.Contains(body, `role = "`+tf.WorkspaceBundleAccessorRole+`"`):
+			accessor = g
+		default:
+			t.Errorf("%s: %s is neither the database grant nor the person-token accessor:\n%s", workspaceRolePath, g.name, body)
+		}
+	}
+	if dbGrant.name == "" || accessor.name == "" {
+		t.Fatalf("%s: the root's two project grants are %q and %q, want the database grant and the person-token accessor", workspaceRolePath, dbGrant.name, accessor.name)
+	}
+	grant := squash(dbGrant.body)
 	for _, want := range []string{
 		"project = var.project",
 		`role = "projects/${var.project}/roles/` + tf.WorkspaceDatabaseRoleID + `"`,
@@ -6747,8 +6803,32 @@ func TestWorkspaceDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
 	// google_project_iam_custom_role's name is computed, so the reference
 	// reaches a plan as an unknown role and the cover could no longer say which
 	// role the grant is (tf's WorkspaceNotCovered, the unknown-role arm).
-	if roleAttr := firstAttr(grants[0].body, "role"); strings.Contains(roleAttr, "google_project_iam_custom_role.") {
+	if roleAttr := firstAttr(dbGrant.body, "role"); strings.Contains(roleAttr, "google_project_iam_custom_role.") {
 		t.Errorf("%s: the database grant reads its role from the role resource (%s), which a plan sees as unknown:\n%s", workspaceRolePath, roleAttr, grant)
+	}
+
+	// WC2's accessor: one grant, gated on the same boolean as the service and
+	// the bundle accessor, on the workspace's own project and account, and
+	// carrying the fence's own title and expression — the two read out of the
+	// Go constants the plan cover compares a plan against, so a plan this root
+	// would apply and a plan the cover would accept cannot be two different
+	// fences.
+	body := squash(accessor.body)
+	for _, want := range []string{
+		"project = var.project",
+		`role = "` + tf.WorkspaceBundleAccessorRole + `"`,
+		"member = google_service_account.workspace.member",
+		"count = local.credentials_service_on ? 1 : 0",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%s: the person-token accessor does not hold %q:\n%s", workspaceRolePath, want, body)
+		}
+	}
+	if title := firstAttr(accessor.body, "title"); title != strconv.Quote(gcp.WorkspacePersonTokenConditionTitle) {
+		t.Errorf("%s: the person-token accessor is titled %s, want %q (gcp.WorkspacePersonTokenConditionTitle, which internal/infra/tf's cover holds a plan to)", workspaceRolePath, title, gcp.WorkspacePersonTokenConditionTitle)
+	}
+	if expr := firstAttr(accessor.body, "expression"); expr != strconv.Quote(gcp.WorkspacePersonTokenCondition()) {
+		t.Errorf("%s: the person-token accessor's condition is %s, want %q (gcp.WorkspacePersonTokenCondition(), the per-person prefix AND the one name the workspace serves): the prefix alone would hand the account every personal secret of the workspace's project and a wider name would reach another project's container", workspaceRolePath, expr, gcp.WorkspacePersonTokenCondition())
 	}
 	// No predefined database role is granted to this account anywhere in the
 	// tree: the whole point of the custom role is that the two predefined ones
