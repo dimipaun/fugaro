@@ -177,6 +177,11 @@ func TestHeartbeatDropsOnlyTheRefusedChild(t *testing.T) {
 	if e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any); e["mode"] != "critical" || e["from"] != "area" {
 		t.Fatalf("the rigor mode went with a refusal that was about the routing source: %v", e)
 	}
+	// The write lands before the beat logs its warning, so the settled entry
+	// does not yet mean the line is there.
+	waitFor(t, "the fallback warning", func() bool {
+		return strings.Contains(logs.String(), "fugaro update --firebase-project")
+	})
 	if strings.Contains(logs.String(), "predate the rigor mode") {
 		t.Fatalf("the heartbeat blamed the wrong child:\n%s", logs.String())
 	}
@@ -231,6 +236,11 @@ func TestHeartbeatDropsBothFamiliesWhenTheRulesKnowNeither(t *testing.T) {
 	if e := entry(); e["recipe"] != "claude-solo" {
 		t.Fatalf("the recipe went with them, and the document knows it: %v", e)
 	}
+	// The write lands before the beat logs its warnings, so the settled entry
+	// does not yet mean the lines are there.
+	waitFor(t, "both warnings", func() bool {
+		return strings.Contains(logs.String(), "predate the routing table's source") && strings.Contains(logs.String(), "predate the rigor mode")
+	})
 	// One line per family, once: each names the child it is about and the one
 	// command that fixes it.
 	for _, want := range []string{"predate the routing table's source", "predate the rigor mode"} {
