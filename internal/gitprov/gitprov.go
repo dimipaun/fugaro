@@ -122,6 +122,11 @@ type PRHead struct {
 // RepoInfo is what a follow-up needs to know about the repository.
 type RepoInfo struct {
 	Private bool
+	// DefaultBranch is the branch the host names as the repository's default,
+	// as the host spells it ("main"); "" when the host named none. It is the
+	// branch every read that names no ref is made at, and it comes off the
+	// repository read itself rather than a call of its own.
+	DefaultBranch string
 }
 
 // PRState is the lifecycle state of a pull request.
