@@ -34,6 +34,15 @@ type layerOptions struct {
 	// failing. An invalid object still fails. Launches and builds are
 	// strict (decision L16).
 	Lenient bool
+	// AsTheUpdateLeavesIt reads a checkout's fugaro.yaml as the file this
+	// update's own removal offer leaves in the working tree
+	// (fugaroYAMLWithoutRemovedMode): the word that was a budget mode taken out
+	// of the bytes before anything judges them. The update is the one command
+	// that must load a file that still says the word, because it is the command
+	// that offers the line's removal (AB8b, F22), and it is the one door that
+	// sets this. Every other reader judges the file's own bytes and refuses the
+	// word (D3022).
+	AsTheUpdateLeavesIt bool
 }
 
 // foundLayer is the project layer that applies to a checkout's fugaro.yaml.

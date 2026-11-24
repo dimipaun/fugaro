@@ -18,7 +18,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/shellword"
 	"github.com/dimipaun/fugaro/internal/task"
-	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
 // The checkout a first run or the repository stage works on: its default
@@ -283,23 +282,16 @@ func defaultBranchParse(ctx context.Context, root string) defaultBranchResult {
 	if result.ref != "" {
 		if data, err := gitCmd(ctx, root, "cat-file", "blob", "refs/remotes/"+result.ref+":fugaro.yaml").Output(); err == nil {
 			result.read, result.data = true, data
-			result.cfg, result.problems = parseCheckoutFugaroYAML(ctx, data, selectedProjectConfig(ctx))
-			if result.cfg == nil && removedBudgetModeOnly(result.problems) {
-				// The one file this stage reads as the file the update's own
-				// offer leaves behind: the default branch still says the word
-				// the removal takes out (AB8b writes the diff into the working
-				// tree and the user commits it), so a stage that stopped on the
-				// line it is removing would need a person to commit the
-				// removal and run `fugaro update` a second time — the one
-				// thing the upgrade may never ask (CLAUDE.md's HARD RULE,
-				// F22). Every other reader of these bytes refuses the word
-				// (D3022), `fugaro validate` first among them, and the run
-				// itself still halts in the job on the file it checks out
-				// until the line is gone.
-				if stripped, err := yamledit.RemoveKey(data, []string{"budget", "mode"}); err == nil {
-					result.cfg, result.problems = parseCheckoutFugaroYAML(ctx, stripped, selectedProjectConfig(ctx))
-				}
+			// The default branch's bytes as this run's own removal offer leaves
+			// them, the way loadCheckoutResolved reads the working tree
+			// (fugaroYAMLWithoutRemovedMode, AB8b, F22): the stage that resolves
+			// this checkout is the update's own, and the branch goes on saying
+			// the word until the person commits the removal this same run
+			// offers.
+			if stripped, off := fugaroYAMLWithoutRemovedMode(data); off {
+				data = stripped
 			}
+			result.cfg, result.problems = parseCheckoutFugaroYAML(ctx, data, selectedProjectConfig(ctx))
 		}
 	}
 	if cache != nil {
@@ -357,23 +349,6 @@ func resolveRepoTarget(ctx context.Context, project string) (*repoTarget, initfl
 		return nil, initflow.Status{State: initflow.NeedsYou, Detail: "this checkout's fugaro.yaml is not the default branch's (" + pluginwire.Printable(db.ref) + "): the repository is onboarded from the default branch, so run git fetch, switch to it and update it (git pull), then rerun fugaro setup --repo", Left: &lf}
 	}
 	return &repoTarget{root: root, origin: oi, repo: repo, branch: branch, cfg: cfg}, initflow.Status{}
-}
-
-// removedBudgetModeOnly reports whether every problem a default branch's
-// fugaro.yaml came back with is the word that was a budget mode (D3022,
-// config.CodeRemovedBudgetMode). A file with any other problem — an unknown
-// key, a cap out of range, a word that is no mode at all — is the user's to fix
-// and leaves cfg nil, so the stage stops on it as it always did.
-func removedBudgetModeOnly(ps []config.Problem) bool {
-	if len(ps) == 0 {
-		return false
-	}
-	for _, p := range ps {
-		if p.Code != config.CodeRemovedBudgetMode {
-			return false
-		}
-	}
-	return true
 }
 
 func normalEOL(b []byte) []byte { return bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n")) }

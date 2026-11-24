@@ -5036,7 +5036,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := o.requireCheckoutProject(ctx, dir); err != nil {
 		return err
 	}
-	root, rf, err := loadCheckoutResolved(ctx, dir, nil, layerOptions{Lenient: true})
+	// The checkout's file as this run's own removal offer leaves it: the update
+	// is the command that takes the word that was a budget mode out of it, so
+	// it is the one reader that must load a file that still says it (AB8b, F22,
+	// layerOptions.AsTheUpdateLeavesIt).
+	root, rf, err := loadCheckoutResolved(ctx, dir, nil, layerOptions{Lenient: true, AsTheUpdateLeavesIt: true})
 	if err != nil {
 		return err
 	}
