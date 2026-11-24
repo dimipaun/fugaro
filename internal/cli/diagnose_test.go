@@ -106,6 +106,110 @@ func TestDiagnoseWithoutTranscripts(t *testing.T) {
 	}
 }
 
+// TestDiagnoseShowsThePauseAndItsResume: a run that suspended itself is
+// diagnosed as paused with the instant its resume is due at and the run that
+// resumed it — the two facts the console's Run screen draws on this document's
+// row (contract-pause R15, D3195).
+//
+// Neither is in the paused run's own records, and this read holds one run and
+// no listing: the instant is the credentials service's node under paused/
+// (runstore.PauseNode), and the resumer is another run of the same repository
+// whose own task names the paused run under `resumes` (task.Spec.Resumes, R17).
+// The two degrade independently, which the last two cases are: a pause whose
+// node this read cannot see has no instant and no resumer named, and a pause
+// nothing has resumed keeps the instant alone — a row that had only the record
+// would show the word and neither fact.
+func TestDiagnoseShowsThePauseAndItsResume(t *testing.T) {
+	f := newCloudFixture(t)
+	// A resume instant that has passed: the contract refuses a resume asked for
+	// before it (contract-pause, "Resuming"), so a resumer exists only behind a
+	// due one.
+	at := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
+	resume := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Second)
+	suspended := wallRunID(t, 2*time.Hour, "7d3e")
+	resumer := wallRunID(t, 25*time.Minute, "9f10")
+	pausedRun(t, f, suspended, "", 7, at)
+	pausedNode(t, f, suspended, suspended, resume, false)
+	seedResumer(t, f, resumer, suspended, time.Now().UTC().Add(-25*time.Minute))
+	// A second pause with a node and no resumer, and a third with neither.
+	standing := wallRunID(t, 4*time.Hour, "cafe")
+	pausedRun(t, f, standing, "", 0, at.Add(-time.Hour))
+	pausedNode(t, f, standing, standing, resume, false)
+	unseen := wallRunID(t, 5*time.Hour, "beef")
+	pausedRun(t, f, unseen, "", 0, at.Add(-2*time.Hour))
+
+	diagnosed := func(t *testing.T, id string) Diagnosis {
+		t.Helper()
+		out, errOut, err := execute(t, "diagnose", "--json", id)
+		if err != nil {
+			t.Fatalf("diagnose %s: %v (%s)", id, err, errOut)
+		}
+		var d Diagnosis
+		if err := json.Unmarshal([]byte(out), &d); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		return d
+	}
+
+	t.Run("the row carries both facts", func(t *testing.T) {
+		d := diagnosed(t, suspended)
+		if d.Row.Status != string(runstore.StatusPaused) {
+			t.Errorf("status = %q, want %q", d.Row.Status, runstore.StatusPaused)
+		}
+		if d.Row.ResumeAt == nil || !d.Row.ResumeAt.Equal(resume) {
+			t.Errorf("resume_at = %v, want %s", d.Row.ResumeAt, resume.Format(time.RFC3339))
+		}
+		if d.Row.ResumedBy != resumer {
+			t.Errorf("resumed_by = %q, want %q: the run whose task names this one under `resumes`", d.Row.ResumedBy, resumer)
+		}
+		// The members on the wire are the ones the console's Run screen reads
+		// (console/docs/json-contract.md), as RFC 3339 UTC and a run id.
+		out, _, err := execute(t, "diagnose", "--json", suspended)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			Row map[string]json.RawMessage `json:"row"`
+		}
+		if err := json.Unmarshal([]byte(out), &doc); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		if got := string(doc.Row["resume_at"]); got != `"`+resume.Format(time.RFC3339)+`"` {
+			t.Errorf("resume_at on the wire = %s, want the instant as RFC 3339 UTC", got)
+		}
+		if got := string(doc.Row["resumed_by"]); got != `"`+resumer+`"` {
+			t.Errorf("resumed_by on the wire = %s, want %q", got, resumer)
+		}
+	})
+
+	t.Run("a run that is not paused carries neither", func(t *testing.T) {
+		d := diagnosed(t, resumer)
+		if d.Row.ResumeAt != nil || d.Row.ResumedBy != "" {
+			t.Errorf("the resumer's own diagnosis carries resume_at %v and resumed_by %q, want neither", d.Row.ResumeAt, d.Row.ResumedBy)
+		}
+	})
+
+	t.Run("a pause nothing has resumed keeps the instant alone", func(t *testing.T) {
+		d := diagnosed(t, standing)
+		if d.Row.ResumeAt == nil || !d.Row.ResumeAt.Equal(resume) {
+			t.Errorf("resume_at = %v, want %s", d.Row.ResumeAt, resume.Format(time.RFC3339))
+		}
+		if d.Row.ResumedBy != "" {
+			t.Errorf("resumed_by = %q, want none: no run of the repository names this pause", d.Row.ResumedBy)
+		}
+	})
+
+	t.Run("a pause this read cannot see names neither fact", func(t *testing.T) {
+		d := diagnosed(t, unseen)
+		if d.Row.Status != string(runstore.StatusPaused) {
+			t.Errorf("status = %q, want %q: the record alone is the word", d.Row.Status, runstore.StatusPaused)
+		}
+		if d.Row.ResumeAt != nil || d.Row.ResumedBy != "" {
+			t.Errorf("a pause with no node carries resume_at %v and resumed_by %q, want neither", d.Row.ResumeAt, d.Row.ResumedBy)
+		}
+	})
+}
+
 // TestDiagnosePrintsStagesAndTolerated: the run's per-stage record (the model
 // calls, sub-agent calls and model spend of each stage, governance T1.1-T1.3)
 // and the findings the run's rigor mode let through (T3.4) are both on the

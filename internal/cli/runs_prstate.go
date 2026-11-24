@@ -341,6 +341,74 @@ func markPauses(rows []runview.Row, resumers map[string]string, pauses pauseLook
 // run id is digits, dashes and hex — so the join names exactly one pair.
 func pauseRowKey(slug, run string) string { return slug + "\x00" + run }
 
+// stampPause stamps one paused row with its pause, for a reader that holds a
+// single run and no listing (`diagnose`): the instant the service's own node
+// names, and the run of the repository whose task resumed it. It is markPauses
+// over a one-row listing, so the two facts degrade exactly as they do there —
+// a node this read could not see, and a chain nothing in the scan resumed,
+// leave the row with the word its own record carries and nothing invented
+// beside it.
+func stampPause(ctx context.Context, env *cloudEnv, row runview.Row, warn func(string, ...any)) runview.Row {
+	if row.Status != string(runstore.StatusPaused) {
+		return row
+	}
+	ref := rowRef(row)
+	pauses := pauseFactsFor(ctx, env, warn)
+	rows := []runview.Row{row}
+	markPauses(rows, resumersOf(ctx, env, ref, pauses, warn), pauses)
+	return rows[0]
+}
+
+// resumersOf is the resumer map markPauses reads, for a reader that holds one
+// run and no listing: the repository's runs whose own task names the paused run
+// under `resumes` (task.Spec.Resumes, contract-pause R17). It is the scan
+// `runs ls` makes over its window, narrowed to the window a resumer of this
+// pause can be in.
+//
+// That window starts an hour under the pause's own resume instant: a resume
+// asked for before it is refused (contract-pause, "Resuming"), so no resumer
+// can have been launched before then, and the hour is the allowance for clock
+// difference the listing's execution read makes. The first id that names the
+// pause wins, which is the newest launch — ListRunIDs' own order, and the
+// answer `runs ls` takes for the same reason: two runs naming one pause is a
+// state the resume guards exist to prevent, and a reader must not flip between
+// two resumers.
+//
+// A pause whose node this read could not see has no instant to bound the scan
+// by, and no scan is made: the row then carries the word alone, which is what a
+// listing whose window holds no resumer draws.
+func resumersOf(ctx context.Context, env *cloudEnv, ref task.Ref, pauses pauseLookup, warn func(string, ...any)) map[string]string {
+	if pauses == nil {
+		return nil
+	}
+	f, ok := pauses(ref.Slug, ref.RunID)
+	if !ok || f.resumeAt.IsZero() {
+		return nil
+	}
+	ids, err := runstore.ListRunIDs(ctx, env.bucket.Bucket, ref.Slug, f.resumeAt.Add(-time.Hour))
+	if err != nil {
+		if warn != nil {
+			warn("warning: run %s/%s ended paused and the runs that could have resumed it could not be listed (%s); the run that resumed it is not named\n",
+				safetext.Field(ref.Slug), task.ShortRun(oneLine(ref.RunID)), safetext.OneLine(err.Error()))
+		}
+		return nil
+	}
+	for _, id := range ids {
+		if id == ref.RunID {
+			continue
+		}
+		// A task this scan cannot read is not this diagnosis's failure: the
+		// run is one of the repository's, its own read is where that belongs,
+		// and the row loses only the resumer it might have been.
+		spec, err := runstore.Open(env.bucket.Bucket, ref.Slug, id).ReadTask(ctx)
+		if err != nil || spec == nil || spec.Resumes != ref.RunID {
+			continue
+		}
+		return map[string]string{pauseRowKey(ref.Slug, ref.RunID): id}
+	}
+	return nil
+}
+
 // pauseLookupWith is pauseFactsFor over a client the caller already holds: the
 // daemon's own, which is the same database the state node lives in
 // (orchestrator_cmd.openBudget), so the orchestrator's view reads a pause
