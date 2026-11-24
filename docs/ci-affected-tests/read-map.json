@@ -21742,6 +21742,7 @@
         "schemas/recipe.schema.json",
         "schemas/result.schema.json",
         "schemas/review.schema.json",
+        "schemas/run-summary.schema.json",
         "schemas/runs-digest-due.schema.json",
         "schemas/runs-show.schema.json",
         "schemas/settings-write.schema.json",
