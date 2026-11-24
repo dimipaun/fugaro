@@ -735,11 +735,18 @@ func TestAccountsRmAsksNothing(t *testing.T) {
 func TestAccountsRmRefusesACodingAgentsSession(t *testing.T) {
 	// The account declared and the profile serving it — what `accounts add`
 	// leaves — written into the fixture's file rather than made by that command:
-	// this is the ordinary installation, where D2217's fence stands in front of
-	// every converge, so the run this test is about is the one that reads the
-	// file as it is. What the refusal asserts is this command's own, and its
-	// subject is the account a profile serves.
-	r := ordinaryInstallationRig(t, rotationLocal(t))
+	// the run this test is about is the one that reads the file as it is. What
+	// the refusal asserts is this command's own, and its subject is the account
+	// a profile serves.
+	//
+	// The project is a managed one whose marks cannot be read: the fence warns
+	// and goes on (D2218), so no gate speaks, and the session reaches this
+	// command's own refusal — accountsRmSession, whose words are what a session
+	// reads when a mark could not be read, and never a permission. An ordinary
+	// installation answers with the fence instead, which is a sentence about
+	// the project rather than about the session.
+	r := newManagedAddRig(t, rotationLocal(t), addMarksManaged)
+	r.gcs.RefusePath("managed.json", 500, "InternalServerError", "", "the creation fact did not answer")
 	before, err := os.ReadFile(r.cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -808,7 +815,12 @@ func TestAccountsRmRefusesACodingAgentsSession(t *testing.T) {
 // agentenv.Markers itself rather than one variable, so a marker the tree adds
 // is one this command is held to (accounts_add_agent_test.go's own loop).
 func TestAccountsRmRefusesAnAgentSession(t *testing.T) {
-	r := ordinaryInstallationRig(t, accountsRmDeclaredLocal)
+	// A managed project whose marks cannot be read, for the same reason as
+	// TestAccountsRmRefusesACodingAgentsSession above: the fence warns and goes
+	// on (D2218), and what refuses the session is this command's own sentence —
+	// the only one that names the marker, which is what this loop is about.
+	r := newManagedAddRig(t, accountsRmDeclaredLocal, addMarksManaged)
+	r.gcs.RefusePath("managed.json", 500, "InternalServerError", "", "the creation fact did not answer")
 	before := readFileString(t, r.cfg)
 	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
 

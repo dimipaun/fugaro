@@ -893,11 +893,12 @@ func TestPolicyPublishReadsTheGateBeforeAnyWrite(t *testing.T) {
 	}
 }
 
-// The other side of the same boundary, and the sentence a project that is NOT
-// managed keeps: today's refusal, byte for byte, before anything is read. The
-// marks are what make a managed project, and a project without them is every
-// ordinary project — its steps are a person's, and an agent's session is
-// refused exactly as it was before this design existed.
+// The other side of the same boundary: a project that is NOT managed is
+// refused by D2217's fence, before anything is read or written, in the same
+// sentence a person at their own terminal reads there — the marks are what make
+// a managed project, and a project without them is every ordinary project.
+// What refuses it is the project and not the session, which is why the fence's
+// clause is what this asserts and not an agent refusal.
 func TestPolicyPublishUnmanagedProjectKeepsTheAgentRefusal(t *testing.T) {
 	f := newUnmanagedPolicyFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
@@ -908,9 +909,7 @@ func TestPolicyPublishUnmanagedProjectKeepsTheAgentRefusal(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a coding agent's session published the policy of a project that is not managed:\n%s", out)
 	}
-	if !strings.Contains(err.Error(), "nothing was written") || !strings.Contains(err.Error(), initflow.AgentRefusal("CLAUDECODE")) {
-		t.Errorf("the refusal is not today's: %v", err)
-	}
+	checkFenceRefusal(t, err, "project policy publish")
 	if got := ExitCode(err); got != ExitUserError {
 		t.Errorf("exit %d, want %d", got, ExitUserError)
 	}
@@ -928,8 +927,9 @@ func TestPolicyPublishUnmanagedProjectKeepsTheAgentRefusal(t *testing.T) {
 // Half a mark is not a managed project, and this is the half that is easy to
 // write and hard to notice: the creation fact is in the runs bucket, with the
 // label the read proves the bucket by, and the project itself carries no
-// fugaro_managed label. The gate requires BOTH, so the session reads today's
-// refusal and nothing is recorded — an implementation that accepted the object
+// fugaro_managed label. The read requires BOTH — it answers "not managed" from
+// the label alone, without looking in the bucket — so D2217's fence refuses the
+// publish and nothing is recorded: an implementation that accepted the object
 // alone would admit a publish in a project its owner never put into managed
 // mode.
 func TestPolicyPublishOneMarkIsNotManaged(t *testing.T) {
@@ -944,9 +944,7 @@ func TestPolicyPublishOneMarkIsNotManaged(t *testing.T) {
 	if err == nil {
 		t.Fatalf("half a mark admitted a coding agent's publish:\n%s", out)
 	}
-	if !strings.Contains(err.Error(), initflow.AgentRefusal("CLAUDECODE")) {
-		t.Errorf("the refusal is not today's: %v", err)
-	}
+	checkFenceRefusal(t, err, "project policy publish")
 	if got := ExitCode(err); got != ExitUserError {
 		t.Errorf("exit %d, want %d", got, ExitUserError)
 	}

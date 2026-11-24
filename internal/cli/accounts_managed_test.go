@@ -535,12 +535,20 @@ func TestAccountsAddManagedRecordsNothingWhenThereIsNoWrite(t *testing.T) {
 
 // An installation that is not managed keeps today's refusal exactly: the
 // declaration is not written, no record is filed — D1025 writes down nothing
-// about a project that is not managed — and the sentence is the one this
-// command has always used. In a coding agent's session that sentence is this
-// command's own marker fence, which answers before the converge reaches the
-// cloud and so before D1541's fence is asked at all; a person at their own
-// terminal on the same project meets the fence instead, which is what
-// TestFencedCommandRefusesUnmanaged pins at the seam.
+// about a project that is not managed — and the run exits a user error.
+//
+// The sentence is the FENCE's, and not this command's own: this command starts
+// by resolving the caller against the project's own database
+// (accessGateProject, whose read is budgetDBFor), that seam makes the managed
+// read, and a project whose marks ANSWER "not managed" is refused there — long
+// before the converge, and so before the marker fence an agent's session would
+// otherwise meet. It is the same sentence a person at their own terminal reads
+// on that project (TestFencedCommandRefusesUnmanaged pins it at the seam), and
+// the reason it is the right one either way is that the fix is the same in
+// both sessions: the project has to be flagged managed by its owner. A read
+// that FAILS is the other half of this row and is not an answer: it warns and
+// goes on, and the sentence is this command's own again
+// (TestAccountsAddManagedUnreadMarksKeepTheRefusal).
 func TestAccountsAddUnmanagedKeepsTheRefusalInAnAgentSession(t *testing.T) {
 	r := newManagedAddRig(t, addRigLocal, addMarksNone)
 	before := readFileString(t, r.cfg)
@@ -550,12 +558,7 @@ func TestAccountsAddUnmanagedKeepsTheRefusalInAnAgentSession(t *testing.T) {
 	if err == nil {
 		t.Fatalf("the command wrote in a coding agent's session:\n%s", out)
 	}
-	if ExitCode(err) != ExitUserError {
-		t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
-	}
-	if !strings.Contains(err.Error(), "refusing to write") || !strings.Contains(err.Error(), "nothing was written") {
-		t.Errorf("the refusal is not this command's own: %v", err)
-	}
+	checkFenceRefusal(t, err, "accounts add")
 	if after := readFileString(t, r.cfg); after != before {
 		t.Errorf("the file changed in a coding agent's session:\n%s", after)
 	}
@@ -565,24 +568,36 @@ func TestAccountsAddUnmanagedKeepsTheRefusalInAnAgentSession(t *testing.T) {
 }
 
 // A mark read that does not answer fails closed: one half of the fact is not
-// the fact, so the project is not managed, the command refuses as it always
-// did, and nothing is recorded. The wrong answer here would be the admitting
-// one, and this is the test that makes it the refusing one. As above, the
-// sentence is this command's own because a coding agent's session is refused by
-// the marker fence before the cloud is reached.
+// the fact, so the project is not managed, the command refuses, and nothing is
+// recorded. The wrong answer here would be the admitting one, and this is the
+// test that makes it the refusing one.
+//
+// The two arms part company on WHICH refusal, because a failed read is not an
+// answer (D2218): the creation fact the fake refuses to serve is a read that
+// broke, so the fence warns on the command's stderr and goes on as a project
+// that is not managed, and the marker fence of this command's own gate — the
+// sentence it has always used — is what an agent's session then meets. A
+// missing label is the other kind: the read answered, the answer is "not
+// managed", and the fence refuses there, at the access gate, before the
+// command's own gate is reached at all.
 func TestAccountsAddManagedUnreadMarksKeepTheRefusal(t *testing.T) {
-	for name, unread := range map[string]func(t *testing.T) *addRig{
-		"the creation fact cannot be read": func(t *testing.T) *addRig {
+	for name, tc := range map[string]struct {
+		world func(t *testing.T) *addRig
+		// fence is true where the marks answered "not managed" rather than
+		// failing to answer, which is what decides the sentence.
+		fence bool
+	}{
+		"the creation fact cannot be read": {world: func(t *testing.T) *addRig {
 			r := newManagedAddRig(t, addRigLocal, addMarksManaged)
 			r.gcs.RefusePath("managed.json", 500, "InternalServerError", "", "the creation fact did not answer")
 			return r
-		},
-		"the project carries no label": func(t *testing.T) *addRig {
+		}},
+		"the project carries no label": {fence: true, world: func(t *testing.T) *addRig {
 			return newManagedAddRig(t, addRigLocal, addMarksUnlabelled)
-		},
+		}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			r := unread(t)
+			r := tc.world(t)
 			before := readFileString(t, r.cfg)
 			t.Setenv(accountsAddAgent, "1")
 
@@ -590,11 +605,15 @@ func TestAccountsAddManagedUnreadMarksKeepTheRefusal(t *testing.T) {
 			if err == nil {
 				t.Fatalf("a project this program cannot prove is managed was admitted:\n%s", out)
 			}
-			if ExitCode(err) != ExitUserError {
-				t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
-			}
-			if !strings.Contains(err.Error(), "refusing to write") || !strings.Contains(err.Error(), "nothing was written") {
-				t.Errorf("the refusal is not this command's own: %v", err)
+			if tc.fence {
+				checkFenceRefusal(t, err, "accounts add")
+			} else {
+				if ExitCode(err) != ExitUserError {
+					t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+				}
+				if !strings.Contains(err.Error(), "refusing to write") || !strings.Contains(err.Error(), "nothing was written") {
+					t.Errorf("the refusal is not this command's own: %v", err)
+				}
 			}
 			if after := readFileString(t, r.cfg); after != before {
 				t.Errorf("the file changed under a mark that could not be read:\n%s", after)

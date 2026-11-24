@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 
@@ -368,6 +369,29 @@ func exemptWorldCalls(r *initRig) []gcpfake.Request {
 	return all
 }
 
+// unreachableBucket takes the world's bucket away: a config that carries the
+// runs bucket by name alone computes a gs:// URL, and a storage client that is
+// refused the dial retries it until its context ends, so a command that reads
+// the bucket would sit there instead of failing. The name is dropped (so the
+// record bucket a build records into is empty too) and bucket_url names a
+// scheme no driver opens, which fails at once. A write that would have gone to
+// a bucket is refused rather than landing somewhere no assertion watches.
+func unreachableBucket(t *testing.T, r *initRig) {
+	t.Helper()
+	cfg, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const named = "runs_bucket: fugaro-runs-proj-1234\n"
+	if !strings.Contains(string(cfg), named) {
+		t.Fatalf("the rig's config does not carry the runs bucket this rewrites:\n%s", cfg)
+	}
+	cfg = []byte(strings.Replace(string(cfg), named, "", 1) + "bucket_url: nosuch://runs\n")
+	if err := os.WriteFile(r.cfg, cfg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestExemptCommandsWriteNothing: the other half of the classification, and the
 // half a fence with an over-broad reading gets wrong. It is answered three
 // times, because the three answers fail for different reasons.
@@ -419,7 +443,15 @@ func TestExemptCommandsWriteNothing(t *testing.T) {
 	// the rig's runs bucket is a name, not a URL: reached for real it would go
 	// to storage.googleapis.com, so it is a bucket that cannot be reached. A
 	// write there is refused rather than silently landing in memory, and a read
-	// takes the path an offline machine takes.
+	// takes the path an offline machine takes. That last part is what the world
+	// has to be built for and not assumed: `project repos ls` and `image status`
+	// open the bucket themselves (blobx.Open over lc.BucketURL and
+	// lc.RecordBucketURL), a gs:// URL there builds a storage client whatever
+	// the credentials, and a client that is refused the dial RETRIES it for as
+	// long as the command's context lives — the read never takes the offline
+	// path, it hangs on it. So the world carries no bucket a driver can open at
+	// all (unreachableBucket below), and every bucket read fails at once.
+	unreachableBucket(t, world)
 	oldLayer := layerBucketOpener
 	layerBucketOpener = func(context.Context, string) (*blobx.Bucket, error) {
 		return nil, &net.OpError{Op: "dial", Err: errors.New("no route to host")}
