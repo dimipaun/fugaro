@@ -7531,6 +7531,7 @@
         "internal/cli/project_cmd.go",
         "internal/cli/project_policy_test.go",
         "internal/cli/recipes_skew.go",
+        "internal/cli/required_cli.go",
         "internal/cli/restore.go",
         "internal/cli/restore_test.go",
         "internal/cli/retired.go",
