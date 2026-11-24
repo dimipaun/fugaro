@@ -37,7 +37,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/mobilesession"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
 // The test's clock: one instant every case is written against, so an assertion
@@ -1256,5 +1258,327 @@ func TestVerifyRefusalsCarryNoValue(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "a-value-that-must-not-be-echoed") {
 		t.Errorf("the refusal repeats the jti: a refusal reaches a log line and an answer body, and a value a stranger chose is neither: %v", err)
+	}
+}
+
+// --- the durable sequence floor ---
+
+// seqFloorDB is the store the durable floor is kept in: the project's
+// compare-and-set store, which internal/gcpfake serves hermetically (the ETag
+// rule and the null-node creation included) and which a service reads through
+// the real client. A test that reached a live database would fail here rather
+// than in a deployment.
+func seqFloorDB(t *testing.T) (*gcpfake.RTDB, *rtdb.Client) {
+	t.Helper()
+	f := gcpfake.NewRTDB(t)
+	c, err := rtdb.New(f.URL, rtdb.Auth{IDToken: func() string { return "operator-id-token" }})
+	if err != nil {
+		t.Fatalf("building the store client: %v", err)
+	}
+	return f, c
+}
+
+// The acceptance's own sentence: the highest sequence is kept "in C1's
+// compare-and-set store", not in process memory -- so what one instance has
+// accepted is what the instance next door refuses, and a restart inherits the
+// floor rather than starting again.
+func TestSeqFloorKeepsTheHighestInTheStore(t *testing.T) {
+	_, store := seqFloorDB(t)
+	ctx := context.Background()
+	const path = "assertion/key-set-seq"
+
+	one, err := NewSeqFloor(store, path)
+	if err != nil {
+		t.Fatalf("building the floor: %v", err)
+	}
+	two, err := NewSeqFloor(store, path)
+	if err != nil {
+		t.Fatalf("building the second instance's floor: %v", err)
+	}
+
+	// A node nothing has written yet holds no floor, so the first set read is
+	// kept.
+	if ok, err := one.Observe(ctx, 7); err != nil || !ok {
+		t.Fatalf("Observe(7) on a store holding no mark = %v, %v; want true: the first key set read has nothing above it", ok, err)
+	}
+	// The instance next door has nothing of its own to remember it by: the mark
+	// is the store's.
+	if ok, err := two.Observe(ctx, 6); err != nil {
+		t.Fatalf("Observe(6) on the second instance: %v", err)
+	} else if ok {
+		t.Fatal("a set below the sequence the store kept was accepted by the instance next door: the mark is the store's, and a floor in this process is the one the plan's O7 forbids")
+	}
+	if ok, err := two.Observe(ctx, 7); err != nil {
+		t.Fatalf("Observe(7) on the second instance: %v", err)
+	} else if ok {
+		t.Error("the sequence a set was accepted at was accepted a second time")
+	}
+
+	// Only a higher set moves the mark, and then it is the first instance that
+	// refuses the one it kept.
+	if ok, err := one.Observe(ctx, 8); err != nil || !ok {
+		t.Fatalf("Observe(8) above the mark = %v, %v; want true", ok, err)
+	}
+	if ok, err := two.Observe(ctx, 7); err != nil || ok {
+		t.Errorf("Observe(7) below the raised mark = %v, %v; want false", ok, err)
+	}
+
+	// A restart is a new floor object over the same node: it inherits what the
+	// store holds instead of beginning again.
+	restarted, err := NewSeqFloor(store, path)
+	if err != nil {
+		t.Fatalf("building the restarted instance's floor: %v", err)
+	}
+	if ok, err := restarted.Observe(ctx, 8); err != nil || ok {
+		t.Errorf("Observe(8) after a restart = %v, %v; want false: a restart is not a second chance for a set the project has moved past", ok, err)
+	}
+	if ok, err := restarted.Observe(ctx, 9); err != nil || !ok {
+		t.Fatalf("Observe(9) after a restart = %v, %v; want true", ok, err)
+	}
+
+	// The node holds the highest sequence and not the last one written.
+	var held int64
+	found, err := store.Get(ctx, path, &held)
+	if err != nil || !found {
+		t.Fatalf("reading the mark back: found=%v err=%v", found, err)
+	}
+	if held != 9 {
+		t.Errorf("the stored mark is %d, want 9: the node holds the highest sequence any instance accepted", held)
+	}
+
+	// Two projects are two nodes: a mark under one path says nothing about
+	// another.
+	other, err := NewSeqFloor(store, "assertion/other-project/key-set-seq")
+	if err != nil {
+		t.Fatalf("building another project's floor: %v", err)
+	}
+	if ok, err := other.Observe(ctx, 1); err != nil || !ok {
+		t.Errorf("Observe(1) under another project's path = %v, %v; want true: the mark is the project's own node", ok, err)
+	}
+}
+
+// Eight instances presenting one sequence that no store holds yet: exactly one
+// keeps it. It is what makes the write a compare-and-set rather than a write,
+// and the losers must not lower the mark on their way out.
+func TestSeqFloorRacesToOneWriter(t *testing.T) {
+	_, store := seqFloorDB(t)
+	ctx := context.Background()
+	floor, err := NewSeqFloor(store, "assertion/raced-seq")
+	if err != nil {
+		t.Fatalf("building the floor: %v", err)
+	}
+
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		kept    int
+		refused int
+		failed  error
+	)
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ok, err := floor.Observe(ctx, 5)
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err != nil:
+				failed = err
+			case ok:
+				kept++
+			default:
+				refused++
+			}
+		}()
+	}
+	wg.Wait()
+	if failed != nil {
+		t.Fatalf("an instance racing for the mark failed: %v", failed)
+	}
+	if kept != 1 || refused != 7 {
+		t.Errorf("of eight instances presenting sequence 5 at once, %d kept it and %d were refused: a mark is raised once, and a store that let two raise it is not a compare-and-set", kept, refused)
+	}
+	if ok, err := floor.Observe(ctx, 4); err != nil || ok {
+		t.Errorf("Observe(4) after the race = %v, %v; want false: a lost race leaves the mark where the winner put it", ok, err)
+	}
+}
+
+// stubStore is CompareAndSet a test answers by hand: the value the node holds,
+// what a read or a write should fail with, and a count of the writes tried.
+type stubStore struct {
+	mu       sync.Mutex
+	value    int64
+	found    bool
+	etag     string
+	readErr  error
+	writeErr error
+	writes   int
+}
+
+func (s *stubStore) GetETag(_ context.Context, _ string, out any) (string, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.readErr != nil {
+		return "", false, s.readErr
+	}
+	if s.found {
+		if held, ok := out.(*int64); ok {
+			*held = s.value
+		}
+	}
+	return s.etag, s.found, nil
+}
+
+func (s *stubStore) PutIfMatch(_ context.Context, _, _ string, _ any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.writes++
+	return s.writeErr
+}
+
+// A store that fails is an error and never a floor: the sequence is the second
+// half of what refuses a stale document, and a failure that answered "no mark
+// yet" would accept one.
+func TestSeqFloorRefusesAStoreThatFails(t *testing.T) {
+	floor, err := NewSeqFloor(&stubStore{readErr: errors.New("the store is down")}, "assertion/down")
+	if err != nil {
+		t.Fatalf("building the floor: %v", err)
+	}
+	ok, err := floor.Observe(context.Background(), 5)
+	if err == nil {
+		t.Fatal("a floor nobody could read answered a sequence")
+	}
+	if ok {
+		t.Error("a floor whose store failed reported the sequence as kept")
+	}
+	if !errors.Is(err, ErrStore) {
+		t.Errorf("the failure is %v, which does not wrap ErrStore: a caller has to be able to tell a store that failed from a set that was refused", err)
+	}
+
+	// A write that fails for any reason but a lost race is the same answer: the
+	// mark was not raised, so the set is not accepted.
+	writeErr := &stubStore{etag: "etag-1", writeErr: errors.New("the store refused the write")}
+	floor, err = NewSeqFloor(writeErr, "assertion/unwritable")
+	if err != nil {
+		t.Fatalf("building the floor: %v", err)
+	}
+	if ok, err := floor.Observe(context.Background(), 5); ok || !errors.Is(err, ErrStore) {
+		t.Errorf("Observe(5) with an unwritable store = %v, %v; want false and ErrStore", ok, err)
+	}
+	if writeErr.writes != 1 {
+		t.Errorf("the floor wrote %d times, want 1: a failure that is not a lost race is not a reason to try again", writeErr.writes)
+	}
+}
+
+// A store that loses the race for ever is a store whose answer this verifier
+// does not have. The bound is what keeps that a failure rather than a loop.
+func TestSeqFloorGivesUpOnAStoreThatAlwaysRaces(t *testing.T) {
+	store := &stubStore{etag: "null_etag", writeErr: rtdb.ErrPrecondition}
+	floor, err := NewSeqFloor(store, "assertion/always-raced")
+	if err != nil {
+		t.Fatalf("building the floor: %v", err)
+	}
+	ok, err := floor.Observe(context.Background(), 5)
+	if ok || err == nil {
+		t.Fatalf("Observe(5) against a store that never lands = %v, %v; want false and an error", ok, err)
+	}
+	if !errors.Is(err, ErrStore) {
+		t.Errorf("the failure is %v, which does not wrap ErrStore", err)
+	}
+	if store.writes != maxSeqFloorRaces {
+		t.Errorf("the floor wrote %d times, want the bound %d: a store that never lands must end in a failure rather than in a loop", store.writes, maxSeqFloorRaces)
+	}
+}
+
+// A node holding something that is not a sequence is not a mark this verifier
+// can compare against, and guessing at it would be guessing at the floor.
+func TestSeqFloorRefusesAMarkItCannotRead(t *testing.T) {
+	fake, store := seqFloorDB(t)
+	fake.Set("assertion/stray-seq", "seven")
+	floor, err := NewSeqFloor(store, "assertion/stray-seq")
+	if err != nil {
+		t.Fatalf("building the floor: %v", err)
+	}
+	if ok, err := floor.Observe(context.Background(), 5); ok || !errors.Is(err, ErrStore) {
+		t.Errorf("Observe(5) with %q in the node = %v, %v; want false and ErrStore", "seven", ok, err)
+	}
+}
+
+// A sequence is at least one -- the envelope's own floor is -- so a zero never
+// becomes a mark, and a floor asked for without a store or a path is refused
+// where it is built rather than at the first assertion.
+func TestNewSeqFloorRefusesWhatItCannotKeep(t *testing.T) {
+	ctx := context.Background()
+
+	store := &stubStore{etag: "null_etag"}
+	floor, err := NewSeqFloor(store, "assertion/zero-seq")
+	if err != nil {
+		t.Fatalf("building the floor: %v", err)
+	}
+	for _, seq := range []int64{0, -1} {
+		if ok, err := floor.Observe(ctx, seq); ok || err == nil {
+			t.Errorf("Observe(%d) = %v, %v; want false and an error", seq, ok, err)
+		}
+	}
+	if store.writes != 0 {
+		t.Errorf("the floor wrote %d times for a sequence below one, want none", store.writes)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		store CompareAndSet
+		path  string
+	}{
+		{name: "with no store", store: nil, path: "assertion/key-set-seq"},
+		{name: "with no path", store: store, path: ""},
+		{name: "with a leading separator", store: store, path: "/assertion/key-set-seq"},
+		{name: "with a trailing separator", store: store, path: "assertion/key-set-seq/"},
+		{name: "with a doubled separator", store: store, path: "assertion//key-set-seq"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := NewSeqFloor(tc.store, tc.path); err == nil {
+				t.Errorf("a floor %s was built: it would keep no mark, and every verification would be refused for a reason about the deployment rather than about the assertion", tc.name)
+			}
+		})
+	}
+}
+
+// The durable floor is the one the verifier runs on, so the rule it enforces is
+// tested through a verifier and not only through the store: the instance next
+// door reads a newer key set, and this instance -- a second verifier over its
+// own floor object, the same node -- is served the older document.
+func TestVerifyRefusesAKeySetBelowTheSequenceTheDurableStoreKept(t *testing.T) {
+	rootPub, rootPriv := testKey(t)
+	oldPub, oldPriv := testKey(t)
+	newPub, newPriv := testKey(t)
+	buildPub, _ := testKey(t)
+	srv := &keySetServer{}
+	_, store := seqFloorDB(t)
+	const path = "assertion/key-set-seq"
+	p := pins(rootPub, 1, pinned("signing-build", buildPub))
+
+	floor, err := NewSeqFloor(store, path)
+	if err != nil {
+		t.Fatalf("building the floor: %v", err)
+	}
+	srv.set(keySetDoc(t, rootPriv, 9, validUntil(), jwkOf("signing-new", newPub)))
+	first := newTestVerifier(t, p, srv, newMemoryClaims(), floor)
+	if _, err := verify(t, first, signAssertion(t, newPriv, "signing-new", goodClaims())); err != nil {
+		t.Fatalf("the newer key set was refused: %v", err)
+	}
+
+	restarted, err := NewSeqFloor(store, path)
+	if err != nil {
+		t.Fatalf("building the second instance's floor: %v", err)
+	}
+	srv.set(keySetDoc(t, rootPriv, 8, validUntil(), jwkOf("signing-old", oldPub)))
+	second := newTestVerifier(t, p, srv, newMemoryClaims(), restarted)
+	_, err = verify(t, second, signAssertion(t, oldPriv, "signing-old", goodClaims()))
+	if err == nil {
+		t.Fatal("a document below the sequence the durable store kept was accepted: a cache serving an older set would walk a project back onto keys another instance has already moved past")
+	}
+	if field := refusalField(t, err); field != "seq" {
+		t.Errorf("the refusal names %q, want \"seq\"", field)
 	}
 }

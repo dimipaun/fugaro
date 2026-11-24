@@ -9,10 +9,12 @@
 // pinned root key signed, the signature verifies over the bytes that arrived,
 // the claims are exactly the eleven C1 fixes, the issuer is the pinned one, the
 // audience and the challenge are the caller's expectation and not a value read
-// off the assertion, the lifetime holds within a bounded skew, and the jti is
-// spent once through C1's compare-and-set store -- a store in the service, not a
-// map in this process, because two credsvc instances are two places a value
-// would otherwise be unused twice (F39).
+// off the assertion, the lifetime holds within a bounded skew, and the two
+// things this verifier remembers are remembered in the service's store rather
+// than in this process: the jti is spent once through C1's compare-and-set
+// store, and the highest key-set sequence ever accepted is kept the same way, so
+// two credsvc instances are one place a value is spent and one floor under a
+// stale document (F39, O7).
 //
 // What this package is not: it holds no session, no roster and no policy. It
 // turns an assertion into a claim set or into a typed refusal naming the field
@@ -37,6 +39,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/mobilesession"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
 const (
@@ -125,9 +128,9 @@ func refuseSet(field, format string, args ...any) error {
 // C1's ClaimStore cannot express this. Claim(namespace, key, ttl) answers one
 // question -- has this value been spent -- and a sequence is a high-water mark
 // rather than a value that is spent: a store built on Claim would refuse every
-// set after the first. The interface therefore lives here, and the durable
-// implementation belongs with the rest of credsvc's store wiring (I1); what this
-// package ships with it is MemorySeqFloor.
+// set after the first. The interface therefore lives here, and this package
+// ships both halves of it: NewSeqFloor, the durable one a service runs, and
+// MemorySeqFloor, which is one process and is not.
 type SeqFloorStore interface {
 	// Observe records seq and reports whether it is at or above the highest
 	// sequence this store has kept. False is a refusal and never an error, the
@@ -141,7 +144,7 @@ type SeqFloorStore interface {
 // one instance and for tests, and it is *not* what the cluster runs: two
 // instances of the public service are two high-water marks, and the sequence a
 // build pins is then the only floor that holds across them. It is exported
-// because P3 and K2 have to build a verifier before I1 wires the durable store,
+// because P3 and K2 have to build a verifier before I1 builds the durable one,
 // and it is named for what it is so that the wiring that replaces it is a
 // search away.
 func MemorySeqFloor() SeqFloorStore { return &memorySeqFloor{} }
@@ -160,6 +163,105 @@ func (m *memorySeqFloor) Observe(_ context.Context, seq int64) (bool, error) {
 	}
 	m.high, m.fresh = seq, true
 	return true, nil
+}
+
+// CompareAndSet is the store a durable sequence floor is kept in: the two
+// operations a high-water mark needs and nothing else. A mark is read and then
+// raised, and the raise must not race the instance next door into lowering it,
+// so the read answers with the tag the node carries and the write lands only
+// while that tag still stands -- a lost race is the store's own precondition
+// failure and this reader reads again. *rtdb.Client is the implementation a
+// service passes: the same store C1's claim store sits on, so a project has one
+// place its stores live.
+type CompareAndSet interface {
+	// GetETag reads the node at path into out, and answers the tag its value
+	// carries now and whether the node was there at all.
+	GetETag(ctx context.Context, path string, out any) (etag string, found bool, err error)
+	// PutIfMatch writes v at path only while the tag still stands, and answers
+	// rtdb.ErrPrecondition when another writer moved the node first.
+	PutIfMatch(ctx context.Context, path, etag string, v any) error
+}
+
+// The client a service passes satisfies the interface above; it is pinned here
+// so that a change to either side is a build failure rather than a wiring
+// failure in a deployment that would then keep no floor at all.
+var _ CompareAndSet = (*rtdb.Client)(nil)
+
+// maxSeqFloorRaces bounds the read-raise loop below. A lost race is another
+// instance raising the floor in the same instant, which is a handful of writers
+// at worst; a store that loses that race for ever is a store whose answer this
+// verifier does not have, and failing closed is the answer then, not looping.
+const maxSeqFloorRaces = 8
+
+// seqFloor is the durable SeqFloorStore: the highest sequence any instance has
+// accepted, kept in a store the instances share, under one path.
+type seqFloor struct {
+	store CompareAndSet
+	path  string
+}
+
+// NewSeqFloor is the sequence floor a service runs, and the one the acceptance
+// names: the highest sequence is kept "in C1's compare-and-set store", so an
+// instance that has already seen a key set cannot be walked back onto older
+// keys by a cache serving it to the instance next door, and a restart is not a
+// second chance for a set this project has moved past.
+//
+// path names the node holding one project's mark, so it is the project's own
+// and not a shared one: two projects keep two floors. The store must answer for
+// every verification -- a mark nobody can read is an error, never a zero -- and
+// the verifier refuses the key set rather than accepting one nothing vouches
+// for.
+func NewSeqFloor(store CompareAndSet, path string) (SeqFloorStore, error) {
+	if store == nil {
+		return nil, errors.New("assertion: a sequence floor needs a compare-and-set store")
+	}
+	if err := checkSeqFloorPath(path); err != nil {
+		return nil, err
+	}
+	return &seqFloor{store: store, path: path}, nil
+}
+
+// checkSeqFloorPath refuses the spellings of a path this package can see are
+// wrong -- a node is named by segments joined by a single separator, with none
+// leading, trailing or doubled -- and leaves the rest to the store, which
+// refuses at the first read whatever it cannot write.
+func checkSeqFloorPath(path string) error {
+	switch {
+	case path == "":
+		return errors.New("assertion: a sequence floor needs the path of the node it keeps")
+	case strings.HasPrefix(path, "/"), strings.HasSuffix(path, "/"), strings.Contains(path, "//"):
+		return fmt.Errorf("assertion: %q is not a node path: segments joined by one separator, none leading, trailing or doubled", path)
+	}
+	return nil
+}
+
+func (f *seqFloor) Observe(ctx context.Context, seq int64) (bool, error) {
+	if seq < 1 {
+		return false, errors.New("assertion: a key set sequence is at least 1")
+	}
+	for race := 0; race < maxSeqFloorRaces; race++ {
+		var held int64
+		etag, found, err := f.store.GetETag(ctx, f.path, &held)
+		if err != nil {
+			return false, fmt.Errorf("%w: the key set's sequence could not be read: %v", ErrStore, err)
+		}
+		if found && held >= seq {
+			return false, nil
+		}
+		// The write only ever raises the mark: held was below seq whenever it
+		// was found at all, and a node nothing has written yet is raised to seq
+		// by the write that found it absent.
+		switch err := f.store.PutIfMatch(ctx, f.path, etag, seq); {
+		case err == nil:
+			return true, nil
+		case errors.Is(err, rtdb.ErrPrecondition):
+			// Another instance raised the mark between this read and this
+			// write; read again and answer from what is there now.
+		default:
+			return false, fmt.Errorf("%w: the key set's sequence could not be kept: %v", ErrStore, err)
+		}
+	}
+	return false, fmt.Errorf("%w: the key set's sequence was raised by other instances faster than this one could keep it", ErrStore)
 }
 
 // The verifier's own settings, all of them fixed at construction. A verifier is
@@ -227,7 +329,7 @@ func New(claims mobilesession.ClaimStore, opts ...Option) (*Verifier, error) {
 		return nil, fmt.Errorf("assertion: the build's pins cannot be used: %w", err)
 	}
 	if o.seq == nil {
-		return nil, errors.New("assertion: a verifier needs a sequence-floor store: it is where the highest key set sequence seen is kept, and the plan's O7 keeps it out of process memory")
+		return nil, errors.New("assertion: a verifier needs a sequence-floor store: it is where the highest key set sequence seen is kept, and the plan's O7 keeps it out of process memory; NewSeqFloor is the durable one, and MemorySeqFloor is not it")
 	}
 	if o.client == nil || o.now == nil {
 		return nil, errors.New("assertion: the verifier was built with no HTTP client or no clock")
