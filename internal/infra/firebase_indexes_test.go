@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/runindex"
 )
 
 // The run index's composite indexes (docs/console-fixes/contract-index.md,
@@ -150,10 +152,52 @@ func TestFirebaseModulePlansNoIndexWithoutTheDatabase(t *testing.T) {
 	}
 }
 
+// indexKeysOfRows names each row the way the module does: its fields joined
+// with "_", in the order the row lists them. want is sorted, so this is too.
+func indexKeysOfRows(rows []string) []string {
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		var fields []string
+		for _, f := range strings.Split(row, ",") {
+			name, _, _ := strings.Cut(f, "=")
+			fields = append(fields, name)
+		}
+		out = append(out, strings.Join(fields, "_"))
+	}
+	return out
+}
+
+// indexKeysOfAddresses are the keys a plan's index addresses carry, which are
+// the module's `for_each` keys and therefore the names the Firebase root's
+// state holds each index under.
+func indexKeysOfAddresses(t *testing.T, planned map[string]plannedResource) []string {
+	t.Helper()
+	var out []string
+	for addr, r := range planned {
+		if r.Type != "google_firestore_index" {
+			continue
+		}
+		key, ok := strings.CutPrefix(addr, "module.firebase.google_firestore_index.run[")
+		key, quoted := strings.CutSuffix(key, "]")
+		if !ok || !quoted || len(key) < 2 || !strings.HasPrefix(key, `"`) || !strings.HasSuffix(key, `"`) {
+			t.Fatalf("%s is not an address this test reads a key out of: the module's for_each keys are the names the state holds its indexes under (RI2)", addr)
+		}
+		out = append(out, strings.Trim(key, `"`))
+	}
+	slices.Sort(out)
+	return out
+}
+
 // TestFirebaseModulePlansRunIndexes plans the Firebase root with the tfvars
 // `fugaro update` writes and holds its `google_firestore_index` resources to
-// contract-index.md's list: every index the contract names is planned, in the
-// order it names, and the plan creates none the contract does not.
+// contract-index.md's list: every index the contract names is planned, and the
+// plan creates none the contract does not.
+//
+// The same three are pinned by name, because `fugaro update` decides whether a
+// converged installation carries the indexes by comparing that installation's
+// state — whose addresses are these keys — with runindex.Indexes: a row the
+// contract and the module carry and that list does not is a row such an
+// installation is never given, and the query it serves is refused for ever.
 func TestFirebaseModulePlansRunIndexes(t *testing.T) {
 	// Firestore's location is the module's own input and the indexes go where
 	// the database is, so the region here is the one every other Firebase plan
@@ -167,5 +211,14 @@ func TestFirebaseModulePlansRunIndexes(t *testing.T) {
 	slices.Sort(got)
 	if !slices.Equal(want, got) {
 		t.Errorf("the Firebase root plans the composite indexes %v, and docs/console-fixes/contract-index.md lists %v:\nthe contract is C-INDEX's and this task consumes it, so the module declares exactly its rows (RI2)", got, want)
+	}
+
+	keys := slices.Clone(runindex.Indexes)
+	slices.Sort(keys)
+	if contractKeys := indexKeysOfRows(want); !slices.Equal(contractKeys, keys) {
+		t.Errorf("contract-index.md's rows name the indexes %v and runindex.Indexes names them %v: the CLI compares that list with the Firebase root's state, so a row added in one place and not the other is an index a converged installation is never given (RI2)", contractKeys, keys)
+	}
+	if planKeys := indexKeysOfAddresses(t, planned); !slices.Equal(planKeys, keys) {
+		t.Errorf("the Firebase root plans the indexes %v and runindex.Indexes names them %v: the CLI's state comparison is written against that list and the state's addresses are these keys (RI2)", planKeys, keys)
 	}
 }

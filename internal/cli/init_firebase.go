@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/place"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/runindex"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
@@ -591,21 +592,22 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	return r.deployFirestore(ctx, fsStep)
 }
 
-// runIndexIndexesManaged reports whether the Firebase root's state already
-// manages a run index composite index (RI2). It is the fallback for the gate
-// the root's tfvars carry (FirestoreStep.DatabaseKnown): a run whose Firestore
-// read did not answer must keep the indexes an installation already has, and
-// the state is what says it has them. It is the resource's prefix and not one
-// address: the module's resources are a for_each keyed by the contract's rows,
-// and any of them is an installation that has been through an apply that
-// created them, whatever the rows are called.
+// runIndexIndexesManaged reports whether the Firebase root's state manages any
+// of the run index's composite indexes (RI2). It is the fallback for the gate
+// the root's tfvars carry (FirestoreStep.DatabaseKnown), and it asks about any
+// of them and not all: a run whose Firestore read did not answer must not plan
+// away the indexes an installation already has — the module's for_each would be
+// empty and the apply would destroy them — so one address in the state is
+// enough to say they are there. Which of them are there is
+// runIndexIndexesMissing's question, and it is the one the plain update's skip
+// is decided by.
 //
-// firebaseIndexesInState reports whether the Firebase root's state manages a
-// run index composite index (RI2) yet, and whether that could be read at all.
-// It is the read the plain update's Firebase stage is decided by — in front of
-// the stage (init_stages.go's firebaseSkip) and again in its no-flag arm, so
-// that a converged installation whose state does not carry them gets the apply
-// that creates them.
+// firebaseIndexesInState reads the addresses the Firebase root's state manages,
+// and whether that could be read at all (RI2). It is the read the plain
+// update's Firebase stage is decided by — in front of the stage
+// (init_stages.go's firebaseSkip) and again in its no-flag arm, so that a
+// converged installation whose state does not carry them gets the apply that
+// creates them.
 //
 // Every way it can fail answers "could not read", and the caller then leaves
 // the installation exactly as it is. That direction is the whole of the safety:
@@ -614,35 +616,54 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 // either, because what a root plans under a state it never saw is the resources
 // that are already there. The indexes such an update does not create are
 // created by the update that can read.
-func (r *initRun) firebaseIndexesInState(ctx context.Context, c *infra.Clients, bin, stateBucket, gcpProject string) (managed, ok bool) {
+func (r *initRun) firebaseIndexesInState(ctx context.Context, c *infra.Clients, bin, stateBucket, gcpProject string) (addresses map[string]bool, ok bool) {
 	has, err := infra.StateExists(ctx, c, stateBucket, infra.StatePrefixFirebase)
 	if err != nil || !has {
-		return false, false
+		return nil, false
 	}
 	fdir, err := infra.FirebaseWorkdir(os.Getenv, gcpProject)
 	if err != nil {
-		return false, false
+		return nil, false
 	}
 	fwd, ft, err := r.terraform(bin, fdir, "firebase")
 	if err != nil {
-		return false, false
+		return nil, false
 	}
 	backend, err := fwd.WriteBackend(stateBucket, infra.StatePrefixFirebase)
 	if err != nil {
-		return false, false
+		return nil, false
 	}
 	if err := ft.Init(ctx, backend); err != nil {
-		return false, false
+		return nil, false
 	}
 	st, err := ft.ShowState(ctx)
 	if err != nil {
-		return false, false
+		return nil, false
 	}
-	addresses := make(map[string]bool)
+	addresses = make(map[string]bool)
 	for _, a := range st.Addresses() {
 		addresses[a] = true
 	}
-	return runIndexIndexesManaged(addresses), true
+	return addresses, true
+}
+
+// runIndexIndexesMissing lists the run index's composite indexes the Firebase
+// root's state does not manage (RI2): the module's declared set
+// (runindex.Indexes) minus the addresses the state holds. It is the whole of
+// the answer to "does this installation carry the indexes yet" — all of them,
+// not any of them — because a contract row added by a later release reaches a
+// converged installation only through an apply of that root, and a state that
+// carries the rows of the release before is exactly what such an installation
+// has. The update that finds a row missing runs the stage; the one that finds
+// none does not.
+func runIndexIndexesMissing(managed map[string]bool) []string {
+	var missing []string
+	for _, key := range runindex.Indexes {
+		if !managed[runindex.IndexAddress(key)] {
+			missing = append(missing, key)
+		}
+	}
+	return missing
 }
 
 // runIndexIndexesWait is RI2's question at the plain update's own door, and the
@@ -650,8 +671,9 @@ func (r *initRun) firebaseIndexesInState(ctx context.Context, c *infra.Clients, 
 // root's and only an apply of that root creates them (F10), so a converged
 // installation — F34's skip, and its caller has already read that this machine's
 // config records the database — owes that apply while its root's state is
-// readable, manages none of them, and this credential may make the project's IAM
-// changes.
+// readable, does not manage all of them (runIndexIndexesMissing: a row a later
+// release added is a row such an installation has not been given yet), and this
+// credential may make the project's IAM changes.
 //
 // The last of those is F34's own reason for the skip, and it is the run
 // that skip was written for: an operator's update, whose credential may not
@@ -669,7 +691,7 @@ func (r *initRun) runIndexIndexesWait(ctx context.Context, c *infra.Clients, bin
 	if !ok {
 		return false, " (the Firebase root's state could not be read, so the run index's composite indexes wait for the update that can)"
 	}
-	if managed {
+	if len(runIndexIndexesMissing(managed)) == 0 {
 		return false, " (and the state already carries the run index's composite indexes)"
 	}
 	if may, err := infra.CanMakeIAMChanges(ctx, c, fp); err != nil || !may {

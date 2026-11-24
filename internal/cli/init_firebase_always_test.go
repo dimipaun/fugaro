@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/runindex"
 )
 
 // AB7: the Firebase stage runs with no flag, on `setup` and `update`, and it
@@ -383,8 +384,11 @@ func TestAKnownDatabaseSkipsTheStageAsToday(t *testing.T) {
 	// (RI2) answers "not read" and F34's line stands: the two states that skip
 	// this stage with a database recorded are this one and the indexed one, and
 	// TestAConvergedInstallationWithTheIndexesSkipsTheStage is the other. The
-	// one that does NOT skip it is an installation whose state manages no run
-	// index (TestAPlainUpdateCreatesTheRunIndexesOfAConvergedInstallation).
+	// one that does NOT skip it is an installation whose state does not carry
+	// the whole set the module declares: none of them
+	// (TestAPlainUpdateCreatesTheRunIndexesOfAConvergedInstallation), and the
+	// ten of an installation the release before left one short
+	// (TestAConvergedInstallationMissingOneIndexRunsTheStage).
 }
 
 // convergedFirebase puts the rig in the state a converged installation is in
@@ -486,17 +490,27 @@ func TestAnOperatorsPlainUpdateSkipsTheStageAndConverges(t *testing.T) {
 	}
 }
 
+// runIndexAddresses is the run index's composite indexes as the Firebase root's
+// state holds them once an apply has created them (RI2, runindex.Indexes).
+func runIndexAddresses() []string {
+	out := make([]string, 0, len(runindex.Indexes))
+	for _, key := range runindex.Indexes {
+		out = append(out, runindex.IndexAddress(key))
+	}
+	return out
+}
+
 // TestAConvergedInstallationWithTheIndexesSkipsTheStage is F34 kept: the same
-// installation one update later, its Firebase root's state now carrying a run
-// index composite index, is what the skip has always been for. The stage says
-// its line, plans nothing in that root and applies nothing there.
+// installation one update later, its Firebase root's state now carrying the
+// whole set the module declares, is what the skip has always been for. The
+// stage says its line, plans nothing in that root and applies nothing there.
 //
 // This rig has the Firebase project's fakes, so a stage that ran would be seen:
 // the assertion is not "the run survived" but "the root was never reached".
 func TestAConvergedInstallationWithTheIndexesSkipsTheStage(t *testing.T) {
 	r := alwaysRig(t)
 	convergedFirebase(t, r)
-	r.fbPlan(t, nil, nil, []string{`module.firebase.google_firestore_index.run["role_updated_at"]`})
+	r.fbPlan(t, nil, nil, runIndexAddresses())
 	fakeTerminal(t)
 
 	out, err := updateRun(t, r.initRig, "update")
@@ -512,6 +526,44 @@ func TestAConvergedInstallationWithTheIndexesSkipsTheStage(t *testing.T) {
 	}
 	if plan := tfRan(t, r.initRig, "firebase", "plan"); len(plan) != 0 {
 		t.Errorf("a skipped stage planned the Firebase root: %v", plan)
+	}
+}
+
+// TestAConvergedInstallationMissingOneIndexRunsTheStage is the row a later
+// release adds. The indexes are a closed set the module declares, and an
+// installation whose state carries ten of the eleven is NOT one whose update
+// may skip that root: the row it lacks would never reach it, and the query that
+// needs it would be refused for ever — which is the one thing `fugaro update`
+// may not be. The stage therefore runs, exactly as it does for an installation
+// that carries none of them.
+//
+// Red before the skip asked which of them the state carries (it asked whether
+// it carried any): the state's ten were read as an installation that has the
+// indexes, so the stage was skipped and the eleventh was never created.
+func TestAConvergedInstallationMissingOneIndexRunsTheStage(t *testing.T) {
+	r := alwaysRig(t)
+	convergedFirebase(t, r)
+	mayCreate(t, r)
+	addresses := runIndexAddresses()
+	missing := runindex.Indexes[len(runindex.Indexes)-1]
+	r.fbPlan(t, nil, nil, addresses[:len(addresses)-1])
+	// The plan the apply is made from is the root's answer for that state: the
+	// one index the state does not carry, planned as a create.
+	r.script["plan@firebase"] = map[string]any{"exit": 2, "stdout": planJSON(t, planChange{
+		"address": runindex.IndexAddress(missing), "type": "google_firestore_index",
+		"change": map[string]any{"actions": []string{"create"}, "before": nil, "after": map[string]any{}}})}
+	r.save(t)
+	fakeTerminal(t)
+
+	out, err := updateRun(t, r.initRig, "update")
+	if err != nil {
+		t.Fatalf("a plain update of an installation that is one index short did not converge: %v\n%s", err, out)
+	}
+	if got := r.applies(t); !slices.Contains(got, "firebase") {
+		t.Errorf("the Firebase root was applied in none of %v, so the run index's composite indexes it lacks were never created (F10)\n%s", got, out)
+	}
+	if v := r.fbVars(t)["firestore_database_exists"]; v != true {
+		t.Errorf("the Firebase root is applied with firestore_database_exists = %v, want true: the database the indexes are created under is there (RI2)", v)
 	}
 }
 
