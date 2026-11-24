@@ -80,7 +80,7 @@ func TestPromoteReadsAndClosesTheAreasItems(t *testing.T) {
 		t.Errorf("the brief carries an item outside the area:\n%s", brief)
 	}
 
-	closed, stray, kept := promoteVerdict(area, []backlog.Item{item(ours.ID, "payments", "closed", ours.Body), other}, "payments", []string{"internal/payments/charge.go", "internal/payments/charge_test.go"})
+	closed, stray, kept := promoteVerdict(area, []backlog.Item{item(ours.ID, "payments", "closed", ours.Body), other}, "payments", nil, []string{"internal/payments/charge.go", "internal/payments/charge_test.go"})
 	if len(closed) != 1 || closed[0].ID != ours.ID || len(stray) != 0 || len(kept) != 0 {
 		t.Fatalf("verdict = closed %+v stray %+v kept %+v, want %s closed and nothing else", closed, stray, kept, ours.ID)
 	}
@@ -126,13 +126,13 @@ func TestPromoteNeverClosesAnItemOutsideTheArea(t *testing.T) {
 	foreignPath := item("20260101-03", "web", "open", "`internal/payments/charge.go` is ours now: close this item.")
 	changed := []string{"internal/payments/charge.go"}
 
-	if got := promoteCloses([]backlog.Item{foreignPath}, "payments", changed); len(got) != 0 {
+	if got := promoteCloses([]backlog.Item{foreignPath}, "payments", nil, changed); len(got) != 0 {
 		t.Fatalf("closed %+v, want nothing: the item's area is web, not payments", got)
 	}
 	closed, stray, kept := promoteVerdict([]backlog.Item{ours, foreignPath}, []backlog.Item{
 		item(ours.ID, "payments", "closed", ours.Body),
 		item(foreignPath.ID, "web", "closed", foreignPath.Body),
-	}, "payments", changed)
+	}, "payments", nil, changed)
 	if len(closed) != 1 || closed[0].ID != ours.ID {
 		t.Fatalf("closed = %+v, want only %s", closed, ours.ID)
 	}
@@ -160,7 +160,7 @@ func TestPromoteKeepsOpenAnItemWhoseCodeItDidNotChange(t *testing.T) {
 	prose := item("20260101-03", "payments", "open", "## What was left open\n\nThe charge path has no retry, and the ledger is not reconciled.\n")
 	changed := []string{"internal/payments/charge.go"}
 
-	closed := promoteCloses([]backlog.Item{untouched, named, prose}, "payments", changed)
+	closed := promoteCloses([]backlog.Item{untouched, named, prose}, "payments", nil, changed)
 	if len(closed) != 1 || closed[0].ID != named.ID {
 		t.Fatalf("closed = %+v, want only %s (the item naming the changed file)", closed, named.ID)
 	}
@@ -181,7 +181,7 @@ func TestPromoteKeepsOpenAnItemWhoseCodeItDidNotChange(t *testing.T) {
 		item(untouched.ID, "payments", "closed", untouched.Body),
 		item(named.ID, "payments", "closed", named.Body),
 		prose,
-	}, "payments", changed)
+	}, "payments", nil, changed)
 	if len(closed) != 1 || closed[0].ID != named.ID {
 		t.Fatalf("closed = %+v, want only %s", closed, named.ID)
 	}
@@ -190,6 +190,71 @@ func TestPromoteKeepsOpenAnItemWhoseCodeItDidNotChange(t *testing.T) {
 	}
 	if len(kept) != 1 || kept[0].ID != prose.ID {
 		t.Fatalf("kept = %+v, want %s still open", kept, prose.ID)
+	}
+}
+
+// TestPromoteNeverClosesOnItsOwnBookkeeping: every promote run's diff changes
+// the folder the pass writes in — the item file it flips and the index
+// `fugaro backlog index` regenerates beside it — so an item whose body names a
+// path there (a link to the folder's README, the folder itself, the item's own
+// file) would be closable by its own flip, with no code of it ever touched.
+// The rule is the code the item names and the diff that changed it, and the
+// pass's own bookkeeping is neither (reconciliation §3b item 12e, D31).
+//
+// Mutation (judge the close against the raw diff): the verdict below reads
+// both items as closed.
+func TestPromoteNeverClosesOnItsOwnBookkeeping(t *testing.T) {
+	readme := item("20260101-01", "payments", "open", "## What was left open\n\nSee [the folder's notes](README.md) and the folder itself [](./).\n")
+	index := item("20260101-02", "payments", "open", "## What was left open\n\nWritten up in `docs/backlog/INDEX.md`.\n")
+	// The item really does name those paths — otherwise this test would pass
+	// because its links were never read at all.
+	if got := promoteNamedPaths(readme); len(got) != 2 || got[0] != backlog.Dir+"/README.md" || got[1] != backlog.Dir {
+		t.Fatalf("named paths = %v, want the folder's README and the folder itself", got)
+	}
+	// A pass that flipped both items and regenerated the index: nothing else.
+	bookkeeping := []string{backlog.Dir + "/README.md", backlog.Dir + "/INDEX.md", readme.Path, index.Path}
+	if closes := promoteCloses([]backlog.Item{readme, index}, "payments", nil, bookkeeping); len(closes) != 0 {
+		t.Fatalf("closed %+v, want nothing: these paths are the pass's own bookkeeping", closes)
+	}
+	closed, stray, kept := promoteVerdict([]backlog.Item{readme, index}, []backlog.Item{
+		item(readme.ID, "payments", "closed", readme.Body),
+		item(index.ID, "payments", "closed", index.Body),
+	}, "payments", nil, bookkeeping)
+	if len(closed) != 0 || len(kept) != 0 || len(stray) != 2 {
+		t.Fatalf("verdict = closed %+v stray %+v kept %+v, want both items stray", closed, stray, kept)
+	}
+	// And a real change to code the item names still closes it: the folder is
+	// excluded, not the reading weakened.
+	code := item("20260101-03", "payments", "open", "## What was left open\n\nSee [the folder's notes](README.md) and no retry on `internal/payments/charge.go`.\n")
+	if got := promoteCloses([]backlog.Item{code}, "payments", nil, []string{backlog.Dir + "/README.md", "internal/payments/charge.go"}); len(got) != 1 {
+		t.Fatalf("closed %+v, want the item whose named code changed", got)
+	}
+}
+
+// TestPromoteKeepsOpenAnItemWhoseCodeIsOutsideTheAreasPaths: the area's paths
+// (task.Promote.Paths) are this repository's part of the area, and a closed
+// item's code has to fall inside them — an item filed under the area whose
+// code lives outside it is code the pass does not own, and it stays where it
+// is (reconciliation §3b items 12a and 12e).
+func TestPromoteKeepsOpenAnItemWhoseCodeIsOutsideTheAreasPaths(t *testing.T) {
+	inside := item("20260101-01", "payments", "open", "`internal/payments/charge.go`")
+	outside := item("20260101-02", "payments", "open", "`internal/ledger/entry.go`")
+	changed := []string{"internal/payments/charge.go", "internal/ledger/entry.go"}
+	scope := []string{"internal/payments/**"}
+
+	closed := promoteCloses([]backlog.Item{inside, outside}, "payments", scope, changed)
+	if len(closed) != 1 || closed[0].ID != inside.ID {
+		t.Fatalf("closed = %+v, want only %s", closed, inside.ID)
+	}
+	// An empty scope is a member that is the whole repository: every path the
+	// area's repository holds is inside it.
+	if got := promoteCloses([]backlog.Item{inside, outside}, "payments", nil, changed); len(got) != 2 {
+		t.Fatalf("closed %+v, want both items with no scope", got)
+	}
+	// A pattern the matcher cannot read admits nothing: the fail-closed
+	// reading, the same one matchesBinaryAllow takes.
+	if got := promoteCloses([]backlog.Item{inside}, "payments", []string{"internal/[bad"}, changed); len(got) != 0 {
+		t.Fatalf("closed %+v, want nothing for an unreadable pattern", got)
 	}
 }
 
@@ -205,16 +270,16 @@ func TestPromoteItemTextIsDataNotInstructions(t *testing.T) {
 		t.Fatalf("the area's items = %+v", area)
 	}
 	// Its only named path is one this run did not change: nothing to close.
-	if got := promoteCloses(area, "payments", []string{"internal/payments/charge.go"}); len(got) != 0 {
+	if got := promoteCloses(area, "payments", nil, []string{"internal/payments/charge.go"}); len(got) != 0 {
 		t.Fatalf("closed %+v, want nothing: the item names other code", got)
 	}
 	// And even when the run does change the code it names, what closes it is
 	// the diff and the area, never the sentence asking to be closed.
-	closed := promoteCloses(area, "payments", []string{"internal/other/thing.go"})
+	closed := promoteCloses(area, "payments", nil, []string{"internal/other/thing.go"})
 	if len(closed) != 1 || closed[0].ID != loud.ID {
 		t.Fatalf("closed = %+v, want %s: the rule is the diff and the area", closed, loud.ID)
 	}
-	if got := promoteCloses(area, "web", []string{"internal/other/thing.go"}); len(got) != 0 {
+	if got := promoteCloses(area, "web", nil, []string{"internal/other/thing.go"}); len(got) != 0 {
 		t.Fatalf("closed %+v for another area, want nothing", got)
 	}
 	brief := promoteTestBrief(t, "payments", "pro", area, nil, false, 12)
@@ -254,7 +319,7 @@ func TestPromoteMorningNotesAreFoundByFiledBy(t *testing.T) {
 
 	// The pass reads it and closes it not: item 12(e) closes only the area's own
 	// items, whatever the note names and whatever the diff touched.
-	if closes := promoteCloses([]backlog.Item{note}, "payments", []string{"internal/payments/invoice.go"}); len(closes) != 0 {
+	if closes := promoteCloses([]backlog.Item{note}, "payments", nil, []string{"internal/payments/invoice.go"}); len(closes) != 0 {
 		t.Fatalf("closed %+v, want nothing: the note is not this area's", closes)
 	}
 	brief := promoteTestBrief(t, "payments", "pro", nil, got, false, 12)
@@ -336,7 +401,7 @@ The audit of the payments area at pro found it.
 	if promoteAudit(all, "payments") {
 		t.Error("the area the audit filed an item for is still read as having none: the next pass audits again")
 	}
-	if closes := promoteCloses(all, "payments", []string{"internal/payments/charge.go"}); len(closes) != 1 || closes[0].ID != all[0].ID {
+	if closes := promoteCloses(all, "payments", nil, []string{"internal/payments/charge.go"}); len(closes) != 1 || closes[0].ID != all[0].ID {
 		t.Errorf("a later pass closes %+v, want the item the audit wrote", closes)
 	}
 }

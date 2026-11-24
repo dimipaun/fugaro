@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/bmatcuk/doublestar/v4"
+
 	"github.com/dimipaun/fugaro/internal/backlog"
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -78,6 +80,10 @@ import (
 type promotePass struct {
 	area  string
 	level string
+	// scope is this repository's part of the area (the task's own
+	// Promote.Paths): the paths a closed item's code has to fall inside.
+	// Empty for a member that is the whole repository.
+	scope []string
 	// items are the area's open items as the first brief read them, and
 	// audit is whether there were none: a source last run at POC leaves no
 	// deferred list (levels-spec.md §2.1), so its first promote pass works out
@@ -118,7 +124,7 @@ func (r *run) promoteRun() *promotePass {
 		return r.promote
 	}
 	block := r.spec.Promote
-	p := &promotePass{area: block.Area, level: string(r.reachedRigor())}
+	p := &promotePass{area: block.Area, level: string(r.reachedRigor()), scope: block.Paths}
 	if all, err := backlog.LoadDir(r.d.WorkDir); err == nil {
 		p.items = promoteAreaItems(all, p.area)
 		p.morning = promoteMorningNotes(all, p.area)
@@ -232,13 +238,14 @@ func itemNamesArea(it backlog.Item, area string) bool {
 //
 // before is the area's open items as the run's first brief read them, after is
 // the folder as the run's own commits left it (every item in it, the closed
-// ones included), and changed is the diff the close is held against,
+// ones included), scope is this repository's part of the area (the task's own
+// Promote.Paths), and changed is the diff the close is held against,
 // repository-relative: the pull request's own for a run on one, the run's own
 // changed files otherwise (promoteChanged). An item that was open before and is
 // closed after was closed by this run: it is the only writer on its own branch.
-func promoteVerdict(before, after []backlog.Item, area string, changed []string) (closed, stray, kept []backlog.Item) {
+func promoteVerdict(before, after []backlog.Item, area string, scope, changed []string) (closed, stray, kept []backlog.Item) {
 	allowed := map[string]bool{}
-	for _, it := range promoteCloses(before, area, changed) {
+	for _, it := range promoteCloses(before, area, scope, changed) {
 		allowed[it.ID] = true
 	}
 	for _, was := range before {
@@ -269,34 +276,41 @@ func itemByID(items []backlog.Item, id string) (backlog.Item, bool) {
 }
 
 // promoteCloses are the items a promote run may close: the area's open items
-// whose code this run's diff changed. It is the whole of D31's rule for a
-// promote run, and every clause of it is a refusal rather than a permission —
-// an item of another area, an item already closed, an item whose code the run
-// did not touch and an item that names no code at all are all left where they
-// are (reconciliation §3b item 12e).
-func promoteCloses(items []backlog.Item, area string, changed []string) []backlog.Item {
+// whose code this run's diff changed, within the part of the repository the
+// area names (scope). It is the whole of D31's rule for a promote run, and
+// every clause of it is a refusal rather than a permission — an item of another
+// area, an item already closed, an item whose code the run did not touch, an
+// item whose code lies outside the area's own paths and an item that names no
+// code at all are all left where they are (reconciliation §3b item 12e).
+func promoteCloses(items []backlog.Item, area string, scope, changed []string) []backlog.Item {
+	code := promoteCodeChanges(changed)
 	var out []backlog.Item
 	for _, it := range promoteAreaItems(items, area) {
-		if itemCodeChanged(it, changed) {
+		if itemCodeChanged(it, scope, code) {
 			out = append(out, it)
 		}
 	}
 	return out
 }
 
-// itemCodeChanged reports whether the run changed any code the item names. The
-// code an item names is the set of repository-relative paths its body carries
-// (promoteNamedPaths): the paths a reader of the item follows to the work it
-// is about. An item that names none is never closable — there is nothing to
-// hold the claim "this run paid it down" against — which is the fail-closed
-// direction and the reason a hand-filed item usually stays open until a person
-// closes it.
-func itemCodeChanged(it backlog.Item, changed []string) bool {
+// itemCodeChanged reports whether the run changed any code the item names,
+// inside the area's own part of the repository. The code an item names is the
+// set of repository-relative paths its body carries (promoteNamedPaths): the
+// paths a reader of the item follows to the work it is about, and only those
+// that fall inside scope (task.Promote.Paths, the paths of the member the area
+// names for this repository). An item that names none is never closable —
+// there is nothing to hold the claim "this run paid it down" against — which is
+// the fail-closed direction and the reason a hand-filed item usually stays open
+// until a person closes it.
+func itemCodeChanged(it backlog.Item, scope, changed []string) bool {
 	named := promoteNamedPaths(it)
 	if len(named) == 0 {
 		return false
 	}
 	for _, p := range named {
+		if !promoteInScope(p, scope) {
+			continue
+		}
 		for _, f := range changed {
 			if f == p || strings.HasPrefix(f, p+"/") {
 				return true
@@ -304,6 +318,42 @@ func itemCodeChanged(it backlog.Item, changed []string) bool {
 		}
 	}
 	return false
+}
+
+// promoteInScope reports whether a path an item names falls inside the area's
+// own part of the repository (task.Promote.Paths, D20c): the scope a closed
+// item's code has to fall inside. An empty scope is a member that is the whole
+// repository and admits every path. The entries are doublestar globs, matched
+// as globs and never compared as prefixes, and a pattern the matcher cannot
+// read admits nothing — the fail-closed reading matchesBinaryAllow takes.
+func promoteInScope(p string, scope []string) bool {
+	if len(scope) == 0 {
+		return true
+	}
+	for _, pattern := range scope {
+		if ok, err := doublestar.Match(pattern, p); err == nil && ok {
+			return true
+		}
+	}
+	return false
+}
+
+// promoteCodeChanges are the paths of a run's diff that can hold a close: the
+// diff without the pass's own bookkeeping, which every promote run changes
+// whatever it did. The bookkeeping is the item file the run flips and the index
+// `fugaro backlog index` regenerates beside it, and it is not evidence that a
+// run changed an item's code — an item whose body names one of those paths (a
+// link to `README.md`, the folder's own file, the item's own file) would
+// otherwise be closable by the flip alone, which is the opposite of D31's rule
+// (reconciliation §3b item 12e).
+func promoteCodeChanges(changed []string) []string {
+	var out []string
+	for _, f := range changed {
+		if !strings.HasPrefix(f, backlog.Dir+"/") {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // promotePathRE and promoteLinkRE are the two shapes an item's body names a
@@ -448,7 +498,7 @@ func promoteBrief(area, level, runID string, items, morning []backlog.Item, audi
 			"An item is a file of the folder `docs/backlog/`, in the shape docs/backlog/FORMAT.md states: its name is `<id>-<slug>.md`, where the id is the day you write it and the next free two-digit number for that day (`20261122-01`) and the slug is the title's letters and digits, cut to 60 characters; its first block is the nine front-matter fields `id`, `title` (one line), `level: %s`, `kind: deferred` (`open-risk` for something that stays a risk rather than a debt), `area: %s`, `status: open`, `filed-by: unknown` (a run records the login that launched it, and this brief carries none), `filed-in: run:%s` and `date: ` the day in `YYYY-MM-DD`; and its body carries the headings `## What was left open` and `## Why` over what the gap is and why it is one. Name the code each gap is about by its repository-relative path in backticks (`internal/payments/charge.go`): the next pass closes an item only when its diff changed the code the item names, so an item that names none is one nothing can ever pay down. Run `fugaro backlog index` in the same commit, so the folder's index moves with the items.\n\n"+
 			"A run that cannot write the folder puts the same list in the hand-back instead, one item per gap with its title and its brief, and reports that it could not write them. Make no fix in this pass: the items are the next promote run's work.\n\n", level, level, area, runID)
 	} else {
-		fmt.Fprintf(&b, "Raise the area's code to the level of %s, and pay down the recorded debt below. %s. Close an item only when %s changed the code it names — the runner reads your branch at the end and names in the pull request's status section every item closed that the rule does not admit — and work on nothing outside this area.\n\n", level, closing, rule)
+		fmt.Fprintf(&b, "Raise the area's code to the level of %s, and pay down the recorded debt below. %s. Close an item only when %s changed the code it names, inside this area's own paths — the runner reads your branch at the end and names in the pull request's status section every item closed that the rule does not admit — and work on nothing outside this area.\n\n", level, closing, rule)
 	}
 	if len(items) == 0 && len(morning) == 0 {
 		return b.String()
@@ -583,7 +633,7 @@ func (r *run) readPromote(ctx context.Context) {
 		r.d.Log.Warn("reading the backlog folder at finalize failed; what this run closed is not reported", "err", r.redact(err.Error()))
 		return
 	}
-	p.closed, p.stray, p.kept = promoteVerdict(p.items, after, p.area, r.promoteChanged(ctx))
+	p.closed, p.stray, p.kept = promoteVerdict(p.items, after, p.area, p.scope, r.promoteChanged(ctx))
 }
 
 // promoteChanged is the diff a promote run's closes are held against: the pull
