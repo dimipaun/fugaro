@@ -157,12 +157,12 @@ the sentence it was written for without anything looking wrong.
 | The site's analytics statement is a **flag with two branches**, and the flag is ON | `website/src/pages/privacy.astro` — the `site.facts.analytics.enabled` constant, the on-branch that names Google Analytics 4, one page view, no event, no user id and the consent banner, and the off-branch that says *"This site has no analytics at all"*; and `website/data/site.yaml`'s `analytics` block (D93's). **Cited by symbol and by phrase, not by line**: the page is edited by the website work, and P7.4 lands against it | **The page already carries the app's paragraph, and it is in this tree** — PR **#689** split it into *The website* and *The software* and added **The phone app**, and PR **#705** wrote D255's answer into it (*"There is no switch inside the app to turn them off"*, *"Earlier builds of the app send nothing at all"*); **both are merged to `main` at this change's base** (§8.3) |
 | The site's own "nothing phones home" check is written and run by the owner | `docs/gcp-live-checklist.md` — the register's `| 69b |` row and its `## Check 69b` section, cited the same way | It is about the **page**, not the app; the app's counterpart is a new check (§12), not an amendment of 69b. |
 
-**`dev.fugaro.app`.** The brief calls the first MVP *"voice-less internal testing on
-`dev.fugaro.app` for both stores"*. That host is **not in this tree** — the only `fugaro.app`
-string is the app shell's root element name (`mobile/src/app/root.js` — `SHELL.ROOT`), which
-is an element-type name and not a host — so the plan treats `dev.fugaro.app` as the owner's
-name for the first internal build's environment and **does not build anything on it**
-(§13, UNVERIFIED).
+**The first internal build's environment.** The brief calls the first MVP *"voice-less
+internal testing on <the owner's dev identity> for both stores"*. That value is **not in this
+tree**, and this document does not write it down either — the only `fugaro.app` string here is
+the app shell's root element name (`mobile/src/app/root.js` — `SHELL.ROOT`), which is an
+element-type name and not a host — so the plan treats it as the owner's name for the first
+internal build's environment and **does not build anything on it** (§13, UNVERIFIED).
 
 ---
 
@@ -1402,7 +1402,9 @@ line below is a claim this plan makes **without** a source in this tree:
    that PR landed — the dynamic `({ config }) => …` export, the three-state `EAS_BUILD` /
    `FUGARO_REQUIRE_IDS` guard, and the three build profiles — and P7.1 re-reads both files when
    it starts, since a later change to either moves under this plan's sentences.
-5. **`dev.fugaro.app`.** The brief's name for the first internal build's environment. It is
+5. **The first internal build's environment.** The brief's name for it is the owner's own dev
+   identity, and this plan does not write that value down — the identity fence the app keeps
+   (`mobile/src/app-config.ids.test.js`) reads every file under `docs/mobile/` too. It is
    not in this tree. Nothing in this plan is built on it, and no task names it as a file.
 6. **The website's privacy statement is quoted, not pinned.** PRs **#689** (`89fecab4`) and
    **#705** (`190b8476`) are merged and the page is read here on `main` at `4d619273`. §8.3

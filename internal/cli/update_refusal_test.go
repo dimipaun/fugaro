@@ -26,6 +26,12 @@ import (
 // there takes the confirmation and the apply's own failure is the run's
 // (report_failure_line_test.go).
 func TestARefusalAfterAFailureStillSaysHowToUnblockIt(t *testing.T) {
+	// The refusal this test is about is the plugin stage's own typed
+	// confirmation, so the machine's installed plugin has to be this test's and
+	// not the host's: a machine whose plugin is newer than this release reads the
+	// stage as nothing to do, the confirmation is never asked, and the run stops
+	// somewhere else with an error the account did print.
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	r := updateRig(t)
 	r.setPlan(t, change("module.installation.google_storage_bucket.runs", "create"))
 	r.script["plan"] = map[string]any{"exit": 2, "stdout": convergeNoise + "\n"}

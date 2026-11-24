@@ -87,6 +87,14 @@ import (
 // register at test time (part 1c).
 var voiceSwitchWritten = []string{"49", "50", "52", "58", "69a", "69b", "70a", "70b", "70c", "80", "81", "82", "83", "84", "85", "86", "87", "88", "89"}
 
+// oneTagMacro is the macro J5r writes on a message's own validator and on the
+// heartbeat (mobile identity-pairing, O6), the name the template spells where
+// the generated document expands to "exactly one of `mac` and `sig`". The
+// design's §2 describes that expansion in prose and the test counts the macro in
+// the template, so a message that lost its tag would be one the design no
+// longer describes.
+const oneTagMacro = "TAGOK"
+
 func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	const designPath = "docs/mobile/design/voice-evaluation-switch.md"
 	const checklistPath = "docs/gcp-live-checklist.md"
@@ -366,33 +374,39 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 		t.Errorf("%s's §5 rule 4 promises the STT path is gated by the redactor, which §3's own table says it cannot be", designPath)
 	}
 
-	// 4. The mailbox rules §2 says are shipped. P6.4 (#601, 371038f) is merged
-	// into this branch, so the rules template requires `mac` on the inbox, the
-	// outbox and the heartbeat; a §2 that calls those fields "not shipped"
-	// contradicts the rules it cites, as an earlier revision's did.
+	// 4. The mailbox rules §2 says are shipped, as J5r rewrote them: P6.4
+	// (#601, 371038f) is merged into this branch, so the rules template requires
+	// a tag on the inbox, the outbox and the heartbeat — and since J5r (mobile
+	// identity-pairing, O6) that tag is exactly one of `mac` and `sig`, so the
+	// required-children list names the four fields and the tag is a clause
+	// beside it. A §2 that quoted the older spelling would cite a rule this
+	// document does not have, as an earlier revision's did when it called the
+	// fields "not shipped".
 	tmpl := readDoc(t, "internal/budget/rules/rules.json.tmpl")
-	// Counted rather than merely found: `mac` is required on the inbox *and*
-	// the outbox, so the string appears twice, and a template that dropped it
-	// from one of the two would still satisfy a plain Contains.
+	// Counted rather than merely found: the tag is required on the inbox *and*
+	// the outbox and on the heartbeat, so each clause appears three times, and a
+	// template that dropped it from one of the three would still satisfy a
+	// plain Contains.
 	for _, want := range []struct {
 		s   string
 		min int
 	}{
-		{"hasChildren(['id', 'sender', 'text', 'at', 'mac'])", 2},
-		{"hasChildren(['at', 'boot', 'mac'])", 1},
+		{"newData.hasChildren(['id', 'sender', 'text', 'at'])", 2},
+		{oneTagMacro, 3},
 	} {
 		if got := strings.Count(tmpl, want.s); got < want.min {
 			t.Errorf("internal/budget/rules/rules.json.tmpl carries %q %d times, want at least %d, so %s §2's account of the mailbox's required fields is stale", want.s, got, want.min, designPath)
 		}
 	}
 	// The design's own sentence, which is the half that went stale: §2 must
-	// name the fields as shipped and carry the rules' two required sets. (The
-	// withdrawn wording is quoted in §11's round-11 entry, so only §2 is read
-	// here — a whole-document search would trip on that quotation.)
+	// name the fields as shipped and carry the rules' required set with the two
+	// tag shapes beside it. (The withdrawn wording is quoted in §11's round-11
+	// entry, so only §2 is read here — a whole-document search would trip on
+	// that quotation.)
 	exists := docSection(t, designPath, design, "## 2. What exists today")
 	for _, want := range []string{
-		"['id', 'sender', 'text', 'at', 'mac']",
-		"['at', 'boot', 'mac']",
+		"newData.hasChildren(['id', 'sender', 'text', 'at'])",
+		"a tag that is exactly one of `mac` and `sig`",
 		"the fields P6.4 added are in it",
 	} {
 		if !strings.Contains(exists, want) {

@@ -223,6 +223,7 @@ type LegacyBridge interface {
 
 // LegacyChain is the bridge the walk consults. The contract ships before the
 // bridge: C1 declares this and a stub answers "no old record" (chain_stub.go),
-// MG3 assigns the real one from legacy_auth.go, and X4 removes both the bridge
-// and this seam.
+// MG3 writes the real one (legacy_auth.go) and the deployment assigns it, over
+// the database client the rest of the service is built with (internal/cli's
+// credentialsServiceConfig), and X4 removes both the bridge and this seam.
 var LegacyChain LegacyBridge

@@ -476,6 +476,18 @@ type IntakeSpec struct {
 	// .invalid host no ID token is ever minted for) until the same stage reads
 	// the URL back from the module's own output and applies it.
 	URL string `json:"url,omitempty"`
+	// People is the intake's SECOND class list (WC3, R5, D3143): the people of
+	// a workspace's roster, as the bare addresses a Google ID token's email
+	// claim holds (infra.IntakePeople). It is a member of the INTAKE's own
+	// block and never of `launchers`, which is the workspace project's
+	// credentials service invoker set as well (F10), and it is empty — no key
+	// at all — for every installation that is not a workspace's project.
+	//
+	// `fugaro update` renders it from the workspace's roster on the owner's own
+	// run (init_stages.go's renderIntakePeople), so a person the roster gains
+	// waits for that one command, which binds the invoke grant beside it
+	// (D2971).
+	People []string `json:"people,omitempty"`
 }
 
 // VoiceServiceSpec is the installation root's var.voice_service (P5.3.3): the
@@ -1484,6 +1496,7 @@ func IntakeOf(vars []byte) (IntakeSpec, bool, error) {
 	spec.Service, _ = block["service"].(string)
 	spec.Image, _ = block["image"].(string)
 	spec.URL, _ = block["url"].(string)
+	spec.People = stringList(block["people"])
 	if spec.Service == "" || spec.Image == "" {
 		return IntakeSpec{}, false, nil
 	}
@@ -1507,6 +1520,27 @@ func IntakeURLOf(vars []byte) (string, error) {
 	block, _ := doc["intake"].(map[string]any)
 	url, _ := block["url"].(string)
 	return url, nil
+}
+
+// LauncherAccountsOf returns the launcher_accounts the installation root's
+// tfvars carry, and the empty list when they carry none — the module's own
+// default, which is also what the key's omitempty writes for an installation
+// whose launcher list names no `user:` member (InstallationSpec.LauncherAccounts,
+// InstallationVars).
+//
+// It is read beside IntakeOf's people because the intake's class is the two
+// TOGETHER: the block's people list is the roster's own, and whether it moves
+// the class the module reads depends on what the launchers already carry
+// (IntakeClass, intake.tf's local.intake_accounts).
+func LauncherAccountsOf(vars []byte) ([]string, error) {
+	if vars == nil {
+		return []string{}, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, err
+	}
+	return stringList(doc["launcher_accounts"]), nil
 }
 
 // SetIntakeURL returns vars with intake.url set to url and every other entry —
@@ -1553,6 +1587,49 @@ func SetIntakeImage(vars []byte, image string) ([]byte, error) {
 		return nil, fmt.Errorf("the installation's terraform.tfvars.json carries no intake to set the image of")
 	}
 	block["image"] = image
+	doc["intake"] = block
+	return sortedJSON(doc)
+}
+
+// SetIntakePeople returns vars with the intake's second class list set to
+// people, and every other entry — of the document and of the intake's own
+// block — unchanged (SetIntakeURL's read-modify-write, on the block's other
+// member).
+//
+// An empty list REMOVES the key rather than writing [], and that is the
+// document's own shape: the module's default is the empty list, so the absent
+// key and [] are one plan, and IntakeSpec.People's omitempty writes a block
+// without it. It is also the state every installation that is not a workspace's
+// project is in, and a run that wrote [] into one would put a diff in its
+// tfvars for a fact it does not have.
+//
+// The list is sorted and deduplicated here, so two equal rosters give equal
+// bytes (sortedJSON's promise) whatever order a caller read them in.
+//
+// A document with no intake block is refused rather than given one, for
+// SetIntakeURL's reason: the people are a member of a block that turns on an
+// account, two roles, a service and its invoker grants, and a caller that
+// invented one would deploy the intake for an installation whose run never
+// resolved an image for it.
+func SetIntakePeople(vars []byte, people []string) ([]byte, error) {
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := doc["intake"].(map[string]any)
+	if block == nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json carries no intake to set the roster's people on")
+	}
+	sorted := append([]string{}, people...)
+	slices.Sort(sorted)
+	delete(block, "people")
+	if sorted = slices.Compact(sorted); len(sorted) > 0 {
+		arr := make([]any, 0, len(sorted))
+		for _, p := range sorted {
+			arr = append(arr, p)
+		}
+		block["people"] = arr
+	}
 	doc["intake"] = block
 	return sortedJSON(doc)
 }
@@ -2357,6 +2434,21 @@ func budgetBillingAccountOf(state []byte) (account string, found bool, err error
 		}
 	}
 	return "", false, nil
+}
+
+// stringList is a decoded JSON array as the list of strings it holds, empty for
+// anything else: a member that is not a string is dropped rather than read as
+// one, because the block a caller asks about is a document this program either
+// wrote (where every member is a string) or one it refuses to act on at all.
+func stringList(v any) []string {
+	arr, _ := v.([]any)
+	out := make([]string, 0, len(arr))
+	for _, e := range arr {
+		if s, ok := e.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // varsDoc decodes an installation tfvars document, keeping numbers as

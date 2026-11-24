@@ -11,12 +11,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// reviewLaunchImage is the build record a review launch that must get through
-// is made against: 0.8.5 rather than the 0.7.0 the refusal cases carry, since
-// every review launch has a title ("Review of PR #N") and a runner older than
-// titlesSince refuses the whole task on it before any review mode is read.
-const reviewLaunchImage = release085
-
 // TestRunRecipeReviewModeWritesReviewPRs: --recipe review-only --pr 7
 // writes review_prs: [7] in task.json, not branch/pr/previous_run — a
 // first-run-shaped task, never a follow-up (design generic-tool §3.6,
@@ -27,7 +21,7 @@ const reviewLaunchImage = release085
 // ReviewPRs empty.
 func TestRunRecipeReviewModeWritesReviewPRs(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", reviewLaunchImage)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "review-only", "--pr", "7"); err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +47,7 @@ func TestRunRecipeReviewModeWritesReviewPRs(t *testing.T) {
 // recipe or ref would end up embedded instead of review-only's.
 func TestRunRecipeReviewModeIgnoresAnyExistingChain(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", reviewLaunchImage)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--recipe", "review-only"); err != nil {
 		t.Fatal(err)
@@ -102,7 +96,7 @@ func TestRunAtMostFourPR(t *testing.T) {
 // both, in order.
 func TestRunPickWritesSeveralReviewPRs(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", reviewLaunchImage)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "pick", "--pr", "7", "--pr", "9"); err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +138,7 @@ func TestRunPickRefusesSinglePR(t *testing.T) {
 // from a pull request's own history).
 func TestRunReviewModeKeepsRefWorkflowFlags(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", reviewLaunchImage)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "review-only", "--pr", "7", "--ref", "main", "--workflow", "web")
 	if err != nil {
 		t.Fatal(err)
