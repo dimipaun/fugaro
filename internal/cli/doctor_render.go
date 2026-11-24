@@ -119,8 +119,17 @@ var doctorShownSecurityIDs = map[string]bool{
 // this binary's generation, whose fix is the newer binary. And cli-version's
 // line names the upgrade first: the newer release is not installed yet, so
 // `fugaro update` alone would run the old binary.
+//
+// cli-below-required is cli-version's pair, and its line is the same two
+// commands for the same reason: the project's stamp names a release this binary
+// is below, so the upgrade comes first and `fugaro update` behind it is what
+// brings the installation and the checkout to the version. One of its states
+// keeps its own line (ownFix): a stamp this binary cannot read at all, which no
+// `fugaro update` repairs — the node has to be corrected in the console (T7) or
+// a newer binary has to read it.
 var doctorUpdatePrefixes = []string{
 	"cli-version",
+	"cli-below-required",
 	"plugin-pin",
 	"plugin-install",
 	"orchestrator-unit",
@@ -744,7 +753,8 @@ var doctorUpdateFixes = map[string]string{
 	// The newer release is not installed yet, so the upgrade comes first; the
 	// update behind it is what brings the installation and the checkout to the
 	// version (CLAUDE.md's hard rule: those two commands are the whole upgrade).
-	"cli-version": "run `brew upgrade fugaro`, then `fugaro update`",
+	"cli-version":        cliBelowRequiredFix,
+	"cli-below-required": cliBelowRequiredFix,
 	// A check that cannot even be read outside a checkout says so in its own
 	// text: update is the whole upgrade, and it runs in the repository.
 	"plugin-pin": "run `fugaro update` in the repository's checkout",
@@ -882,7 +892,12 @@ type doctorShort struct {
 // its own sentence, which the default view prints whole.
 var doctorShorts = map[string]doctorShort{
 	"cli-version": {"a newer Fugaro release is available.", ""},
-	"plugin-pin":  {"the Claude Code plugin is pinned to another version than this Fugaro.", ""},
+	// The project's own stamp names a release this binary is below, so every
+	// command that acts on the project is refused until it upgrades. The class's
+	// line is the whole fix (the upgrade, then `fugaro update`), which is why this
+	// entry carries none.
+	"cli-below-required": {"this project requires a newer Fugaro release than this binary.", ""},
+	"plugin-pin":         {"the Claude Code plugin is pinned to another version than this Fugaro.", ""},
 	// The login unit the daemon runs under was written from an older template,
 	// and `fugaro update` re-renders it in place (init_stages.go's unit stage),
 	// so the entry carries no fix of its own: the class's command is the whole
