@@ -361,7 +361,8 @@ func entryIndex(table Table, e Entry) int {
 // The ladder is: the model Vertex may carry at all (GV4's rule), then the
 // source's spelling of the model (D3175), then whether the source reaches it
 // (R2's reach, the predicate craft.ByReach and a pool's members share), then
-// R3's gate on a Claude model through a provider key.
+// R3's gate on a Claude model reached through a provider route — a source of
+// kind provider, and the same route reached through a member of a pool.
 func sourceProblem(in Checks, i, j int, s Source, asked string) (Problem, bool) {
 	at := fmt.Sprintf("model_routing[%d].chain[%d]", i, j)
 	// Which model this source would be sent: the one it names (a written
@@ -407,6 +408,21 @@ func sourceProblem(in Checks, i, j int, s Source, asked string) (Problem, bool) 
 				Code:    CodeNoReach,
 				Message: fmt.Sprintf("no member of the pool %q can be sent %q: a pool is reached by its members' own credentials, and a member serves the models its own credential serves (the project's accounts and key reach Anthropic's models, a provider key the models its entry claims). List members that serve %q, or point the entry at the source that does", s.Pool, served, served),
 			}, true
+		}
+		// R3 is about a chain that reaches a Claude model through OpenRouter, and
+		// a pool is one: a member of kind provider is the same route a source of
+		// that kind is, and the pool's own rule may put the call on it (a
+		// round-robin pool picks a member nobody chose). So the gate is asked of
+		// the pool's members and not only of a source written as a provider.
+		if config.IsClaudeModel(served) && !in.Check50Passed {
+			if m, ok := routedMember(pool, in, served); ok {
+				return Problem{
+					Path:    at,
+					Entry:   i,
+					Code:    CodeCheck50,
+					Message: fmt.Sprintf("the pool %q holds %s, which reaches the Claude model %q through OpenRouter, and a chain that reaches a Claude model through OpenRouter is refused until Check 50 has been recorded as passed: the check measures whether the route reports the prompt-cache markers a Claude call is charged by, and until it has run a routed Claude is charged at a rate nobody measured (D3013, R3). Run Check 50 and record it, or take %s out of the pool, or point the entry at a pool that reaches Anthropic itself (an account or the project's key)", s.Pool, m.Name, served, m.Name),
+				}, true
+			}
 		}
 	case KindAnthropic, KindVertex:
 		if !config.PoolMemberServesModel(config.PoolMember{Type: credentialType(s.Kind)}, served, in.Providers) {
@@ -483,6 +499,24 @@ func poolReaches(p config.Pool, in Checks, model string) bool {
 		}
 	}
 	return false
+}
+
+// routedMember is the member of a pool that reaches the model over a provider
+// route: an OpenRouter member whose own provider entry claims it. It is what
+// R3's gate is asked of, because that member is the route a source of kind
+// provider names — the pool's own rule may put the call on it, so a chain
+// naming the pool reaches Claude through OpenRouter as surely as one naming the
+// provider directly (D3013, reconciliation R3).
+func routedMember(p config.Pool, in Checks, model string) (config.PoolMember, bool) {
+	for _, m := range config.PoolMembers(p, in.Credentials) {
+		if m.Path == "" || m.Type != config.CredentialTypeOpenRouter {
+			continue
+		}
+		if config.PoolMemberServesModel(m, model, in.Providers) {
+			return m, true
+		}
+	}
+	return config.PoolMember{}, false
 }
 
 // loneSubscriptionProblems is X2's rule in the shape release 1 gives it: a

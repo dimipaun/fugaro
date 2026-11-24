@@ -105,6 +105,23 @@ func TestProblems(t *testing.T) {
 		wantProblems(t, in, CodeCheck50)
 	})
 
+	t.Run("claude_through_a_pool_before_check_50", func(t *testing.T) {
+		// R3 is about a chain that reaches a Claude model through OpenRouter, and
+		// a pool is such a chain: a member of kind provider is the route a source
+		// of that kind names, and the pool's own rule may put the call on it (a
+		// round-robin pool picks a member nobody chose), so the gate is asked of
+		// the pool's members too. The model is written as the route's own ID
+		// here, because that is the spelling a route claims and the one the
+		// provider entry lists.
+		in := checksFixture(Table{{Match: "anthropic/*", Chain: []Source{{Kind: KindPool, Pool: "routed"}}}},
+			"anthropic/claude-sonnet-5.5")
+		wantProblems(t, in, CodeCheck50)
+		// And the record is what lifts it, exactly as it does for a provider
+		// source: the pool is accepted as it stands.
+		in.Check50Passed = true
+		wantProblems(t, in)
+	})
+
 	t.Run("check_50_passed", func(t *testing.T) {
 		// The same table, with the check recorded: R3's gate is the record and
 		// not the shape, so the entry is accepted as it stands.
