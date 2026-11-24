@@ -35,7 +35,7 @@ Run `fugaro doctor --offline --json` once at the start of a session: where its `
 fugaro update
 ```
 
-A coding agent's session cannot apply cloud changes, by design: never look for a flag or another command that would let this session apply those writes, and never unset the marker that says this session is one. A check `--offline` did not run comes back `skipped: true` with severity `info`, and is not one of these. Where `plugin-install` is not ok the user has no Fugaro skills yet, so the wizard's own step comes first; and a status report nobody asked for is the failure this sentence exists to avoid, so if everything `--offline` could check is ok, say nothing and carry on.
+A coding agent's session cannot apply cloud changes, by design: never look for a flag or another command that would let this session apply those writes, and never unset the marker that says this session is one. A check `--offline` did not run comes back `skipped: true` with severity `info`, and is not one of these. Where `plugin-install` is not ok the user has no Fugaro skills yet, so the wizard's own step comes first; and a status report nobody asked for is the failure to avoid, so where everything `--offline` could check is ok, say nothing and carry on.
 
 From the repository root (`git rev-parse --show-toplevel`) run `fugaro doctor --json`. If it reports no installation, say the wizard's step comes first and stop: no project config can be selected without it. The user runs it once per project, in their own terminal window, not through the agent:
 
@@ -113,7 +113,7 @@ Before the first build, and again before any rebuild after a change, show every 
 - the names of the declared `secrets` variables, and whether each is already set (presence only, never a value): the build mounts the workflow's `secrets:` as file secrets, so a registry token reaches it that way, never as a build argument or a copied file
 - any file you add that a command runs, such as the `agent.instructions` file (appended to the agent's prompt; it must exist in the repository)
 
-Pin every download by version and checksum. Don't pipe a download into a shell, use an unpinned `latest` or run a remote script. Say plainly that the build runs the repository's code in Cloud Build, in the project's own cloud project, as the build account with the workflow's secrets. Wait for an explicit yes. The user then submits it in their own terminal, after the merge (step 10): it is billable. If the user declines, say what is unverified (the runtime contract's smoke checks); their first run is the test.
+Pin every download by version and checksum. Don't pipe a download into a shell, use an unpinned `latest` or run a remote script. Wait for an explicit yes. The user then submits it in their own terminal, after the merge (step 10): it is billable. If the user declines, say what is unverified (the runtime contract's smoke checks); their first run is the test.
 
 ## 7. Check the image the workflow runs
 
@@ -125,7 +125,7 @@ From the checkout, run `fugaro secrets ls --repo --json` (not doctor, which list
 
 Setup's prompts (step 9) have no `--repo` to pass: they store a name project-wide, except a per-repository one (`bitbucket-token`, project-wide only through an explicit `project_secrets` allow-list entry); a covered name is not asked for, nor is a covered workflow secret; for its own copy, press Ctrl-C at the prompt and run the command it printed in your own terminal, then start setup again.
 
-The user runs these in their own terminal, not through the agent. One line per missing secret: no `--repo` for the GitHub App key (project-wide), `--repo <owner/name>` for `bitbucket-token` (per-repository by default; project-wide only through that same entry). Run:
+The user runs these in their own terminal, not through the agent. One line per missing secret: no `--repo` for the GitHub App key (project-wide), `--repo <owner/name>` for `bitbucket-token` (per-repository by default). Run:
 
 ```bash user-runs
 # the GitHub App private key (a PEM file: redirected, not typed)
@@ -167,4 +167,4 @@ The periodic reviews are the user's cadence: Fugaro schedules nothing, so say th
 
 ## 12. Changing the auth, a workflow, a secret or a provider
 
-A `fugaro.yaml` edit that retires resources: [reference/transitions.md](reference/transitions.md) has the step and the command.
+A `fugaro.yaml` edit that retires resources, or a change to the auth, a credential, a pool or a provider: [reference/transitions.md](reference/transitions.md) has the steps and the commands, the routing table's among them (`fugaro routing ls`, `set`, `rm`).
