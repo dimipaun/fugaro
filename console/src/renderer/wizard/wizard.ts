@@ -172,6 +172,13 @@ export const WIZARD_QUESTIONS_CLASS = 'console-wizard-questions'
 export const WIZARD_QUESTION_CLASS = 'console-wizard-question'
 export const WIZARD_QUESTION_ATTRIBUTE = 'data-wizard-question'
 export const WIZARD_LABEL_CLASS = 'console-wizard-label'
+
+/** WIZARD_CONTROL_ID_PREFIX is the head of the id every question's control is
+ * given, and the label beside it is drawn `for` that id: a control with no
+ * accessible name is a control a screen reader reads as "edit text", and the id's
+ * tail is the row's own answer key, so the two can never drift apart. */
+export const WIZARD_CONTROL_ID_PREFIX = 'console-wizard-field-'
+
 export const WIZARD_NOTE_CLASS = 'console-wizard-note'
 export const WIZARD_INPUT_CLASS = 'console-wizard-input'
 export const WIZARD_OPTION_CLASS = 'console-wizard-option'
@@ -487,9 +494,17 @@ export function drawWizard(deps: WizardDeps): WizardElement {
   const drawn: DrawnQuestion[] = WIZARD_QUESTIONS.map((question) => {
     const row = make(factory, 'div', WIZARD_QUESTION_CLASS)
     row.setAttribute(WIZARD_QUESTION_ATTRIBUTE, question.key)
-    row.append(literal(make(factory, 'label', WIZARD_LABEL_CLASS), question.label))
+    // A question's label names its box the way the launch window's form does
+    // (`launch.ts`'s `field`): a `<label for>` pointing at the control's own id,
+    // so every control has an accessible name. The row's key is the id's tail, so
+    // the two are one string rather than a second convention.
+    const controlId = WIZARD_CONTROL_ID_PREFIX + question.key
+    const label = literal(make(factory, 'label', WIZARD_LABEL_CLASS), question.label)
+    label.setAttribute('for', controlId)
+    row.append(label)
     row.append(literal(make(factory, 'p', WIZARD_NOTE_CLASS), question.note))
     const control = make(factory, question.control === 'select' ? 'select' : 'input', WIZARD_INPUT_CLASS)
+    control.setAttribute('id', controlId)
     if (question.control === 'text') {
       // A text field's default is its `value` attribute: a document reads it back
       // as the field's value until the operator types, and there is no `value`

@@ -63,6 +63,7 @@ import {
   WIZARD_COMMANDS_LEAD,
   WIZARD_COPY_CLASS,
   WIZARD_COPY_REFUSAL_CLASS,
+  WIZARD_CONTROL_ID_PREFIX,
   WIZARD_COPY_WORDS,
   WIZARD_DONE,
   WIZARD_EVENT_ATTRIBUTE,
@@ -71,6 +72,7 @@ import {
   WIZARD_HAND_OFF,
   WIZARD_INPUT_CLASS,
   WIZARD_KIND_WORDS,
+  WIZARD_LABEL_CLASS,
   WIZARD_LEAD_CLASS,
   WIZARD_NO,
   WIZARD_OPTION_CLASS,
@@ -317,6 +319,24 @@ describe('the setup wizard’s questions', () => {
     // No secret is asked for here, and there is no field beyond the five.
     expect(rowsOf(root)).toHaveLength(SETUP_ANSWER_KEYS.length)
     expect(classed(root, WIZARD_LEAD_CLASS)[0]?.textContent).toContain('no secret')
+  })
+
+  it('names every control with the label beside it, and gives each one its own id', () => {
+    const { root } = setupHarness(() => feedOf(DONE))
+    // One label and one control per row, in the contract's order, and the label
+    // points at the control beside it: a control with no accessible name is read
+    // as "edit text", which is what this form drew before.
+    const pairs = rowsOf(root).map((row) => ({
+      id: classed(row, WIZARD_INPUT_CLASS)[0]?.getAttribute('id') ?? '',
+      label: classed(row, WIZARD_LABEL_CLASS)[0]?.getAttribute('for') ?? '',
+    }))
+    expect(pairs.map((pair) => pair.id)).toEqual(
+      [...SETUP_ANSWER_KEYS].map((key) => WIZARD_CONTROL_ID_PREFIX + key),
+    )
+    expect(pairs.filter((pair) => pair.label !== pair.id)).toEqual([])
+    // And no two questions share an id, which a duplicate would quietly do while
+    // still pairing with its own label above.
+    expect(new Set(pairs.map((pair) => pair.id)).size).toBe(SETUP_ANSWER_KEYS.length)
   })
 
   it('sends nothing, and refuses the rigor question by name, when no mode is answered', async () => {

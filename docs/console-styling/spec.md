@@ -1872,7 +1872,9 @@ of such a helper — so these are the one part of §2 whose hooks stand unqualif
 element column below is what the module draws today rather than what a rule may assume. **The
 only attributes any rule here keys on are `:disabled` and `aria-busy`** (all four of the
 module's own attributes — `data-wizard-question`, `data-wizard-event` and the two `aria-busy`
-marks — are licensed by §3.1's list and are named in the rows below); the screen deliberately
+marks — are licensed by §3.1's list and are named in the rows below; the `id` a box carries
+and the `for` its label does are not attributes a rule reads at all, they are the pairing
+that gives the box its accessible name); the screen deliberately
 sets **no `data-busy`**, because `flight-deck.css`'s rule for a busy section fades every child
 that is not the busy slot, and the operator's own typed answers fading for the up-to-an-hour a
 setup may take is not what a read in flight should look like here.
@@ -1883,9 +1885,9 @@ setup may take is not what a read in flight should look like here.
 | `console-wizard-lead` | the sentence above the questions | the console's own words for what is about to happen, muted. It is `max-width`-capped like the prose below it rather than stretched across a wide window |
 | `console-wizard-questions` | the questions' column | the five questions as a grid, narrower than the events below them: a form is read in one column and a feed is read across |
 | `console-wizard-question` | one question, a `div` | the label and its box as one unit, with `data-wizard-question` naming the answer key it collects so the tree can be read back against `SETUP_ANSWER_KEYS` |
-| `console-wizard-label` | a question's label, a `label` | the question in the operator's words, wrapping its own box so label and box are one target |
+| `console-wizard-label` | a question's label, a `label` | the question in the operator's words, drawn `for` its own control's id (`for` before the box, the way the launch window's form does it, `launch.ts`'s `field`), so every box has an accessible name. The pairing is a label and an id rather than nesting: a `select` inside a `label` is a target a click on the label opens, which is not what a click on a question should do |
 | `console-wizard-note` | a question's note, a `p` | the smaller line under a question — the default it takes when the operator types nothing, and why one question has none. Muted, and the console's words, never a document's |
-| `console-wizard-input` | a text question's box, an `input` | `type="text"`, with the CLI's default as its `value` and a placeholder naming that default. Typed into, never filled from a document |
+| `console-wizard-input` | a text question's box, an `input` | `type="text"`, with the CLI's default as its `value` and a placeholder naming that default. Its `id` is `console-wizard-field-` and the row's own answer key, which is the string its label's `for` carries; the box is typed into, never filled from a document |
 | `console-wizard-option` | a choice question's option, an `option` | one member of a `select`. The popup it opens is the platform's and is not styled here; the rule sets the closed state's colours so an option does not read as a native widget inside a themed panel |
 | `console-wizard-submit` | the one control that sends the answers, a `button` | a `type="button"` — the questions are drawn in a plain container and **not** in a `form`, so Enter is not a second way to send an answer. It is `disabled` for as long as the send it started is unanswered: this screen's answer can take up to an hour |
 | `console-wizard-follow` | the control that follows the run, a `button` | a `type="button"` in the same shape, asking for the run the confirmation window's yes started. Held `disabled` with the submit while an attempt is in flight, for the same reason |
