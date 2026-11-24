@@ -19,6 +19,7 @@ package rules
 // is admitted nowhere.
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -194,6 +195,204 @@ func TestMailboxMessageShape(t *testing.T) {
 
 	// A zero-length node key is not a path.
 	h.mustDeny(alice, "a message at the inbox itself", put("mailbox/"+mbAlice+"/inbox", aMessage("m1", mbAlice)))
+}
+
+// signed is a record whose tag is the second scheme rather than the first
+// (J5r, O6): the same record with `mac` taken out and `sig` put in. Both are
+// well-formed strings that no key produced, which is the whole of what the
+// rules see.
+func signed(v map[string]any) map[string]any {
+	delete(v, "mac")
+	v["sig"] = aSig
+	return v
+}
+
+// TestMailboxTagIsOneOfTwo: J5r's tag against the database (O6, which amends
+// D171) — a message and the heartbeat carry exactly one of `mac` and `sig`, and
+// the two are interchangeable everywhere a tag is required: the message's own
+// validator, the registration's three fields and the heartbeat.
+//
+// "Exactly one" is the half no schema can state and the half a client gets
+// wrong: a record carrying both is a record two verifiers would each accept, so
+// it is refused here, and so is one carrying neither. Which scheme a device
+// must use, and whether the value verifies, is its device node's and the gate's
+// (J5b) — nothing here signs anything, and the rules check length and
+// characters alone.
+//
+// Red step (for the reviewer): under generation 10's document every row below
+// that writes a `sig` is refused, because a `mac` is required of every message
+// and of the heartbeat.
+func TestMailboxTagIsOneOfTwo(t *testing.T) {
+	h := newHarness(t)
+	alice, consumer := h.phone(mbAlice), h.consumer(mbAlice)
+
+	// The positive control: the signature where the MAC goes, on all three
+	// holders of a tag — the phone's inbox message, the consumer's outbox
+	// message and the consumer's heartbeat.
+	h.mustAllow(alice, "an inbox message signed rather than tagged",
+		put(inbox(mbAlice, "s1"), signed(aMessage("s1", mbAlice))))
+	h.mustAllow(consumer, "an outbox message signed rather than tagged",
+		put(outbox(mbAlice, "s2"), signed(aMessage("s2", mbAlice))))
+	h.mustAllow(consumer, "a heartbeat signed rather than tagged", put(beat(mbAlice), signed(aHeartbeat())))
+	h.wantValue(inbox(mbAlice, "s1")+"/sig", `"`+aSig+`"`)
+
+	// The ack on a signed outbox message is unaffected: the ack is a field of
+	// the message and not of the tag beside it.
+	h.mustAllow(alice, "the ack on a signed outbox message", put(outbox(mbAlice, "s2")+"/acked", true))
+
+	// The registration's three fields accept either scheme (J5b reads the
+	// device node to decide which one a device must present), so a signing
+	// device registers with the same record a MACing one does.
+	reg := signed(aMessage("s5", mbAlice))
+	reg["kind"] = "registration"
+	reg["token"] = "a-push-token"
+	reg["platform"] = "ios"
+	h.mustAllow(alice, "a signed registration", put(inbox(mbAlice, "s5"), reg))
+
+	// Both, and neither: the rule is "exactly one", not "either". Note the two
+	// refusals have different causes under the older document (both are refused
+	// for carrying a `mac` they may not duplicate; neither is refused for
+	// carrying none), which is why the case names them apart.
+	both := aMessage("s3", mbAlice)
+	both["sig"] = aSig
+	h.mustDeny(alice, "a message carrying both a mac and a sig", put(inbox(mbAlice, "s3"), both))
+	neither := aMessage("s4", mbAlice)
+	delete(neither, "mac")
+	h.mustDeny(alice, "a message carrying neither a mac nor a sig", put(inbox(mbAlice, "s4"), neither))
+	bothBeat := aHeartbeat()
+	bothBeat["sig"] = aSig
+	h.mustDeny(consumer, "a heartbeat carrying both a mac and a sig", put(beat(mbAlice), bothBeat))
+	neitherBeat := aHeartbeat()
+	delete(neitherBeat, "mac")
+	h.mustDeny(consumer, "a heartbeat carrying neither a mac nor a sig", put(beat(mbAlice), neitherBeat))
+	bothReg := signed(aMessage("s6", mbAlice))
+	bothReg["kind"], bothReg["token"], bothReg["platform"] = "registration", "a-push-token", "ios"
+	bothReg["mac"] = aMac
+	h.mustDeny(alice, "a registration carrying both", put(inbox(mbAlice, "s6"), bothReg))
+
+	// The signature's own shape: 86 characters of the base64url alphabet and no
+	// padding, checked for length and characters exactly as the MAC is.
+	for _, bad := range []struct {
+		what string
+		v    any
+	}{
+		{"one character short", aSig[:len(aSig)-1]},
+		{"one character long", aSig + "A"},
+		{"carrying base64's padding", aSig[:len(aSig)-2] + "=="},
+		{"carrying a character outside the alphabet", aSig[:len(aSig)-1] + "+"},
+		{"that is a number", 42},
+		{"that is empty", ""},
+	} {
+		id := "s7-" + strings.ReplaceAll(bad.what, " ", "-")
+		m := aMessage(id, mbAlice)
+		delete(m, "mac")
+		m["sig"] = bad.v
+		h.mustDeny(alice, "a sig "+bad.what, put(inbox(mbAlice, id), m))
+	}
+	full := aMessage("s8", mbAlice)
+	delete(full, "mac")
+	full["sig"] = strings.Repeat("A", MaxSigLength)
+	h.mustAllow(alice, "a sig exactly at the bound, unpadded", put(inbox(mbAlice, "s8"), full))
+	h.mustDeny(consumer, "a heartbeat with a sig over the bound",
+		put(beat(mbAlice), map[string]any{"at": msgAt, "boot": "boot-1", "sig": aSig + "A"}))
+
+	// Nothing else about the message moved: the tag is a field of the message
+	// and never a field of a field, so a child of it is refused.
+	h.mustDeny(alice, "a child of the sig", put(inbox(mbAlice, "s9")+"/sig/x", "y"))
+}
+
+// TestMailboxTypedLaunch: J5r's launch action against the database (O10) — an
+// inbox action whose `verb` is `launch` carries a `mode` and needs no
+// `confirmation`, where every other verb still carries one.
+//
+// The rules check the *shape* of the mode and nothing about its value: the mode
+// is a rigor mode, whose vocabulary is internal/rigor's, and which modes need a
+// read-back before they run is the launch gate's (J5a, D2786). So the rules
+// admit a mode that names no rigor mode at all, and that is deliberate — a
+// bound is not a vocabulary, and a rules generation must not be what carries
+// the sixth mode when one is added.
+//
+// Red step (for the reviewer): under generation 10's document every row below
+// that writes `launch` is refused at the verb enumeration, and the positive
+// control is the case that says so.
+func TestMailboxTypedLaunch(t *testing.T) {
+	h := newHarness(t)
+	alice := h.phone(mbAlice)
+	repo := map[string]any{"repo": "aurora/web"}
+	launch := func(id, mode string, target map[string]any) map[string]any {
+		a := map[string]any{"id": id, "verb": "launch", "target": target}
+		if mode != "" {
+			a["mode"] = mode
+		}
+		return a
+	}
+	msg := func(id string, action map[string]any) map[string]any {
+		m := aMessage(id, mbAlice)
+		m["kind"] = "action"
+		m["action"] = action
+		return m
+	}
+
+	// The positive control: a start naming a repository and a mode, with no
+	// confirmation at all. A plain start needs none — the mode is what the gate
+	// reads, and a costly one is the gate's read-back to ask for.
+	h.mustAllow(alice, "a typed launch", put(inbox(mbAlice, "L1"), msg("L1", launch("L1", "startup", repo))))
+
+	// A launch may carry a confirmation: the gate's read-back is written the
+	// same way on a launch as on the verbs that always need it.
+	withConfirm := launch("L2", "critical", repo)
+	withConfirm["confirmation"] = map[string]any{"id": "L2", "at": msgAt}
+	h.mustAllow(alice, "a typed launch carrying a confirmation", put(inbox(mbAlice, "L2"), msg("L2", withConfirm)))
+
+	// The mode is the launch's own: required on it, and refused on any other
+	// verb, so `mode` on a cancel is a shape the rules do not have.
+	h.mustDeny(alice, "a launch with no mode", put(inbox(mbAlice, "L3"), msg("L3", launch("L3", "", repo))))
+	cancel := map[string]any{"id": "L4", "verb": "cancel", "target": map[string]any{"run": "r1"},
+		"confirmation": map[string]any{"id": "L4", "at": msgAt}, "mode": "startup"}
+	h.mustDeny(alice, "a cancel carrying a mode", put(inbox(mbAlice, "L4"), msg("L4", cancel)))
+
+	// The mode's shape: a short identity string. Nothing here is a vocabulary
+	// the rules know, which is why an unlisted word of the right shape is
+	// admitted (the row above) and only the bound and the characters are what
+	// this document holds.
+	for i, bad := range []struct {
+		what string
+		v    any
+	}{
+		{"over the bound", strings.Repeat("m", MaxModeLength+1)},
+		{"carrying a space", "the quick brown fox"},
+		{"carrying a slash", "pro/hotfix"},
+		{"that is empty", ""},
+		{"that is a number", 7},
+	} {
+		id := fmt.Sprintf("L5-%d", i)
+		h.mustDeny(alice, "a launch whose mode is "+bad.what,
+			put(inbox(mbAlice, id), msg(id, map[string]any{"id": id, "verb": "launch", "target": repo, "mode": bad.v})))
+	}
+	at := launch("L6", strings.Repeat("m", MaxModeLength), repo)
+	h.mustAllow(alice, "a mode exactly at the bound", put(inbox(mbAlice, "L6"), msg("L6", at)))
+
+	// The target is a repository alone: a start names no run and no pull
+	// request, and the arm refuses a target that carries either of them beside
+	// it — the shape TestConfirmTargetsCarryOneShape pins statically.
+	h.mustDeny(alice, "a launch whose target carries a run",
+		put(inbox(mbAlice, "L7"), msg("L7", launch("L7", "startup", map[string]any{"repo": "aurora/web", "run": "r1"}))))
+	h.mustDeny(alice, "a launch whose target carries a pull request",
+		put(inbox(mbAlice, "L8"), msg("L8", launch("L8", "startup", map[string]any{"repo": "aurora/web", "pr": 12}))))
+	h.mustDeny(alice, "a launch whose target carries no repository",
+		put(inbox(mbAlice, "L9"), msg("L9", launch("L9", "startup", map[string]any{"run": "r1"}))))
+
+	// Every other verb is exactly what it was: the enumeration gained one word
+	// and lost none, so an unknown one is still refused, and a cancel still
+	// needs its confirmation.
+	h.mustDeny(alice, "an action whose verb is no verb the schema has",
+		put(inbox(mbAlice, "L10"), msg("L10", map[string]any{"id": "L10", "verb": "start", "target": repo,
+			"confirmation": map[string]any{"id": "L10", "at": msgAt}})))
+	h.mustDeny(alice, "a cancel with no confirmation",
+		put(inbox(mbAlice, "L11"), msg("L11", map[string]any{"id": "L11", "verb": "cancel", "target": map[string]any{"run": "r1"}})))
+	h.mustAllow(alice, "a cancel with its confirmation",
+		put(inbox(mbAlice, "L12"), msg("L12", map[string]any{"id": "L12", "verb": "cancel", "target": map[string]any{"run": "r1"},
+			"confirmation": map[string]any{"id": "L12", "at": msgAt}})))
 }
 
 // TestMailboxConsumerWritesOnlyItsMailbox: D113b's writer, and the fence
