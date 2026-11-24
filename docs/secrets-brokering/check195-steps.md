@@ -20,15 +20,23 @@ Restore deletes. Read those before you start. This file is the two commands.
   the file.
 - `bash`, `mktemp`, `gcloud`, `curl` and `fugaro` on PATH, `gcloud` authenticated as you. Nothing is
   installed and nothing is fetched.
-- An account that can **create a Cloud Run service, create a service account, set IAM on the service
-  and add one project-level binding**, submit a build, and read the build's own lines out of Cloud
-  Logging: a project Owner can.
+- An account that can **create a Cloud Run service, create a service account, set IAM on the service,
+  add one project-level binding, create a GCS bucket, set IAM on it, read the object in it and delete
+  it**, submit a build, and read the build's own record and its lines out of Cloud Logging: a project
+  Owner can.
 - **Nothing else. No token, no secret, no repository, no file to prepare.** The only credential in the
   whole path is the ID token the build's own step mints for itself, out of the build's own metadata
   server, and uses where it mints it. This check mints no credential of its own and asks you for
   none — which is exactly what it is there to settle.
 - **Minutes at the terminal**: one build (a couple of minutes), one deploy and one short call. The
-  service scales to zero and the run deletes it.
+  service scales to zero and the run deletes it — and so does the bucket, with the object in it.
+- **A bucket appears and goes.** The step writes its one line **twice**: into an object in a throwaway
+  GCS bucket this run creates and deletes (`fugaro-dev-chk195-<nonce>`, labelled `chk195=<nonce>` so
+  the Restore only ever deletes its own), and into the build's own log. The object is read first:
+  Cloud Storage hands an object back the moment it is written, while the log a `CLOUD_LOGGING_ONLY`
+  build writes with its own account's credentials is a pipeline that can carry nothing at all — which
+  is how the owner's run of 2026-11-24 came back with a FAILURE build and an empty `gcloud builds log`.
+  The step's exit code, out of the build's own record, is under both.
 
 ## The steps
 
@@ -98,13 +106,22 @@ worth knowing by name:
   service: the grant does not admit a build account's own token, which is the answer S4 rests on, so
   report it rather than working around it. A **401** is the front end refusing the token itself.
   Read the step's own lines with `gcloud builds log <build id> --project=fugaro-dev`.
-- **The logWriter grant does not land** (`logwriter-wait`) — the row says what the project's own
-  policy read back, and how long it was waited for. The wait is **bounded** (120 s, plus a short fixed
-  settle) because IAM's propagation is not something the check can wait out indefinitely; the build
-  runs either way, and a FAIL here means the build may write **no log at all**. Check the binding by
-  hand with `gcloud projects get-iam-policy fugaro-dev --format=json`.
-- **The build's own line cannot be read** (`call`) — the block does **not** give up here: the step ends
-  with one exit code per outcome, Cloud Build writes that code into the build's own record
+- **A grant the build's own writes need does not land** (`write-grants`) — both policies are re-read
+  until they name the throwaway account: the project's own for `roles/logging.logWriter` (what buys
+  the build's own log) and the bucket's own for `roles/storage.objectCreator` (what buys the object
+  the step writes its line into, and nothing else on that bucket). The row says what each policy read
+  back and how long each was waited for. The wait is **bounded** (120 s, plus one short fixed settle)
+  because IAM's propagation is not something the check can wait out indefinitely; the build runs
+  either way, and a FAIL here means it may write **neither**. Check the two by hand with
+  `gcloud projects get-iam-policy fugaro-dev --format=json` and
+  `gcloud storage buckets get-iam-policy gs://<bucket> --format=json` — the row names the bucket.
+- **The build's own line cannot be read** (`line-object`, `call`) — the block does **not** give up
+  here. The step's line is read **out of the object first**, with the one command the reading is
+  (`gcloud storage cat gs://<bucket>/chk195-line.txt`, the row names the bucket), and out of the
+  build's own log only when the object did not carry it; when neither has it, the row says so in one
+  line with both commands to run by hand, and the step's own marker that its write into the object did
+  not land is quoted as what the log carried. Under both readings is the exit code: the step ends with
+  one exit code per outcome, Cloud Build writes that code into the build's own record
   (`gcloud builds describe <build id> --project=fugaro-dev` → `steps[0].exitCode`, which is not Cloud
   Logging at all), and the row names the outcome from it — 0 (the service answered 200 *and* the
   token's email claim is the throwaway account), 11 (401), 12 (403), 13 (any other status or none at
@@ -112,22 +129,23 @@ worth knowing by name:
   one code that record does **not** carry: `exitCode` is a proto3 `int64` with no presence, so a zero
   is omitted and a step that exited 0 and a step that never ran leave the same empty column — the
   check reads that `0` from the build's own `SUCCESS` instead (this build's only step is this one),
-  and the row says which of the two readings it is. What the line
-  adds is the email claim as **text**: read it by hand with
-  `gcloud builds log <build id> --project=fugaro-dev`, where `<build id>` is the row's own id. Your
-  account needs `roles/logging.viewer` on the project, and the line may simply not have arrived yet —
-  in the owner's run of 2026-11-24 it never did.
+  and the row says which of the two readings it is. What the object and the log add is the email claim
+  as **text**; the log's own command is `gcloud builds log <build id> --project=fugaro-dev`, where
+  `<build id>` is the row's own id. Your account needs `roles/logging.viewer` on the project for the
+  log and `roles/storage.objectViewer` on that one bucket for the object — and the log may simply not
+  have arrived: in the owner's run of 2026-11-24 it never did, and the object is why the answer is
+  readable now.
 - **A step exit code the check's own step never writes** (`call`) — a **failure**, and the row says
   the cause is not named rather than guessing at one: the step has one `exit` per outcome and nothing
   else in it exits, so a 1 is a step that died before it decided anything (a container that never
   started, a shell that could not run the script). Read the build with
   `gcloud builds describe <build id> --project=fugaro-dev` and its lines with
   `gcloud builds log <build id> --project=fugaro-dev`.
-- **A delete that failed** (`service-deleted`, `account-deleted`, `binding-removed`, `restore`) —
-  every one of the three is **read back**, and a FAILed row names what is left, what the last refusal
-  said and the exact command to remove it. The project-level binding is removed **before** the account
-  on purpose: a binding that outlives its member reads back as `deleted:serviceAccount:…` and can
-  never be removed again. Those two writes are ordered and IAM's consistency can still put them out of
+- **A delete that failed** (`service-deleted`, `bucket-deleted`, `account-deleted`, `binding-removed`,
+  `restore`) — every one of the four is **read back**, and a FAILed row names what is left, what the last refusal
+  said and the exact command to remove it. The bucket is deleted **before** the account, and the
+  project-level binding **before** it too, on purpose: a binding that outlives its member reads back
+  as `deleted:serviceAccount:…` and can never be removed again. Those two writes are ordered and IAM's consistency can still put them out of
   order, so the account deletion re-reads the policy and is **retried** (up to six times). The owner's
   run of 2026-11-24 came back with the account still there, and **what its refusal said was not
   captured**: either cause fits, a delete refused as *still referenced by a policy binding* in the
@@ -141,13 +159,17 @@ Nothing but the **build's own record**, in the project's Cloud Build history: it
 of what ran rather than a resource this check created, and nothing here deletes it — `gcloud builds
 list --project=fugaro-dev` shows it. Everything the check makes is deleted by its Restore, which runs
 from the exit trap too, so a Ctrl-C in the middle still deletes the service (and the invoker binding
-with it), the project-level `roles/logging.logWriter` binding and the throwaway account — and each of
-the three is read back. The scratch directory goes at the end, and its row says whether it did.
+with it), the bucket (with the object the step wrote into it, and the bucket-level
+`roles/storage.objectCreator` binding beside it), the project-level `roles/logging.logWriter` binding
+and the throwaway account — and each of the four is read back. The scratch directory goes at the end,
+and its row says whether it did.
 
-The `roles/logging.logWriter` binding is the one grant this check makes beyond the reading itself, and
-it is there because a build that names its own service account must say where its logs go
-(`options.logging: CLOUD_LOGGING_ONLY`, as Fugaro's own image builds do) and writes them with **that**
-account's credentials — without it the build still runs, but the line carrying the token's email claim
-is never written anywhere the check can read it.
+The two grants are what the build's own **writes** need, beyond the reading itself: a build that names
+its own service account must say where its logs go (`options.logging: CLOUD_LOGGING_ONLY`, as Fugaro's
+own image builds do) and writes them with **that** account's credentials, and the object the step
+writes its line into is in this run's own bucket. Without the first the build still runs and writes no
+log; without the second it runs and writes no object. Either way the step's exit code is still in the
+build's own record — but the token's `email` claim as **text** is in neither, and that is what the
+block would then be missing.
 
 **No agent runs any step of it.**
