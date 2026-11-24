@@ -177,20 +177,16 @@ var PrincipalKinds = []PrincipalKind{PrincipalPerson, PrincipalServiceAccount, P
 // [contract-pools.md](../../docs/model-credentials-routing/contract-pools.md)
 // and deliberately not here: that guard fails a Go file of this module which
 // names it, which is what keeps it out of every decision.
-// The yaml tags name the same members as the json ones, and are here for the
-// reason Source's are (internal/routing/table.go): a pool's `principal` is a
-// member of the installation's own `pools:` block (PL1, R21), so the shape the
-// config decodes and the shape the wire carries are one spelling stated twice
-// rather than two that may drift. Reading is unaffected — yaml.v3 already read
-// the lowercased field name — and omitempty is what keeps a principal nothing
-// named out of a document a person reads.
+// Its json tags are the wire's own (the slip a launcher and a service exchange,
+// internal/creds): the config's `pools:` block decodes config.PoolPrincipal, not
+// this type (PL1), so nothing here is written to or read from a yaml document.
 type Principal struct {
 	// Kind is one of PrincipalKinds.
-	Kind PrincipalKind `json:"kind" yaml:"kind"`
+	Kind PrincipalKind `json:"kind"`
 	// ID is the principal's own identifier: a person's Google subject, a service
 	// account's address, or the project's name. It is a name and never a value:
 	// no credential's secret is ever here, and none ever may be.
-	ID string `json:"id" yaml:"id"`
+	ID string `json:"id"`
 }
 
 // Valid reports whether p names a principal: a kind this release knows and a

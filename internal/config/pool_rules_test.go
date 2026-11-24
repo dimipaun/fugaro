@@ -140,6 +140,37 @@ func TestALoneSubscriptionIsNotRefusedOnRelease1(t *testing.T) {
 	}
 }
 
+// TestPoolThresholdIsRefusedOutsideItsBound pins the optional threshold
+// (D3178, PL8): it is a fraction of a member's limit, so the bound is greater
+// than 0 and at most 1, and both halves are the picker's bound as well as this
+// validation's (PoolThreshold.Valid). An absent threshold is accepted — every
+// installation that has not migrated holds one — and 0 and 1 are the two ends
+// the bound decides: 0 is refused because it would move off every member
+// always, 1 because it fires exactly at the limit.
+func TestPoolThresholdIsRefusedOutsideItsBound(t *testing.T) {
+	at := func(v float64) *PoolThreshold { x := PoolThreshold(v); return &x }
+
+	for _, v := range []float64{0.5, 0.8, 1} {
+		pools := []Pool{{Name: "team", Members: []string{CredentialVertex}, Threshold: at(v)}}
+		if ps := ValidatePools(pools, nil); len(ps) != 0 {
+			t.Errorf("threshold %v: ValidatePools = %v, want none", v, ps)
+		}
+	}
+	if ps := ValidatePools([]Pool{{Name: "team", Members: []string{CredentialVertex}}}, nil); len(ps) != 0 {
+		t.Errorf("no threshold: ValidatePools = %v, want none: the member is optional", ps)
+	}
+	for _, v := range []float64{0, -0.1, 1.5} {
+		pools := []Pool{{Name: "team", Members: []string{CredentialVertex}, Threshold: at(v)}}
+		ps := ValidatePools(pools, nil)
+		if len(ps) != 1 || ps[0].Path != "pools.team.threshold" {
+			t.Errorf("threshold %v: ValidatePools = %v, want one problem at pools.team.threshold", v, ps)
+		}
+		if PoolThreshold(v).Valid() {
+			t.Errorf("PoolThreshold(%v).Valid = true, want false: the two read one bound", v)
+		}
+	}
+}
+
 // TestPolicyRanksOrdered holds the merge's copy of the rule vocabulary to this
 // package's (internal/policy/craft.go). The two are separate declarations
 // because internal/policy may not import this package, and the rule that orders

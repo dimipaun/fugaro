@@ -312,13 +312,19 @@ func (e *Effective) tightenCraftPool(name string, p CraftPool, src string) {
 				e.craftSource(CraftPoolMembersKey(name))})
 		}
 	}
+	// Both are judged against the value in force (ruleInForce), not against the
+	// member they were written under: the rule and the strategy are one scale of
+	// tightness and one of them serves the pool, so a layer's rule must be able
+	// to tighten a pool the project wrote as a strategy and to lose to a pool it
+	// wrote as a rule.
+	inForce := ruleInForce(out)
 	if p.Strategy != "" {
-		switch rank, running := poolStrategyRank(p.Strategy), poolStrategyRank(out.Strategy); {
+		switch rank, running := poolStrategyRank(p.Strategy), poolStrategyRank(inForce); {
 		case rank > running:
 			out.Strategy, e.Sources[CraftPoolStrategyKey(name)] = p.Strategy, src
 		case rank < running:
 			e.Ignored = append(e.Ignored, Ignored{CraftPoolStrategyKey(name),
-				p.Strategy, poolStrategyText(out.Strategy), e.craftSource(CraftPoolStrategyKey(name))})
+				p.Strategy, poolStrategyText(inForce), e.craftSource(CraftPoolStrategyKey(name))})
 		}
 	}
 	// The rule is judged on its own key and by the same order of tightness, so
@@ -326,12 +332,12 @@ func (e *Effective) tightenCraftPool(name string, p CraftPool, src string) {
 	// dropped and recorded. An empty effective rule is `failover`, which is what
 	// a pool that names none is served by (poolStrategyText, R21).
 	if p.Rule != "" {
-		switch rank, running := poolStrategyRank(p.Rule), poolStrategyRank(out.Rule); {
+		switch rank, running := poolStrategyRank(p.Rule), poolStrategyRank(inForce); {
 		case rank > running:
 			out.Rule, e.Sources[CraftPoolRuleKey(name)] = p.Rule, src
 		case rank < running:
 			e.Ignored = append(e.Ignored, Ignored{CraftPoolRuleKey(name),
-				p.Rule, poolStrategyText(out.Rule), e.craftSource(CraftPoolRuleKey(name))})
+				p.Rule, poolStrategyText(inForce), e.craftSource(CraftPoolRuleKey(name))})
 		}
 	}
 	// The roster may only narrow: every name on it is a grant of the pool's
@@ -464,6 +470,23 @@ func poolStrategyText(s string) string {
 		return PoolStrategyFailover
 	}
 	return s
+}
+
+// ruleInForce is what serves a pool: its rule where it names one and its
+// strategy otherwise, and failover where it names neither (R5, R21) — the
+// resolve config.Pool.RuleOrDefault and routing.Rule.RuleOrDefault make, read
+// here on the pool the merge keeps. The rule and the strategy are one scale of
+// tightness, so a later layer's value is judged against this and not against
+// the member it was written under: judged against `out.Rule` alone, a
+// repository's `failover` beside a project's `strategy: round-robin` is dropped
+// as a widening although the pool is served round-robin, and its `round-robin`
+// is recorded as a value that lost to an effective failover although the pool
+// is not served failover. Its answer is never "".
+func ruleInForce(p CraftPool) string {
+	if p.Rule != "" {
+		return p.Rule
+	}
+	return p.Strategy
 }
 
 // poolStrategyRank is how tight a written strategy or rule is: `ordered` is
