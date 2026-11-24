@@ -128,10 +128,12 @@ worth knowing by name:
   said and the exact command to remove it. The project-level binding is removed **before** the account
   on purpose: a binding that outlives its member reads back as `deleted:serviceAccount:…` and can
   never be removed again. Those two writes are ordered and IAM's consistency can still put them out of
-  order, so the account deletion re-reads the policy and is **retried** — a delete issued just after
-  the binding went is refused as *still referenced by a policy binding*, which is how the owner's run
-  of 2026-11-24 came back with the account still there. A build that FAILED changes nothing about any
-  of it: the account goes either way.
+  order, so the account deletion re-reads the policy and is **retried** (up to six times). The owner's
+  run of 2026-11-24 came back with the account still there, and **what its refusal said was not
+  captured**: either cause fits, a delete refused as *still referenced by a policy binding* in the
+  moment after the binding went, or a delete that landed whose account the listing went on naming. The
+  re-read before each attempt and the read-back after it answer both. A build that FAILED changes
+  nothing about any of it: the account goes either way.
 
 ## What is left behind
 

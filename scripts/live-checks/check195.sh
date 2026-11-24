@@ -58,7 +58,11 @@
 #             deletion are ordered IAM writes that IAM's own consistency can put
 #             out of order: the owner's run of 2026-11-24 ended with the binding
 #             removed and read back clean, the service gone, and the account
-#             still there. Each of the three is READ BACK rather than assumed —
+#             still there — and what the refusal said was not captured, so the
+#             re-read covers both ways that happens: a delete refused as still
+#             referenced by a policy binding, and a delete that landed whose
+#             account the list had not stopped naming yet. Each of the three is
+#             READ BACK rather than assumed —
 #             the `service-deleted`, `account-deleted` and `binding-removed` rows
 #             are that reading. The
 #             build's own RECORD stays in the project's Cloud Build history: it
@@ -272,14 +276,17 @@ last_lines() {
 # The two IAM writes the Restore makes are ordered — the project-level binding
 # goes before the account, because a binding that outlives its member reads back
 # as deleted:serviceAccount:… and can never be removed again — and that order is
-# also what IAM's own consistency can put out of order: a delete issued in the
-# moment after the binding is removed is refused as still referenced by a policy
-# binding, even though the policy already reads clean. That is the answer the
-# owner's run of 2026-11-24 came back with: the service deleted, the binding
-# removed AND read back clean, and account-deleted FAILed with the account still
-# there. So the policy is re-read before every attempt, and an attempt that did
-# not take is retried; the last refusal is kept for the row. A build that FAILED
-# is no reason to skip any of it: the account is this check's and goes either way.
+# also what IAM's own consistency can put out of order: the owner's run of
+# 2026-11-24 ended with the service deleted, the binding removed AND read back
+# clean, and account-deleted FAILed with the account still there. What the
+# refusal said was not captured, and either of two causes fits it: a delete
+# issued in the moment after the binding is removed is refused as still
+# referenced by a policy binding even though the policy already reads clean, and
+# a delete that landed can leave the account still named by a listing that has
+# not caught up either. So the policy is re-read before every attempt and the
+# account's own state after every one, and an attempt that did not take is
+# retried; the last refusal is kept for the row. A build that FAILED is no
+# reason to skip any of it: the account is this check's and goes either way.
 delete_account_retrying() {
   local try=0
   : >"$SCRATCH/account-delete.err"
@@ -1112,7 +1119,7 @@ print_plan() {
   say "  [network, writes] gcloud builds cancel <build id> --project=${P} (refused, harmlessly, when the build already ended)"
   say "  [network, deletes] gcloud run services delete ${SVC} --project=${P} --region=${L}  (which takes the roles/run.invoker binding with it)"
   say "  [network, deletes] gcloud projects remove-iam-policy-binding ${P} --member=serviceAccount:${CALLER_EMAIL} --role=roles/logging.logWriter --condition=None"
-  say "  [network, deletes] gcloud iam service-accounts delete ${CALLER_EMAIL} --project=${P}, re-reading the project policy first and retrying up to ${ACCOUNT_DELETE_TRIES} times: the binding removal and the account deletion are ordered IAM writes that IAM's own consistency can put out of order, and a delete refused that way leaves the account behind — which is what the owner's run of 2026-11-24 came back with"
+  say "  [network, deletes] gcloud iam service-accounts delete ${CALLER_EMAIL} --project=${P}, re-reading the project policy first and retrying up to ${ACCOUNT_DELETE_TRIES} times: the binding removal and the account deletion are ordered IAM writes that IAM's own consistency can put out of order — the owner's run of 2026-11-24 came back with the account still there and the refusal was not captured, so the re-read covers both causes: a delete refused as still referenced by a policy binding, and a delete that landed whose account the list was still naming"
   say "  [network] three reads that say the service, the account and the binding are gone"
   say "What is left behind either way: the build's own RECORD, in the project's Cloud Build history. It is the project's log of what ran rather than a resource this check made, and nothing here deletes it."
 }
