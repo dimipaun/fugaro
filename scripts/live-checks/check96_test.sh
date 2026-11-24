@@ -680,12 +680,17 @@ JSON
 # as `credsvc: refused`), whose `status` is the HTTP status as a NUMBER. A
 # fixture of one line is what let the reader's join of that status pass a test
 # suite and crash the live run of 2026-11-24.
+#
+# Both carry all ten of the audit contract's fields, empty ones included, and
+# they have to: the reader tells an audited act from any other line of the read
+# by that whole shape, so a fixture written with fewer fields is read as no
+# audited act at all.
 write_audit() { # dir
   local dir=$1 checked=${2:-$SANDBOX_SLUG} other=${3:-$OTHER_SLUG}
   local refusal_message="the run identity is not a run of the calling job's repository"
-  printf '[{"jsonPayload": {"run": "@RUN@", "repository": "%s", "job": "%s", "caller": "%s", "credential": "%s", "purpose": "mint", "status": "ok"}}]\n' \
+  printf '[{"jsonPayload": {"run": "@RUN@", "repository": "%s", "job": "%s", "caller": "%s", "credential": "%s", "purpose": "mint", "tier": "", "status": "ok", "slip": "", "owner": ""}}]\n' \
     "$checked" "$JOB" "$JOBSA" "$APPKEY" >"$dir/state/audit-ok.tmpl"
-  printf '[{"jsonPayload": {"run": "@RUN@", "repository": "%s", "job": "%s", "caller": "%s", "credential": "%s", "purpose": "mint", "status": "unverified_run_identity"}},\n {"jsonPayload": {"type": "unverified_run_identity", "status": 403, "repository": "%s", "run": "@RUN@", "message": "%s", "tried": "", "read": "", "error_class": ""}}]\n' \
+  printf '[{"jsonPayload": {"run": "@RUN@", "repository": "%s", "job": "%s", "caller": "%s", "credential": "%s", "purpose": "mint", "tier": "", "status": "unverified_run_identity", "slip": "", "owner": ""}},\n {"jsonPayload": {"type": "unverified_run_identity", "status": 403, "repository": "%s", "run": "@RUN@", "message": "%s", "tried": "", "read": "", "error_class": ""}}]\n' \
     "$other" "$JOB" "$JOBSA" "$APPKEY" "$other" "$refusal_message" >"$dir/state/audit-refusal.tmpl"
   printf '[]\n' >"$dir/state/audit-purpose.json"
   : >"$dir/state/audit-purpose-after"
@@ -1660,7 +1665,7 @@ test_a_log_whose_status_is_a_number_does_not_stop_the_reader() {
   # fine and the check reached neither the outsider nor the survivors. The row
   # still FAILs here, because a status that is not the refusal's own IS a finding;
   # what must not happen is the check dying without a verdict about the line.
-  printf '[{"jsonPayload": {"run": "@RUN@", "repository": "%s", "job": "%s", "caller": "%s", "credential": "%s", "purpose": "mint", "status": 403}}]\n' \
+  printf '[{"jsonPayload": {"run": "@RUN@", "repository": "%s", "job": "%s", "caller": "%s", "credential": "%s", "purpose": "mint", "tier": "", "status": 403, "slip": "", "owner": ""}}]\n' \
     "$OTHER_SLUG" "$JOB" "$JOBSA" "$APPKEY" >"$dir/state/audit-refusal.tmpl"
   run96
   expect_status "$status" 1 "a numeric status in the log"
@@ -1696,6 +1701,34 @@ PY
   expect_contains "$out" "the pairing refusal's audit line is not the route's: 0 line(s)" \
     "a refusal whose audit line is missing: the row counts the diagnosis line as no act at all"
   expect_contains "$out" "a 0 here would be the finding" "a refusal whose audit line is missing: why it is a finding"
+}
+
+test_the_warn_line_beside_a_mint_is_not_an_audited_act() {
+  setup_case mintwarnline
+  # internal/credsvc's github.go writes a warn line when GitHub itself refuses
+  # the mint, carrying the purpose, the credential, the repository, the run and
+  # -- when GitHub answered -- the status as a NUMBER, and no caller. It is not
+  # an audited act, and a read told apart by any single field counts it as one:
+  # the row then names a second act for a run in which one at most happened.
+  python3 - "$dir/state/audit-refusal.tmpl" <<'PY2'
+import json, sys
+lines = json.load(open(sys.argv[1], encoding="utf-8"))
+audit = lines[0]["jsonPayload"]
+warn = {"jsonPayload": {"run": audit["run"], "repository": audit["repository"],
+                        "purpose": "mint", "credential": "github-app-key",
+                        "status": 401}}
+json.dump([lines[0], warn, lines[1]], open(sys.argv[1], "w", encoding="utf-8"))
+PY2
+  run96
+  expect_status "$status" 0 "a warn line beside the mint's audit line"
+  # The block prints ONE row per key, and the two halves of the pairing claim
+  # write two: the second half is in the block only when it FAILED, so what this
+  # case reads is the absence of its finding. Counted, the warn line makes the
+  # read two lines where the row needs one, and the row is then the FAIL that
+  # names an act which never happened.
+  expect_absent "$out" "is not the route's" \
+    "a warn line beside the mint's audit line: the row counts the audited act and not the warn line"
+  expect_absent "$out" "2 line(s)" "a warn line beside the mint's audit line: no second act is named"
 }
 
 test_a_mint_that_answered_and_left_no_line_is_a_fail() {
@@ -2044,6 +2077,7 @@ t test_a_pairing_that_is_answered_is_the_finding
 t test_a_refusal_with_no_audit_line_is_the_finding
 t test_a_log_whose_status_is_a_number_does_not_stop_the_reader
 t test_the_diagnosis_beside_a_refusal_is_not_an_audited_act
+t test_the_warn_line_beside_a_mint_is_not_an_audited_act
 t test_a_mint_that_answered_and_left_no_line_is_a_fail
 t test_a_log_that_has_not_caught_up_is_read_again
 t test_a_log_line_that_never_arrives_still_fails_the_row

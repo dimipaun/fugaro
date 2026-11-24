@@ -2127,15 +2127,22 @@ def cmd_audit():
     line's -- a string -- is what stopped this check on 2026-11-24 with
     `join`'s TypeError.
 
-    The two are told apart by the audit contract's own shape and not by their
-    message: the audit line writes every field of its event, empty ones
-    included (so a line is one shape and a reader does not have to tell "not
-    known" from "not there"), and `purpose` is one of them -- while the
-    diagnosis line carries none of the contract's fields."""
+    The line is told apart from every other line by the audit contract's own
+    shape and not by their messages: the audit line writes EVERY field of its
+    event, empty ones included (so a line is one shape and a reader does not
+    have to tell "not known" from "not there"), while a line written beside it
+    carries the few fields its author had and no more. All ten are required
+    here. One field is not the contract: internal/credsvc's github.go writes a
+    warn line when GitHub refuses the mint, carrying purpose, credential,
+    repository, run and -- when GitHub answered -- the status as a NUMBER, so
+    a filter of `purpose` alone counted that warn line as a second audited act
+    and this row then named an act that never happened."""
     raw = sys.stdin.read()
     entries = json.loads(raw) if raw.strip() else []
-    audit = [e.get("jsonPayload") or {} for e in entries
-             if "purpose" in (e.get("jsonPayload") or {})]
+    contract = ("run", "repository", "job", "caller", "credential", "purpose",
+                "tier", "status", "slip", "owner")
+    audit = [p for p in (e.get("jsonPayload") or {} for e in entries)
+             if all(k in p for k in contract)]
     fields = {}
     statuses = []
     for payload in audit:
