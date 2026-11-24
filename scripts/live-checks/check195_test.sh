@@ -158,6 +158,7 @@ ALLOWED = {
     ("storage", "buckets", "get-iam-policy"): ("--format"),
     ("storage", "buckets", "add-iam-policy-binding"): ("--member", "--role", "--quiet"),
     ("storage", "buckets", "delete"): ("--quiet"),
+    ("storage", "rm"): ("--recursive", "--quiet"),
     ("storage", "cat"): (),
 }
 
@@ -244,6 +245,14 @@ def step_line():
     if mode == "wrong-email":
         return "CHK195 status=200 email=somebody-else@fugaro-dev.iam.gserviceaccount.com"
     return "CHK195 status=200 email=%s" % CALLER
+
+
+def bucket_holds_the_object():
+    """Whether the bucket holds the step's object. Every mode outside NO_OBJECT is
+    a build whose write into the bucket landed -- which is exactly what `storage
+    cat` answers out of -- so the bucket is non-empty in all of them and the API
+    would refuse a plain delete."""
+    return mode not in NO_OBJECT
 
 
 def tsv(*lines):
@@ -407,6 +416,24 @@ elif sub == ("storage", "buckets", "add-iam-policy-binding"):
 elif sub == ("storage", "buckets", "delete"):
     if mode == "bucket-delete-fails":
         die("storage.buckets.delete failed")
+    if bucket_holds_the_object():
+        # The real API: buckets delete refuses a bucket that still holds an
+        # object, which this check's bucket does -- the step wrote its one line
+        # into it. Nothing in the check calls this; it is here so a regression
+        # back to it is refused here rather than in the owner's project.
+        die("Bucket is not empty: gs://%s" % state_get("bucket").replace("gs://", ""))
+    state_set("bucket", "0")
+    state_set("bucketgrant", "0")
+elif sub == ("storage", "rm"):
+    # What the check deletes its bucket with: --recursive takes the step's object
+    # and the bucket together, which is the only way a bucket holding an object
+    # goes at all.
+    if not has("--recursive"):
+        die("the step's object is still in the bucket: --recursive is what removes it")
+    if mode == "bucket-delete-fails":
+        die("storage.objects.delete was refused: the session has expired")
+    if state_get("bucket") in ("", "0"):
+        die("No URLs matched")
     state_set("bucket", "0")
     state_set("bucketgrant", "0")
 elif sub == ("storage", "cat"):
@@ -1152,12 +1179,16 @@ test_happy_path() {
   expect_contains "$calls" "storage buckets add-iam-policy-binding gs://fugaro-dev-chk195-" "happy path: the grant is on the bucket itself"
   expect_contains "$calls" "--member=serviceAccount:fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com --role=roles/storage.objectCreator" "happy path: objectCreator, on the bucket, for the throwaway account"
   expect_contains "$calls" "storage cat gs://fugaro-dev-chk195-" "happy path: the step's own line is read out of the object"
-  expect_contains "$calls" "storage buckets delete gs://fugaro-dev-chk195-" "happy path: the bucket is deleted again"
+  # Deleted with rm --recursive, and not with buckets delete: the step's object is
+  # in the bucket, and the API refuses to delete a bucket that holds one -- the
+  # fake refuses it the same way, so a regression to buckets delete fails here.
+  expect_contains "$calls" "storage rm --recursive gs://fugaro-dev-chk195-" "happy path: the bucket goes with the object in it"
+  expect_absent "$calls" "storage buckets delete" "happy path: not with buckets delete, which a non-empty bucket refuses"
   # ... and only after its label is read: the record of creating it is written
   # before the create returns, so the Restore may not go by the record alone.
   local label_line bucket_delete_line
   label_line=$(grep -n 'storage buckets describe' "$dir/logs/gcloud.calls" | head -n 1 | cut -d: -f1)
-  bucket_delete_line=$(grep -n 'storage buckets delete' "$dir/logs/gcloud.calls" | head -n 1 | cut -d: -f1)
+  bucket_delete_line=$(grep -n 'storage rm --recursive' "$dir/logs/gcloud.calls" | head -n 1 | cut -d: -f1)
   [ -n "$label_line" ] && [ -n "$bucket_delete_line" ] && [ "$label_line" -lt "$bucket_delete_line" ] \
     || fail "happy path: the bucket's label must be read before it is deleted (label at $label_line, delete at $bucket_delete_line)"
   expect_contains "$calls" "storage buckets describe gs://fugaro-dev-chk195-" "happy path: the bucket's own label is read out of a describe"
@@ -1394,8 +1425,8 @@ test_a_build_whose_step_exited_zero_is_a_pass_without_the_log() {
   expect_contains "$out" "Cloud Build omits a zero exit code" "exit 0 with no log: the row names the omission as the reason the column is empty"
   expect_absent "$out" "the build's own record says its step exited 0" "exit 0 with no log: the row does not claim a code the record does not carry"
   expect_contains "$out" "the token's email claim is fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "exit 0 with no log: what code 0 asserts about the claim"
-  expect_contains "$out" "the step's own line was read from NEITHER place" "exit 0 with no log: the row says the line was not read"
-  expect_contains "$out" "gcloud storage cat gs://fugaro-dev-chk195-" "exit 0 with no log: the row names the object read that came back empty"
+  expect_contains "$out" "the step's own line was read from neither place" "exit 0 with no log: the row says the line was not read"
+  expect_contains "$out" "line not read: gcloud storage cat gs://fugaro-dev-chk195-" "exit 0 with no log: the row names the object read that came back empty, and its command"
   expect_contains "$out" "FACT line-object: INFO" "exit 0 with no log: the object row says where the line would have been"
   # The reading came out of the build's own record: the check asks for the step's
   # exit code, which is not a Cloud Logging read at all.
@@ -1410,11 +1441,11 @@ test_a_build_whose_step_exited_zero_is_a_pass_without_the_log() {
 test_each_step_exit_code_names_the_cause_without_the_log() {
   local spec mode want dir
   for spec in \
-    "11|the service answered 401" \
-    "12|the service answered 403" \
-    "13|a status that is neither 200, 401 nor 403" \
-    "14|minted it no ID token" \
-    "15|the token's email claim is NOT fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com"; do
+    "11|the one code it exits for a 401" \
+    "12|the one code it exits for a 403" \
+    "13|any other status or none at all" \
+    "14|the metadata server minting it no ID token" \
+    "15|whose token is NOT fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com"; do
     mode=${spec%%|*}
     want=${spec#*|}
     dir=$work/exit$mode
@@ -1424,7 +1455,7 @@ test_each_step_exit_code_names_the_cause_without_the_log() {
     expect_contains "$out" "FACT call: FAIL" "step exit $mode: the row"
     expect_contains "$out" "the build's own record says its step exited $mode" "step exit $mode: the code the record gave"
     expect_contains "$out" "$want" "step exit $mode: the cause the row names"
-    expect_contains "$out" "gcloud builds log fake-build-1 --project=fugaro-dev" "step exit $mode: how to read the line by hand"
+    expect_contains "$out" "gcloud builds log fake-build-1 --project=fugaro-dev" "step exit $mode: the block names the command that reads the line by hand"
     expect_contains "$out" "FACT build: FAIL" "step exit $mode: the build ended FAILURE"
     expect_contains "$out" "FACT service-deleted: PASS" "step exit $mode: the service is deleted"
     expect_contains "$out" "FACT account-deleted: PASS" "step exit $mode: the account is deleted"
@@ -1443,7 +1474,7 @@ test_a_step_exit_code_this_check_never_writes_is_a_failure() {
   run195 "$dir" FAKE_GCLOUD_MODE=step-exit-unknown
   expect_status "$status" 1 "an unknown code: the verdict"
   expect_contains "$out" "FACT call: FAIL" "an unknown code: the row"
-  expect_contains "$out" "says its step exited 1, which is not a code this check's step writes" "an unknown code: the row refuses to name a cause"
+  expect_contains "$out" "says its step exited 1, which is not a code this step writes" "an unknown code: the row refuses to name a cause"
   expect_contains "$out" "the step exited with non-zero status: 1" "an unknown code: the failure detail is carried too"
   expect_absent "$out" "FACT call: PASS" "an unknown code: the row is not a pass"
 }
@@ -1517,11 +1548,13 @@ test_an_object_that_never_landed_falls_back_on_the_log() {
   run195 "$dir" FAKE_GCLOUD_MODE=object-missing
   expect_status "$status" 0 "object missing: the verdict (the build passed; only the write to the bucket is missing)"
   expect_contains "$out" "FACT line-object: INFO" "object missing: the object row"
-  expect_contains "$out" "carried nothing this reading could take" "object missing: the object was empty"
-  expect_contains "$out" "gcloud storage cat gs://fugaro-dev-chk195-" "object missing: the row names the exact command to read it by hand"
-  expect_contains "$out" "read out of the build's own log instead" "object missing: where the line came from"
+  expect_contains "$out" "line not read from the object: gcloud storage cat gs://fugaro-dev-chk195-" "object missing: the row names the exact command to read it by hand"
+  expect_contains "$out" "read out of the build's own log instead: gcloud builds log fake-build-1 --project=fugaro-dev" "object missing: where the line came from, with that command too"
+  expect_absent "$out" "carried nothing this reading could take" "object missing: what the cat answered is on stderr, not in the row"
+  expect_contains "$err" "carried nothing this reading could take" "object missing: the object was empty, said on stderr"
+  expect_contains "$err" "the step retries the write 6 times" "object missing: the retry the step makes is on stderr too"
   expect_contains "$out" "was answered 200 by the IAM-only service" "object missing: the log's reading is the row"
-  expect_absent "$out" "the step's own line was read from NEITHER place" "object missing: the log did carry it, so this is not the neither case"
+  expect_absent "$out" "the step's own line was read from neither place" "object missing: the log did carry it, so this is not the neither case"
 }
 
 # Both writes lost and the log carrying the step's own marker that its write into
@@ -1536,9 +1569,10 @@ test_the_steps_own_not_written_marker_is_never_read_as_the_line() {
   run195 "$dir" FAKE_GCLOUD_MODE=object-not-written
   expect_status "$status" 0 "the marker: the verdict"
   expect_contains "$out" "FACT line-object: INFO" "the marker: the line row"
-  expect_contains "$out" "could not be read from EITHER place" "the marker: neither place carried it"
-  expect_contains "$out" "it carried 'Step #0: CHK195-OBJECT-NOT-WRITTEN" "the marker: the row quotes what the log did carry"
-  expect_contains "$out" "gcloud storage cat gs://fugaro-dev-chk195-" "the marker: the row names the command to read the object by hand"
+  expect_contains "$out" "line not read: gcloud storage cat gs://fugaro-dev-chk195-" "the marker: the row names the command to read the object by hand"
+  expect_contains "$out" "; gcloud builds log fake-build-1 --project=fugaro-dev" "the marker: the row names the command to read the log with"
+  expect_contains "$err" "was read from NEITHER place" "the marker: neither place carried it, on stderr"
+  expect_contains "$err" "it carried 'Step #0: CHK195-OBJECT-NOT-WRITTEN" "the marker: stderr says what the log did carry"
   expect_contains "$out" "the build ended SUCCESS with no steps[0].exitCode" "the marker: the reading is the build's own record, not the marker"
   expect_contains "$out" "the service answered 200 and the token's email claim is fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "the marker: the answer is still named"
   expect_absent "$out" "status=none" "the marker: the marker was not read as the line"
@@ -1641,8 +1675,8 @@ test_a_bucket_that_is_not_this_runs_is_left_alone() {
   expect_contains "$out" "FACT bucket-deleted: PASS" "not this run's bucket: the row"
   expect_contains "$out" "does not carry this run's own label chk195=" "not this run's bucket: why it was left"
   expect_contains "$out" "this check deletes only its own" "not this run's bucket: the rule"
-  expect_absent "$out" "delete it by hand with gcloud storage buckets delete" "not this run's bucket: the owner is never told to delete somebody else's bucket"
-  expect_absent "$(cat "$dir/logs/gcloud.calls")" "storage buckets delete" "not this run's bucket: no delete was issued at all"
+  expect_absent "$out" "delete it by hand" "not this run's bucket: the owner is never told to delete somebody else's bucket"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "storage rm --recursive" "not this run's bucket: no delete was issued at all"
   expect_contains "$out" "FACT restore: PASS" "not this run's bucket: the Restore row"
   expect_absent "$out" "everything this check created was deleted and READ BACK: the service (and the invoker binding with it), the bucket" "not this run's bucket: the Restore row does not claim the bucket was deleted"
   expect_contains "$out" "was NOT deleted and is not this check's" "not this run's bucket: the Restore row says which one was left"
@@ -1660,8 +1694,39 @@ test_a_bucket_whose_label_cannot_be_read_is_not_deleted() {
   expect_contains "$out" "carries this run's own label chk195=" "unreadable label: what could not be read"
   expect_contains "$out" "gcloud storage buckets describe gs://fugaro-dev-chk195-" "unreadable label: how to read it by hand"
   expect_contains "$out" "delete the bucket yourself only if it carries that label" "unreadable label: the by-hand delete is guarded by the label"
-  expect_absent "$(cat "$dir/logs/gcloud.calls")" "storage buckets delete" "unreadable label: no delete was issued at all"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "storage rm --recursive" "unreadable label: no delete was issued at all"
   expect_contains "$out" "FACT restore: FAIL" "unreadable label: the Restore row"
+}
+
+# A delete the bucket refuses is a FAIL that names the one command that can still
+# remove it, and that command is `rm --recursive`: the step's object is in the
+# bucket, and the API refuses a plain buckets delete on a bucket that holds one.
+test_a_bucket_that_cannot_be_deleted_is_a_failure() {
+  local dir=$work/bucketleftover
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=bucket-delete-fails
+  expect_status "$status" 1 "bucket leftover: the verdict"
+  expect_contains "$out" "FACT bucket-deleted: FAIL" "bucket leftover: the row"
+  expect_contains "$out" "gcloud storage rm --recursive gs://fugaro-dev-chk195-" "bucket leftover: how to delete it by hand"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "storage rm --recursive gs://fugaro-dev-chk195-" "bucket leftover: the check deleted it with rm --recursive, not buckets delete"
+  expect_contains "$out" "FACT restore: FAIL" "bucket leftover: the Restore row"
+}
+
+# And the fake refuses a non-empty bucket delete the way the API does, so the
+# command the check uses is not a matter of taste: a copy that deletes the bucket
+# with `buckets delete` is refused, leaves the bucket (and the objectCreator
+# binding beside it) behind, and FAILs its own read-back.
+test_a_bucket_delete_that_refuses_a_non_empty_bucket() {
+  local dir=$work/bucketrefused
+  prepare "$dir"
+  mkdir -p "$dir/copy"
+  sed 's|gcloud storage rm --recursive "gs://${BUCKET:?}" --quiet|gcloud storage buckets delete "gs://${BUCKET:?}" --quiet|' \
+    "$script" >"$dir/copy/check195.sh"
+  expect_contains "$(cat "$dir/copy/check195.sh")" "gcloud storage buckets delete \"gs://\${BUCKET:?}\"" "buckets delete: the copy really deletes the bucket the old way"
+  run_copy "$dir" "$dir/copy/check195.sh"
+  expect_status "$status" 1 "buckets delete: the verdict"
+  expect_contains "$out" "FACT bucket-deleted: FAIL" "buckets delete: the bucket is left behind and FAILed"
+  expect_contains "$out" "delete it by hand with gcloud storage rm --recursive" "buckets delete: the by-hand command is the one that takes the object too"
 }
 
 # The other half of the same rule: the project-level binding has to be removed
@@ -1780,6 +1845,8 @@ t test_a_grant_that_fails_stops_before_the_build
 t test_a_service_that_cannot_be_deleted_is_a_failure
 t test_a_bucket_that_is_not_this_runs_is_left_alone
 t test_a_bucket_whose_label_cannot_be_read_is_not_deleted
+t test_a_bucket_that_cannot_be_deleted_is_a_failure
+t test_a_bucket_delete_that_refuses_a_non_empty_bucket
 t test_an_account_that_cannot_be_deleted_is_a_failure
 t test_never_belong
 

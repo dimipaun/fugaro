@@ -383,11 +383,13 @@ restore_run() {
     # below, so the bucket's own roles/storage.objectCreator binding goes with it:
     # a binding that outlives its member reads back as deleted:serviceAccount:...
     # and could never be removed. The object the step wrote — the whole reason the
-    # bucket existed — goes with the bucket.
+    # bucket existed — goes with the bucket: `rm --recursive` is the only one of
+    # the two that can take a bucket holding an object, since the API refuses a
+    # plain buckets delete on a non-empty one.
     bucket_own=$(bucket_owner_state)
     case "$bucket_own" in
     mine)
-      gcloud storage buckets delete "gs://${BUCKET:?}" --quiet >&2 || true
+      gcloud storage rm --recursive "gs://${BUCKET:?}" --quiet >&2 || true
       bucket_deleted=yes
       ;;
     other)
@@ -439,7 +441,7 @@ restore_run() {
     fact bucket-deleted PASS "gs://${BUCKET}, the line the step wrote into it and the roles/storage.objectCreator binding beside it are gone (read back by a listing)"
   elif [ "$bst" = there ]; then
     left="$left the bucket gs://${BUCKET};"
-    fact bucket-deleted FAIL "gs://${BUCKET} is still in ${P}: delete it by hand with gcloud storage buckets delete gs://${BUCKET} --project=${P} --quiet"
+    fact bucket-deleted FAIL "gs://${BUCKET} is still in ${P}: delete it by hand with gcloud storage rm --recursive gs://${BUCKET} --project=${P} --quiet"
   else
     left="$left whether the bucket gs://${BUCKET} is gone;"
     fact bucket-deleted FAIL "whether gs://${BUCKET} is gone cannot be read (the list failed), so nothing is claimed about it: check it with gcloud storage buckets list --project=${P} --format=value(name) and delete it if it is there"
@@ -1324,9 +1326,11 @@ step_build() {
     obj_why=$(last_lines "$SCRATCH/line-object.err")
     if build_log "$BUILD_ID"; then
       got=$(step_line_in "$SCRATCH/build-log.txt")
-      fact line-object INFO "the object the step writes its one line into carried nothing this reading could take: gcloud storage cat ${LINE_URI} answered '${obj_why}' within ${LINE_WAIT_SECONDS} s. The line was read out of the build's own log instead — the step says there when its write into the object did not land — so the step's WRITE to the bucket is what to look at rather than this reading: the account holds roles/storage.objectCreator on that bucket alone (the write-grants row says whether that binding was read back from the bucket's own policy) and the step retries the write ${LINE_TRIES} times, ${LINE_RETRY_SECONDS} s apart. Read the object by hand with gcloud storage cat ${LINE_URI}"
+      owner "the object the step writes its one line into carried nothing this reading could take: gcloud storage cat ${LINE_URI} answered '${obj_why}' within ${LINE_WAIT_SECONDS} s. The step's WRITE to the bucket is what to look at rather than the reading: the account holds roles/storage.objectCreator on that bucket alone (the write-grants row says whether that binding was read back from the bucket's own policy) and the step retries the write ${LINE_TRIES} times, ${LINE_RETRY_SECONDS} s apart, and the step says in the build's own log when its write did not land"
+      fact line-object INFO "line not read from the object: gcloud storage cat ${LINE_URI}; read out of the build's own log instead: gcloud builds log ${BUILD_ID} --project=${P}"
     else
-      fact line-object INFO "the step's own line could not be read from EITHER place: neither the object it writes it into — gcloud storage cat ${LINE_URI}, answered '${obj_why}' within ${LINE_WAIT_SECONDS} s — nor the build's own log, which within ${LOG_WAIT_SECONDS} s carried no line with status= in it (it carried '$(last_lines "$SCRATCH/build-log.txt")', and the command answered $(last_lines "$SCRATCH/build-log.err")). Read it by hand with gcloud storage cat ${LINE_URI}, and read the build's lines with gcloud builds log ${BUILD_ID} --project=${P}: the step says there when its write into the object did not land. The reading below is the step's own exit code, out of the build's own record, which goes through neither"
+      owner "the step's own line was read from NEITHER place: gcloud storage cat ${LINE_URI} answered '${obj_why}' within ${LINE_WAIT_SECONDS} s, and the build's own log carried no line with status= within ${LOG_WAIT_SECONDS} s (it carried '$(last_lines "$SCRATCH/build-log.txt")', and the command answered $(last_lines "$SCRATCH/build-log.err")) — the step says in that log when its write did not land"
+      fact line-object INFO "line not read: gcloud storage cat ${LINE_URI}; gcloud builds log ${BUILD_ID} --project=${P}. The reading below is the step's own exit code, out of the build's own record"
     fi
   fi
   local code email
@@ -1389,40 +1393,41 @@ step_build() {
 # shell's own status — means the step died before it decided anything.
 call_from_step_exit_code() {
   local code=$1 detail=$2 zero_omitted=${3:-no}
-  # Where the line would have been, said once and not repeated per code: the
-  # object the step writes it into (gcloud storage cat, the reading that needs no
-  # Cloud Logging) and the build's own log, with the exact command to read each
-  # by hand. Every row below is a code that was read WITHOUT the line, so every
-  # one of them carries this.
-  local nowhere="the step's own line was read from NEITHER place: not out of the object it writes it into (gcloud storage cat ${LINE_URI} answered '$(last_lines "$SCRATCH/line-object.err")' within ${LINE_WAIT_SECONDS} s) and not out of the build's own log, which within ${LOG_WAIT_SECONDS} s carried no line with status= in it (it carried '$(last_lines "$SCRATCH/build-log.txt")', and the command answered $(last_lines "$SCRATCH/build-log.err")) — the step says in that log when its write did not land. Read the object by hand with gcloud storage cat ${LINE_URI} and the build's lines with gcloud builds log ${BUILD_ID} --project=${P}"
+  # Every row below is a code that was read WITHOUT the line, so every one of
+  # them says the one clause. The two commands that would read it by hand are in
+  # the line-object row above, which is the row that says the line did not come;
+  # what the object cat answered and what the log carried is progress for the
+  # terminal, on stderr, and not a fact in the block.
+  owner "the step's own line was read from NEITHER place: gcloud storage cat ${LINE_URI} answered '$(last_lines "$SCRATCH/line-object.err")' within ${LINE_WAIT_SECONDS} s, and the build's own log carried no line with status= in it within ${LOG_WAIT_SECONDS} s (it carried '$(last_lines "$SCRATCH/build-log.txt")', and the command answered $(last_lines "$SCRATCH/build-log.err"))"
+  local nowhere="the step's own line was read from neither place"
   case "$code" in
   0)
     local read_as="the build's own record says its step exited 0"
     if [ "$zero_omitted" = yes ]; then
-      read_as="the build ended SUCCESS with no steps[0].exitCode in its record, and that empty column IS the code 0: Cloud Build omits a zero exit code (the field is a proto3 int64 with no presence), this build has no step other than this one, and a build that ended SUCCESS is a step that ran and exited 0"
+      read_as="the build ended SUCCESS with no steps[0].exitCode in its record, and that empty column IS the code 0: Cloud Build omits a zero exit code, and this build has no step other than this one"
     fi
-    fact call PASS "${read_as}, and the step is written to exit 0 for one outcome alone: the service answered 200 and the token's email claim is ${CALLER_EMAIL}, the throwaway account this check granted roles/run.invoker on ${SVC} alone. ${nowhere}. The email claim is therefore asserted by the exit code rather than printed. The token itself is in no line of this block"
+    fact call PASS "${read_as}, the one code the step exits for: the service answered 200 and the token's email claim is ${CALLER_EMAIL}, the account this check granted roles/run.invoker on ${SVC} alone. ${nowhere}, so the claim is asserted by the exit code and not printed, and no token is in any line of this block"
     ;;
   11)
-    fact call FAIL "the build's own record says its step exited 11, the code the step exits for one outcome alone: the service answered 401, the front end refusing the token itself. ${nowhere}, so the token's email claim was not printed. A 401 is a refusal of the token rather than of the grant, so this is not yet the reading S4 rests on"
+    fact call FAIL "the build's own record says its step exited 11, the one code it exits for a 401 — the front end refusing the token itself. ${nowhere}, so the email claim was not printed. A 401 refuses the token rather than the grant, so this is not yet the reading S4 rests on"
     ;;
   12)
-    fact call FAIL "the build's own record says its step exited 12, the code the step exits for one outcome alone: the service answered 403, Cloud Run refusing this caller. ${nowhere}, so the token's email claim was not printed. This is the reading S4's build exception would rest on: the grant this check made does not admit the account's own token"
+    fact call FAIL "the build's own record says its step exited 12, the one code it exits for a 403 — Cloud Run refusing this caller. ${nowhere}, so the email claim was not printed. This is the reading S4's build exception would rest on: the grant does not admit the account's own token"
     ;;
   13)
-    fact call FAIL "the build's own record says its step exited 13, the code the step exits for one outcome alone: the service answered with a status that is neither 200, 401 nor 403, or answered nothing at all. ${nowhere}, so the token's email claim and the status itself were not printed. The build's own failureInfo.detail: ${detail:-none given}"
+    fact call FAIL "the build's own record says its step exited 13, the one code it exits for any other status or none at all. ${nowhere}, so neither the claim nor the status was printed. The build's own failureInfo.detail: ${detail:-none given}"
     ;;
   14)
-    fact call FAIL "the build's own record says its step exited 14, the code the step exits for one outcome alone: the build's own metadata server minted it no ID token, so ${SVC} was never called and nothing about the grant was measured. ${nowhere}. The build's own default service account and the metadata server are the two things to read"
+    fact call FAIL "the build's own record says its step exited 14, the one code it exits for the metadata server minting it no ID token: ${SVC} was never called and the grant was not measured. ${nowhere}. The build's own default service account and the metadata server are the two things to read"
     ;;
   15)
-    fact call FAIL "the build's own record says its step exited 15, the code the step exits for one outcome alone: the service answered 200, but the token's email claim is NOT ${CALLER_EMAIL} — the token was minted for another identity, so the 200 says nothing about the account this check granted. ${nowhere}, so the claim itself was not printed. The build's serviceAccount field, the grant, and the metadata server's default account are the three things to read"
+    fact call FAIL "the build's own record says its step exited 15, the one code it exits for a 200 whose token is NOT ${CALLER_EMAIL}: it was minted for another identity, so the 200 says nothing about the account this check granted. ${nowhere}, so the claim itself was not printed. The build's serviceAccount field, the grant and the metadata server are the three things to read"
     ;;
   "")
-    fact call FAIL "${nowhere}, and the build's own record carries no steps[0].exitCode either — and the build did NOT end SUCCESS, so this empty column is not the zero Cloud Build omits — so the token's email claim and the status the service answered are NOT measured. A record with no step exit code on a build that did not succeed is a build whose step never ran: a container that could not start, or an API that refused the step, and its failureInfo.detail says so: ${detail:-none given}. Read the build with 'gcloud builds describe ${BUILD_ID} --project=${P}' and its lines with 'gcloud builds log ${BUILD_ID} --project=${P}'"
+    fact call FAIL "${nowhere}, and the build's own record carries no steps[0].exitCode either — and the build did NOT end SUCCESS, so this empty column is not the zero Cloud Build omits — so neither the claim nor the status the service answered was measured. A record with no step exit code on a build that did not succeed is a step that never ran: a container that could not start, or an API that refused the step, and its failureInfo.detail says so: ${detail:-none given}. Read it with 'gcloud builds describe ${BUILD_ID} --project=${P}' and its lines with 'gcloud builds log ${BUILD_ID} --project=${P}'"
     ;;
   *)
-    fact call FAIL "${nowhere}, and the build's own record says its step exited ${code}, which is not a code this check's step writes — 0, 11, 12, 13, 14 and 15 are the only ones it can end with — so the cause is NOT named and nothing about the grant was measured. It is a step that died before it decided anything: a shell that could not run the script, a pull the container could not make. The build's own failureInfo.detail says: ${detail:-none given}. Read the build with 'gcloud builds describe ${BUILD_ID} --project=${P}' and its lines with 'gcloud builds log ${BUILD_ID} --project=${P}'"
+    fact call FAIL "${nowhere}, and the build's own record says its step exited ${code}, which is not a code this step writes — 0, 11, 12, 13, 14 and 15 are the only ones it can end with — so the cause is NOT named and the grant was not measured. It is a step that died before it decided anything: a shell that could not run the script, a pull the container could not make. The build's own failureInfo.detail says: ${detail:-none given}. Read it with 'gcloud builds describe ${BUILD_ID} --project=${P}' and its lines with 'gcloud builds log ${BUILD_ID} --project=${P}'"
     ;;
   esac
 }
@@ -1453,7 +1458,7 @@ print_plan() {
   say "and its Restore (also from the exit trap) would run:"
   say "  [network, writes] gcloud builds cancel <build id> --project=${P} (refused, harmlessly, when the build already ended)"
   say "  [network, deletes] gcloud run services delete ${SVC} --project=${P} --region=${L}  (which takes the roles/run.invoker binding with it)"
-  say "  [network, deletes] gcloud storage buckets delete gs://${BUCKET} --quiet  (which takes the object the step wrote its one line into and the bucket-level roles/storage.objectCreator binding with it; it is deleted only when the bucket carries this run's own label chk195=${BUCKET_NONCE}, and a bucket that does not is never touched)"
+  say "  [network, deletes] gcloud storage rm --recursive gs://${BUCKET} --quiet  (--recursive because the step's object is in it, and a bucket holding an object is not deleted by buckets delete; it takes the object and the bucket-level roles/storage.objectCreator binding with it, and runs only when the bucket carries this run's own label chk195=${BUCKET_NONCE} — a bucket that does not is never touched)"
   say "  [network, deletes] gcloud projects remove-iam-policy-binding ${P} --member=serviceAccount:${CALLER_EMAIL} --role=roles/logging.logWriter --condition=None"
   say "  [network, deletes] gcloud iam service-accounts delete ${CALLER_EMAIL} --project=${P}, re-reading the project policy first and retrying up to ${ACCOUNT_DELETE_TRIES} times: the binding removal and the account deletion are ordered IAM writes that IAM's own consistency can put out of order — the owner's run of 2026-11-24 came back with the account still there and the refusal was not captured, so the re-read covers both causes: a delete refused as still referenced by a policy binding, and a delete that landed whose account the list was still naming"
   say "  [network] four reads that say the service, the bucket, the account and the project binding are gone"
