@@ -6782,7 +6782,22 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, sharedProfile, repo, auth,
 	// repository by construction; the root's own tfvars say the same thing,
 	// so the two sides cannot disagree.
 	address := infra.CredentialsServiceAddress(installed, local.CredentialsServiceOn(), auth, mode)
-	if auth == "" {
+	if auth == "" && local.Vertex {
+		// The auth this launcher could not read, read off the repository's own
+		// record of it instead (localcfg.Repo.Vertex, which `fugaro update`
+		// writes from the very auth the spec builder decides the address with,
+		// infra's repoCtx): a vertex repository's address is the installation's
+		// own block and nothing else (CredentialsServiceAddress's vertex arm),
+		// so the two stand-ins below — the record and this machine's tfvars —
+		// are the wrong question for it, both describing the model switch and
+		// both false by construction. Without this a console launch of a vertex
+		// repository — no document to read and no tfvars of its root on the
+		// machine that spawns it — was handed nothing while its root's own
+		// apply granted its account roles/run.invoker, which is the acceptance
+		// IS9 states: the installation has a service, so the launcher puts the
+		// address on the execution.
+		address = installed
+	} else if auth == "" {
 		// No document this launcher could read, so the switch's third
 		// condition is judged on the two answers that do not need one: the
 		// repository's own record, and this machine's tfvars of the root it

@@ -79,6 +79,67 @@ func TestLaunchPutsAddressForVertexRepo(t *testing.T) {
 	}
 }
 
+// TestLaunchPutsAddressForVertexWithoutADocument is the console half of the
+// acceptance, and it is the half no document covers: `fugaro run --repo` from
+// a directory holding no checkout of the repository — what the desktop console
+// spawns — has no `agent.auth` to read, so credentialsServiceLaunchEnv stands
+// one of two other answers in for it, the repository's own record and this
+// machine's tfvars of its root (deployed). For a vertex repository both
+// describe the MODEL switch and are false by construction — the record because
+// infra.CredentialsServiceServes answers false for that auth, the tfvars
+// because the console's machine applied no root of that repository at all — so
+// a launcher reading either handed a vertex run nothing while the
+// installation's own apply had just granted its account roles/run.invoker, and
+// the run's bootstrap then fetched no workflow secret: exactly the shortfall
+// the acceptance's `whenever the installation has a service` rules out. The
+// auth it could not read comes off the entry the local config publishes for
+// the repository instead (localcfg.Repo.Vertex, written from the auth the
+// spec builder decides the address with), and the address is then the
+// installation's own block and nothing else, as CredentialsServiceAddress's
+// vertex arm has it.
+//
+// The second row is the designed record of a vertex repository — false — and
+// the third is F17's floor: a vertex repository of an installation with no
+// block at all is handed nothing, because there is no address to hand it. The
+// last row is the control that the stand-in is the vertex auth's alone: a
+// repository whose entry carries no vertex flag is judged on the two answers
+// it always was, and with neither of them saying on it is handed nothing.
+func TestLaunchPutsAddressForVertexWithoutADocument(t *testing.T) {
+	want := envCredentialsServiceURL + "=" + launchCredsURL
+	block := &localcfg.CredentialsService{URL: launchCredsURL}
+	for name, tc := range map[string]struct {
+		lc       *localcfg.Config
+		deployed bool
+		on       bool
+	}{
+		"a vertex repository, no record and no tfvars of its root": {
+			lc: &localcfg.Config{CredentialsService: block, Repos: map[string]localcfg.Repo{"acme/app": {Vertex: true}}},
+			on: true,
+		},
+		"a vertex repository whose record is the designed false": {
+			lc: &localcfg.Config{CredentialsService: block, Repos: map[string]localcfg.Repo{"acme/app": {Vertex: true, CredentialsServiceReady: localcfg.RecordSwitch(false)}}},
+			on: true,
+		},
+		"a vertex repository of an installation with no service": {
+			lc: &localcfg.Config{Repos: map[string]localcfg.Repo{"acme/app": {Vertex: true}}},
+		},
+		"a repository that is not a vertex one, and neither stand-in": {
+			lc: &localcfg.Config{CredentialsService: block, Repos: map[string]localcfg.Repo{"acme/app": {}}},
+		},
+	} {
+		got := credentialsServiceLaunchEnv(tc.lc, "", "acme/app", "", "", tc.deployed, false)
+		if tc.on {
+			if len(got) != 1 || got[0] != want {
+				t.Errorf("%s: credentialsServiceLaunchEnv = %v, want [%s]: a console launch reads no document, and a vertex repository's address is the installation's block alone — neither the record nor this machine's tfvars can answer for it, both being the model switch and both false for this auth (D3326, F17)", name, got, want)
+			}
+			continue
+		}
+		if len(got) != 0 {
+			t.Errorf("%s: credentialsServiceLaunchEnv = %v, want none: the vertex arm reaches the one auth D3326 names, and a repository the switch holds off keeps the path it has", name, got)
+		}
+	}
+}
+
 // TestLaunchAddressIsThePlanAddressForVertex is the one-function half of the
 // acceptance: the launch answers from infra.CredentialsServiceAddress, the very
 // function the repository root's tfvars are built from, so a job is handed an

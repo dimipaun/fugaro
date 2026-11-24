@@ -159,8 +159,14 @@ func RepoStateObjects(ctx context.Context, c *Clients, stateBucket, slug string)
 // modules/workflow/sa.tf's
 // google_cloud_run_v2_service_iam_member.credentials, planned with count 0/1
 // on that root's installation.credentials_service, so an address with this
-// suffix is in the state exactly when that root was applied with the service
-// on. The suffix is the whole address's tail — module.repo.module.workflow
+// suffix is in the state exactly when that root was applied with the ADDRESS
+// on — the service serving the repository's credentials, or, for a vertex
+// repository alone, the block whose address is what its runner fetches
+// workflow secrets through (D3326, CredentialsServiceAddress). The two come
+// apart for that one auth, so a caller after "was this root applied with the
+// service ON" folds the auth in (internal/cli's backfillCredentialsServiceReady)
+// where a caller after the address does not. The suffix is the whole address's
+// tail — module.repo.module.workflow
 // ["<name>"].google_cloud_run_v2_service_iam_member.credentials[0] — and it is
 // the same spelling the spec's own address list carries (spec.go's
 // repoAddresses), so a state and a spec name one resource the same way.
@@ -172,7 +178,9 @@ const credentialsMemberAddress = "google_cloud_run_v2_service_iam_member.credent
 // grant.
 //
 // It is the shared evidence for "this repository's root has been applied with
-// the credentials service on", where the tfvars a workdir holds
+// the credentials service's ADDRESS" — which is the service on for every auth
+// but `vertex` (credentialsMemberAddress above) — where the tfvars a workdir
+// holds
 // (RepoCredentialsServiceDeployed) are only this machine's: the workdir is
 // per-machine state (<state>/fugaro/terraform/<project>/repos/<slug>), so a
 // repository whose root was applied from another machine, or from another

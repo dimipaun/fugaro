@@ -985,6 +985,25 @@ func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, c *infra.
 			// read that failed.
 			continue
 		}
+		if on && lc.Repos[key].Vertex {
+			// The grant is the ADDRESS, and a vertex repository is the one
+			// repository whose address its root plans without serving its
+			// credentials (D3326, infra.CredentialsServiceAddress): the state
+			// answers that the root was applied with the block on, which for a
+			// vertex root is the workflow-secret fetch's address and not the
+			// model switch this record is about. Writing the reading over such
+			// an entry would record `ready` for a repository whose jobs kept
+			// every model mount the module drops for a served one, and hand
+			// `fugaro image build` and the image refresh — whose builds are
+			// judged on this record alone (image.go's
+			// appliedBuildMountsServed) — a service address that root granted
+			// its BUILD account no roles/run.invoker for. The entry is answered
+			// as the repository door answers it, which is the switch's own
+			// reading for this auth (CredentialsServiceServes is false for
+			// vertex by construction), so the two doors agree and neither
+			// oscillates.
+			on = false
+		}
 		if on {
 			switched = append(switched, key)
 			continue
@@ -1049,6 +1068,11 @@ func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, c *infra.
 // The question here is the installation's — was that root applied with the
 // service on, by anyone — so the answer has to come from the installation's
 // own state (the review of 2026-11-07's fourth round).
+//
+// The state answers with the ADDRESS and the caller folds the auth in: a
+// vertex repository's root plans the invoker grant without the service serving
+// its credentials (D3326), which is the one state where the grant is not the
+// switch (infra's credentialsMemberAddress).
 //
 // A repository the local config does not hold, one it cannot name a slug for,
 // and a run with no state bucket to read all answer false, and none of them
