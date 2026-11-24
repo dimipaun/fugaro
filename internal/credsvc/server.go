@@ -1783,32 +1783,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// person or to the project is served only under a slip that names it.
 	binding, _ := callSlipOf(ctx)
 	cands, notAdmitted = slipOffering(binding, cands, notAdmitted)
-	// C2's own rule on the offering (R7), read last and only for a call that
-	// was admitted under a WORKSPACE slip: the person's own token is offered
-	// FIRST, ahead of the shared entries the call is admitted to, so a run that
-	// holds a slip naming a personal credential spends the person's token and
-	// not the workspace's paid one. The reader is the scope's (C2's Personal),
-	// the candidate it answers is the cascade's own shape, and an answered
-	// error REFUSES the call rather than falling to the shared entries —
-	// D2974's whole point, and the reason the reader's three classes are three
-	// (PersonalReader). A call with no workspace slip, and one whose slip names
-	// no personal credential (found=false), is served exactly what it was
-	// admitted to, which is the state every call is in until the personal half
-	// is wired.
-	if binding != nil && binding.slip != nil {
-		if ps, person := personScopeOf(sc); person {
-			c, found, err := ps.Personal().Personal(ctx, *binding.slip)
-			switch {
-			case err != nil:
-				s.log.Error("credsvc: the call's personal credential could not be offered", "slip", binding.id, "error", err)
-				s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable,
-					"the call's personal credential could not be offered")
-				return
-			case found:
-				cands = append([]creds.Credential{c}, cands...)
-			}
-		}
-	}
+	// R7's candidate is already in this list, first, and already marked as the
+	// call's own exclusive one: it is assembled where the list is built
+	// (candidates, cascade.go) and never here, so the entry that is SERVED and
+	// not only the entry that is offered is the person's own token (D2974,
+	// D3144), and the class the reader answers is the sentence the call is
+	// refused with.
 	// The strategy travels with the candidate list it was answered for
 	// (candidates, roundrobin.go; MC7): a pool asking for round-robin is served
 	// by the rotation, and every other list by the cascade's own rule. It is

@@ -48,6 +48,11 @@ type valueSpec struct {
 	// secret reads the value with the terminal's echo off and prints nothing of
 	// what was typed; the bytes are the caller's to clear.
 	secret bool
+	// asked says the caller has already printed the question and its
+	// suggestion, so the entry writes the colon the answer is typed after and
+	// nothing else: the wizard's questions are one line each (initRun.ask), and
+	// a second "Type the …: " under them is the same question asked twice.
+	asked bool
 }
 
 // supply is how the value comes in with no terminal at all, as the end of one
@@ -62,6 +67,18 @@ func (s valueSpec) supply() string {
 		return "set " + s.env
 	}
 	return ""
+}
+
+// valuePrompt is what is written before the read: the value's own name after
+// "Type" where the entry speaks for itself, and the colon alone where the
+// caller has already printed the question (spec.asked) — the two are the same
+// line to a person typing an answer, and only one of them says the same thing
+// twice.
+func valuePrompt(s valueSpec) string {
+	if s.asked {
+		return ": "
+	}
+	return "Type " + s.what + ": "
 }
 
 // readValue reads one value at the command's terminal, or refuses before it
@@ -106,7 +123,7 @@ func readValueIn(ctx context.Context, in io.Reader, out io.Writer, spec valueSpe
 		}
 		return readHidden(ctx, f, out, spec.what)
 	}
-	fmt.Fprintf(out, "Type %s: ", spec.what)
+	fmt.Fprint(out, valuePrompt(spec))
 	line, err := readConfirmLine(in)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, userErr("reading %s: %v", spec.what, err)

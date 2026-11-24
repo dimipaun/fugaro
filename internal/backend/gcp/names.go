@@ -296,6 +296,34 @@ func DynamicSecretNamesCondition() string {
 		extract + `.startsWith("` + secretname.ProjectPrefix + `")`
 }
 
+// WorkspacePersonTokenConditionTitle is the title of the workspace's one
+// conditioned accessor (WC2 of docs/workspace-credentials, R6, D2971), as the
+// workspace root writes it beside the expression. internal/infra/tf reads a
+// plan's condition titles, so both spellings are taken from here rather than
+// written twice.
+const WorkspacePersonTokenConditionTitle = "fugaro-workspace-person-token"
+
+// WorkspacePersonTokenCondition is the fence around the ONE personal name the
+// workspace's own service serves (R6): the per-person prefix AND the name that
+// ends in the token's own, so the workspace's account reads a person's Claude
+// token and no other personal secret a person keeps in the workspace's project
+// — and none of the shared class, which the workspace serves no member through
+// (a project-shared secret of a workspace's project is not served; what is
+// shared is a shared entry, D2976).
+//
+// It carries the intake's own extraction template and deliberately not its
+// expression. The intake admits the whole grammar because the writes are the
+// callers' own names; the workspace READS, and the prefix alone would hand it
+// every personal secret a person stores in the workspace's project. The
+// container is one per person and named from the verified token's own sub
+// (`fugaro_u_<sub>_claude-oauth-token`, secretname.User), which no plan knows,
+// so the resource's own name is the only thing left to narrow the grant by.
+func WorkspacePersonTokenCondition() string {
+	const extract = `resource.name.extract("/secrets/{secret}")`
+	return extract + `.startsWith("` + secretname.UserPrefix + `") && ` +
+		extract + `.endsWith("_` + config.ClaudeOAuthToken + `")`
+}
+
 // IntakeAdminListConditionTitle is the title of the intake's one bucket grant
 // (DS2.2): objectViewer on the runs bucket under a condition naming the single
 // object the derived admin list is published to (DS2.0's access.PathAdminList).

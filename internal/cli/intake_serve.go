@@ -159,13 +159,20 @@ var intakeTest *intakeWiring
 //     token to *this* service. Cloud Run assigns it, so it is passed rather
 //     than derived, and a service that guessed one would admit nobody, or
 //     worse, admit a token minted for another service.
-//   - FUGARO_LAUNCHER_ACCOUNTS is the launcher class's list (D1938, F25): the
-//     roster's people, as the bare addresses a Google ID token's email claim
-//     carries. It is READ AS OPTIONAL, by credentialsServiceLaunchers' rule
-//     and for its reason — the module renders the entry only on an
-//     installation whose roster names a launcher, and one that names none must
-//     still start, with a class that admits nobody (fail closed), rather than
-//     be a service that will not bind a port.
+//   - FUGARO_LAUNCHER_ACCOUNTS is the class this process admits (D1938, F25):
+//     the installation's launchers AND, on a workspace's own project, the
+//     people of the workspace's roster (WC3, R5, D3143), as the bare addresses
+//     a Google ID token's email claim carries. The module composes the two into
+//     ONE list (intake.tf's local.intake_accounts, one expression with the
+//     invoker grant above it) rather than naming a second variable, so the list
+//     this process reads and the list IAM admits a caller by can never drift
+//     apart — and what a caller IS decides nothing here: both classes are
+//     admitted to the same routes, and a roster person writes under their own
+//     sub and nowhere else (internal/intake's routes). It is READ AS OPTIONAL,
+//     by credentialsServiceLaunchers' rule and for its reason — the module
+//     renders the entry only on an installation whose list names somebody, and
+//     one that names nobody must still start, with a class that admits nobody
+//     (fail closed), rather than be a service that will not bind a port.
 //   - FUGARO_RUNS_BUCKET is the runs bucket holding the derived admin list
 //     (access.PathAdminList, DS2.0). It is the intake's only reach beyond
 //     Secret Manager and it is an object read: the intake holds no database
