@@ -122,6 +122,31 @@ func TestRunsReindexStartsJob(t *testing.T) {
 	}
 }
 
+// TestRunsReindexWithoutAReportedName is the line the command prints when the
+// platform started the execution but its operation reported no readable name
+// (gcp.ErrStartedUnnamed): the walk is going, so the line says that rather than
+// leaving "reindexing now as" with nothing after it, and it must not read as
+// "no execution was started", which would be untrue and would invite a second
+// start.
+func TestRunsReindexWithoutAReportedName(t *testing.T) {
+	f, _ := reindexRig(t)
+	f.run.BadRunMetadata = true
+
+	out, stderr, err := execute(t, "runs", "reindex")
+	if err != nil {
+		t.Fatalf("err = %v, stdout = %q, stderr = %q", err, out, stderr)
+	}
+	if !strings.Contains(out, "index: reindexing now (the platform started the execution but did not report its name), resuming from its own cursor") {
+		t.Fatalf("the line does not name the start without an execution name: %q", out)
+	}
+	if strings.Contains(out, "no execution was started") {
+		t.Fatalf("a started execution was reported as one that never started: %q", out)
+	}
+	if got := len(f.run.RunRequests()); got != 1 {
+		t.Fatalf("the history job was started %d times, want one: %+v", got, f.run.RunRequests())
+	}
+}
+
 // TestRunsReindexOverAFoldClaimMarks is the lease's other holder (RI5, U3): the
 // writer lease is the sweep's own while the sweep folds, and a dead execution's
 // claim stands for its whole TTL. A person asking for a rebuild must not be
