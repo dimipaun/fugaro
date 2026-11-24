@@ -387,14 +387,21 @@ func layerScalar(layer map[string]any, path []string) string {
 }
 
 // valueAt is what a decoded document holds at path. A path the document does
-// not write answers nil — an unwritten key, and not an unreadable one — while
-// a path that runs through something other than a mapping answers ok false: a
-// shape no key of B3's and no layer scalar can be under.
+// not write answers nil — an unwritten key, and not an unreadable one — and so
+// does a path that runs through YAML's null: a block whose members are all
+// commented out, or a key with nothing indented under it, is a file the strict
+// decode reads as the zero value, so it says nothing at that key rather than
+// something no key of B3's and no layer scalar can be under. What answers ok
+// false is a path that runs through something that is neither a mapping nor
+// null — a scalar, a list — which no Fugaro config shape has under it.
 func valueAt(tree map[string]any, path []string) (any, bool) {
 	cur := any(tree)
 	for _, seg := range path {
 		m, ok := cur.(map[string]any)
 		if !ok {
+			if cur == nil {
+				return nil, true
+			}
 			return nil, false
 		}
 		v, has := m[seg]

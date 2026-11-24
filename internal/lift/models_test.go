@@ -244,6 +244,23 @@ func TestPlanModels(t *testing.T) {
 		}
 	})
 
+	t.Run("a legal empty block is read, not refused", func(t *testing.T) {
+		// A block whose members are all commented out, or a key with nothing
+		// indented under it, is YAML's null: the strict decode reads it as the
+		// zero value, so the file is a legal one that writes nothing at those
+		// keys. Reading it as a shape no model name is would drop the whole
+		// repository — its vote, its record and its line — over a file a person
+		// commented out.
+		web := repoAt(t, "acme/web", "budget:\nagent:\n  models:\n  levels:\n    l2:\n  crafts:\n    coder:\n")
+		app := repoAt(t, "acme/app", "agent:\n  models:\n    coder: claude-sonnet-5-5\n")
+		c := planModels(t, Project{}, web, app)
+
+		checkChange(t, c, []LayerEdit{edit("defaults.agent.models.coder", "claude-sonnet-5-5")}, []string{
+			"acme/web: coder Fugaro's default -> claude-sonnet-5-5 (the project's)",
+		})
+		checkRecords(t, c, web, app)
+	})
+
 	t.Run("a file update cannot read is named and left alone", func(t *testing.T) {
 		app := repoAt(t, "acme/app", "agent: [oops\n")
 		web := repoAt(t, "acme/web", "agent:\n  models:\n    coder: claude-sonnet-5-5\n")
