@@ -55,6 +55,11 @@ package credsvc
 //   - The strict switch before the allow path, which is the red step this
 //     task's plan states: a strict project refuses with no device node written,
 //     no family issued and no token minted.
+//   - The allow path's two READS before its writes: the mailbox consumer key the
+//     phone pins (O12) and the crash-report switch its collector is gated on
+//     (D731, D734, D738). The key is the pairing's own store read and a failure
+//     of it refuses; the switch is a value and never a refusal, so a policy that
+//     cannot answer it fills the answer with it off.
 //   - The audit line last and before the answer, because it is the line the
 //     session cannot be answered without (D143). What the route did before it —
 //     a node, a family, a token — is taken back when it cannot be recorded,
