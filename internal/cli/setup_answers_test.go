@@ -164,8 +164,7 @@ func TestSetupAnswersFile(t *testing.T) {
 		if err := r.gatherInputs(t.Context()); err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
-		q := questionFor("--gcp-project")
-		if !strings.Contains(out.String(), q.what) {
+		if !strings.Contains(out.String(), askedPrompt("--gcp-project")) {
 			t.Errorf("the file answers no project ID, and the wizard did not ask for one:\n%s", out)
 		}
 		if r.o.cloud.gcpProject == "" {

@@ -537,6 +537,14 @@ func (e *initEngine) converge(ctx context.Context) error {
 	// identical to these, so a step queued while the run was going — which no
 	// stage of this run published — stays owed (D1563).
 	e.readOwedBefore()
+	// The run's own heading, and the section its steps are read under: a first
+	// run's header went out with its first question (printRunHeader prints it
+	// once either way), and everything the converge says on its own way here —
+	// the roles step's warnings, the budget stops, the runs in flight — is
+	// above the heading in the block it belongs to, so what a reader sees under
+	// it is the steps themselves.
+	e.r.printRunHeader(e.lc.Name, "")
+	fmt.Fprintln(e.r.w, e.r.qs.Header(convergeSection(e.r.o)))
 	res, err := initflow.Run(ctx, stages, e.options())
 	// The steps this run answered are steps nothing owes any more: `update`
 	// runs every stage, and the entries of the stages it ran successfully are
@@ -549,6 +557,16 @@ func (e *initEngine) converge(ctx context.Context) error {
 		e.planOnlyReview(ctx, res.Stages)
 	}
 	return e.outcome(ctx, res, err)
+}
+
+// convergeSection is the heading the converge's own steps are read under, and
+// it follows what the run does: a run that applies says so, and --plan-only,
+// which shows what would be applied and applies nothing, does not.
+func convergeSection(o *initOptions) string {
+	if o.planOnly {
+		return "Planning"
+	}
+	return "Applying"
 }
 
 // outcome maps a loop result to init's error, keeping the exit codes the
@@ -693,6 +711,12 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// The run's last line, on the door whose job it is to say it: what filing
 	// an issue on GitHub needs (`gh`), and that nothing else about issues does.
 	e.announceGhHint()
+	// And the other end-of-run line, for the installation set up outside any
+	// checkout: how a repository is enrolled, which only a run that converged
+	// says (announceEnrolNote). It is here rather than above the steps because
+	// a run that fails was asked for no repository, and a line telling its
+	// reader to enrol one belongs to no failure.
+	e.announceEnrolNote()
 	if len(res.Left) > 0 && !o.planOnly {
 		return &notFinished{userErr("%s is not finished: %d step(s) left for you, listed above", o.doorProgram(), len(res.Left))}
 	}

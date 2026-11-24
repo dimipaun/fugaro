@@ -608,8 +608,8 @@ type Policy struct {
 	ImageServices ImageServices `json:"image_services,omitempty"`
 
 	// BakeRepos is whether a repository is baked into the image its job runs
-	// (D1901): the setup wizard's "Bake your repos into the Docker images?",
-	// asked with the answer yes.
+	// (D1901): the setup wizard's "Bake repos into the images for faster job
+	// starts?", asked with the answer yes.
 	//
 	// It is a pointer because the default is yes and therefore absent and true
 	// are the same statement: a project that never answered writes no member,

@@ -678,6 +678,16 @@ type initRun struct {
 	cmd *cobra.Command
 	o   *initOptions
 	w   io.Writer // the human-readable account: stdout, or stderr with --json
+	// qs is the colour the run's own lines are drawn with before there is a
+	// reporter to draw them: the wizard's questions are asked before the
+	// converge builds one (gatherInputs runs before the run has a config to
+	// redact a log with), and the two hands have to draw one screen
+	// (report.NewStyle).
+	qs report.Style
+	// headed says the run's own `==> Setting up …` line is out. It is printed
+	// with the first thing the run says — the first question, or the converge's
+	// first block on a run that asks nothing — and never twice.
+	headed bool
 	// in is the run's own input, which the value entry reads through
 	// (valueentry.go's readValue, which asks the command for the same reader)
 	// and which a value question left over from an earlier shape of this file
@@ -1068,6 +1078,7 @@ func newInitRun(cmd *cobra.Command, o *initOptions) *initRun {
 		r.events = newSetupEvents(cmd.OutOrStdout())
 	}
 	r.in = cmd.InOrStdin()
+	r.qs = questionStyle(cmd, cmd.OutOrStdout())
 	return r
 }
 
@@ -2510,9 +2521,12 @@ func initErr(err error) error {
 	return remote(err)
 }
 
+// warn is the run's own line about something it has to say and that is not a
+// failure: the message in the result, unchanged, and the same message on the
+// screen under the Warning label the whole CLI draws one with (report.Style).
 func (r *initRun) warn(msg string) {
 	r.res.Warnings = append(r.res.Warnings, msg)
-	fmt.Fprintln(r.w, "warning: "+msg)
+	fmt.Fprintln(r.w, r.qs.Warning(msg))
 }
 
 // printWorkflowWarnings prints what the workflows' deploy-time specs carry
