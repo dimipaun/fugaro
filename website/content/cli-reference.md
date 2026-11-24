@@ -6601,7 +6601,11 @@ its next request on.
 The order is the command (M4): the device node under config/admin/devices
 goes first, because the node's existence is what the rules read and its
 deletion revokes at once, without waiting for an ID token to expire; then
-the account's push node under config/admin/push, the sibling that holds
+the device's refresh family under config/admin/refresh, because the node
+ends the phone's database reads while the family is the session it holds,
+so a stolen phone loses that session at its next refresh and cannot refresh
+again (D2794); then the account's push node under config/admin/push, the
+sibling that holds
 the one registration this installation made for it, so the phone's token
 goes with the pairing rather than outliving it (push design §3.4); then,
 where the installation has a resident orchestrator, the installation's own
@@ -6614,6 +6618,13 @@ key. Every deletion this command can make is here, in that order.
 Deleting the cloud copy un-reads nothing: whoever held the key keeps it, a
 project Owner or Editor among them, and what the step ends is the
 installation's own service's ability to verify a message and to forge one.
+
+The member record is not deleted here. Revoking a DEVICE must not hand the
+address back to whoever signs in with it next (F34), so the record stays and
+the next pairing must match its provider and sub; removing a MEMBER is
+`fugaro user revoke`'s act, which deletes the record, every device node of
+the address and every refresh family through the same removal this command
+uses per device (O14).
 
 The pairing session's own node is not one of them. Its key is the p~ uid
 the session drew, and nothing on this laptop records that uid, so a revoke
