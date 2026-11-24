@@ -14182,9 +14182,23 @@ lines are the only record of what answered a call — so the check launches one 
 the two repositories and reads the lines back. Four things are measured, and three of them have a second
 half that only the flip can show:
 
-- **The switch is really on**, for both repositories: `gcloud run jobs list` holds a job of each (matched
-  by the job's own `FUGARO_REMOTE`) and that job's container carries
-  `FUGARO_CREDENTIALS_SERVICE_URL`. And the published budget mode is not `off`: the mode is what
+- **The switch is really on**, for both repositories, read off what the apply **changes** and never off an
+  address a per-repository job template never carries: `gcloud run jobs list` holds a job of each (matched
+  by the job's own `FUGARO_REMOTE`), that job's container mounts **no model credential** (**D2072**,
+  **G17** — the one mount a switched job keeps is a mixed stage account's own `CLAUDE_CODE_OAUTH_TOKEN`,
+  and only an `api-key` repository's jobs have one: the mix is `api-key`'s alone
+  (`mixedStageAccountJob`), so that exception is judged by the auth each repository's own
+  `creds/repoauth` record names, which the check reads **before** this row — and never by the job's own
+  `FUGARO_STAGE_ACCOUNT_SERVED`, which says whether the service *selects* that account and leaves the
+  mount in place either way), and that job's own account is a member of a
+  `roles/run.invoker` binding on the `fugaro-credentials` service's own IAM policy
+  (`gcloud run services get-iam-policy`, **D135**, `modules/workflow/sa.tf`) — the two facts a
+  repository root applied with the switch on writes. `FUGARO_CREDENTIALS_SERVICE_URL` is **not** read
+  there: the launcher writes it on each run's **execution** (`internal/cli/run.go`) and no
+  per-repository job template bakes it, so it is read only where it is, a shared project job's template
+  (Check 197's subject). A read of the service's own policy that did not answer, or answered no policy
+  at all, leaves the row **unmeasured** (verdict `2`) rather than calling a switched repository off it.
+  And the published budget mode is not `off`: the mode is what
   `fugaro update` reads, and a repository whose root was applied while the mode was live and whose mode
   is then `off` is one whose jobs hold no mount — the flip, B2.7 — and whose runs have nothing to be
   served from, because the address follows the same answer (**D2071**, and the state `fugaro project
@@ -14236,9 +14250,10 @@ half that only the flip can show:
   own `updateTime` — **kept its own mount and still finished** (**U9**): an execution created before the
   re-apply keeps the container spec it was created with, and the check reads **that spec** — the
   execution's own containers still carry the model credential while the job template the re-apply wrote
-  carries none. The service's own lines for that run are not this reading: the flip keeps
-  `FUGARO_CREDENTIALS_SERVICE_URL` on the repository (**D2072**), so a switched run reaches the service
-  before and after it. A run named there that started **after** the re-apply is refused, not read: it
+  carries none. The service's own lines for that run are not this reading: the flip takes the **mounts**
+  (**D2072**) and not the address — the launcher writes `FUGARO_CREDENTIALS_SERVICE_URL` on each run's
+  **execution**, before and after any re-apply — so a switched run reaches the service either way. A run
+  named there that started **after** the re-apply is refused, not read: it
   was launched by the template the re-apply wrote, and its mount says nothing about U9.
 
 **A run is the only thing that can show this.** The service binds a credential to the run that asked for
@@ -14257,9 +14272,11 @@ development build: a checkout build resolves no released credentials-service ima
 `belong`. `bash`, `mktemp`, `python3`, `gcloud`, `curl` and `fugaro` on PATH, with `gcloud` authenticated
 as you — the record is read with `gcloud auth print-access-token` and a GET, and nothing else is asked of
 your account. **Two sandbox repositories of that installation**, one whose own `fugaro.yaml` records
-`agent.auth: api-key` and one whose records `oauth`, both already switched (the check refuses a pair that
-is not one of each, and refuses a repository whose job carries no
-`FUGARO_CREDENTIALS_SERVICE_URL`), and **a run of one of them already going** for `--after-flip`. If the
+`agent.auth: api-key` and one whose records `oauth`, both already switched — the check refuses a pair that
+is not one of each, and refuses a repository whose jobs still mount the credential the service serves for
+its auth or whose job accounts hold no `roles/run.invoker` on the `fugaro-credentials` service (a read of
+that service's own policy, which needs `run.services.getIamPolicy`: a project Owner has it) — and **a run
+of one of them already going** for `--after-flip`. If the
 Bitbucket one of the two is published with `proxy: true`, the proxy row is measured; name it with
 `CHECK193_PROXY_REPO` if the policy admits a repository that is not one of the two.
 
@@ -14365,8 +14382,8 @@ and three of them have a half that only the flip can show:
   containers while the job template the re-apply wrote hands a run neither. A run named there that
   started **after** the re-apply is refused, not read: it was launched by the template the re-apply
   wrote, and its spec says nothing about U9. The service's own lines for that run are deliberately not
-  this row's reading — the flip keeps the URL, so a run in flight across the re-apply is served before
-  and after it.
+  this row's reading — the address is a launch-time entry the execution is created with, and no re-apply
+  takes it away, so a run in flight across the re-apply is served before and after it.
 
 **Prerequisites.** Installation `fugaro` only: the project (`fugaro-dev`) and the region (`us-east5`) are
 hard-coded in the script and never read from `gcloud config`, and `fugaro doctor --project fugaro --all`
