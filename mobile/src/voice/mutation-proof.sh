@@ -573,8 +573,8 @@ run "a send the client refused is not a line in the one conversation" \
 #     owner's words with whatever the pipeline heard while the send was out --
 #     the same lie the snapshot's `transcript` event refuses one function up.
 run "a line keeps the engine of the words it holds, not the next utterance's" \
-  "    record(text, engine);" \
-  "    record(text, readEngineTag());" \
+  "    record(sent.text, engine);" \
+  "    record(sent.text, readEngineTag());" \
   mobile/src/voice/screen.js src/voice/screen.test.js
 
 # 20. X1 (D2788) + D118: the voice view records the REDACTED text the client
