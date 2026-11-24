@@ -243,7 +243,18 @@ func (r *run) askWorkflowSecret(ctx context.Context, svc *gateway.Service, url s
 		return workflowSecretAnswer{}, fmt.Errorf("fetching workflow secret %s: %w", name, err)
 	}
 	if status != http.StatusOK {
-		return workflowSecretAnswer{status: status, code: workflowSecretRefusal(status, answer)}, nil
+		code := workflowSecretRefusal(status, answer)
+		if code == "" {
+			// A refusal whose body is not this contract's error is still a
+			// refusal, and there is no code to act on: read as an answer it
+			// would put an EMPTY value under the variable, the run would then
+			// stop in agent.BuildEnv naming the mount rather than the service,
+			// and the version-1 fallback -- which one refusal deserves -- would
+			// never be asked. Which is why an answer's empty code means served
+			// and nothing else.
+			return workflowSecretAnswer{}, refusedWorkflowSecret(name, status, "")
+		}
+		return workflowSecretAnswer{status: status, code: code}, nil
 	}
 	var ans credsvc.WorkflowSecretsResponse
 	if err := decodeWorkflowSecretAnswer(answer, &ans); err != nil {

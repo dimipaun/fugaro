@@ -454,6 +454,51 @@ func TestBootstrapPrefersTheMountedValue(t *testing.T) {
 	}
 }
 
+// TestMountedSecretsAreRedacted: a declared secret the job itself mounts is a
+// credential of the repository's like any other, and the run publishes none of
+// it either. Nothing registers a mounted value on the runner's side -- the
+// fetch never sees it, and FUGARO_SECRET_ENVS names the credentials the runner
+// itself uses, not the workflow's declared secrets -- so what redacts it is the
+// value agent.BuildEnv hands back for a DECLARED non-file secret, and only that.
+//
+// Hand mutation this fails on: broadening fileSecretEnvs to every declared
+// secret (runner.go's bootstrap), which sends a mounted declared secret down
+// the file arm and leaves its value registered with nobody -- it is then
+// published in full wherever the stage echoes it.
+func TestMountedSecretsAreRedacted(t *testing.T) {
+	svc := &secretsService{names: map[string]string{secretName: fetchedSecretValue}}
+	b := secretsRun(t, "  first_line_review: off\n", nil, svc)
+	b.deps.Env = append(b.deps.Env, secretEnvVar+"="+mountedSecretValue)
+
+	leaky := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		_, _ = fmt.Fprintf(req.Transcript, "{\"leaked\":%q}\n", mountedSecretValue)
+		_, _ = fmt.Fprintln(req.Stderr, "claude: "+mountedSecretValue)
+		res, err := implement("feature")(t, ctx, req)
+		res.Text = "done, the file is " + mountedSecretValue
+		return res, err
+	}
+	rec, err := b.run(t, leaky, review("ship", 0))
+	mustReady(t, rec, err)
+
+	logs := b.logs.String()
+	if strings.Contains(logs, mountedSecretValue) {
+		t.Fatalf("the runner's log publishes the mounted secret:\n%s", logs)
+	}
+	if !strings.Contains(logs, "[REDACTED]") {
+		t.Fatalf("nothing was redacted, so this test proves nothing:\n%s", logs)
+	}
+	if got, _ := json.Marshal(rec); bytes.Contains(got, []byte(mountedSecretValue)) {
+		t.Fatalf("the record holds the mounted secret: %s", got)
+	}
+	if keys := objectsContaining(t, b.harness, mountedSecretValue); len(keys) > 0 {
+		t.Fatalf("the mounted secret is stored in %v", keys)
+	}
+	pr := onlyPR(t, b.provider)
+	if body := pr.Spec.Body + strings.Join(pr.Comments, "\n"); strings.Contains(body, mountedSecretValue) {
+		t.Fatalf("the pull request holds the mounted secret:\n%s", body)
+	}
+}
+
 // TestFetchedSecretsAreRedacted: a fetched value is a credential of the
 // repository's, and the run publishes none of it -- not its log, not the
 // objects it leaves in its bucket, not its record, not the pull request it
@@ -565,7 +610,9 @@ func TestReviewRunFetchedSecretsNeverReachTheAgent(t *testing.T) {
 // Each of those stops the run here rather than handing the answer on: the
 // contract echoes what the call named for exactly the third of them, and the
 // floor of the fourth is the same one agent.BuildEnv refuses a declared secret
-// under.
+// under. A non-2xx answer whose body names no code this contract could have
+// written is a refusal too, and stops the run rather than being read as a served
+// answer with no value.
 func TestServiceDownHaltsTheRunBeforeTheAgent(t *testing.T) {
 	// A service that is not listening at all: a URL whose port nothing holds.
 	closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
@@ -582,6 +629,14 @@ func TestServiceDownHaltsTheRunBeforeTheAgent(t *testing.T) {
 		{name: "the service refuses the call", edit: func(s *secretsService) {
 			s.status, s.body = credsvc.StatusUnavailable, fmt.Sprintf(`{"error":%q,"message":"the workflow records cannot be read"}`, credsvc.ErrorStateUnavailable)
 		}, wantInErr: "answered 503, refused: " + credsvc.ErrorStateUnavailable},
+		{name: "the refusal names no code this contract could have written", edit: func(s *secretsService) {
+			// A refusal whose code is not one reviewServiceErrorCode carries is
+			// still a refusal: read as an answer it would put an EMPTY value
+			// under the variable and stop the run in agent.BuildEnv, naming the
+			// mount instead of the service -- and version 1 would never be asked
+			// for it, which is the fallback this shape of service needs.
+			s.status, s.body = credsvc.StatusUnavailable, `{"error":"Workflow-Records-Unreadable","message":"the workflow records cannot be read"}`
+		}, wantInErr: "answered 503"},
 		{name: "the answer is not this contract's", edit: func(s *secretsService) {
 			s.malformed = `{"name":"fixture-fails","value":"x","extra":1}`
 		}, wantInErr: "is not a workflow secret's"},
