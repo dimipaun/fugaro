@@ -45,6 +45,11 @@ type Budget struct {
 const (
 	// BudgetAPIKey is the web API key a fake budget database is named by.
 	BudgetAPIKey = "AIzaSyFakeWebApiKeyForTests000000000"
+	// BudgetSigner is the signer account a fake budget database's installation
+	// mints its runs' identities with. It is a service account in the Firebase
+	// project (the name `fugaro update --firebase-project` writes), shaped like
+	// one and not one.
+	BudgetSigner = "fugaro-token-signer@aurora-fp.iam.gserviceaccount.com"
 )
 
 // NewBudget starts a fake budget database, which lives until the test ends.
@@ -80,15 +85,23 @@ func (b *Budget) Env() []string {
 }
 
 // ConfigBlock is the budget block a project config carries for this database,
-// as one line for a fixture's config text: the database and the key a client
-// exchanges a run's token with, and no mode — the block says the installation
-// has one, never how a run is accounted for, which is the job's mode and the
-// project's published policy. A test that also means a mode, a per-run cap or a
-// signer adds that itself, the way internal/cli's buildBudgetWorld does. Empty
-// for a null budget.
+// as one line for a fixture's config text: the database, the key a client
+// exchanges a run's token with and the signer account the launcher mints it
+// with, and no mode — the block says the installation has one, never how a run
+// is accounted for, which is the job's mode and the project's published policy.
+// A test that also means a mode, a per-run cap or a different signer adds that
+// itself, the way internal/cli's buildBudgetWorld does. Empty for a null
+// budget.
+//
+// The signer is part of the block because it is part of what an installation
+// with a database has: the Firebase root that creates the database creates the
+// web key, the signer account, the custom role and the grants with it (F4), and
+// every launch of such an installation mints its run's identity through that
+// signer (AB4, F7). A config block naming a database and no signer is a state
+// no update leaves behind — and one a launch refuses (budgetSignerOn).
 func (b *Budget) ConfigBlock() string {
 	if b == nil {
 		return ""
 	}
-	return "budget: { firebase_api_key: " + b.APIKey + ", rtdb_url: " + b.DB.URL + " }\n"
+	return "budget: { firebase_api_key: " + b.APIKey + ", rtdb_url: " + b.DB.URL + ", token_signer: " + BudgetSigner + " }\n"
 }

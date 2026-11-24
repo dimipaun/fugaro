@@ -171,8 +171,24 @@ const checkoutNote = "this checkout's repository is not onboarded; the converge 
 // it, and the line names `fugaro setup --repo`, the run D5 gives enrolment to.
 // It says nothing about the other door: what `update` does with an unlisted
 // repository of its own is W5.1's to settle.
+//
+// It is a line of the run's own summary, not one of its steps (announceEnrolNote):
+// a run that fails was asked for no repository, and a line about enrolling one
+// under a failure is advice about a run that never happened.
 func enrolNote() string {
 	return "to enrol a repository later, run " + selfCommand() + " setup --repo in a checkout of it"
+}
+
+// announceEnrolNote prints that line at the end of a run that converged
+// (outcome's own tail, beside the `gh` hint) and nowhere else: it is what a
+// reader who set up an installation outside any checkout has to know, and it
+// belongs with the run's result rather than above its steps, where it read as
+// one more thing to act on before the run had done anything.
+func (e *initEngine) announceEnrolNote() {
+	if e.repo == nil || !e.asksEnrolNote() {
+		return
+	}
+	fmt.Fprintln(e.r.w, e.r.qs.Dim(enrolNote()))
 }
 
 // notInACheckout is the opening of the repository target's refusal where there
@@ -253,8 +269,8 @@ func notOnboardingDetail(o originInfo) string {
 // the answer no is the run's — the repository is declined for every stage
 // (declineRepo), and the repository stage reports that it is not onboarding it
 // and says how to enrol it later. Outside a checkout there is nothing to ask
-// about, so that run prints the one line saying how a repository is enrolled
-// (enrolNote).
+// about, and the line saying how a repository is enrolled is one of the run's
+// own summary (announceEnrolNote).
 func (e *initEngine) gateEarly(ctx context.Context) {
 	if e.repo == nil {
 		return
@@ -262,9 +278,6 @@ func (e *initEngine) gateEarly(ctx context.Context) {
 	e.repo.resolve(ctx)
 	tg := e.repo.tg
 	if tg == nil {
-		if e.asksEnrolNote() {
-			fmt.Fprintln(e.r.w, "note: "+enrolNote())
-		}
 		return
 	}
 	if a, err := e.authState(tg.origin); err != nil || a != authAsk {

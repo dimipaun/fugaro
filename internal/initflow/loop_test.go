@@ -1906,9 +1906,9 @@ func TestLoopDefaultViewIsOneLinePerStage(t *testing.T) {
 	m := reporterMarks(t)
 	got := m.steps(out.String())
 	if len(got) != 4 {
-		t.Fatalf("the account is %d step lines, want one per stage:\n%s", len(got), out.String())
+		t.Fatalf("the account is %d step lines, want the stages that printed one and the one line the stages behind them share:\n%s", len(got), out.String())
 	}
-	for i, name := range []string{Preflight, Installation, Secrets, Repository} {
+	for i, name := range []string{Preflight, Installation, Secrets} {
 		if !strings.Contains(got[i], name) {
 			t.Errorf("step %d is %q, want the stage %s:\n%s", i, got[i], name, out.String())
 		}
@@ -1921,6 +1921,12 @@ func TestLoopDefaultViewIsOneLinePerStage(t *testing.T) {
 	}
 	if !strings.HasPrefix(got[3], m.waiting) {
 		t.Errorf("a stage that never ran does not carry the waiting marker:\n%s", out.String())
+	}
+	// The stage behind the one the user owes is not a line of its own: the
+	// steps a run never reached are one line, counting them and naming what
+	// they wait for (the brief's item 6, and the owner's layout of 2026-11-22).
+	if !strings.Contains(got[3], "1 step not run") || !strings.Contains(got[3], Secrets) || strings.Contains(got[3], Repository) {
+		t.Errorf("the steps the run never reached are %q, want one line counting them and naming what they wait for, and not the stages:\n%s", got[3], out.String())
 	}
 	if strings.Contains(strings.Join(got, "\n"), "[") || strings.Contains(out.String(), ": result") {
 		t.Errorf("the plan view's words are in the run's account:\n%s", out.String())
@@ -2026,14 +2032,21 @@ func TestLoopFailureShowsContextAndFix(t *testing.T) {
 	m := reporterMarks(t)
 	got := out.String()
 	line := m.line(got, Installation)
-	if !strings.HasPrefix(line, m.failed+" "+Installation+": ") {
-		t.Errorf("the failed stage is %q, want the reporter's cross and its error:\n%s", line, got)
+	if line != m.failed+" "+Installation {
+		t.Errorf("the failed stage is %q, want the reporter's cross and the stage alone, with the error on the line under it:\n%s", line, got)
 	}
 	for _, want := range []string{
-		"terraform apply exited 1: Error: quota exceeded",
+		// The stage's own sentence first: the step that stopped the run is
+		// the one thing its reader has to read in full.
+		"Error: terraform apply exited 1: Error: quota exceeded",
 		"on main.tf line 3",
 		"with google_project_service.this",
-		"stopped at " + Installation + "; fix: raise the quota, then rerun fugaro update",
+		// Then what to do about it, which is the way out the stage itself
+		// gave, and not a second sentence beside it (endStep).
+		"raise the quota, then rerun fugaro update",
+		// And the command that picks the run up where it stopped, as the
+		// closing line — a stopped run says it once.
+		"Failed in 0.0s. Rerun " + defaultProgram + " to resume at " + Installation + ".",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the failure block lost %q:\n%s", want, got)
@@ -2313,13 +2326,14 @@ func TestLoopBillingStagesAreNotTicks(t *testing.T) {
 	}
 	m := reporterMarks(t)
 	got := out.String()
-	// Seven stages, five lines: the stages behind the billing account wait for
-	// the same thing and are one line, and the stages that ran print their own.
+	// Eight stages, four lines: the three that ran print their own, and every
+	// stage behind the billing account — the ones before the stage that ran
+	// anyway included — is the one line the run never reached.
 	steps := m.steps(got)
-	if len(steps) != 5 {
-		t.Fatalf("the account is %d step lines, want one per stage with the billing waits collapsed:\n%s", len(steps), got)
+	if len(steps) != 4 {
+		t.Fatalf("the account is %d step lines, want the stages that ran and one line for everything the billing account stopped:\n%s", len(steps), got)
 	}
-	for _, stage := range []string{Preflight, Project, Plugin, Repository} {
+	for _, stage := range []string{Preflight, Project, Plugin} {
 		line := m.line(got, stage)
 		if !strings.Contains(line, stage) {
 			t.Errorf("no line for %s:\n%s", stage, got)
@@ -2334,13 +2348,14 @@ func TestLoopBillingStagesAreNotTicks(t *testing.T) {
 	if line := m.line(got, Plugin); !strings.HasPrefix(line, m.done+" "+Plugin) {
 		t.Errorf("the stage that needs no billing is %q, want the tick:\n%s", line, got)
 	}
-	if line := m.line(got, Repository); !strings.HasPrefix(line, m.waiting+" "+Repository) {
-		t.Errorf("%s is %q, want the waiting marker:\n%s", Repository, line, got)
-	}
-	// The three stages behind the billing account are one line, not three.
-	want := m.waiting + " " + Installation + ", " + Images + ", " + Secrets + " wait for the billing account"
+	// The stages behind the billing account are one line, not four, and the
+	// stage that ran although the run was stopped is above it.
+	want := m.waiting + " 4 steps not run (they need the billing account)"
 	if !slices.Contains(outputLines(got), want) {
 		t.Errorf("the billing waits are not one line %q:\n%s", want, got)
+	}
+	if l := m.line(got, Repository); l != "" {
+		t.Errorf("%s is %q, want no line of its own: it is one of the steps the billing account stopped:\n%s", Repository, l, got)
 	}
 	if !strings.Contains(got, "left for you (project, command): billing is not linked yet") {
 		t.Errorf("the left-for-you block is missing:\n%s", got)

@@ -141,7 +141,7 @@ run "the_role_is_the_databases_two_data_permissions_and_no_lifecycle_one" {
   }
 }
 
-run "the_only_grant_is_the_workspace_database_role_on_the_workspace_service" {
+run "the_database_grant_is_the_custom_role_on_the_workspace_service" {
   command = plan
 
   # The same override as the run above, which each run block needs of its own:
@@ -174,7 +174,10 @@ run "the_only_grant_is_the_workspace_database_role_on_the_workspace_service" {
 # workspace owner's `fugaro update` writes: null — the default the runs above
 # plan with — creates none of it, and one image, one region and one member table
 # create the service, its ONE bundle accessor and one invoke grant per member job
-# account.
+# account. The same variables carry the workspace's roster (WC2, R6, D2971), and
+# with a non-empty people list they add one invoke grant per person and the ONE
+# conditioned accessor the workspace's own account holds on a person's own Claude
+# token.
 #
 # What these runs hold is what the Go-side cover reads a plan for
 # (internal/infra/tf's WorkspaceServiceEnv, workspaceService and
@@ -197,6 +200,14 @@ run "the_service_is_off_until_the_owner_deploys_it" {
   assert {
     condition     = length(google_cloud_run_v2_service_iam_member.workspace_invoker) == 0
     error_message = "no invoke grant may exist without the service it is bound to"
+  }
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.workspace_person_invoker) == 0
+    error_message = "no roster person's invoke grant may exist without the service it is bound to either (R6, D2971)"
+  }
+  assert {
+    condition     = length(google_project_iam_member.workspace_person_token) == 0
+    error_message = "no conditioned accessor may exist without the service that reads a person's token through it (R6)"
   }
 }
 
@@ -223,6 +234,10 @@ run "the_service_runs_as_the_workspaces_own_account_inside_r9s_limits" {
         ]
       }
     }
+    # The roster's people, as fugaro update renders them from the workspace's own
+    # roster node: the addresses the root binds one invoke grant to each (R6,
+    # D2971).
+    people = ["ada@example.com", "grace@example.org"]
   }
 
   # The account's email and member are what the service's runtime identity and
@@ -362,6 +377,50 @@ run "the_service_runs_as_the_workspaces_own_account_inside_r9s_limits" {
     ])
     error_message = "the grants are bound to the member table's own job accounts and to no other principal"
   }
+
+  # The roster's people (WC2, R6, D2971): one invoke grant per human the roster
+  # names, on the same service and in the same project, and the ONE conditioned
+  # accessor the workspace's own account holds on a person's own Claude token.
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.workspace_person_invoker) == 2
+    error_message = "the root makes ONE invoke grant per person of the workspace's roster, and the people above name two"
+  }
+  assert {
+    condition = alltrue([
+      for g in values(google_cloud_run_v2_service_iam_member.workspace_person_invoker) :
+      g.role == "roles/run.invoker" && g.name == "fugaro-workspace-credentials" && g.project == var.project
+    ])
+    error_message = "every person's invoke grant is roles/run.invoker on the workspace's own service in the workspace's own project"
+  }
+  assert {
+    condition = sort([
+      for g in values(google_cloud_run_v2_service_iam_member.workspace_person_invoker) : g.member
+      ]) == sort([
+      "user:ada@example.com",
+      "user:grace@example.org",
+    ])
+    error_message = "the grants are bound to the roster's own addresses as user:<address> and to no other principal: a bare address, a serviceAccount: or a group here is a caller the roster never named"
+  }
+  assert {
+    condition     = length(google_project_iam_member.workspace_person_token) == 1
+    error_message = "the workspace's own account holds ONE conditioned accessor on a person's token (R6), and a per-person container cannot be written here at all: its name is the verified token's own sub"
+  }
+  assert {
+    condition     = google_project_iam_member.workspace_person_token[0].role == "roles/secretmanager.secretAccessor"
+    error_message = "the conditioned accessor is the read of a container's versions and nothing else"
+  }
+  assert {
+    condition     = google_project_iam_member.workspace_person_token[0].member == google_service_account.workspace.member
+    error_message = "a person's token is read by the workspace's own account and by nobody else"
+  }
+  assert {
+    condition     = google_project_iam_member.workspace_person_token[0].condition[0].title == "fugaro-workspace-person-token"
+    error_message = "the condition's title is the one internal/infra/tf holds a plan to (gcp.WorkspacePersonTokenConditionTitle)"
+  }
+  assert {
+    condition     = google_project_iam_member.workspace_person_token[0].condition[0].expression == "resource.name.extract(\"/secrets/{secret}\").startsWith(\"fugaro_u_\") && resource.name.extract(\"/secrets/{secret}\").endsWith(\"_claude-oauth-token\")"
+    error_message = "the condition is the fence byte for byte (gcp.WorkspacePersonTokenCondition): the per-person prefix AND the one name this half serves, and a wider one hands the workspace's account every personal secret a person keeps in its project"
+  }
 }
 
 # The image half of this root's own fence, and the shape every instance of the
@@ -445,4 +504,21 @@ run "the_service_on_a_tag_with_no_digest_is_refused" {
   }
 
   expect_failures = [var.credentials_service]
+}
+
+# A roster row is a person or a machine by its kind AND by its address (WC2's
+# review): the member this root binds a person through is `user:<address>` and
+# nothing else, and IAM refuses a `user:` member that is a machine's. A row
+# marked a `human` at a service account's address is therefore refused HERE, at
+# the plan, rather than at apply in the API's own words about the member — which
+# name no roster row. A machine the workspace admits is admitted as one, through
+# the members' own invoke grant above.
+run "a_persons_address_that_is_a_machines_is_refused" {
+  command = plan
+
+  variables {
+    people = ["ada@example.com", "fugaro-run-alpha@member-alpha-1234.iam.gserviceaccount.com"]
+  }
+
+  expect_failures = [var.people]
 }
