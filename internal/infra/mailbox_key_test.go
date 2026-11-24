@@ -24,12 +24,13 @@ import (
 // plans of the installations that did not opt in (where no row of it appears at
 // all).
 const (
-	mailboxModulePath = "gcp/modules/installation/mailbox_key.tf"
+	mailboxModulePath      = "gcp/modules/installation/mailbox_key.tf"
+	orchestratorModulePath = "gcp/modules/installation/orchestrator.tf"
 
 	mailboxRingAddr  = "module.installation.google_kms_key_ring.mailbox[0]"
 	mailboxKeyAddr   = "module.installation.google_kms_crypto_key.mailbox_consumer[0]"
 	mailboxRoleAddr  = "module.installation.google_project_iam_custom_role.mailbox_signer[0]"
-	mailboxGrantAddr = "module.installation.google_kms_crypto_key_iam_member.mailbox_consumer_signer[0]"
+	mailboxGrantAddr = "module.installation.google_kms_crypto_key_iam_member.orchestrator_mailbox_signer[0]"
 	cloudKMSAPIAddr  = `module.installation.google_project_service.this["cloudkms.googleapis.com"]`
 
 	// The one binding J6 makes, by type: O17's "the consumer's account only" is
@@ -53,6 +54,11 @@ const (
 // TestMailboxKeyIsTheConsumersSignerAlone below.
 func TestMailboxKeyNamesAreTheGoSpellings(t *testing.T) {
 	src := readMailboxModule(t)
+	// The binding is orchestrator.tf's, which is where section 4.3's table
+	// lives: TestOrchestratorIsNeverALauncher refuses the account's address as
+	// a member in any other file of the module, so the grant's own literals are
+	// read there.
+	grantSrc := readModuleFile(t, orchestratorModulePath)
 	const project, region = "proj-1234", "us-east5"
 
 	ring := moduleStringLiteral(t, src, "mailbox_key_ring")
@@ -96,10 +102,11 @@ func TestMailboxKeyNamesAreTheGoSpellings(t *testing.T) {
 	if got := moduleStringLiteral(t, src, "role_id"); got != tf.MailboxSignerRole {
 		t.Errorf("mailbox_key.tf's role is %q and internal/infra/tf's is %q: the cover's row is keyed by the role ID, so a difference is a row that stops closing the cell — and the cell is the whole of O17's \"the mailbox consumer's account only\"", got, tf.MailboxSignerRole)
 	}
-	if got, want := fill(moduleStringLiteral(t, src, "role")), "projects/"+project+"/roles/"+tf.MailboxSignerRole; got != want {
-		t.Errorf("mailbox_key.tf grants %s, want %s: the cover reads a custom role's project out of the grant's own role string, and a role of another project is a role this run's cover does not know", got, want)
+	grant := moduleResourceBlock(t, grantSrc, "google_kms_crypto_key_iam_member", "orchestrator_mailbox_signer")
+	if got, want := fill(moduleStringLiteral(t, grant, "role")), "projects/"+project+"/roles/"+tf.MailboxSignerRole; got != want {
+		t.Errorf("orchestrator.tf grants %s, want %s: the cover reads a custom role's project out of the grant's own role string, and a role of another project is a role this run's cover does not know", got, want)
 	}
-	member := fill(moduleStringLiteral(t, src, "member"))
+	member := fill(moduleStringLiteral(t, grant, "member"))
 	wantMember := "serviceAccount:" + OrchestratorAccountID + "@" + project + ".iam.gserviceaccount.com"
 	if member != wantMember {
 		t.Errorf("mailbox_key.tf grants the signer's role to %s, want %s: the mailbox consumer of this installation IS the resident orchestrator (P5.1), so the module writes that account out rather than a reference — a computed member reaches a plan as UNKNOWN, and the cover cannot tell an unknown principal from an ordinary job account", member, wantMember)
@@ -133,9 +140,20 @@ func TestMailboxKeyNamesAreTheGoSpellings(t *testing.T) {
 		types = append(types, m[1])
 	}
 	slices.Sort(types)
-	wantTypes := []string{"google_kms_crypto_key", "google_kms_crypto_key_iam_member", "google_kms_key_ring", "google_project_iam_custom_role"}
+	wantTypes := []string{"google_kms_crypto_key", "google_kms_key_ring", "google_project_iam_custom_role"}
 	if !slices.Equal(types, wantTypes) {
-		t.Errorf("mailbox_key.tf declares %v, want %v: the ring, the one key, the one role and the one binding are the whole of J6's Terraform, and anything else here is a resource nobody reviewed — a second key version, an import job, a container holding material", types, wantTypes)
+		t.Errorf("mailbox_key.tf declares %v, want %v: the ring, the one key and the one role are this file's whole Terraform, and anything else here is a resource nobody reviewed — a second key version, an import job, a container holding material. The one binding is orchestrator.tf's, for that file's own reason (TestOrchestratorIsNeverALauncher)", types, wantTypes)
+	}
+	// ... and the one binding orchestrator.tf declares is the ONLY Cloud KMS
+	// resource outside this file, which is section 4.3's rule read from the
+	// other end: a second google_kms_ block there is a key or a grant this task
+	// did not write (TestOrchestratorIsNeverALauncher is the rule's own test).
+	var kmsRows []string
+	for _, m := range regexp.MustCompile(`(?m)^resource\s+"(google_kms_[a-z_]+)"\s+"([a-z0-9_]+)"`).FindAllStringSubmatch(grantSrc, -1) {
+		kmsRows = append(kmsRows, m[1]+"."+m[2])
+	}
+	if !slices.Equal(kmsRows, []string{"google_kms_crypto_key_iam_member.orchestrator_mailbox_signer"}) {
+		t.Errorf("orchestrator.tf declares the Cloud KMS resources %v, want exactly the one binding: the key, the ring and the role are mailbox_key.tf's, and a second block here is a resource no reader of that file would look for", kmsRows)
 	}
 	if regexp.MustCompile(`(?m)^data\s+"`).MatchString(src) {
 		t.Errorf("mailbox_key.tf has a data source: nothing here may READ key material, and the plan's own inputs are the installation's variables")
@@ -420,11 +438,35 @@ func stringList(v any) []string {
 // embeds — the same tree `fugaro update` writes into its workdir.
 func readMailboxModule(t *testing.T) string {
 	t.Helper()
-	b, err := fs.ReadFile(terraform.FS, mailboxModulePath)
+	return readModuleFile(t, mailboxModulePath)
+}
+
+// readModuleFile is one file of the embedded tree's own text.
+func readModuleFile(t *testing.T, path string) string {
+	t.Helper()
+	b, err := fs.ReadFile(terraform.FS, path)
 	if err != nil {
-		t.Fatalf("the embedded installation module has no %s: J6's key lives there, and every literal this file pins is read out of it: %v", mailboxModulePath, err)
+		t.Fatalf("the embedded installation module has no %s: J6's key lives there, and every literal this file pins is read out of it: %v", path, err)
 	}
 	return string(b)
+}
+
+// moduleResourceBlock is one resource block of a module as its own text, so
+// that a literal read out of it is the one THAT resource writes: orchestrator.tf
+// has many `role =` lines, and the first of them is not this one.
+func moduleResourceBlock(t *testing.T, src, typ, name string) string {
+	t.Helper()
+	head := `resource "` + typ + `" "` + name + `" {`
+	i := strings.Index(src, head)
+	if i < 0 {
+		t.Fatalf("no resource \"%s\" \"%s\" in the module", typ, name)
+	}
+	rest := src[i+len(head):]
+	j := strings.Index(rest, "\n}")
+	if j < 0 {
+		t.Fatalf("resource \"%s\" \"%s\" is not closed", typ, name)
+	}
+	return rest[:j]
 }
 
 // moduleStringLiteral is one `attr = "..."` line of a module, its value. An
