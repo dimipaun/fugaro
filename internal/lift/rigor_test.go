@@ -24,8 +24,8 @@ func TestPlanRigor(t *testing.T) {
 		// The block form and the scalar shorthand D20 shipped: both are the
 		// repository's level, and both become defaults.rigor.repos.<repo>.
 		got := planRigor(t, Project{}, []Repo{
-			repoWith(t, "acme/app", "rigor:\n  default: poc\n"),
-			repoWith(t, "acme/tools", "rigor: pro\n"),
+			rigorRepoWith(t, "acme/app", "rigor:\n  default: poc\n"),
+			rigorRepoWith(t, "acme/tools", "rigor: pro\n"),
 		})
 		wantEdits := []LayerEdit{
 			{Path: []string{"defaults", "rigor", "repos", "acme/app"}, Value: "poc"},
@@ -36,7 +36,7 @@ func TestPlanRigor(t *testing.T) {
 		}
 		wantLine(t, got, "acme/app: rigor.default poc -> defaults.rigor.repos.acme/app")
 		wantLine(t, got, "acme/tools: rigor.default pro -> defaults.rigor.repos.acme/tools")
-		if want := []string{slugOf(t, "acme/app"), slugOf(t, "acme/tools")}; !slices.Equal(got.Records, want) {
+		if want := []string{rigorSlugOf(t, "acme/app"), rigorSlugOf(t, "acme/tools")}; !slices.Equal(got.Records, want) {
 			t.Errorf("Records = %v, want %v (a repository this item moved is migrated once, D3305)", got.Records, want)
 		}
 		if n := len(got.Lines); n != 2 {
@@ -50,7 +50,7 @@ func TestPlanRigor(t *testing.T) {
 		// file's value outranks the entry today and stops applying — so R5
 		// names it with the old and the new level.
 		got := planRigor(t, Project{Layer: layerTree(t, "defaults:\n  rigor:\n    repos:\n      acme/app: critical\n")}, []Repo{
-			repoWith(t, "acme/app", "rigor:\n  default: poc\n"),
+			rigorRepoWith(t, "acme/app", "rigor:\n  default: poc\n"),
 		})
 		if len(got.LayerEdits) != 0 {
 			t.Errorf("LayerEdits = %+v, want none: the project's entry stands", got.LayerEdits)
@@ -66,7 +66,7 @@ func TestPlanRigor(t *testing.T) {
 		// Each of the repository's rules becomes a project area with one member
 		// — {repo, paths: [its match]} — keeping its name (RG2's acceptance).
 		got := planRigor(t, Project{}, []Repo{
-			repoWith(t, "acme/app", `rigor:
+			rigorRepoWith(t, "acme/app", `rigor:
   areas:
     - name: ui
       match: ui/**
@@ -85,7 +85,7 @@ func TestPlanRigor(t *testing.T) {
 		}
 		wantLine(t, got, `acme/app: rigor.areas "ui" startup -> defaults.rigor.areas "ui" (member acme/app, paths ui/**)`)
 		wantLine(t, got, `acme/app: rigor.areas "api" critical -> defaults.rigor.areas "api" (member acme/app, paths internal/api/**)`)
-		if want := []string{slugOf(t, "acme/app")}; !slices.Equal(got.Records, want) {
+		if want := []string{rigorSlugOf(t, "acme/app")}; !slices.Equal(got.Records, want) {
 			t.Errorf("Records = %v, want %v", got.Records, want)
 		}
 	})
@@ -101,7 +101,7 @@ func TestPlanRigor(t *testing.T) {
         match: web/**
         level: startup
 `)}, []Repo{
-			repoWith(t, "acme/app", "rigor:\n  areas:\n    - name: ui\n      match: ui/**\n      level: poc\n"),
+			rigorRepoWith(t, "acme/app", "rigor:\n  areas:\n    - name: ui\n      match: ui/**\n      level: poc\n"),
 		})
 		if n := len(got.LayerEdits); n != 1 {
 			t.Fatalf("LayerEdits = %+v, want the one moved area", got.LayerEdits)
@@ -121,7 +121,7 @@ func TestPlanRigor(t *testing.T) {
 		long := strings.Repeat("u", rigor.MaxAreaName)
 		got := planRigor(t, Project{Layer: layerTree(t, "defaults:\n  rigor:\n    areas:\n"+
 			"      - name: "+long+"\n        match: web/**\n        level: startup\n")}, []Repo{
-			repoWith(t, "acme/app", "rigor:\n  areas:\n"+
+			rigorRepoWith(t, "acme/app", "rigor:\n  areas:\n"+
 				"    - name: "+long+"\n      match: ui/**\n      level: poc\n"+
 				"    - name: "+long+"\n      match: lib/**\n      level: startup\n"),
 		})
@@ -157,8 +157,8 @@ func TestPlanRigor(t *testing.T) {
 		// The block is written both ways an empty one is: `rigor:` and
 		// `rigor: {}`.
 		got := planRigor(t, Project{Layer: layerTree(t, "defaults:\n  rigor:\n    default: startup\n")}, []Repo{
-			repoWith(t, "acme/app", "rigor:\n"),
-			repoWith(t, "acme/tools", "rigor: {}\n"),
+			rigorRepoWith(t, "acme/app", "rigor:\n"),
+			rigorRepoWith(t, "acme/tools", "rigor: {}\n"),
 		})
 		want := []LayerEdit{
 			{Path: []string{"defaults", "rigor", "repos", "acme/app"}, Value: "startup"},
@@ -183,8 +183,8 @@ func TestPlanRigor(t *testing.T) {
 			fmt.Fprintf(&b, "      acme/r%d: pro\n", i)
 		}
 		got := planRigor(t, Project{Layer: layerTree(t, b.String())}, []Repo{
-			repoWith(t, "acme/empty", "rigor:\n"),
-			repoWith(t, "acme/level", "rigor:\n  default: poc\n"),
+			rigorRepoWith(t, "acme/empty", "rigor:\n"),
+			rigorRepoWith(t, "acme/level", "rigor:\n  default: poc\n"),
 		})
 		if len(got.LayerEdits) != 0 || len(got.Records) != 0 {
 			t.Errorf("LayerEdits = %+v, Records = %v, want none: the map holds all the repositories the layer may", got.LayerEdits, got.Records)
@@ -205,14 +205,14 @@ func TestPlanRigor(t *testing.T) {
 			fmt.Fprintf(&b, "      acme/r%d: pro\n", i)
 		}
 		got := planRigor(t, Project{Layer: layerTree(t, b.String())}, []Repo{
-			repoWith(t, "acme/a", "rigor: {}\n"),
-			repoWith(t, "acme/b", "rigor: {}\n"),
-			repoWith(t, "acme/c", "rigor: {}\n"),
+			rigorRepoWith(t, "acme/a", "rigor: {}\n"),
+			rigorRepoWith(t, "acme/b", "rigor: {}\n"),
+			rigorRepoWith(t, "acme/c", "rigor: {}\n"),
 		})
 		if n := len(got.LayerEdits); n != 1 {
 			t.Errorf("LayerEdits = %+v, want the one the layer still has room for", got.LayerEdits)
 		}
-		if want := []string{slugOf(t, "acme/a")}; !slices.Equal(got.Records, want) {
+		if want := []string{rigorSlugOf(t, "acme/a")}; !slices.Equal(got.Records, want) {
 			t.Errorf("Records = %v, want %v: a repository the item wrote nothing for is not migrated (D3305)", got.Records, want)
 		}
 		full := fmt.Sprintf("defaults.rigor.repos is full: %d of the %d repositories it may hold", rigor.MaxRepoLevels, rigor.MaxRepoLevels)
@@ -231,8 +231,8 @@ func TestPlanRigor(t *testing.T) {
 			fmt.Fprintf(&b, "      - name: rule%d\n        match: r%d/**\n        level: pro\n", i, i)
 		}
 		got := planRigor(t, Project{Layer: layerTree(t, b.String())}, []Repo{
-			repoWith(t, "acme/a", "rigor:\n  areas:\n    - name: ui\n      match: ui/**\n      level: poc\n"),
-			repoWith(t, "acme/b", "rigor:\n  areas:\n    - name: api\n      match: api/**\n      level: poc\n"),
+			rigorRepoWith(t, "acme/a", "rigor:\n  areas:\n    - name: ui\n      match: ui/**\n      level: poc\n"),
+			rigorRepoWith(t, "acme/b", "rigor:\n  areas:\n    - name: api\n      match: api/**\n      level: poc\n"),
 		})
 		if n := len(got.LayerEdits); n != 1 {
 			t.Errorf("LayerEdits = %+v, want the one the layer still has room for", got.LayerEdits)
@@ -259,7 +259,7 @@ func TestPlanRigor(t *testing.T) {
             paths: ["[abc]/**"]
         level: critical
 `)}, []Repo{
-			repoWith(t, "acme/app", "rigor:\n  areas:\n    - name: aliases\n      match: \"{ui,mobile}/**\"\n      level: poc\n    - name: classes\n      match: \"[abc]/**\"\n      level: startup\n"),
+			rigorRepoWith(t, "acme/app", "rigor:\n  areas:\n    - name: aliases\n      match: \"{ui,mobile}/**\"\n      level: poc\n    - name: classes\n      match: \"[abc]/**\"\n      level: startup\n"),
 		})
 		wantLine(t, got, "acme/app: {ui,mobile}/** poc -> startup")
 		wantLine(t, got, "acme/app: [abc]/** startup -> critical")
@@ -301,7 +301,7 @@ func TestPlanRigor(t *testing.T) {
       - name: docs
         match: docs/**
         level: critical
-`)}, []Repo{repoWith(t, "acme/app", "rigor:\n")})
+`)}, []Repo{rigorRepoWith(t, "acme/app", "rigor:\n")})
 		wantLine(t, got, "acme/app: docs/** critical -> startup")
 		if n := len(got.Lines); n != 2 {
 			t.Errorf("Lines = %v, want the move and the one path whose level it changes", got.Lines)
@@ -321,7 +321,7 @@ func TestPlanRigor(t *testing.T) {
             paths: [ui/**]
         level: startup
 `)}, []Repo{
-			repoWith(t, "acme/app", "rigor:\n  default: pro\n  areas:\n    - name: ui\n      match: ui/**\n      level: poc\n"),
+			rigorRepoWith(t, "acme/app", "rigor:\n  default: pro\n  areas:\n    - name: ui\n      match: ui/**\n      level: poc\n"),
 		})
 		wantLine(t, got, "acme/app: ui/** poc -> startup")
 	})
@@ -338,7 +338,7 @@ func TestPlanRigor(t *testing.T) {
           - repo: acme/app
         level: poc
 `)}, []Repo{
-			repoWith(t, "acme/app", "rigor:\n  default: critical\n"),
+			rigorRepoWith(t, "acme/app", "rigor:\n  default: critical\n"),
 		})
 		wantLine(t, got, "acme/app: every path critical -> poc")
 	})
@@ -347,8 +347,8 @@ func TestPlanRigor(t *testing.T) {
 		// A repository with a record is never migrated again (D3305): the
 		// planner writes nothing for it and only names the keys its file still
 		// writes, with C1's own sentence.
-		got := planRigor(t, Project{Migrated: map[string]bool{slugOf(t, "acme/app"): true}}, []Repo{
-			repoWith(t, "acme/app", "rigor:\n  default: poc\n  areas:\n    - name: ui\n      match: ui/**\n      level: startup\n"),
+		got := planRigor(t, Project{Migrated: map[string]bool{rigorSlugOf(t, "acme/app"): true}}, []Repo{
+			rigorRepoWith(t, "acme/app", "rigor:\n  default: poc\n  areas:\n    - name: ui\n      match: ui/**\n      level: startup\n"),
 		})
 		if len(got.LayerEdits) != 0 || len(got.Records) != 0 {
 			t.Errorf("LayerEdits = %+v, Records = %v, want none for a migrated repository (D3305)", got.LayerEdits, got.Records)
@@ -368,8 +368,8 @@ func TestPlanRigor(t *testing.T) {
 		// half-migrating it would drop the rest of its block when release A
 		// stops honouring it, so nothing is written for it at all.
 		got := planRigor(t, Project{}, []Repo{
-			repoWith(t, "acme/app", "rigor:\n  default: [poc\n"),
-			repoWith(t, "acme/bad-rule", "rigor:\n  default: poc\n  areas:\n    - name: ui\n      match: /ui/**\n      level: startup\n"),
+			rigorRepoWith(t, "acme/app", "rigor:\n  default: [poc\n"),
+			rigorRepoWith(t, "acme/bad-rule", "rigor:\n  default: poc\n  areas:\n    - name: ui\n      match: /ui/**\n      level: startup\n"),
 			Repo{Repo: "acme/unread", Provider: "github", Branch: "main", Unreadable: "the default branch could not be read"},
 		})
 		if len(got.LayerEdits) != 0 {
@@ -390,7 +390,7 @@ func TestPlanRigor(t *testing.T) {
 	t.Run("no rigor block", func(t *testing.T) {
 		// A repository that writes no rigor: key is not this item's business:
 		// no line, no write, no record.
-		got := planRigor(t, Project{}, []Repo{repoWith(t, "acme/app", "workflows:\n  default: {}\n")})
+		got := planRigor(t, Project{}, []Repo{rigorRepoWith(t, "acme/app", "workflows:\n  default: {}\n")})
 		if !got.Empty() {
 			t.Errorf("the change = %+v, want nothing at all", got)
 		}
@@ -417,12 +417,12 @@ func layerTree(t *testing.T, text string) map[string]any {
 	return tree
 }
 
-func repoWith(t *testing.T, name, text string) Repo {
+func rigorRepoWith(t *testing.T, name, text string) Repo {
 	t.Helper()
 	return Repo{Repo: name, Provider: "github", Branch: "main", Config: []byte(text)}
 }
 
-func slugOf(t *testing.T, repo string) string {
+func rigorSlugOf(t *testing.T, repo string) string {
 	t.Helper()
 	slug, err := task.Slug("github", repo)
 	if err != nil {
