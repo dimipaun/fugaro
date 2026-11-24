@@ -7849,6 +7849,7 @@
         "mobile/firebase.json",
         "mobile/package-lock.json",
         "mobile/package.json",
+        "mobile/spike/.gitignore",
         "mobile/src/accounts/**",
         "mobile/src/accounts/account.js",
         "mobile/src/accounts/secret.js",
