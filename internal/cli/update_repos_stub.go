@@ -6,7 +6,6 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
-	"github.com/dimipaun/fugaro/internal/repofiles"
 )
 
 // update_repos_stub.go is C1's stand-in for the real reader (R21): while it
@@ -43,9 +42,9 @@ var enrolledReposImpl = func(ctx context.Context, in enrolledIn) ([]repoView, []
 	case db.ref == "":
 		v.Unread = "no origin/HEAD, origin/main or origin/master here, so its default branch could not be read"
 	case !db.read:
-		v.Unread = "no " + repofiles.YAML + " on the default branch"
+		v.Unread = "no fugaro.yaml on the default branch"
 	case db.cfg == nil:
-		v.Unread = "its " + repofiles.YAML + " is not valid: " + firstProblemText(db.problems)
+		v.Unread = "its fugaro.yaml is not valid: " + firstProblemText(db.problems)
 	default:
 		v.Head = headOfDefaultBranch(ctx, root, db.ref)
 	}
