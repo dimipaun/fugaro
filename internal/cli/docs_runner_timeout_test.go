@@ -47,11 +47,12 @@ func runnerBoundMechanics(st runnerCIState) string {
 //
 // mechanics is runnerCIMechanics for a document that states the mechanism
 // itself, and empty for one that states the claim without its numbers
-// (CONTRIBUTING.md). It is read off the workflow like the bound and the cap
-// are: the two documents that carry it named a fixed pair of legs
+// (CONTRIBUTING.md). The two numbers are read off the workflow like the bound
+// and the cap are, so a document that states the mechanism cannot keep a bound
+// the workflow has moved. The leg names a document gives are not read: the two
+// documents that state the mechanism named the hand-written matrix's pair
 // (`runner-0`, `runner-1`) until the matrix became the selector's output, and
-// a document that names the matrix's numbers is where a leg that no longer
-// exists, or a bound that moved, is left behind.
+// nothing here holds them to the names the selector prints.
 var runnerTimeoutClaims = []struct {
 	path             string
 	pending, applied string
@@ -201,12 +202,13 @@ func runnerTimeoutStateProblems(ci string, doc func(path string) string) []strin
 		if !strings.Contains(text, runnerLocalCommand) {
 			problems = append(problems, fmt.Sprintf("%s no longer names `%s`: that command is the bound this claim is about, and the three documents name the same one", c.path, runnerLocalCommand))
 		}
-		// And the mechanism, in the documents that state it: the numbers are
-		// the workflow's, so a document that carries last month's bound, or the
-		// name of a leg the matrix no longer has, is caught here. Nothing is
-		// asked while the workflow gives the package no bound to describe.
+		// And the mechanism, in the documents that state it: the `-timeout` and
+		// the cap are the workflow's, so a document that states last month's
+		// bound, or that bound under a cap the job does not have, is caught
+		// here. Nothing is asked while the workflow gives the package no bound
+		// to describe.
 		if want := runnerBoundMechanics(st); c.mechanics != "" && want != "" && !strings.Contains(text, want) {
-			problems = append(problems, fmt.Sprintf("%s no longer states this bound as .github/workflows/ci.yml carries it (%q): the bound and the cap are the workflow's, and a document that writes them down is where a matrix the selector prints leaves a number, or a runner's name, behind", c.path, want))
+			problems = append(problems, fmt.Sprintf("%s no longer states this bound as .github/workflows/ci.yml carries it (%q): the bound and the cap belong to the workflow, and a document that writes them down is where a bound that has moved is left behind", c.path, want))
 		}
 	}
 	// The workflow side of the same fact, once it carries the step: the step's
@@ -310,8 +312,8 @@ func TestRunnerTimeoutStateRulesSeeEveryState(t *testing.T) {
 			[]string{"CONTRIBUTING.md does not say CI gives internal/runner no bound", "docs/dogfooding.md does not say CI gives internal/runner no bound", "docs/pending-workflows/README.md does not say CI gives internal/runner no bound"}},
 		{"applied, but under the cap the job has today", ciAppliedUnderTheOldCap, docsIn("applied"), false,
 			[]string{"is capped at 30 minutes while the internal/runner step asks for `-timeout 40m`"}},
-		{"applied, with a document still naming the matrix that came before the selector", ciApplied, overriding("applied", "docs/dogfooding.md",
-			runnerTimeoutClaims[1].applied+" "+runnerLocalCommand+" (`-timeout 20m` under the shard job's `timeout-minutes: 30`, on the runners `runner-0` and `runner-1`)"),
+		{"applied, with a document carrying the numbers the matrix had before the selector", ciApplied, overriding("applied", "docs/dogfooding.md",
+			runnerTimeoutClaims[1].applied+" "+runnerLocalCommand+" (`-timeout 20m` under the shard job's `timeout-minutes: 30`)"),
 			false, []string{"docs/dogfooding.md no longer states this bound as .github/workflows/ci.yml carries it"}},
 		{"both sentences in one document", ciPending, overriding("pending", "CONTRIBUTING.md",
 			runnerTimeoutClaims[0].pending+runnerTimeoutClaims[0].applied+runnerLocalCommand),
