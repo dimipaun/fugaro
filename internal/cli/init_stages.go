@@ -72,6 +72,16 @@ type initEngine struct {
 	repo      *repositoryStage
 	policy    *policyMigrateStage
 
+	// The lift stage and the layer stage after it: the migration of what a
+	// repository's own file declares into the project holds the first, and the
+	// second publishes the layer file it edited. The engine keeps both because
+	// the two are one write from the outside — the lift stage forgets the layer
+	// stage's cached read of the file it just changed, and the records it
+	// migrated are written after the loop, once the publish has landed
+	// (update_lift.go).
+	lift  *liftStage
+	layer *layerStage
+
 	// The credentials service's image as this run resolved it
 	// (credentialsResolve): the policy stage asks for it before it raises the
 	// published node's version and the credentials-service stage pins the
@@ -366,7 +376,16 @@ func initStages(e *initEngine) []initflow.Stage {
 	// publish is read under the node the policy stage just moved in place, so a
 	// layer whose claims the older node could not carry is judged by the same
 	// installation it is published for (init_layer_stage.go).
-	stages = append(stages, newLayerStage(e))
+	//
+	// The lift stage comes immediately before it, and the order between these
+	// two is the whole of the migration's promise: the lift stage moves what a
+	// repository's own file declares into this same layer file, so the document
+	// the layer stage publishes is the one the migration just wrote, and the
+	// records it keeps wait for that publish (update_lift.go, L8, D3305).
+	e.lift = newLiftStage(e)
+	stages = append(stages, e.lift)
+	e.layer = newLayerStage(e)
+	stages = append(stages, e.layer)
 	// The checkout's own steps (the cloud half; the pin and the plugin are
 	// are a stage of this run too: fugaro update is the whole upgrade, so the
 	// one command the user runs may not leave the checkout it runs in behind
@@ -556,6 +575,14 @@ func (e *initEngine) converge(ctx context.Context) error {
 	// leaves its step owed — and it never touches a catalog build, which
 	// `update` does not run (D1577).
 	e.clearAnsweredSteps(res)
+	// The migration records this run may write, and they are written HERE
+	// rather than by the stage that planned them: a record claims that a
+	// repository's migration has landed, and the layer half of it lands in the
+	// layer stage's publish of the document the lift stage edited, which runs
+	// after it — so a publish that was refused, skipped or never reached writes
+	// no record and the next update migrates the repository again
+	// (update_lift.go, D3305).
+	e.writeLiftRecords(ctx, res)
 	if err == nil && res != nil && e.r.o.planOnly && res.Failed == nil {
 		e.planOnlyReview(ctx, res.Stages)
 	}
