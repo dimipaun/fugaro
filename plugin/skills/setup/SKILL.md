@@ -57,7 +57,7 @@ A project is managed when its runs bucket holds Fugaro's marker (`fugaro/managed
 
 Check `fugaro version` and `fugaro backends ls`: it marks the project's own — `cloud-run`, the default, and `cloud-batch`, gated by `--provision-batch` and `fugaro doctor`, selected with `fugaro backends use cloud-batch`. Never write it yourself. On Windows, run everything in WSL2, in the repository's Linux checkout.
 
-`FUGARO_PROJECT=<name> fugaro config example` (just `fugaro config example` when none was asked for) prints the template; its `project:` line is the selected project's name. When it shows `example`, no project is selectable: ask the user. Never invent one: a wrong name makes every run refuse.
+`FUGARO_PROJECT=<name> fugaro config example` (just `fugaro config example` when none was asked for) prints the template; its `project:` line is the selected project's name. When it shows `example`, no project is selectable: ask the user; a wrong name makes every run refuse.
 
 ### Does the project publish a project layer?
 
@@ -125,7 +125,7 @@ From the checkout, run `fugaro secrets ls --repo --json` (not doctor, which list
 
 Setup's prompts (step 9) have no `--repo` to pass: they store a name project-wide, except a per-repository one (`bitbucket-token`, project-wide only through an explicit `project_secrets` allow-list entry); a covered name is not asked for, nor is a covered workflow secret; for its own copy, press Ctrl-C at the prompt and run the command it printed in your own terminal, then start setup again.
 
-The user runs these in their own terminal, not through the agent. One line per missing secret: no `--repo` for the GitHub App key (project-wide), `--repo <owner/name>` for `bitbucket-token` (per-repository by default). Run:
+The user runs these in their own terminal, not through the agent. One line per missing secret: no `--repo` for the GitHub App key (project-wide), `--repo <owner/name>` for `bitbucket-token` (per-repository by default; project-wide only through that same entry). Run:
 
 ```bash user-runs
 # the GitHub App private key (a PEM file: redirected, not typed)
