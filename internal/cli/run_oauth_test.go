@@ -181,7 +181,7 @@ func TestFollowUpNoTokenInheritsPreviousAccount(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, appClaudeAccountsConfig)
 	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-personal")), "4", "8Gi")
-	writeBuildRecord(t, f, appSlug, "web", release065)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	seedAppFollowUpRoot(t, f, "acme-personal")
 	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "more work")
 	if err != nil {
@@ -206,7 +206,7 @@ func TestFollowUpExplicitTokenOverridesInheritedAccount(t *testing.T) {
 	f.appendConfig(t, appClaudeAccountsConfig)
 	variant := gcp.WorkflowVariant("web", "acme-personal")
 	f.run.AddJob(gcp.JobName(appSlug, variant), "4", "8Gi")
-	writeBuildRecord(t, f, appSlug, "web", release065)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	seedAppFollowUpRoot(t, f, "") // root used the default account
 	var got gcpfake.RunCall
 	f.run.OnRun = func(c gcpfake.RunCall) { got = c }
@@ -312,7 +312,7 @@ func TestFollowUpTokenOverrideRefusedWhenAuthNotOAuth(t *testing.T) {
 func TestFollowUpTokenOverrideRefusedWhenVariantJobMissing(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, appClaudeAccountsConfig)
-	writeBuildRecord(t, f, appSlug, "web", release065)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	// No AddJob for "web_acme-personal": it does not exist yet.
 	seedAppFollowUpRoot(t, f, "")
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--token", "acme-personal", "more work")
@@ -337,7 +337,7 @@ func TestFollowUpDocumentedTokenOverrideCommandWorks(t *testing.T) {
 	f.appendConfig(t, appClaudeAccountsConfig)
 	variant := gcp.WorkflowVariant("web", "acme-personal")
 	f.run.AddJob(gcp.JobName(appSlug, variant), "4", "8Gi")
-	writeBuildRecord(t, f, appSlug, "web", release065)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	seedAppFollowUpRoot(t, f, "")
 	var got gcpfake.RunCall
 	f.run.OnRun = func(c gcpfake.RunCall) { got = c }
@@ -369,7 +369,7 @@ func TestFollowUpRepeatRunIDRefusesDifferentToken(t *testing.T) {
 	f.appendConfig(t, appClaudeAccountsConfig) // allows acme-personal and acme-overflow for acme/app
 	variant := gcp.WorkflowVariant("web", "acme-personal")
 	f.run.AddJob(gcp.JobName(appSlug, variant), "4", "8Gi")
-	writeBuildRecord(t, f, appSlug, "web", release065)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	seedAppFollowUpRoot(t, f, "")
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--token", "acme-personal", "more work"); err != nil {
 		t.Fatal(err)

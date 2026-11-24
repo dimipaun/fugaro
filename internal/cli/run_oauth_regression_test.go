@@ -115,7 +115,7 @@ func TestFollowUpAfterRealNamedLaunch(t *testing.T) {
 	f.run.Project, f.run.Region = "proj-1234", "us-east5"
 	f.appendConfig(t, claudeAccountsConfig)
 	oauthCheckout(t, f, "")
-	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	writeBuildRecord(t, f, otherSlug, "svc", release085)
 	variant := gcp.WorkflowVariant("svc", "acme-personal")
 	f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
 

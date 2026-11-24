@@ -1101,12 +1101,9 @@ var sealRunnerIntroduced = time.Date(2026, 10, 17, 17, 45, 33, 0, time.UTC)
 // has the release checklist verify it. internal/cli/run.go gates a launch
 // that would set a title against an older build record, exactly as it does
 // for a named Claude account (namedTokensSince) and for mode: artifact
-// (artifactsSince); a launch that ends with no title at all — no --title,
-// no title inherited from the run it continues and no brief to take one
-// from — writes no such field and is never gated. A plain `--pr` follow-up
-// is not one of those any more: it takes the pull request's title when the
-// host can be read (followUpPRTitle), and the gate then judges that field
-// like any other title's.
+// (artifactsSince). A launch with no title at all is refused before it is
+// gated (createTask), and a plain `--pr` follow-up carries its chain's title,
+// so the gate judges a follow-up's inherited title like any other.
 const titlesSince = "0.8.5"
 
 // planTaskSince is the first fugaro release whose runner reads a task's

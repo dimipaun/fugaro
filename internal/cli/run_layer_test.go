@@ -355,7 +355,7 @@ func TestRunFollowUpEmbedsTheCurrentProjectLayer(t *testing.T) {
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
-	writeBuildRecord(t, f, appSlug, "web", release060)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	out, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--json")
 	if err != nil {
 		t.Fatal(err)

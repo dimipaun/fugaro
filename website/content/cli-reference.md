@@ -8561,10 +8561,10 @@ fugaro watch and runs ls list the run by, and the title (with the body's first
 heading) of the pull request the run opens when the agent writes no pr.md of
 its own. Without it the run is named by the task's first line, so briefs that
 start with the same preamble all read alike. A follow-up (--pr) keeps its run's
-title unless --title is given, and with neither a title nor a task of its own it
-takes the title of the pull request it continues, read from the code host (a host
-that cannot be read leaves the run named by its own instructions). A task of its
-own always wins, and --retry takes none (the stored task keeps its own).
+title (the first line of its brief when it had none) unless --title is given; one
+whose chain names nothing and which has no task of its own is refused, naming
+--title, and so is any launch left with no title. A review launch with neither is
+named Review of PR #N. --retry takes none (the stored task keeps its own).
 
 --plan-task PLAN/TASK records which task of which plan this run works on, so
 the console's graph can join the run to that node. One plan and one task id,
@@ -8650,7 +8650,7 @@ Flags:
 | `--spec` | string | "" | no | review against the task in this FILE instead of the task of the run that opened the pull request: the way to review a pull request no run produced. Its text is redacted like any other a launcher adds, and a file over 16384 bytes is refused with its size. Needs a mode: review recipe and --pr, and refused with --code-only |
 | `--task-file` | string | "" | no | read the task from this file, or - for stdin |
 | `--tier` | string | "" | no | the expectation tier to dispatch this run at: trivial, small, medium, large. It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all |
-| `--title` | string | "" | no | the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given, and with no title and no task of its own it takes the pull request's title instead |
+| `--title` | string | "" | no | the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given, and one whose chain names nothing and which has no task of its own is refused, naming --title |
 | `--token` | string | "" | no | named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's) |
 | `--total-timeout` | string | "" | no | override the workflow's timeouts.total for this run, such as 45m |
 | `--used-review-rounds` | string | "" | no | state that the chain has already spent N review rounds, such as 2: tighten-only like --used-usd |
