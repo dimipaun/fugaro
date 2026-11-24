@@ -824,7 +824,10 @@ wait_for_logwriter() {
 # hands it back. The codes, and the row each one becomes:
 #
 #   0   the service answered 200 AND the token's email claim is the throwaway
-#       account — the reading S4's build exception rests on
+#       account — the reading S4's build exception rests on. This is the one code
+#       Cloud Build does NOT write into the record: the field is a proto3 int64
+#       with no presence, so a zero is omitted, and the check reads this code from
+#       the build's own SUCCESS instead (see step_build)
 #   11  the service answered 401 (the front end refusing the token itself)
 #   12  the service answered 403 (Cloud Run refusing this caller)
 #   13  any other status, including no status at all (curl could not reach it)
@@ -962,12 +965,24 @@ step_build() {
   # Logging: Cloud Build writes it into the build the step ran in, so this
   # reading is there the moment the build ends, whatever the logging front end is
   # doing. It is what the `call` row falls back on when the step's line has not
-  # arrived — see call_from_step_exit_code. A build with no step record at all
-  # (a container that never started) prints nothing for this field, which is not
-  # the number 0: the blank lines go, and an empty value stays empty.
+  # arrived — see call_from_step_exit_code.
   local step_exit
   step_exit=$(gcloud builds describe "$BUILD_ID" --project="${P:?}" --format='value(steps[0].exitCode)' 2>/dev/null \
     | tr -d '\r' | grep -v '^$' | head -n 1 || true)
+
+  # Cloud Build OMITS a zero exit code — the field is a proto3 int64 with no
+  # presence — so a step that exited 0 and a step that never ran print the SAME
+  # empty column. Read as "no code", the empty column would report the log-less
+  # PASS this reading exists for as unmeasured, which is exactly the reading the
+  # owner's run of 2026-11-24 needed. The two are told apart by the build's own
+  # status, which this run already read: the step is this build's ONLY step, so a
+  # build that ended SUCCESS is a step that ran and exited 0, and a build that
+  # ended anything else with an empty column is a step that never exited at all.
+  local step_exit_omitted_zero=no
+  if [ -z "$step_exit" ] && [ "$status" = SUCCESS ]; then
+    step_exit=0
+    step_exit_omitted_zero=yes
+  fi
 
   # The build's own line, read whether or not the build passed: the step prints
   # its answer BEFORE it exits non-zero, so a refused call carries both the
@@ -999,7 +1014,7 @@ step_build() {
     # Logging has not ingested it. The build's OWN RECORD answers instead: the
     # step ends with one exit code per outcome, and Cloud Build wrote that code
     # into the build. This is why the verdict is independent of the log.
-    call_from_step_exit_code "$step_exit" "$detail"
+    call_from_step_exit_code "$step_exit" "$detail" "$step_exit_omitted_zero"
     ;;
   notoken)
     fact call FAIL "the build's step minted no ID token from the build's own metadata server, so it never called ${SVC}: the metadata server answered it nothing, which is a fact about the build and not about the grant this check made. Read the step's own lines with 'gcloud builds log ${BUILD_ID} --project=${P}'"
@@ -1020,22 +1035,29 @@ step_build() {
   esac
 }
 
-# call_from_step_exit_code EXIT_CODE DETAIL: the `call` row when the step's own
-# line was not read. The step ends with ONE exit code per outcome (the list is on
-# write_build_config), Cloud Build writes it into the build's own record, and
-# `gcloud builds describe` hands it back — so the one thing this reading never
-# depends on is Cloud Logging, whose ingestion is what the owner's run of
-# 2026-11-24 came back empty from. What the row loses by not having the line is
-# the email claim as TEXT; the step's exit code 0 is only written when that claim
-# IS the throwaway account, so the verdict is the same one. An exit code that is
-# not on the list is not read as any of them: the step's script has one `exit`
-# per outcome and nothing else in it exits, so a code this reading cannot name —
-# 1, or a shell's own status — means the step died before it decided anything.
+# call_from_step_exit_code EXIT_CODE DETAIL [ZERO_OMITTED]: the `call` row when
+# the step's own line was not read. The step ends with ONE exit code per outcome
+# (the list is on write_build_config), Cloud Build writes it into the build's own
+# record, and `gcloud builds describe` hands it back — so the one thing this
+# reading never depends on is Cloud Logging, whose ingestion is what the owner's
+# run of 2026-11-24 came back empty from. What the row loses by not having the
+# line is the email claim as TEXT; the step's exit code 0 is only written when
+# that claim IS the throwaway account, so the verdict is the same one. ZERO_OMITTED
+# is `yes` when the record carried no code at all on a build that ended SUCCESS:
+# Cloud Build omits the zero, so the 0 is read from the build's own status and
+# the row says which of the two readings it is. An exit code that is not on the
+# list is not read as any of them: the step's script has one `exit` per outcome
+# and nothing else in it exits, so a code this reading cannot name — 1, or a
+# shell's own status — means the step died before it decided anything.
 call_from_step_exit_code() {
-  local code=$1 detail=$2
+  local code=$1 detail=$2 zero_omitted=${3:-no}
   case "$code" in
   0)
-    fact call PASS "the build's own record says its step exited 0, and the step is written to exit 0 for one outcome alone: the service answered 200 and the token's email claim is ${CALLER_EMAIL}, the throwaway account this check granted roles/run.invoker on ${SVC} alone. The step's own line was NOT read — it did not arrive in Cloud Logging within ${LOG_WAIT_SECONDS} s ($(last_lines "$SCRATCH/build-log.err")) — so the email claim is asserted by the exit code rather than printed: read it with 'gcloud builds log ${BUILD_ID} --project=${P}'. The token itself is in no line of this block"
+    local read_as="the build's own record says its step exited 0"
+    if [ "$zero_omitted" = yes ]; then
+      read_as="the build ended SUCCESS with no steps[0].exitCode in its record, and that empty column IS the code 0: Cloud Build omits a zero exit code (the field is a proto3 int64 with no presence), this build has no step other than this one, and a build that ended SUCCESS is a step that ran and exited 0"
+    fi
+    fact call PASS "${read_as}, and the step is written to exit 0 for one outcome alone: the service answered 200 and the token's email claim is ${CALLER_EMAIL}, the throwaway account this check granted roles/run.invoker on ${SVC} alone. The step's own line was NOT read — it did not arrive in Cloud Logging within ${LOG_WAIT_SECONDS} s ($(last_lines "$SCRATCH/build-log.err")) — so the email claim is asserted by the exit code rather than printed: read it with 'gcloud builds log ${BUILD_ID} --project=${P}'. The token itself is in no line of this block"
     ;;
   11)
     fact call FAIL "the build's own record says its step exited 11, the code the step exits for one outcome alone: the service answered 401, the front end refusing the token itself. The step's own line was NOT read (it did not arrive in Cloud Logging within ${LOG_WAIT_SECONDS} s), so the token's email claim was not printed; read it with 'gcloud builds log ${BUILD_ID} --project=${P}'. A 401 is a refusal of the token rather than of the grant, so this is not yet the reading S4 rests on"
@@ -1053,7 +1075,7 @@ call_from_step_exit_code() {
     fact call FAIL "the build's own record says its step exited 15, the code the step exits for one outcome alone: the service answered 200, but the token's email claim is NOT ${CALLER_EMAIL} — the token was minted for another identity, so the 200 says nothing about the account this check granted. The step's own line was NOT read (it did not arrive in Cloud Logging within ${LOG_WAIT_SECONDS} s), so the claim itself was not printed; read it with 'gcloud builds log ${BUILD_ID} --project=${P}'. The build's serviceAccount field, the grant, and the metadata server's default account are the three things to read"
     ;;
   "")
-    fact call FAIL "the build's own line was not read (nothing arrived in Cloud Logging within ${LOG_WAIT_SECONDS} s: $(last_lines "$SCRATCH/build-log.err")) and the build's own record carries no steps[0].exitCode either, so the token's email claim and the status the service answered are NOT measured. A record with no step exit code is a build whose step never ran — a container that could not start, or an API that refused the step — and its failureInfo.detail says so: ${detail:-none given}. Read the build with 'gcloud builds describe ${BUILD_ID} --project=${P}' and its lines with 'gcloud builds log ${BUILD_ID} --project=${P}'"
+    fact call FAIL "the build's own line was not read (nothing arrived in Cloud Logging within ${LOG_WAIT_SECONDS} s: $(last_lines "$SCRATCH/build-log.err")) and the build's own record carries no steps[0].exitCode either — and the build did NOT end SUCCESS, so this empty column is not the zero Cloud Build omits — so the token's email claim and the status the service answered are NOT measured. A record with no step exit code on a build that did not succeed is a build whose step never ran: a container that could not start, or an API that refused the step, and its failureInfo.detail says so: ${detail:-none given}. Read the build with 'gcloud builds describe ${BUILD_ID} --project=${P}' and its lines with 'gcloud builds log ${BUILD_ID} --project=${P}'"
     ;;
   *)
     fact call FAIL "the build's own line was not read (nothing arrived in Cloud Logging within ${LOG_WAIT_SECONDS} s) and the build's own record says its step exited ${code}, which is not a code this check's step writes — 0, 11, 12, 13, 14 and 15 are the only ones it can end with — so the cause is NOT named and nothing about the grant was measured. It is a step that died before it decided anything: a shell that could not run the script, a pull the container could not make. The build's own failureInfo.detail says: ${detail:-none given}. Read the build with 'gcloud builds describe ${BUILD_ID} --project=${P}' and its lines with 'gcloud builds log ${BUILD_ID} --project=${P}'"
@@ -1079,7 +1101,7 @@ print_plan() {
   say "  [network, writes] gcloud builds submit --project=${P} --no-source --config=${SCRATCH}/cloudbuild.yaml --service-account=projects/${P}/serviceAccounts/${CALLER_EMAIL} --async (nothing is staged anywhere: the build has no source, and the installation's gs://${P}_cloudbuild is not touched)"
   say "  [network] gcloud builds describe <build id> --project=${P}, every 10 s until the build ends, then once more for its serviceAccount field and once more for steps[0].exitCode — the account field is a RESOURCE NAME, and this reading reduces it to the account it ends in (the bare address, or the account's numeric uniqueId, which then costs one gcloud iam service-accounts describe) so that a build that ran as somebody else still fails and a build that ran as this check's own account is not reported as another identity"
   say "  [network] gcloud logging read 'resource.type=\"build\" resource.labels.build_id=\"<build id>\"' --project=${P}  (the build's own line: retried while Cloud Logging catches up; when it does not arrive, the step's exit code above is the reading instead)"
-  say "  [the build itself, which is the point of the check] one step in ${IMAGE}: mint an ID token for the service's URL from the build's own metadata server (http://metadata.google.internal/…/default/identity?audience=<the service URL>&format=full), call the service with it, print CHK195 status=<code> email=<the token's email claim> — never the token — and end with ONE exit code per outcome, which Cloud Build writes into the build's own record: 0 = 200 and the claim is ${CALLER_EMAIL}, 11 = 401, 12 = 403, 13 = any other status or none at all, 14 = the metadata server minted no token, 15 = the claim is another identity"
+  say "  [the build itself, which is the point of the check] one step in ${IMAGE}: mint an ID token for the service's URL from the build's own metadata server (http://metadata.google.internal/…/default/identity?audience=<the service URL>&format=full), call the service with it, print CHK195 status=<code> email=<the token's email claim> — never the token — and end with ONE exit code per outcome, which Cloud Build writes into the build's own record: 0 = 200 and the claim is ${CALLER_EMAIL} (the one code the record does not carry: Cloud Build omits a zero exit code, and this check reads it from the build's own SUCCESS), 11 = 401, 12 = 403, 13 = any other status or none at all, 14 = the metadata server minted no token, 15 = the claim is another identity"
   say "and its Restore (also from the exit trap) would run:"
   say "  [network, writes] gcloud builds cancel <build id> --project=${P} (refused, harmlessly, when the build already ended)"
   say "  [network, deletes] gcloud run services delete ${SVC} --project=${P} --region=${L}  (which takes the roles/run.invoker binding with it)"

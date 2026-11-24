@@ -14502,7 +14502,11 @@ outcome** (0 = the service answered 200 *and* the claim is the throwaway account
 13 = any other status or none at all, 14 = the metadata server minted no token, 15 = the claim is
 another identity), Cloud Build writes that code into the **build's own record** (`gcloud builds
 describe` → `steps[0].exitCode`, which is not Cloud Logging at all), and when the line has not arrived
-the block names the cause from that code. A build whose line cannot be read is therefore
+the block names the cause from that code. Code `0` is the one Cloud Build does **not** write —
+`exitCode` is a proto3 `int64` with no presence, so a zero is omitted and a step that exited 0 leaves
+the same empty column as a step that never ran — and the check reads that `0` from the build's own
+`SUCCESS`, the only step of the build being this one; a build that did **not** succeed with an empty
+column is the other case, and the block says so. A build whose line cannot be read is therefore
 **measured**, not a failure — what failed on 2026-11-24 was reading the log, on a build record that
 answered perfectly well. A step exit code the step never writes (a 1, a container that never started)
 names no cause, and that is a **failure**: the block says so rather than passing.
