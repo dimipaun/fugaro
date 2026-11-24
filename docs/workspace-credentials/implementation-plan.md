@@ -303,6 +303,11 @@ WC5, WC14.
   `fugaro update` that publishes it; the key moves no version, so the upgrade is the whole fix. The
   skew is recorded where release notes expect it — the next release's `### Known limits`
   (`docs/releases/v0.29.0.md`), which WC13 owns with the rest of the notes.
+- Contract change raised: **R-person-wire** (C1, §7) — for the carrier's shape alone, and not the
+  home. C1's "The switch (R9, U8)" said WC6 does not touch `internal/localcfg/localcfg.go` while the
+  `triage` shape it asks for *is* a field of that file, so WC6 amends that sentence in the contract
+  and raises the change there, under §7's own name for it and with §7's reaches (WC4, WC5, WC7, WC8,
+  WC11 — none of them sees the key, its home, the reader or the enforcer move).
 - Files: `internal/projectpolicy/policy.go`, `internal/projectpolicy/policy_test.go`,
   `internal/settings/registry.go`, `schemas/settings.schema.json`,
   `internal/cli/init_policy_publish.go`; `internal/localcfg/localcfg.go` if C1 places the

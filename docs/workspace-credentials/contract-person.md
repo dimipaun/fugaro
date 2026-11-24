@@ -79,7 +79,7 @@ obey. **WC6 therefore adds the key's carrier to `internal/localcfg/localcfg.go`*
 strict (`KnownFields(true)`), `fugaro settings set` writes and re-parses this file, and the publish
 reads `localcfg.Config`, so a settings row whose key is publishable is a field of this file by
 construction. What U8 refuses is the *alternative*, not the file: the switch's home, its reader and
-its enforcer are unchanged (see R-switch-carrier under "The changes anticipated").
+its enforcer are unchanged (see R-person-wire under "The changes anticipated").
 
 | Fact | Value |
 | --- | --- |
@@ -276,15 +276,18 @@ not be one this package refused on its behalf.
 
 ## The changes anticipated
 
-**R-switch-carrier** (raised by WC6, reaching WC6 alone): the switch's carrier lives in
-`internal/localcfg/localcfg.go`, which "The switch (R9, U8)" said WC6 does not touch. The contract was
-wrong about the road it stated itself: it asks for the `triage` shape — a `fugaro settings set` row
-whose value the member's `fugaro update` publishes — and that shape *is* a field of that file, because
+**R-person-wire** (raised by WC6, reaching WC4, WC5, WC7, WC8 and WC11 — the change §7 of the plan
+anticipates for this contract, "if the switch's home must be elsewhere, or an answer to the threat
+model's review changes a name or a shape"): raised for the *shape* of the carrier and not for the
+home. "The switch (R9, U8)" above fixes the home at the top level of the member's published policy,
+and then said WC6 does not touch `internal/localcfg/localcfg.go`. That sentence was wrong about the
+road the same section states: it asks for the `triage` shape — a `fugaro settings set` row whose
+value the member's `fugaro update` publishes — and that shape *is* a field of that file, because
 `localcfg.Parse` decodes strictly, `settings set` writes and re-parses it, and the publish reads
 `localcfg.Config`. U8's rejected candidate is the alternative it names (a field no settings row and no
-publish touches), not the file. WC6 adds the field and its keep rule there; nothing this contract
+publish touches), not the file. WC6 adds the field and its keep rule there; nothing else this contract
 fixes moves — the key's spelling, its home at the top level of the member's published policy, the
-reader's signature and the enforcer are as they were, and WC5, WC7, WC8 and WC11 read the boundary
+reader's signature and the enforcer are as they were, so WC4, WC5, WC7, WC8 and WC11 read the boundary
 unchanged. Amended here in the same sweep, in `internal/creds/person.go`'s doc on `PersonSwitchKey`,
 and in the next release's notes (`docs/releases/v0.29.0.md`, `### Known limits`: publishing the key
 makes an older CLI in that project refuse to launch until it is upgraded).
