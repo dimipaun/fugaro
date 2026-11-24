@@ -369,13 +369,14 @@ run "only offline refuses: stale is still an orchestrator" \
   "  const offline = () => presence !== null && presence.state === STATE.OFFLINE;" \
   "  const offline = () => presence !== null && presence.state !== STATE.LIVE;"
 run "the message is judged before the presence is" \
-  "    if (typeof text !== 'string' || text.length === 0) return noteRefusal(refuse(SCREEN_CODES.BAD_TEXT, 'text'));
+  "    const engine = readEngineTag();
     if (offline()) {
       const refusedByLicence = await client.licenceRefusal(text, options);" \
   "    if (offline()) {
       return noteRefusal(refuse(SCREEN_CODES.OFFLINE, 'presence'));
     }
     if (typeof text !== 'string' || text.length === 0) return noteRefusal(refuse(SCREEN_CODES.BAD_TEXT, 'text'));
+    const engine = readEngineTag();
     if (offline()) {
       const refusedByLicence = await client.licenceRefusal(text, options);"
 run "an empty message is refused as an empty message" \
