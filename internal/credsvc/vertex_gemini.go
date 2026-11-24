@@ -16,10 +16,10 @@
 // because a request Vertex answers without a member is not the call the agent
 // made — a tool the agent offered but the model was never told about, a
 // constraint that vanished, an image the model cannot see — and the agent would
-// read a wrong answer with no error at all. Two members are the deliberate
-// exceptions, both named and both argued where they are dropped (the hint
-// `cache_control`, and `metadata.user_id`): a member whose absence changes no
-// input the model reads.
+// read a wrong answer with no error at all. Three members are the deliberate
+// exceptions, each named and each argued where it is dropped (the hint
+// `cache_control`, `metadata.user_id`, and the `custom` mark a client tool
+// carries): a member whose absence changes no input the model reads.
 //
 // **The wire is not in this repository (U8 of the reconciliation)**, so every
 // mapping below cites the page it was read from, and GV1's pull request cites
@@ -271,7 +271,8 @@ func vertexGeminiPath(callPath, project, location, spelling string, stream bool)
 // `model` (the path names it), `stream` (the path's method is chosen by it) and
 // `anthropic_version` (a member of Vertex's Anthropic publisher and of nothing
 // else). Everything else is either mapped below or refused — see the file's own
-// note on the two deliberate drops, `cache_control` and `metadata.user_id`.
+// notes on the deliberate drops, `cache_control`, `metadata.user_id` and a
+// client tool's `custom` mark, which vertexGeminiTools argues.
 //
 // counting is the token-count path, and it is the one body this translation
 // builds that is NOT a generateContent request: Vertex's CountTokensRequest has
@@ -390,8 +391,8 @@ func vertexGeminiStopSequences(raw json.RawMessage) ([]string, error) {
 	return sequences, nil
 }
 
-// vertexGeminiMetadata is the metadata member, and the second of this
-// translation's two deliberate drops: Anthropic's `metadata.user_id` is a fact
+// vertexGeminiMetadata is the metadata member, and one of this translation's
+// deliberate drops: Anthropic's `metadata.user_id` is a fact
 // about the CALLER's bookkeeping — the end user an API integration attributes a
 // request to — and Vertex's Google publisher has no per-request member for it
 // (the body's members are contents, cachedContent, tools, toolConfig, labels,
@@ -582,10 +583,12 @@ func vertexGeminiParts(raw json.RawMessage, where string, calls map[string]strin
 // carries:
 //
 //   - text, as Part.text;
-//   - tool_use, as Part.functionCall — the tool's name and its arguments. The
-//     block's id is NOT carried: Vertex's `v1` functionCall has no id member,
-//     and the id's whole use here is to find the name a later tool_result must
-//     be sent under (vertexGeminiContents);
+//   - tool_use, as Part.functionCall — the tool's name and its arguments, and
+//     the thought signature that call was answered with, as Part.thoughtSignature
+//     (vertexGeminiThoughtSignature). The id itself is NOT carried: Vertex's
+//     `v1` functionCall has no id member, and what the id is read for here is the
+//     signature it may hold and the name a later tool_result must be sent under
+//     (vertexGeminiContents);
 //   - tool_result, as Part.functionResponse, named for the call it answers and
 //     carrying its output — under `output`, or `error` when the agent marked it
 //     as a failure, which is the key convention Google's Gemini API reference
@@ -752,13 +755,17 @@ func vertexGeminiToolResultContent(raw json.RawMessage, where string) (string, e
 // `input_schema` as the declaration's `parametersJsonSchema`, verbatim (see
 // vertexGeminiSchema for why that member and not `parameters`).
 //
-// A tool that names a `type` is refused, and that is the acceptance's "unknown
-// tool form": Anthropic's server tools (its web search, its code execution, its
-// computer use) are a `type` and no function declaration at all — they are
-// executed on Anthropic's side, and a Gemini model offered them as ordinary
-// functions would call something that does not exist. Vertex's own
-// server-side tools are a different wire this translation does not build, so
-// the honest answer is a refusal rather than a declaration invented for one.
+// A tool may mark itself `type: custom` — the client tool's own mark, and the
+// only value the gateway in front of this service admits — and that mark is
+// dropped, because a Gemini declaration offers every tool as an ordinary
+// function and the mark is nothing such a declaration reads. Any OTHER type is
+// refused, and that is the acceptance's "unknown tool form": Anthropic's server
+// tools (its web search, its code execution, its computer use) are a `type` and
+// no function declaration at all — they are executed on Anthropic's side, and a
+// Gemini model offered them as ordinary functions would call something that does
+// not exist. Vertex's own server-side tools are a different wire this
+// translation does not build, so the honest answer is a refusal rather than a
+// declaration invented for one.
 func vertexGeminiTools(raw json.RawMessage) ([]any, error) {
 	items, err := readVertexArray(raw, "tools")
 	if err != nil {
@@ -942,7 +949,7 @@ func vertexGeminiToolChoice(raw json.RawMessage) (map[string]any, error) {
 	return map[string]any{"functionCallingConfig": config}, nil
 }
 
-// vertexGeminiCacheHint is the first of this translation's two deliberate drops,
+// vertexGeminiCacheHint is one of this translation's deliberate drops,
 // and it is not written as a function because there is nothing to do: a
 // `cache_control` member is dropped wherever it appears.
 //
