@@ -88,24 +88,46 @@ worth knowing by name:
   binding and must name the throwaway account and nobody else. A binding that did not land is a stop
   rather than a 403 the block would report as the account having been refused, which is a different
   fact.
-- **The build fails** (`build`) — the row carries Cloud Build's own failure detail and the build's own
-  last lines, redacted. The likeliest causes, in order: your account lacks `iam.serviceAccounts.actAs`
-  on the throwaway account (so `gcloud builds submit` was refused before the build existed), the Cloud
-  Build API is not enabled in `fugaro-dev`, or this gcloud has no `--no-source` flag. The account and
-  the service are deleted either way.
+- **The build fails** (`build`) — the row carries Cloud Build's own failure detail, the step's own
+  exit code out of the build's record, and the build's own last lines, redacted. The likeliest causes,
+  in order: your account lacks `iam.serviceAccounts.actAs` on the throwaway account (so `gcloud builds
+  submit` was refused before the build existed), the Cloud Build API is not enabled in `fugaro-dev`, or
+  this gcloud has no `--no-source` flag. The account and the service are deleted either way.
 - **The call is refused** (`call`, the reading the check exists for) — the step printed the status it
   got and the email claim it was refused with. A **403** is Cloud Run refusing that caller on that
   service: the grant does not admit a build account's own token, which is the answer S4 rests on, so
   report it rather than working around it. A **401** is the front end refusing the token itself.
   Read the step's own lines with `gcloud builds log <build id> --project=fugaro-dev`.
-- **The build's own line cannot be read** (`call`) — the block says so rather than passing: nothing
-  about the grant was measured. Your account needs `roles/logging.viewer` on the project, and the
-  line may simply not have arrived yet. Read it by hand with
-  `gcloud builds log <build id> --project=fugaro-dev`, where `<build id>` is the row's own id.
+- **The logWriter grant does not land** (`logwriter-wait`) — the row says what the project's own
+  policy read back, and how long it was waited for. The wait is **bounded** (120 s, plus a short fixed
+  settle) because IAM's propagation is not something the check can wait out indefinitely; the build
+  runs either way, and a FAIL here means the build may write **no log at all**. Check the binding by
+  hand with `gcloud projects get-iam-policy fugaro-dev --format=json`.
+- **The build's own line cannot be read** (`call`) — the block does **not** give up here: the step ends
+  with one exit code per outcome, Cloud Build writes that code into the build's own record
+  (`gcloud builds describe <build id> --project=fugaro-dev` → `steps[0].exitCode`, which is not Cloud
+  Logging at all), and the row names the outcome from it — 0 (the service answered 200 *and* the
+  token's email claim is the throwaway account), 11 (401), 12 (403), 13 (any other status or none at
+  all), 14 (the metadata server minted no token), 15 (the claim is another identity). What the line
+  adds is the email claim as **text**: read it by hand with
+  `gcloud builds log <build id> --project=fugaro-dev`, where `<build id>` is the row's own id. Your
+  account needs `roles/logging.viewer` on the project, and the line may simply not have arrived yet —
+  in the owner's run of 2026-11-24 it never did.
+- **A step exit code the check's own step never writes** (`call`) — a **failure**, and the row says
+  the cause is not named rather than guessing at one: the step has one `exit` per outcome and nothing
+  else in it exits, so a 1 is a step that died before it decided anything (a container that never
+  started, a shell that could not run the script). Read the build with
+  `gcloud builds describe <build id> --project=fugaro-dev` and its lines with
+  `gcloud builds log <build id> --project=fugaro-dev`.
 - **A delete that failed** (`service-deleted`, `account-deleted`, `binding-removed`, `restore`) —
-  every one of the three is **read back**, and a FAILed row names what is left and the exact command
-  to remove it. The project-level binding is removed **before** the account on purpose: a binding that
-  outlives its member reads back as `deleted:serviceAccount:…` and can never be removed again.
+  every one of the three is **read back**, and a FAILed row names what is left, what the last refusal
+  said and the exact command to remove it. The project-level binding is removed **before** the account
+  on purpose: a binding that outlives its member reads back as `deleted:serviceAccount:…` and can
+  never be removed again. Those two writes are ordered and IAM's consistency can still put them out of
+  order, so the account deletion re-reads the policy and is **retried** — a delete issued just after
+  the binding went is refused as *still referenced by a policy binding*, which is how the owner's run
+  of 2026-11-24 came back with the account still there. A build that FAILED changes nothing about any
+  of it: the account goes either way.
 
 ## What is left behind
 

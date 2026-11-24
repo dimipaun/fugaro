@@ -14423,7 +14423,7 @@ are hard-coded in the script and never read from `gcloud config`, and `fugaro do
 must answer that this is the `fugaro-dev` installation, so the check cannot be pointed at another one.
 Never `belong`. `bash`, `mktemp`, `gcloud`, `curl` and `fugaro` on PATH, `gcloud` authenticated as an
 account that can create a Cloud Run service, create a service account, set IAM on the service, add one
-project-level binding, submit a build and read the build's own lines out of Cloud Logging — a project
+project-level binding, submit a build and read the build's own record and its lines — a project
 Owner can. **Nothing else is needed and nothing is prepared**: no token, no secret, no repository, no
 file. The check mints no credential of its own and asks the owner for none, which is the point of it —
 the only credential in the path is the ID token the build's own step mints for itself and uses where it
@@ -14434,8 +14434,14 @@ from Google's own public Cloud Run sample container, so the check builds and pus
 own; one throwaway service account (`fugaro-chk195-caller`); the `roles/run.invoker` binding on that
 service; and one project-level `roles/logging.logWriter` binding, which a build that names its own
 service account needs to write the log the token's email claim is read out of (`options.logging:
-CLOUD_LOGGING_ONLY`, as Fugaro's own image builds do). **Minutes at the terminal, not money**: one
-build and one Cloud Run service that is idle by the time you look. A service or an account of those two
+CLOUD_LOGGING_ONLY`, as Fugaro's own image builds do). That last binding is **waited for** before the
+build starts — the project's own policy is re-read until it names the account, **bounded** at
+`CHECK195_LOGWRITER_WAIT_SECONDS` (120 s), and then given one short fixed settle
+(`CHECK195_LOGWRITER_SETTLE_SECONDS`, 30 s) — because IAM is eventually consistent and a build that
+starts inside the propagation window writes **no log at all**, which is how the owner's run of
+2026-11-24 came back with a FAILURE build and an empty `gcloud builds log`. **Minutes at the terminal,
+not money**: one build and one Cloud Run service that is idle by the time you look. A service or an
+account of those two
 names that was **already there** is a hard stop before anything is created — this check never adopts,
 grants on or deletes what it did not create — and so is a filtered **list that could not be read**: an
 expired session or a transient API error is not the answer "it is not there", and read that way the
@@ -14454,8 +14460,16 @@ block would report as the account having been refused. The build's own record is
 field is a **resource name** (`projects/<project>/serviceAccounts/<account>`, carrying the address the
 build was submitted with or the account's numeric `uniqueId`), and it is read as the account it ends in
 rather than compared with the address. The step's own line — one line, `CHK195 status=… email=…` — is
-read out of Cloud Logging, retried while ingestion catches up; a build whose line cannot be read is a
-**failure**, not a pass, because nothing about the grant was measured.
+read out of Cloud Logging, retried while ingestion catches up, and it is where the token's `email`
+claim is read as **text**. The verdict does **not** rest on it: the step ends with **one exit code per
+outcome** (0 = the service answered 200 *and* the claim is the throwaway account, 11 = 401, 12 = 403,
+13 = any other status or none at all, 14 = the metadata server minted no token, 15 = the claim is
+another identity), Cloud Build writes that code into the **build's own record** (`gcloud builds
+describe` → `steps[0].exitCode`, which is not Cloud Logging at all), and when the line has not arrived
+the block names the cause from that code. A build whose line cannot be read is therefore
+**measured**, not a failure — what failed on 2026-11-24 was reading the log, on a build record that
+answered perfectly well. A step exit code the step never writes (a 1, a container that never started)
+names no cause, and that is a **failure**: the block says so rather than passing.
 
 **What you type** (the full text is in
 [secrets-brokering/check195-steps.md](secrets-brokering/check195-steps.md)):
@@ -14467,11 +14481,17 @@ read out of Cloud Logging, retried while ingestion catches up; a build whose lin
 **Restore.** The service (which takes the invoker binding with it), the project-level binding and the
 throwaway account are all deleted, and each of the three is **read back** rather than assumed: the
 project binding is removed **before** the account, because a binding that outlives its member reads
-back as `deleted:serviceAccount:…` and can never be removed again. It runs from the exit trap too, so a
-Ctrl-C in the middle still leaves nothing running, and the scratch directory goes at the end. What is
-left is the **build's own record**, in the project's Cloud Build history: it is the project's log of
-what ran rather than a resource this check made, and nothing here deletes it. **No agent runs any step
-of it.**
+back as `deleted:serviceAccount:…` and can never be removed again. Those two writes are ordered, and
+IAM's own consistency can still put them out of order, so the account deletion **re-reads the project
+policy and is retried** (up to six times): a delete issued in the moment after the binding is removed
+is refused as *still referenced by a policy binding* even though the policy already reads clean, and
+that is the answer the owner's run of 2026-11-24 came back with — the service deleted, the binding
+removed and read back clean, and `account-deleted` FAILed with the account still there. **A build that
+FAILED changes nothing about any of it**: the account is this check's and goes whether the build passed
+or failed. The Restore runs from the exit trap too, so a Ctrl-C in the middle still leaves nothing
+running, and the scratch directory goes at the end. What is left is the **build's own record**, in the
+project's Cloud Build history: it is the project's log of what ran rather than a resource this check
+made, and nothing here deletes it. **No agent runs any step of it.**
 
 ## Check 196: a repository's image build and its daily image check through the credentials service, GitHub and Bitbucket, and the flip (installation `fugaro` only, never `belong`; run by you; NOT RUN)
 
