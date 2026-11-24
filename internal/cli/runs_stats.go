@@ -50,8 +50,11 @@ import (
 // While the index has never finished a walk it cannot answer for a window at
 // all -- a page cut out of a history nobody has walked yet is a partial sum,
 // which is a wrong one rather than a smaller truth -- and the records are read
-// instead, exactly as they were before the index existed, with the document's
-// own `index_complete` saying which of the two reads produced it.
+// instead, exactly as they were before the index existed, one object read per
+// run. The document's own `index_complete` says which of the two reads produced
+// the figures. The two are not interchangeable, and readUserStatsRuns spells
+// out where they part: the window each applies, and a run the index has not
+// folded yet.
 
 // userStatsDefaultSince is runs stats' default window: the same seven days
 // runs ls lists by default.
@@ -129,9 +132,13 @@ type userStatsDoc struct {
 	// IndexComplete is whether the rows came from the run index: true when the
 	// figures are its own page, read with no run object at all (F32), and false
 	// when the index has never finished a walk and the run records were read
-	// instead -- the same figures over the same window, one object read per run
-	// (readUserStatsRuns). It is the one field this document gained for the
-	// index, and it says which of the two reads a consumer is looking at.
+	// instead, one object read per run (readUserStatsRuns). It is the one field
+	// this document gained for the index, and it says which of the two reads a
+	// consumer is looking at. The two answer the same question and are not the
+	// same read: the index windows a run by its entry's own last change where
+	// the records window it by the day its run id places its start, and a run
+	// the index has not folded reaches it with no launcher, so it lands under
+	// "unknown" here and under the launcher its own launch recorded there.
 	IndexComplete bool `json:"index_complete"`
 	// Rows are the groups, one per (user, currency); Totals one per currency
 	// with an empty user. Dollars are never added across currencies.
@@ -169,8 +176,11 @@ func newRunsStatsCmd() *cobra.Command {
 			"  - Dollars are never added across currencies: a row is one user and one currency,\n" +
 			"    and a total covers one currency. Every cost recorded today is in USD.\n" +
 			"  - The window is UTC days like the rest of the CLI. A run is counted on the day\n" +
-			"    the bucket's run IDs place its start, so the window and the runs in it agree\n" +
-			"    with runs ls.\n\n" +
+			"    the read places it: the day its own run id places its start when the records\n" +
+			"    are read -- which is runs ls's window -- and its entry's own last change when\n" +
+			"    the index answers, which is a settled run's finish. The two reads can therefore\n" +
+			"    put the same run inside the window or outside it (see the index paragraph\n" +
+			"    below).\n\n" +
 			"The money is model dollars, counted the way the budget screens count them. COUNTED\n" +
 			"$ is the model spend that counts toward the caps: the money part of a run's model\n" +
 			"figure (model_usd minus model_notional_usd, C1.16/P12). NOTIONAL $ is the part of\n" +
@@ -197,8 +207,9 @@ func newRunsStatsCmd() *cobra.Command {
 			"identity with no key of its own because nothing printable is left of it (a pasted\n" +
 			"zero-width character, say) is shown no row instead: the table is empty, and its\n" +
 			"view line says the CLI cannot tell who you are. A row keyed 'unknown' is every run\n" +
-			"of the window that recorded no launcher -- never one person's -- so it is not shown\n" +
-			"as the caller's own either, and a note says so.\n\n" +
+			"of the window that recorded no launcher, and -- when the index answers -- the runs\n" +
+			"it has not folded yet, whose launcher its page cannot show (below). It is never one\n" +
+			"person's, so it is not shown as the caller's own either, and a note says so.\n\n" +
 			"The launcher text is what a launcher wrote and is read for nothing else: it is\n" +
 			"sanitised and size-capped before it is printed, and it authorises and admits\n" +
 			"nothing. Two identities that differ only in what the sanitising drops -- an\n" +
@@ -221,7 +232,16 @@ func newRunsStatsCmd() *cobra.Command {
 			"truncation is. The rows come from the run index -- one page of entries for the\n" +
 			"window, and no run object read at all -- which index_complete reports: it is false\n" +
 			"while the index has not finished a walk, when the run records are read instead,\n" +
-			"over the same window and with the same figures.\n\n" +
+			"one object read per run.\n\n" +
+			"The two reads answer the same question and do not always answer it alike. The\n" +
+			"index windows a run by its entry's own last change where the record read windows\n" +
+			"it by the day its run id places its start, so a run that started and settled on\n" +
+			"opposite sides of an edge is in one read's window and not the other's. And a run\n" +
+			"the index has not folded yet arrives as its id, its repository and its status\n" +
+			"alone -- no launcher and no record to read -- so the index read counts it under\n" +
+			"'unknown' with no record, where the record read would name the launcher its own\n" +
+			"launch recorded. A folded run both windows hold reads the same either way, and\n" +
+			"index_complete says which of the two reads a caller is looking at.\n\n" +
 			"--json prints {version, project, by, view, you, admin, since, until, max_runs,\n" +
 			"truncated, index_complete, rows[], totals[], unlaunched, notes}; rows and totals\n" +
 			"carry {user, currency, runs, succeeded, failed, halted, infra_error, other,\n" +
@@ -235,7 +255,7 @@ func newRunsStatsCmd() *cobra.Command {
 	f.StringVar(&o.by, "by", userStatsByUser, "what to break the figures down by (user)")
 	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name, or a path inside its checkout)")
 	f.BoolVar(&o.all, "all", false, "every repository in the runs bucket")
-	f.StringVar(&o.since, "since", userStatsDefaultSince, "only runs started within this long (7d, 36h, 90m; 0 for all)")
+	f.StringVar(&o.since, "since", userStatsDefaultSince, "only runs the read places within this long (7d, 36h, 90m; 0 for all)")
 	f.IntVar(&o.maxRuns, "max-runs", userStatsMaxRuns, "read at most this many runs, newest first (a bigger window is truncated and says so)")
 	f.BoolVar(&o.allUsers, "all-users", false, "show every user's row, not only your own (the table names whose numbers it shows)")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
@@ -563,9 +583,19 @@ func readRunObjects(ctx context.Context, env *cloudEnv, slugs []string, since, u
 // installation is in until the reindex `fugaro update` starts reaches the end of
 // history (RI5), and the state a caller that has wired nothing is in
 // (runindex.NewStub) -- so the command then reads the records exactly as it did
-// before the index existed: the same rows, the same money, the same count of
-// runs that never started, one object read per run. `index_complete` in the
+// before the index existed, one object read per run. `index_complete` in the
 // document says which of the two reads produced the figures.
+//
+// The two reads answer the same question and are not the same read, which is a
+// fact the output must not hide rather than a defect to paper over. The index
+// windows a run by its entry's own last change -- a settled run's finish -- and
+// the record read windows it by the day its run id places its start, so a run
+// that started and settled on opposite sides of an edge is in one read's window
+// and not the other's. And an overlay row -- a run the index has not folded yet
+// -- carries no launch and no record, so the index read counts it under the
+// unknown launcher with no record, where the record read would name the launcher
+// its own launch recorded. A folded run both windows hold reads the same either
+// way.
 func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since time.Time, max int) (userStatsRead, error) {
 	idx, err := runIndexReader(ctx, env)
 	if err != nil {

@@ -647,9 +647,15 @@ step_checkout() {
   fi
   fact checkout PASS "https://github.com/$REPO.git cloned at ${head:-unknown} into a throwaway checkout in this check's scratch directory (nothing of your own working tree was read or changed)"
 
+  # doctor exits 1 when it finds a problem and still prints its document, and the
+  # state this check builds on purpose (an empty github-app-key container, step 2)
+  # is a problem doctor reports: an exit 1 with a readable document is an
+  # answer, anything else (a timeout, another status, nothing readable) is not.
   if ! run_bounded "$CLI_TIMEOUT" doctor "$FUGARO_BIN" doctor --json; then
-    unmeasured installation "the checkout's own 'fugaro doctor --json' exited $BOUNDED_STATUS, so the installation this check is aimed at could not be read: $(last_lines "$SCRATCH/doctor.err")"
-    stop "the checkout's own doctor did not answer, so this check does not know which installation it is looking at"
+    if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 1 ] || ! read_json doctor "$SCRATCH/doctor.out" "$SCRATCH/doctor.txt"; then
+      unmeasured installation "the checkout's own 'fugaro doctor --json' exited $BOUNDED_STATUS, so the installation this check is aimed at could not be read: $(last_lines "$SCRATCH/doctor.err")"
+      stop "the checkout's own doctor did not answer, so this check does not know which installation it is looking at"
+    fi
   fi
   if ! read_json doctor "$SCRATCH/doctor.out" "$SCRATCH/doctor.txt"; then
     unmeasured installation "'fugaro doctor --json' printed a document this check could not read: what it printed is in $SCRATCH/doctor.out"

@@ -81,6 +81,11 @@ type Fold struct {
 	Now func() time.Time
 	// Warn receives what could not be folded; nil discards it.
 	Warn func(string)
+	// StartLimit is the moment a reindex pass may start work until (RI5): a
+	// pass that reaches it stops at the run it is on and leaves its position
+	// behind. Zero is no bound, which is what the sweep -- whose execution is
+	// already bounded by the job's own timeout -- leaves it at.
+	StartLimit time.Time
 }
 
 // FoldReport is what one fold did.
@@ -407,6 +412,7 @@ func (f *Fold) read(ctx context.Context, k runKey) (*Entry, error) {
 		Status:       statusOf(rec),
 		PlanTask:     row.PlanTask,
 		PR:           row.PR,
+		Branch:       row.Branch,
 		RequestedBy:  row.RequestedBy,
 		LaunchedBy:   row.LaunchedBy,
 		Batch:        row.Batch,

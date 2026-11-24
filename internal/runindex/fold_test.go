@@ -27,9 +27,13 @@ const (
 	// The run ids are the shape task.NewRunID mints, which is what the
 	// entry's own sort key falls back to when a run's records carry no
 	// moment.
-	runOne   = "20261120-093000-a1b2"
-	runTwo   = "20261120-101500-c3d4"
-	runThree = "20261120-113000-e5f6"
+	runOne = "20261120-093000-a1b2"
+	runTwo = "20261120-101500-c3d4"
+	// runThree is older than both, and runGhost sits between them: a run
+	// directory a walk reaches and reads nothing from (RI5's failure test).
+	runThree = "20261120-080000-eeee"
+	runGhost = "20261120-090000-ffff"
+	runFour  = "20261120-113000-e5f6"
 )
 
 var foldNow = time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
@@ -50,9 +54,9 @@ func newFoldEnv(t *testing.T) *foldEnv {
 	return &foldEnv{t: t, db: gcpfake.NewRTDB(t), fs: gcpfake.NewFirestore(t), bucket: memblob.OpenBucket(nil), now: foldNow}
 }
 
-// fold runs one fold, as the sweep does: the lease's holder is the execution's
+// index is the folder one pass runs as: the lease's holder is the execution's
 // name and the wall clock is the fixture's.
-func (e *foldEnv) fold() (FoldReport, error) {
+func (e *foldEnv) index() *Fold {
 	e.t.Helper()
 	c, err := rtdb.New(e.db.URL, rtdb.Auth{IDToken: func() string { return "" }})
 	if err != nil {
@@ -62,9 +66,14 @@ func (e *foldEnv) fold() (FoldReport, error) {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	f := &Fold{DB: c, FS: fs, Bucket: e.bucket, Holder: "exec-1", Now: func() time.Time { return e.now },
+	return &Fold{DB: c, FS: fs, Bucket: e.bucket, Holder: "exec-1", Now: func() time.Time { return e.now },
 		Warn: func(s string) { e.warns = append(e.warns, s) }}
-	return f.Fold(context.Background())
+}
+
+// fold runs one fold, as the sweep does.
+func (e *foldEnv) fold() (FoldReport, error) {
+	e.t.Helper()
+	return e.index().Fold(context.Background())
 }
 
 // agent is a run's registry heartbeat: what a live run writes, and the fold's
@@ -360,7 +369,7 @@ func TestFoldCarriesAnUnreadableObject(t *testing.T) {
 	started := foldNow.Add(-3 * time.Hour)
 	e.agent(foldSlug, runOne, started)
 	e.agent(foldSlug, runTwo, started)
-	e.agent(foldSlug, runThree, started)
+	e.agent(foldSlug, runFour, started)
 	// The first run is the finding's case: a task, a launch.json that is there
 	// and unreadable, and no result.json. The second is the same for its
 	// record, with a launch the fold can read. The third is that launch with
@@ -377,7 +386,7 @@ func TestFoldCarriesAnUnreadableObject(t *testing.T) {
 	}
 	put(runOne, "launch.json", `{"version":1,`)
 	put(runTwo, "result.json", `{"version":1,`)
-	put(runThree, "launch.json", `{"version":1,`)
+	put(runFour, "launch.json", `{"version":1,`)
 
 	rep, err := e.fold()
 	if err != nil {
@@ -422,14 +431,14 @@ func TestFoldCarriesAnUnreadableObject(t *testing.T) {
 	// Without the guard's own clause this run is skipped outright -- no entry,
 	// and rep.Unreadable above reads 1 -- and the index, which is the only
 	// thing a reader of it sees, would say the run never existed.
-	three := e.doc(runThree)
+	three := e.doc(runFour)
 	if three["launch_unreadable"] != true {
 		t.Fatalf("launch_unreadable = %#v, want true: the bucket holds a launch.json the fold could not use", three["launch_unreadable"])
 	}
 	if _, ok := three["launch"]; ok {
 		t.Fatalf("the entry carries a launch nobody can read: %v", three)
 	}
-	threeMinted, err := runstore.RunTime(runThree)
+	threeMinted, err := runstore.RunTime(runFour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -628,5 +637,38 @@ func TestFoldLeavesTheStampOnFailure(t *testing.T) {
 	}
 	if got := e.summary()["folded_through"]; got != stamp {
 		t.Fatalf("a failed fold moved the stamp: %v became %v", stamp, got)
+	}
+}
+
+// TestFoldProjectsTheTaskBranch is run 1a21's deferred review finding, on the
+// writing side. indexRun rebuilt the coordinator view from the entry's two
+// records alone, so a run whose record is absent or unreadable lost the branch
+// coordinatorRun falls back to the task for. The fold is where that fallback is
+// preserved: the entry projects the branch runview.Join joins (the record's,
+// else the task's), so a reader of the index draws the same branch the bucket
+// read draws. A record-less run is the case that makes the projection
+// load-bearing, and the one asserted here.
+func TestFoldProjectsTheTaskBranch(t *testing.T) {
+	e := newFoldEnv(t)
+	branch := "fugaro/" + runTwo
+	spec := &task.Spec{
+		Version: 1, RunID: runTwo, Repo: foldRepo, Ref: "main", Workflow: "go",
+		Task: "# Task: a run in flight\n\nthe body", Title: "a run in flight",
+		Branch: branch, PR: 41, PreviousRun: runOne,
+	}
+	// A task and a launch, no record at all: the state whose branch nothing
+	// else in the entry can answer for.
+	e.agent(foldSlug, runTwo, foldNow.Add(-2*time.Minute))
+	e.objects(foldSlug, spec, foldLaunch(runTwo, foldNow.Add(-3*time.Minute)), nil)
+
+	if _, err := e.fold(); err != nil {
+		t.Fatal(err)
+	}
+	two := e.doc(runTwo)
+	if got := two["branch"]; got != branch {
+		t.Fatalf("branch = %#v, want the task's %s", got, branch)
+	}
+	if _, ok := two["record"]; ok {
+		t.Fatalf("a run that never finalized carries a record: %v", two)
 	}
 }

@@ -1909,6 +1909,9 @@
         "workspace_pin.service_address": {
           "default": "unset = this project takes no workspace credential"
         },
+        "workspace_shared.*.all_members": {
+          "default": "unset = false: the credential is offered to the members `projects` names, and only the written true offers it to every member of the workspace"
+        },
         "workspace_shared.*.covers": {
           "default": "unset = the credential covers no repository"
         },
