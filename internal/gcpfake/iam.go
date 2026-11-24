@@ -52,6 +52,25 @@ func servePolicy(w http.ResponseWriter, q url.Values, bindings []Binding) {
 	writeJSON(w, http.StatusOK, map[string]any{"version": version, "etag": "BwX0", "bindings": bindings})
 }
 
+// writtenBindings is a policy a caller wrote, as the fake stores it: the
+// members are normalised the way the real API normalises them, a plain address
+// becoming the person's `user:` member. Fugaro hands a bare address to the
+// folder it makes the caller the owner of -- the address the credentials
+// answered with -- and reads every live policy back with the prefix, so a fake
+// that kept the bare spelling would answer a policy no reader of the real
+// service ever sees (D2823's gate reads `user:<address>`).
+func writtenBindings(bs []Binding) []Binding {
+	out := cloneBindings(bs)
+	for i := range out {
+		for j, m := range out[i].Members {
+			if !strings.Contains(m, ":") {
+				out[i].Members[j] = "user:" + m
+			}
+		}
+	}
+	return out
+}
+
 func cloneBindings(bs []Binding) []Binding {
 	out := make([]Binding, len(bs))
 	for i, b := range bs {

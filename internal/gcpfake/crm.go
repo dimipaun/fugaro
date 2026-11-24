@@ -628,7 +628,7 @@ func (f *CRM) handleV3(w http.ResponseWriter, r *http.Request, body []byte) bool
 				writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "a policy is required")
 				return true
 			}
-			f.folderPolicies[id] = in.Policy.Bindings
+			f.folderPolicies[id] = writtenBindings(in.Policy.Bindings)
 			f.folderAudits[id] = in.Policy.AuditConfigs
 		}
 		bs := f.folderPolicies[id]
@@ -695,7 +695,7 @@ func (f *CRM) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "a policy is required")
 			return
 		}
-		f.policies[m[1]] = in.Policy.Bindings
+		f.policies[m[1]] = writtenBindings(in.Policy.Bindings)
 		bs := f.policies[m[1]]
 		if bs == nil {
 			bs = []Binding{}

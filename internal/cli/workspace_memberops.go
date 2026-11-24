@@ -696,24 +696,17 @@ func checkMemberTarget(m workspace.MemberTarget) error {
 	return nil
 }
 
-// memberMirrorDoc is the document at PathMemberMirror: the member list as the
-// member's own database holds it. Its one key is spelled as the roster spells
-// its own people list (internal/workspace/roster.go), so a reader of both
-// documents reads one word for one thing. The list is a pointer for that file's
-// reason: a document with no `people` at all is not an empty member list.
-type memberMirrorDoc struct {
-	People *[]workspace.MirrorEntry `json:"people"`
-}
-
-// EncodeMemberMirror renders the member list as the mirror's document, holding
-// every entry to C1's `Validate` first, so a writer cannot store a document its
-// own reader refuses. The entries are sorted by address and each address is
-// written once, as the roster's own lists are: the object is a SET of people, so
-// the bytes are a function of the set and not of the order a caller held it in.
+// EncodeMemberMirror renders the member list as the mirror's document
+// (workspaceMirrorDoc, the shape WU5 writes and the shape the node holds),
+// holding every entry to C1's `Validate` first, so a writer cannot store a
+// document its own reader refuses. The entries are sorted by address and each
+// address is written once, as the roster's own lists are: the object is a SET of
+// people, so the bytes are a function of the set and not of the order a caller
+// held it in.
 //
-// No entries is the document that REMOVES the mirror (an empty `people`), which
-// is a state and not a refusal: a member the workspace no longer mirrors into
-// has no member list, and the read that follows says so.
+// No entries is a mirror that lists nobody, which is a state and not a refusal:
+// the database prunes the empty list, and an absent `members` reads back as the
+// empty one (C1's rule for every list of its own).
 func EncodeMemberMirror(people []workspace.MirrorEntry) ([]byte, error) {
 	entries := make([]workspace.MirrorEntry, 0, len(people))
 	for i, p := range people {
@@ -726,35 +719,50 @@ func EncodeMemberMirror(people []workspace.MirrorEntry) ([]byte, error) {
 		entries = append(entries, p)
 	}
 	slices.SortFunc(entries, func(a, b workspace.MirrorEntry) int { return strings.Compare(a.Address, b.Address) })
-	return json.Marshal(memberMirrorDoc{People: &entries})
+	return json.Marshal(workspaceMirrorDoc{Version: workspaceMirrorVersion, Members: entries})
 }
 
 // DecodeMemberMirror reads the mirror's document. It refuses a document that is
 // not a JSON object, one carrying a key a mirror does not have, a second JSON
-// value after the first, a missing people list, a null one, an entry that is not
-// an object of exactly C1's three keys, and an entry C1's `Validate` refuses —
-// the one-spelling rule the roster's own reader applies (internal/access's
-// `Decode`), for the reason the mirror has a shape at all: two spellings of one
-// document are two documents to a reader that has no rule to fold them.
+// value after the first, a version this build does not write, a null `members`,
+// an entry that is not an object of exactly C1's three keys, and an entry C1's
+// `Validate` refuses — the one-spelling rule the roster's own reader applies
+// (internal/access's `Decode`), for the reason the mirror has a shape at all:
+// two spellings of one document are two documents to a reader that has no rule
+// to fold them.
 //
-// The entries' ORDER is not part of that: the document is returned as it was
-// written, because a member list in another order is the same list, and nothing
-// here compares bytes.
+// An absent `members` is the empty list and not an unreadable document: the
+// database prunes an empty one, so the absent key and the empty list are one
+// node (C1's contract, and the reason WU8's own reader of this document reads it
+// the same way). The entries' ORDER is not part of it either: the document is
+// returned as it was written, because a member list in another order is the same
+// list, and nothing here compares bytes.
 func DecodeMemberMirror(raw []byte) ([]workspace.MirrorEntry, error) {
 	fields, err := mirrorObject(raw)
 	if err != nil {
 		return nil, err
 	}
-	rawPeople, ok := fields["people"]
+	rawVersion, ok := fields["version"]
 	if !ok {
-		return nil, fmt.Errorf("the mirror has no %q list: it is the member list the workspace put in this member's database, and a document without one vouches for nobody", "people")
+		return nil, fmt.Errorf("the mirror states no %q: it is the member list the workspace put in this member's database, and a reader that did not know which version wrote it would be reading a document it does not understand", "version")
+	}
+	var version int
+	if err := json.Unmarshal(rawVersion, &version); err != nil {
+		return nil, fmt.Errorf("the mirror's version: %w", err)
+	}
+	if version != workspaceMirrorVersion {
+		return nil, fmt.Errorf("version: %d is not the version this build writes (%d)", version, workspaceMirrorVersion)
+	}
+	rawMembers, ok := fields["members"]
+	if !ok {
+		return nil, nil
 	}
 	var rawEntries []json.RawMessage
-	if err := json.Unmarshal(rawPeople, &rawEntries); err != nil {
-		return nil, fmt.Errorf("the mirror's people: %w", err)
+	if err := json.Unmarshal(rawMembers, &rawEntries); err != nil {
+		return nil, fmt.Errorf("the mirror's members: %w", err)
 	}
 	if rawEntries == nil {
-		return nil, fmt.Errorf("the mirror's %q is not a list: a null there is not an empty member list", "people")
+		return nil, fmt.Errorf("the mirror's %q is not a list: a null there is not an empty member list", "members")
 	}
 	people := make([]workspace.MirrorEntry, 0, len(rawEntries))
 	for i, rawEntry := range rawEntries {
@@ -774,7 +782,7 @@ func DecodeMemberMirror(raw []byte) ([]workspace.MirrorEntry, error) {
 }
 
 // mirrorObject decodes the mirror document and holds it to carrying exactly the
-// one key it has. An unknown key is a refusal and a key spelled another way is
+// two keys it has. An unknown key is a refusal and a key spelled another way is
 // one too, because encoding/json matches a name case-insensitively for a struct
 // field (the rule internal/access's and internal/workspace's own readers apply).
 func mirrorObject(raw []byte) (map[string]json.RawMessage, error) {
@@ -783,8 +791,8 @@ func mirrorObject(raw []byte) (map[string]json.RawMessage, error) {
 		return nil, err
 	}
 	for name := range fields {
-		if name != "people" {
-			return nil, fmt.Errorf("the mirror carries %q, and its one key is %q", name, "people")
+		if name != "version" && name != "members" {
+			return nil, fmt.Errorf("the mirror carries %q, and its keys are %q and %q", name, "version", "members")
 		}
 	}
 	return fields, nil
