@@ -640,6 +640,41 @@ func TestConfirmValidateActionBindsTheHeadReadBack(t *testing.T) {
 	}
 }
 
+// TestConfirmRefusesAStateThatDoesNotSayWhatIsCostly: the module refuses a
+// state whose `costlyModes` is missing (`missing-field/costlyModes`), and a port
+// that read a nil list as "no mode is costly" would fail open on the worst
+// answer: a costly start would pass through with no read-back while the phone
+// asked for one. A state that *names* no costly mode is the empty list, which is
+// read as what it says.
+func TestConfirmRefusesAStateThatDoesNotSayWhatIsCostly(t *testing.T) {
+	state, refusal := ConfirmInitialState(ConfirmOptions{Now: testNow})
+	if refusal != nil {
+		t.Fatalf("the empty machine was refused: %s", refusal.Code)
+	}
+	launch := ConfirmEvent{
+		Type: ConfirmEventCommand, Now: testNow + 1000,
+		UtteranceID: "utt-1", Text: "kick off the docs job in pro mode",
+		Verb: ConfirmVerbLaunch, Mode: "pro", HasMode: true,
+		ActionID: "act-1", HasActionID: true,
+	}
+
+	state.CostlyModes = nil
+	if answer := ConfirmStep(state, launch); answer.OK || answer.Code != CodeMissingField || answer.Field != "costlyModes" {
+		t.Errorf("a state with no costly mode list was answered: ok=%v code=%s field=%s, want %s/%s",
+			answer.OK, answer.Code, answer.Field, CodeMissingField, "costlyModes")
+	}
+
+	// A start that is not costly is a plain start, which carries no action id:
+	// it is the same event the machine passes through with no read-back.
+	plain := launch
+	plain.ActionID, plain.HasActionID = "", false
+	state.CostlyModes = []string{}
+	if answer := ConfirmStep(state, plain); !answer.OK || answer.Outcome != ConfirmOutcomePassThrough {
+		t.Errorf("a session that calls no mode costly did not pass the start through: ok=%v outcome=%s code=%s",
+			answer.OK, answer.Outcome, answer.Code)
+	}
+}
+
 func openTestMemory(t *testing.T, path string, cap int) *ConfirmMemory {
 	t.Helper()
 	m, err := OpenConfirmMemory(ConfirmMemoryOptions{

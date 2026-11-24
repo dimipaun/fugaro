@@ -550,6 +550,12 @@ func ConfirmInitialState(o ConfirmOptions) (ConfirmState, *Refusal) {
 	}, nil
 }
 
+// confirmIsCostlyStart answers whether a start in `mode` is the costly start
+// D2786 names: one the session's own list calls costly.
+func confirmIsCostlyStart(mode string, costlyModes []string) bool {
+	return confirmContains(costlyModes, mode)
+}
+
 // confirmReadCostlyModes reads the modes a session calls costly: a bounded list
 // of bounded single-line names, read with the same reader an id or a text gets.
 //
@@ -557,13 +563,18 @@ func ConfirmInitialState(o ConfirmOptions) (ConfirmState, *Refusal) {
 // what the list means, so the second entry answers what the first did. The port
 // that builds the list from the project policy is the one that refuses a
 // duplicate (C2's checkPolicy), and this file is not the reader of a session.
-// confirmIsCostlyStart answers whether a start in `mode` is the costly start
-// D2786 names: one the session's own list calls costly.
-func confirmIsCostlyStart(mode string, costlyModes []string) bool {
-	return confirmContains(costlyModes, mode)
-}
-
+//
+// A nil list is refused rather than read as "no mode is costly": the two ends
+// have to answer a state that does not say what the session calls costly the
+// same way, and the module refuses it (`missing-field/costlyModes`) -- a state
+// that has lost the field is a defect, and the lenient reading of a defect is
+// exactly the reading that lets a costly start through with no read-back. A
+// state that *names* no costly mode is the empty list, which is read here as
+// what it says.
 func confirmReadCostlyModes(modes []string) *Refusal {
+	if modes == nil {
+		return refuse(CodeMissingField, "costlyModes")
+	}
 	if len(modes) > ConfirmMaxCostlyModes {
 		return refuse(CodeTooLong, "costlyModes")
 	}
