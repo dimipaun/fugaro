@@ -182,7 +182,14 @@ func (s *versionStampStage) read(ctx context.Context) (*versionStampPlan, error)
 	var raw json.RawMessage
 	etag, found, err := db.GetETag(ctx, versionstamp.Path, &raw)
 	if err != nil {
-		return nil, dbErr(lc, err, false)
+		// A read that FAILS is not an answer: the stamp is a fence and not a
+		// boundary, so a database blip leaves the node exactly as it is and the
+		// next `fugaro update` finishes the step (spec, D3264, "Read failures
+		// fail open"). The malformed node below is the one read that does not.
+		return nil, &versionStampSkip{
+			reason: fmt.Sprintf("the installation's required CLI could not be read (%s): %s; the node is left exactly as it is", versionstamp.Path, oneLine(err.Error())),
+			undone: true,
+		}
 	}
 	p := &versionStampPlan{lc: lc, db: db, ver: ver, etag: etag, found: found}
 	if found {
