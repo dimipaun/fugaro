@@ -409,7 +409,7 @@
         "inbox": {
           "$msg": {
             ".write": "((auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists()) && $mb == auth.uid) && newData.exists() && !data.exists()",
-            ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at', 'mac']) && $msg.length <= 100 && (((newData.child('kind').exists() ? newData.child('kind').val() : 'message') == 'answer' ? newData.child('reply_to').exists() : true) && ((newData.child('kind').exists() ? newData.child('kind').val() : 'message') == 'action' ? newData.child('action').exists() : true) && ((newData.child('kind').exists() ? newData.child('kind').val() : 'message') == 'registration' ? (newData.child('token').exists() && newData.child('platform').exists()) : true))",
+            ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at']) && ((newData.child('mac').exists() && !newData.child('sig').exists()) || (newData.child('sig').exists() && !newData.child('mac').exists())) && $msg.length <= 100 && (((newData.child('kind').exists() ? newData.child('kind').val() : 'message') == 'answer' ? newData.child('reply_to').exists() : true) && ((newData.child('kind').exists() ? newData.child('kind').val() : 'message') == 'action' ? newData.child('action').exists() : true) && ((newData.child('kind').exists() ? newData.child('kind').val() : 'message') == 'registration' ? (newData.child('token').exists() && newData.child('platform').exists()) : true))",
             "id": {
               ".validate": "newData.isString() && newData.val().length <= 100 && newData.val() == $msg"
             },
@@ -424,6 +424,9 @@
             },
             "mac": {
               ".validate": "(newData.isString() && newData.val().length == 64 && newData.val().matches(/^[0-9a-f]+$/))"
+            },
+            "sig": {
+              ".validate": "(newData.isString() && newData.val().length == 86 && newData.val().matches(/^[A-Za-z0-9_-]+$/))"
             },
             "agent": {
               ".validate": "(newData.isString() && newData.val().length > 0 && newData.val().length <= 64 && newData.val().matches(/^[A-Za-z0-9._:-]+$/))"
@@ -441,15 +444,18 @@
               ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100 && ((newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'answer' || (newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'action')"
             },
             "action": {
-              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'action' && newData.hasChildren(['id', 'verb', 'target', 'confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)",
+              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'action' && newData.hasChildren(['id', 'verb', 'target']) && (newData.child('verb').val() == 'launch' ? newData.child('mode').exists() : (newData.hasChildren(['confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)))",
               "id": {
                 ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100"
               },
               "verb": {
-                ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm')"
+                ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm' || newData.val() == 'launch')"
+              },
+              "mode": {
+                ".validate": "newData.parent().child('verb').val() == 'launch' && (newData.isString() && newData.val().length > 0 && newData.val().length <= 64 && newData.val().matches(/^[A-Za-z0-9._:-]+$/))"
               },
               "target": {
-                ".validate": "(newData.parent().child('verb').val() == 'merge' ? (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()) : (newData.parent().child('verb').val() == 'cancel' ? (newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) : ((newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) || (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()))))",
+                ".validate": "(newData.parent().child('verb').val() == 'merge' ? (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()) : (newData.parent().child('verb').val() == 'cancel' ? (newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) : (newData.parent().child('verb').val() == 'launch' ? (newData.hasChildren(['repo']) && !newData.child('run').exists() && !newData.child('pr').exists()) : ((newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) || (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists())))))",
                 "run": {
                   ".validate": "(newData.isString() && newData.val().length > 0 && newData.val().length <= 200 && newData.val().matches(/^[A-Za-z0-9_:][A-Za-z0-9._:-]*$/))"
                 },
@@ -483,13 +489,13 @@
               }
             },
             "token": {
-              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'registration' && (newData.isString() && newData.val().length > 0 && newData.val().length <= 256) && (newData.parent().child('mac').isString() && newData.parent().child('mac').val().length == 64 && newData.parent().child('mac').val().matches(/^[0-9a-f]+$/))"
+              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'registration' && (newData.isString() && newData.val().length > 0 && newData.val().length <= 256) && ((newData.parent().child('mac').isString() && newData.parent().child('mac').val().length == 64 && newData.parent().child('mac').val().matches(/^[0-9a-f]+$/)) || (newData.parent().child('sig').isString() && newData.parent().child('sig').val().length == 86 && newData.parent().child('sig').val().matches(/^[A-Za-z0-9_-]+$/)))"
             },
             "platform": {
-              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'registration' && (newData.isString() && (newData.val() == 'ios' || newData.val() == 'android')) && (newData.parent().child('mac').isString() && newData.parent().child('mac').val().length == 64 && newData.parent().child('mac').val().matches(/^[0-9a-f]+$/))"
+              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'registration' && (newData.isString() && (newData.val() == 'ios' || newData.val() == 'android')) && ((newData.parent().child('mac').isString() && newData.parent().child('mac').val().length == 64 && newData.parent().child('mac').val().matches(/^[0-9a-f]+$/)) || (newData.parent().child('sig').isString() && newData.parent().child('sig').val().length == 86 && newData.parent().child('sig').val().matches(/^[A-Za-z0-9_-]+$/)))"
             },
             "prefs": {
-              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'registration' && newData.hasChildren(['kill_switch', 'cap_reached', 'consumer_offline', 'cap_near', 'prompt']) && (newData.parent().child('mac').isString() && newData.parent().child('mac').val().length == 64 && newData.parent().child('mac').val().matches(/^[0-9a-f]+$/))",
+              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'registration' && newData.hasChildren(['kill_switch', 'cap_reached', 'consumer_offline', 'cap_near', 'prompt']) && ((newData.parent().child('mac').isString() && newData.parent().child('mac').val().length == 64 && newData.parent().child('mac').val().matches(/^[0-9a-f]+$/)) || (newData.parent().child('sig').isString() && newData.parent().child('sig').val().length == 86 && newData.parent().child('sig').val().matches(/^[A-Za-z0-9_-]+$/)))",
               "kill_switch": {
                 ".validate": "newData.isBoolean()"
               },
@@ -533,7 +539,7 @@
           ".read": "((auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists()) && $mb == auth.uid)",
           "$msg": {
             ".write": "(auth != null && auth.token.mc != null && auth.token.mc == $mb) && newData.exists() && !data.exists()",
-            ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at', 'mac']) && $msg.length <= 100 && (((newData.child('kind').exists() ? newData.child('kind').val() : 'message') == 'answer' ? newData.child('reply_to').exists() : true) && ((newData.child('kind').exists() ? newData.child('kind').val() : 'message') == 'action' ? newData.child('action').exists() : true) && ((newData.child('kind').exists() ? newData.child('kind').val() : 'message') == 'registration' ? (newData.child('token').exists() && newData.child('platform').exists()) : true))",
+            ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at']) && ((newData.child('mac').exists() && !newData.child('sig').exists()) || (newData.child('sig').exists() && !newData.child('mac').exists())) && $msg.length <= 100 && (((newData.child('kind').exists() ? newData.child('kind').val() : 'message') == 'answer' ? newData.child('reply_to').exists() : true) && ((newData.child('kind').exists() ? newData.child('kind').val() : 'message') == 'action' ? newData.child('action').exists() : true) && ((newData.child('kind').exists() ? newData.child('kind').val() : 'message') == 'registration' ? (newData.child('token').exists() && newData.child('platform').exists()) : true))",
             "id": {
               ".validate": "newData.isString() && newData.val().length <= 100 && newData.val() == $msg"
             },
@@ -548,6 +554,9 @@
             },
             "mac": {
               ".validate": "(newData.isString() && newData.val().length == 64 && newData.val().matches(/^[0-9a-f]+$/))"
+            },
+            "sig": {
+              ".validate": "(newData.isString() && newData.val().length == 86 && newData.val().matches(/^[A-Za-z0-9_-]+$/))"
             },
             "agent": {
               ".validate": "(newData.isString() && newData.val().length > 0 && newData.val().length <= 64 && newData.val().matches(/^[A-Za-z0-9._:-]+$/))"
@@ -565,15 +574,18 @@
               ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100 && ((newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'answer' || (newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'action')"
             },
             "action": {
-              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'action' && newData.hasChildren(['id', 'verb', 'target', 'confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)",
+              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'action' && newData.hasChildren(['id', 'verb', 'target']) && (newData.child('verb').val() == 'launch' ? newData.child('mode').exists() : (newData.hasChildren(['confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)))",
               "id": {
                 ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100"
               },
               "verb": {
-                ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm')"
+                ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm' || newData.val() == 'launch')"
+              },
+              "mode": {
+                ".validate": "newData.parent().child('verb').val() == 'launch' && (newData.isString() && newData.val().length > 0 && newData.val().length <= 64 && newData.val().matches(/^[A-Za-z0-9._:-]+$/))"
               },
               "target": {
-                ".validate": "(newData.parent().child('verb').val() == 'merge' ? (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()) : (newData.parent().child('verb').val() == 'cancel' ? (newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) : ((newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) || (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()))))",
+                ".validate": "(newData.parent().child('verb').val() == 'merge' ? (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()) : (newData.parent().child('verb').val() == 'cancel' ? (newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) : (newData.parent().child('verb').val() == 'launch' ? (newData.hasChildren(['repo']) && !newData.child('run').exists() && !newData.child('pr').exists()) : ((newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) || (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists())))))",
                 "run": {
                   ".validate": "(newData.isString() && newData.val().length > 0 && newData.val().length <= 200 && newData.val().matches(/^[A-Za-z0-9_:][A-Za-z0-9._:-]*$/))"
                 },
@@ -607,13 +619,13 @@
               }
             },
             "token": {
-              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'registration' && (newData.isString() && newData.val().length > 0 && newData.val().length <= 256) && (newData.parent().child('mac').isString() && newData.parent().child('mac').val().length == 64 && newData.parent().child('mac').val().matches(/^[0-9a-f]+$/))"
+              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'registration' && (newData.isString() && newData.val().length > 0 && newData.val().length <= 256) && ((newData.parent().child('mac').isString() && newData.parent().child('mac').val().length == 64 && newData.parent().child('mac').val().matches(/^[0-9a-f]+$/)) || (newData.parent().child('sig').isString() && newData.parent().child('sig').val().length == 86 && newData.parent().child('sig').val().matches(/^[A-Za-z0-9_-]+$/)))"
             },
             "platform": {
-              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'registration' && (newData.isString() && (newData.val() == 'ios' || newData.val() == 'android')) && (newData.parent().child('mac').isString() && newData.parent().child('mac').val().length == 64 && newData.parent().child('mac').val().matches(/^[0-9a-f]+$/))"
+              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'registration' && (newData.isString() && (newData.val() == 'ios' || newData.val() == 'android')) && ((newData.parent().child('mac').isString() && newData.parent().child('mac').val().length == 64 && newData.parent().child('mac').val().matches(/^[0-9a-f]+$/)) || (newData.parent().child('sig').isString() && newData.parent().child('sig').val().length == 86 && newData.parent().child('sig').val().matches(/^[A-Za-z0-9_-]+$/)))"
             },
             "prefs": {
-              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'registration' && newData.hasChildren(['kill_switch', 'cap_reached', 'consumer_offline', 'cap_near', 'prompt']) && (newData.parent().child('mac').isString() && newData.parent().child('mac').val().length == 64 && newData.parent().child('mac').val().matches(/^[0-9a-f]+$/))",
+              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'registration' && newData.hasChildren(['kill_switch', 'cap_reached', 'consumer_offline', 'cap_near', 'prompt']) && ((newData.parent().child('mac').isString() && newData.parent().child('mac').val().length == 64 && newData.parent().child('mac').val().matches(/^[0-9a-f]+$/)) || (newData.parent().child('sig').isString() && newData.parent().child('sig').val().length == 86 && newData.parent().child('sig').val().matches(/^[A-Za-z0-9_-]+$/)))",
               "kill_switch": {
                 ".validate": "newData.isBoolean()"
               },
@@ -660,7 +672,7 @@
         "heartbeat": {
           ".read": "((auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists()) && $mb == auth.uid)",
           ".write": "(auth != null && auth.token.mc != null && auth.token.mc == $mb) && newData.exists()",
-          ".validate": "newData.hasChildren(['at', 'boot', 'mac'])",
+          ".validate": "newData.hasChildren(['at', 'boot']) && ((newData.child('mac').exists() && !newData.child('sig').exists()) || (newData.child('sig').exists() && !newData.child('mac').exists()))",
           "at": {
             ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 9007199254740991 && newData.val() % 1 == 0)"
           },
@@ -669,6 +681,9 @@
           },
           "mac": {
             ".validate": "(newData.isString() && newData.val().length == 64 && newData.val().matches(/^[0-9a-f]+$/))"
+          },
+          "sig": {
+            ".validate": "(newData.isString() && newData.val().length == 86 && newData.val().matches(/^[A-Za-z0-9_-]+$/))"
           },
           "agents": {
             ".validate": "newData.hasChildren()",

@@ -71,4 +71,10 @@ module "firebase" {
   # project's database (docs/workspaces/spec.md §5, W7). Internal to the pin:
   # the workspace's published record names no service account.
   workspace_service_account = var.workspace_service_account
+
+  # Whether the FP's Firestore database is there, as `fugaro update` read it:
+  # the module's firestore_indexes.tf applies the run index's composite indexes
+  # only under a database that exists, and `fugaro update` creates that database
+  # AFTER this root (RI2, D3027).
+  firestore_database_exists = var.firestore_database_exists
 }
