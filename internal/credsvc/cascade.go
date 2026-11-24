@@ -860,12 +860,15 @@ func wireTier(t creds.Tier) string {
 }
 
 // entryFor resolves a selected candidate to the bundle entry that holds its
-// value. It is a selection by KIND for a tier-C candidate and a lookup by name
-// for every other, and the difference is the accessor's own reason: the provider
-// key is in the document and NOT in byName, because an account may legally be
-// named after it, so a lookup by name alone could answer that account's token
-// where the provider's key was meant — one name, two credentials, and the value
-// attached to a call would be the one nobody chose.
+// value. It is a selection by KIND for a tier-C candidate, a selection by DOCUMENT
+// KEY for a member of C1's family, and a lookup by name for every other, and each
+// difference is the accessor's own reason: the provider key is in the document and
+// NOT in byName, because an account may legally be named after it, so a lookup by
+// name alone could answer that account's token where the provider's key was meant
+// — one name, two credentials, and the value attached to a call would be the one
+// nobody chose. The family is out of byName for that reason read one step further
+// (two repositories' entries for one credential name), so its members are answered
+// by the key alone, which is what the candidate already carries (Bundle.RepoCredential).
 //
 // It fails closed on both halves: a name the bundle does not hold is not an
 // entry, and a tier-C candidate whose name is not the provider entry's is not
@@ -873,6 +876,23 @@ func wireTier(t creds.Tier) string {
 // nothing, and the caller refuses on nothing rather than forwarding an empty
 // credential (D143).
 func entryFor(b *Bundle, c creds.Credential) (Entry, bool) {
+	// A member of C1's family is answered before the two arms below, because
+	// neither of them can answer it: the family is in no byName (KindRepoCredential
+	// indexes it by the document key), and a repository's own PROVIDER key carries
+	// the same reserved tier C the project's provider key does, so the tier alone
+	// cannot tell the two apart. What is read is the candidate's own key and
+	// nothing is derived from it: the entry the copy wrote under that key, which is
+	// the repository's whose candidate list it came from (ownRepositorysEntries,
+	// R2, D3008).
+	//
+	// A family-SHAPED name is the family's and never an account's: the loader reads
+	// a document key the same way (CredentialKey), so a name of this shape reaches
+	// this package as a member of the family or as nothing at all, and the arm
+	// answers nothing for a key no entry carries rather than falling through to a
+	// byName entry another kind put there.
+	if _, _, ok := RepoCredentialByKey(c.Name); ok {
+		return b.RepoCredential(c.Name)
+	}
 	if c.Tier == creds.TierC {
 		e, ok := b.ProviderKey()
 		if !ok || e.Name != c.Name {

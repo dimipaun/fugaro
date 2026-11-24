@@ -73,7 +73,16 @@ SANDBOX_REPO=acme/sandbox
 SANDBOX_SLUG=acme_sandbox
 OTHER_REPO=acme/legacy
 OTHER_SLUG=acme_legacy
-BUNDLE=fugaro-credentials
+# The bundle's container, by the name the check has to find it by:
+# gcp.CredsBundleSecretID's fugaro-project-<the Fugaro project>-creds-bundle-<the
+# first 16 hex of sha256("project\0<the Fugaro project>\0creds-bundle")>. The
+# check matches that stem and hex tail rather than computing the hash, so any
+# other 16 hex would do — this is the real ID for $FUGARO_PROJECT, because a
+# fixture named outside the shape would be testing a check that cannot find the
+# container on a real installation. Its labels are not its identity: the
+# orchestrator's pairing container and the voice hop's provider-key container
+# wear the same pair.
+BUNDLE=fugaro-project-fugaro-sbx-creds-bundle-be49e2786437f8df
 APPKEY=github-app-key
 # The token the fake service would mint. It is a fixture and not a credential:
 # the check must never print it, and the block's own scan exists to make that
@@ -1298,6 +1307,47 @@ JSON
   expect_contains "$out" "FACT app-key: PASS — " "two repositories' App key containers: the row reads the sandbox's own"
 }
 
+test_the_installations_other_project_labelled_containers_are_not_the_bundle() {
+  setup_case projectlabels
+  # The bundle's labels are two ownership marks rather than its identity: the
+  # orchestrator's pairing container (orchestrator.tf) and the voice hop's
+  # provider-key container (secrets.tf) wear exactly the same pair and
+  # deliberately no fugaro_secret, so a reader selecting "fugaro_project and no
+  # fugaro_secret" finds three containers on a live installation and stops
+  # before it measures anything. The bundle is the one container of the name the
+  # service derives from its own FUGARO_PROJECT (gcp.CredsBundleSecretID), and
+  # neither of these two is it.
+  cat >"$dir/state/secrets.json" <<JSON
+[{"name": "$APPKEY", "labels": {"fugaro": "managed", "fugaro_project": "$FUGARO_PROJECT", "fugaro_secret": "$APPKEY"}},
+ {"name": "$BUNDLE", "labels": {"fugaro": "managed", "fugaro_project": "$FUGARO_PROJECT"}},
+ {"name": "fugaro-orch-pairing", "labels": {"fugaro": "managed", "fugaro_project": "$FUGARO_PROJECT"}},
+ {"name": "fugaro-voice-provider-keys", "labels": {"fugaro": "managed", "fugaro_project": "$FUGARO_PROJECT"}}]
+JSON
+  run96
+  expect_status "$status" 0 "the installation's other project-labelled containers"
+  expect_absent "$out" "not the shape this check reads" "the installation's other project-labelled containers: no stop"
+  expect_contains "$out" "FACT bundle: PASS — " "the installation's other project-labelled containers: Q6's row is measured"
+  expect_contains "$out" "the bundle's container is $BUNDLE" "the installation's other project-labelled containers: the container it read"
+}
+
+test_two_containers_named_like_a_bundle_are_refused() {
+  setup_case twobundles
+  # Two containers of the bundle's own name shape: a re-derivation leaves the
+  # one the service no longer reads behind, and prevent_destroy keeps it. The
+  # check refuses rather than reading the policy of one of them, and names what
+  # it found, which is the whole fix when a listing holds two.
+  cat >"$dir/state/secrets.json" <<JSON
+[{"name": "$APPKEY", "labels": {"fugaro": "managed", "fugaro_project": "$FUGARO_PROJECT", "fugaro_secret": "$APPKEY"}},
+ {"name": "$BUNDLE", "labels": {"fugaro": "managed", "fugaro_project": "$FUGARO_PROJECT"}},
+ {"name": "fugaro-project-$FUGARO_PROJECT-creds-bundle-0123456789abcdef", "labels": {"fugaro": "managed", "fugaro_project": "$FUGARO_PROJECT"}}]
+JSON
+  run96
+  expect_status "$status" 2 "two containers named like a bundle"
+  expect_contains "$out" "exactly one container of the installation's bundle name" "two containers named like a bundle: the refusal"
+  expect_contains "$out" "found 2" "two containers named like a bundle: the count it read"
+  expect_contains "$out" "fugaro-project-$FUGARO_PROJECT-creds-bundle-0123456789abcdef" "two containers named like a bundle: the container the service does not read"
+}
+
 test_the_switch_hook_may_only_name_the_file_it_reads() {
   setup_case hook
   RUN96_ENV=(CHECK96_PROVIDERS="$dir/state/elsewhere.go")
@@ -1774,6 +1824,8 @@ t test_a_job_of_a_repository_the_config_records_as_off_is_a_pass
 t test_the_drop_landed_is_a_pass
 t test_the_drop_without_the_code_is_a_fail
 t test_another_repositorys_app_key_container_is_not_this_ones
+t test_the_installations_other_project_labelled_containers_are_not_the_bundle
+t test_two_containers_named_like_a_bundle_are_refused
 t test_the_switch_hook_may_only_name_the_file_it_reads
 t test_a_bundle_with_the_job_as_a_second_member_is_a_fail
 t test_a_bundle_whose_one_member_is_not_the_service_account_is_a_fail
