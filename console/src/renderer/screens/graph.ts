@@ -2861,9 +2861,16 @@ export class GraphScreen {
    * is part of a node's structure hash -- the drawing is sized by what it writes
    * -- so this is `build`'s path and not `redraw`'s, and the engine answers a
    * document it has already placed without a message to the worker.
+   *
+   * **`notice` is the sentence the drawing carries afterwards**, `load`'s third
+   * argument asked at the decoration instead of at a first paint: a screen whose
+   * notice is the merge section's own refusal must not keep it once a read has
+   * answered -- the sentence was about a read that did not answer, and the entry
+   * hands the scope's own sentence (usually none) back with the document.
    */
-  decorateMerges(document: PlanStatusView): Promise<ScreenElement | null> {
+  decorateMerges(document: PlanStatusView, notice: string | null = null): Promise<ScreenElement | null> {
     this.document = document
+    this.notice = notice
     return this.build()
   }
 

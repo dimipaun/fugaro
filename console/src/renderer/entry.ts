@@ -4501,7 +4501,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         refuseMerges(decoded.skew.because)
         return
       }
-      const drawn = await graphScreenNow().decorateMerges(decoded.value)
+      // **The scope's own sentence goes back in with the document**: a canvas
+      // served from memory drew the sentence the last merge read was refused
+      // with, and this read is the one that answers it -- leaving it up over a
+      // document that carries the merge state would be a sentence about a read
+      // that has since been made.
+      const drawn = await graphScreenNow().decorateMerges(decoded.value, graph.notice)
       if (stale(mine) || drawn === null) return
       graph.mergeNotice = null
       redraw(drawn, stopNow())

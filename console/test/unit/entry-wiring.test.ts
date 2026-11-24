@@ -8105,11 +8105,15 @@ describe('the Graph canvas read before its merge state', () => {
     // state, and taking it down for a fact about a colour would throw away a
     // graph the operator can read. The node keeps the mark its own document
     // carries, which is the honest answer while nothing has read the merge.
+    let plainReads = 0
     const { bridge } = mergesGraphBridge({
-      planStatus: (args) =>
-        (args as { noMerges?: boolean }).noMerges === true
-          ? planStatusReply()
-          : ({ ok: false, reason: GRAPH_REFUSAL } as const),
+      planStatus: (args) => {
+        if ((args as { noMerges?: boolean }).noMerges === true) return planStatusReply()
+        plainReads += 1
+        return plainReads === 1
+          ? ({ ok: false, reason: GRAPH_REFUSAL } as const)
+          : planStatusReply(withMergesRead())
+      },
     })
     const document = await openGraph(bridge)
 
@@ -8117,6 +8121,19 @@ describe('the Graph canvas read before its merge state', () => {
     expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
     expect(mergeMarkOf(document, 'task-one')).toBe('merge unknown')
     expect(operationOf(document), 'a refused merge read is not a refusal screen').toBe(null)
+
+    // **The sentence goes when a read answers**, and on the visit that serves the
+    // canvas from memory it is the merge section's own read that has to take it
+    // down: the cached door draws the sentence the last read was refused with
+    // (`graph.mergeNotice`), so a success here must leave neither the sentence
+    // nor the mark it was about.
+    buttonFor(document, 'live').click()
+    await flush()
+    buttonFor(document, 'graph').click()
+    await flush()
+    expect(plainReads).toBe(2)
+    expect(classed(panelOf(document), 'graph-scope-notice')).toEqual([])
+    expect(mergeMarkOf(document, 'task-one')).toBe('')
   })
 })
 
