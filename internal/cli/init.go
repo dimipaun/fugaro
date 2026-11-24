@@ -500,11 +500,27 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 				// refused by name (refuseConvergeFlags) rather than ignored.
 				err = runUpdateCheck(cmd, o, args)
 			case o.repo:
-				err = runInitRepo(r, args)
+				// The door's own fence (T4, D3266, R8), on both of the arms
+				// that write: an installation a newer fugaro updated refuses
+				// an older binary here, before its first write, whatever mode
+				// it was asked for. --check above and --print-vars (inside the
+				// two arms' own runs) make no cloud call and are not fenced.
+				//
+				// The installation is the checkout at PATH, which is the one
+				// runInitRepo acts on and not the working directory's.
+				if err = refuseUpdateBelowTheStamp(cmd, o, stampDoor{dir: repoDir(args)}); err == nil {
+					err = runInitRepo(r, args)
+				}
 			case len(args) > 0:
 				err = userErr("a checkout path is for --repo; fugaro %s takes no argument", d.name)
 			default:
-				err = runInit(r)
+				// The converge and `setup` act on the working directory's
+				// checkout and select a project config the way loadInitConfig
+				// does: the door is starting one if there is none, and --name
+				// chooses among several.
+				if err = refuseUpdateBelowTheStamp(cmd, o, stampDoor{creating: true, name: o.name}); err == nil {
+					err = runInit(r)
+				}
 			}
 			if r.events != nil {
 				// The run asked for lines instead of the document
@@ -5016,11 +5032,17 @@ func runInitRepo(r *initRun, args []string) error {
 			return err
 		}
 	}
-	dir := "."
+	return r.repoEngine(cmd.Context(), repoDir(args), "", false)
+}
+
+// repoDir is the checkout `--repo` acts on: its PATH argument, else the working
+// directory. One function so the fence and the run it fences resolve the same
+// checkout (update_stamp_guard.go).
+func repoDir(args []string) string {
 	if len(args) > 0 {
-		dir = args[0]
+		return args[0]
 	}
-	return r.repoEngine(cmd.Context(), dir, "", false)
+	return "."
 }
 
 // billableBuildLeft is the left-for-you for a billable first image build: the
