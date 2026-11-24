@@ -42,6 +42,14 @@ workflows:
       - { name: fixture-fails, env: FIXTURE_FAILS_FILE }
 `
 
+// layerModels is what every layer these tests hand a run carries: since S1
+// (D3237) a repository's file names no model, so the layer is where a run's
+// models are. A layer that names none is handed the harness's own pins instead
+// (testutil.MergePins) — a text of its own, and so a sha256 that is not the
+// one a test wrote — and these two tests are about the sha256 a refused layer
+// is recorded by.
+const layerModels = "  agent: { auth: api-key, models: { coder: claude-sonnet-5-5, reviewer: claude-opus-5, background: claude-haiku-4-5 } }\n"
+
 func layerSpec(text string) *task.Spec {
 	return &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "Add a feature",
 		ProjectLayer: &task.ProjectLayer{SHA256: config.LayerSum([]byte(text)), Generation: 3, YAML: text}}
@@ -88,7 +96,7 @@ func TestRunnerIgnoresTheLayerForAnUnanchoredFile(t *testing.T) {
 // invalid layer's sha256 and generation, so ls and diagnose (Task 17) can
 // show it even though it was never applied.
 func TestRunnerRefusesAnInvalidLayer(t *testing.T) {
-	bad := "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n  budget: { per_run_usd: 1 }\n"
+	bad := "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n  budget: { per_run_usd: 1 }\n" + layerModels
 	h := newHarness(t, layeredRepo, layerSpec(bad))
 	rec, err := h.run(t, implement("feature"))
 	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "project layer") ||
@@ -106,7 +114,7 @@ func TestRunnerRefusesAnInvalidLayer(t *testing.T) {
 // layer published for another project is refused outright, with no
 // fallback to running without it.
 func TestRunnerRefusesALayerForAnotherProject(t *testing.T) {
-	other := "version: 1\nproject: other\ngcp_project: proj-1234\n"
+	other := "version: 1\nproject: other\ngcp_project: proj-1234\ndefaults:\n" + layerModels
 	h := newHarness(t, layeredRepo, layerSpec(other))
 	h.deps.Project = "aurora"
 	rec, err := h.run(t, implement("feature"))

@@ -50,9 +50,18 @@ func pushBranch(t *testing.T, h *harness, branch, yaml string) {
 	testutil.Git(t, other, "push", "--quiet", "origin", "HEAD:refs/heads/"+branch)
 }
 
+// projectHarness is a run whose repository names a project, for the check that
+// refuses one that is not the job's. It is an oauth run on purpose: the file
+// these tests write names another project's name as often as this one's, and a
+// project layer belongs to one project — a run behind a gateway would be
+// refused for that file before the check these tests are about, since a
+// repository's models live in the layer now and a layer for another project
+// does not apply to this file at all (S1, D3237). An oauth run carries no
+// gateway and so names no model to be priced by.
 func projectHarness(t *testing.T, mainYAML string) *harness {
 	t.Helper()
-	h := newHarness(t, withProject(t, fixtureYAML(t), mainYAML), nil)
+	h := newHarness(t, oauthCfg(t, withProject(t, fixtureYAML(t), mainYAML)), nil)
+	oauthEnv(h)
 	h.deps.Project = "aurora"
 	return h
 }
@@ -164,8 +173,10 @@ func TestProjectCheckBeforeLock(t *testing.T) {
 
 func TestProjectCheckBaseUnparseable(t *testing.T) {
 	h := projectHarness(t, "aurora")
-	// main now has a field fugaro.yaml doesn't know; the branch is fine.
-	pushBranch(t, h, "feature", withProject(t, fixtureYAML(t), "aurora"))
+	// main now has a field fugaro.yaml doesn't know; the branch is fine — and
+	// an oauth one, like the harness's own file, so that the run the branch
+	// names is not refused for the models a file cannot pin it with (S1).
+	pushBranch(t, h, "feature", oauthCfg(t, withProject(t, fixtureYAML(t), "aurora")))
 	other := filepath.Join(t.TempDir(), "other")
 	testutil.Git(t, filepath.Dir(other), "clone", "--quiet", h.remote, other)
 	testutil.WriteFiles(t, other, map[string]string{"fugaro.yaml": fixtureYAML(t) + "surprise: true\n"})
