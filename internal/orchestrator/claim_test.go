@@ -372,6 +372,48 @@ func TestOnePlanTaskOneLaunchAcrossTwoTicks(t *testing.T) {
 	}
 }
 
+// TestAClaimSkipIsInFlightNotEmpty is how the skip reads for the breaker. Two
+// orchestrators of one project is the deployment the claim exists for
+// (D3206/D3207), and there the loser of a claim skips every action the winner
+// holds. A cycle whose only work was skipped is waiting on that other
+// orchestrator, not one that achieved nothing, and it has to read that way: read
+// as empty, three in a row reach the breaker's threshold and pause the node,
+// which refuses this daemon's own unclaimed items too — the pause the finding on
+// this cycle named (D1228, D3209).
+//
+// The skip is counted, and the count is what the outcome is read from: the
+// loser's own node never moved, so nothing else in the cycle says the work is
+// going anywhere.
+//
+// Mutation (run, restored): take `c.rep.Skipped++` out of carry's ErrItemClaimed
+// branch and the cycle reads CycleEmpty, so the third of them trips the breaker
+// and this test fails on it.
+func TestAClaimSkipIsInFlightNotEmpty(t *testing.T) {
+	now := o6Now()
+	item := cg4PlanItem("wi-1", now.Add(-time.Minute))
+
+	f := gcpfake.NewRTDB(t)
+	first := cg4OrchestratorAt(t, f, cg4First, "demo", now, item, "20261107-120000-aaaa")
+	second := cg4OrchestratorAt(t, f, cg4Second, "demo", now, item, "20261107-120000-bbbb")
+	if rep := first.step(); rep.Carried != 1 {
+		t.Fatalf("the first cycle carried %d action(s) for the plan's one approved item", rep.Carried)
+	}
+
+	var breaker orchestrator.Breaker
+	for i := 1; i <= orchestrator.BreakerThreshold; i++ {
+		rep := second.step()
+		if rep.Skipped != 1 {
+			t.Fatalf("the loser's cycle %d reports %d skipped action(s) for the one plan task the other orchestration holds", i, rep.Skipped)
+		}
+		if rep.Outcome != orchestrator.CycleInFlight {
+			t.Fatalf("the loser's cycle %d reads as %s, and a cycle whose work is going on another orchestration is in flight rather than empty (D3209)", i, rep.Outcome)
+		}
+		if breaker.Observe(rep.Outcome) {
+			t.Fatalf("cycle %d tripped the breaker: %d cycles in a row spent skipping what another orchestration holds is the two-orchestrator deployment working, and the pause would refuse this daemon's own unclaimed items too (D1228)", i, orchestrator.BreakerThreshold)
+		}
+	}
+}
+
 // TestCycleReleasesTheClaimOfAnItemThatFinished: the release is the cycle's own
 // read of its nodes and not a step that must follow the run's own report, which
 // is what makes it survive the two ways a release is missed — a cycle that died

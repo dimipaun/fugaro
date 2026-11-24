@@ -171,6 +171,19 @@ type Report struct {
 	// Carried is how many of the plan's actions the starter carried out — a
 	// launch, a retry, a re-issue or an abandonment.
 	Carried int
+	// Skipped is how many of the plan's actions the cycle skipped because the
+	// item is another orchestrator's: the claim on it is held elsewhere
+	// (ErrItemClaimed, D3209), so the item is that daemon's work and this cycle
+	// carries nothing for it and fails nothing over it.
+	//
+	// It is not a move and it is not a cycle that did nothing. Two orchestrators
+	// of one project are the deployment the claim exists for (D3206, D3207), and
+	// there the loser of a claim skips every item the winner holds: read as a
+	// cycle that achieved nothing, three of those in a row would reach the
+	// breaker's threshold and pause the node — refusing this daemon's own
+	// unclaimed items too, over a daemon doing exactly what the deployment asks
+	// of it (D1228).
+	Skipped int
 	// Triaged is how many runs the cycle judged past the threshold and acted
 	// on. A run the rule was read about but did not have an outcome for — one
 	// under the threshold — is not counted, and neither is one whose line the
@@ -892,7 +905,9 @@ func (c *cycle) writeFold(ctx context.Context, base State, folded int, ops []Op,
 // An action whose item another orchestrator holds the claim on is not one of
 // those: it is skipped, because the item is that orchestrator's work and not
 // this daemon's (ErrItemClaimed, D3209), and nothing about it is this cycle's to
-// carry or to fail over.
+// carry or to fail over. The skip is counted on the report all the same
+// (Skipped), because a cycle that skipped every action it planned is a cycle
+// waiting on another orchestrator and not one that did nothing (outcome).
 func (c *cycle) carry(ctx context.Context, view RunView) error {
 	starter := Starter{Launcher: c.tick.Launcher, Commit: c.commit, Mint: c.tick.Mint, Claims: c.tick.Claims}
 	actions, planned := planNode(c.state, view, c.tick.Caps, c.now, c.counts, c.planned, c.paused)
@@ -900,6 +915,7 @@ func (c *cycle) carry(ctx context.Context, view RunView) error {
 	for _, a := range actions {
 		next, err := starter.Start(ctx, c.state, a, c.now)
 		if errors.Is(err, ErrItemClaimed) {
+			c.rep.Skipped++
 			continue
 		}
 		if err != nil {
@@ -929,6 +945,14 @@ func (c *cycle) carry(ctx context.Context, view RunView) error {
 // ends owes a person, and the breaker names no item (boundRetry,
 // mergeRetryWindow).
 //
+// An action the cycle skipped because another orchestrator holds the item
+// (Skipped) is that same reading once more: the work is going, on the daemon
+// that holds it, and this one has nothing to do about it and nothing to ask
+// anyone. Two orchestrators of one project is the deployment the claim is for
+// (D3206, D3207), and the loser of a claim skips what the winner holds — read as
+// a cycle that did nothing, three of those stop a daemon whose own unclaimed
+// items are still there for it (D1228).
+//
 // A judgement counts as work when it landed — Decided is the case the agent
 // answered and the patch it landed is committed — and a cycle whose only news
 // is a call is read by what the call came to: a call that failed or answered
@@ -940,7 +964,7 @@ func (c *cycle) outcome() CycleOutcome {
 		return CycleProgress
 	case c.rep.DecideOutcome != "":
 		return c.rep.DecideOutcome
-	case c.anyNode(func(s State) bool { return hasOpenIntent(s) || hasReviewWait(s) }) || c.rep.Waited > 0:
+	case c.anyNode(func(s State) bool { return hasOpenIntent(s) || hasReviewWait(s) }) || c.rep.Waited > 0 || c.rep.Skipped > 0:
 		return CycleInFlight
 	}
 	return CycleEmpty

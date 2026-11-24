@@ -1268,7 +1268,7 @@ func (d *orchestratorDaemon) report(rep orchestrator.Report, err error) {
 	if err != nil {
 		return
 	}
-	fmt.Fprintf(d.out, "orchestrator %s: %s (%d folded, %d carried, %d judged)\n", safetext.Field(d.id), safetext.OneLine(string(rep.Outcome)), rep.Folded, rep.Carried, rep.Decided)
+	fmt.Fprintf(d.out, "orchestrator %s: %s (%d folded, %d carried, %d skipped, %d judged)\n", safetext.Field(d.id), safetext.OneLine(string(rep.Outcome)), rep.Folded, rep.Carried, rep.Skipped, rep.Decided)
 	// A judgement that failed is said and not raised: the cycle it was part of
 	// still folded its runs and still carries its items, and what a person
 	// reads here is that one case went unanswered — the fence was not written,

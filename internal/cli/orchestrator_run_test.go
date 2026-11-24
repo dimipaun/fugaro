@@ -815,6 +815,20 @@ func TestBeatRestampsTheClaimsTheDaemonHolds(t *testing.T) {
 	}
 }
 
+// TestTheCycleLineSaysTheSkips: a cycle that skipped an action because another
+// orchestrator of the project holds the item says so where a person reads the
+// cycles. Without the count, the line is the same as an idle daemon's, and the
+// one person who needs to know why this daemon is doing nothing while the
+// project's other orchestrator works is the one reading it (Skipped, D3209).
+func TestTheCycleLineSaysTheSkips(t *testing.T) {
+	var out strings.Builder
+	d := &orchestratorDaemon{id: "fugaro~night", out: &out, warn: &out}
+	d.report(orchestrator.Report{Outcome: orchestrator.CycleInFlight, Skipped: 2}, nil)
+	if said := out.String(); !strings.Contains(said, "in-flight") || !strings.Contains(said, "2 skipped") {
+		t.Errorf("the cycle line is %q, and a cycle that skipped two items another orchestrator holds says so", said)
+	}
+}
+
 // claimPathOf is one claim node's path, through the package's own builder: a
 // path a test spelled itself could name a node the package never writes.
 func claimPathOf(t *testing.T, ref orchestrator.ItemRef) string {
