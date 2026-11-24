@@ -2999,6 +2999,11 @@ func (r *initRun) resourceManager(ctx context.Context, c *infra.Clients) error {
 // When whether the project is managed cannot be read, the refusal is neither
 // mode's advice: it says the read failed and names no way past it — never the
 // unmanaged text, whose flag is what the read exists to withhold.
+//
+// The standalone --repo door at a real terminal prints the block above
+// (guardRefusalBlock) in place of all of this, and holds every rule stated
+// here: the mode's own advice, and no flag on the managed modes' (the owner's
+// feedback of 2026-11-24, and the brief for it).
 func (r *initRun) guard(ctx context.Context, c *infra.Clients, plan *tf.Plan, allowDelete []string) error {
 	if err := infra.RefuseProjectJobDeletes(plan); err != nil {
 		return userErr("%v", err)
@@ -3011,13 +3016,13 @@ func (r *initRun) guard(ctx context.Context, c *infra.Clients, plan *tf.Plan, al
 	switch {
 	case readErr != nil:
 		if r.refusalIsShort() {
-			return userErr("%s", r.guardRefusalBlock(plan, allowDelete, managedReadFailedTerminal))
+			return userErr("%s", r.guardRefusalBlock(plan, allowDelete, managedReadFailedTerminal, false))
 		}
 		return userErr("%s\nwhether %s is a managed project could not be read (%s), so this refusal names no way past it: say which address is refused to the person who owns the project",
 			tf.GuardWith(plan, allowDelete, ""), safetext.Field(r.projectName), safetext.Field(readErr.Error()))
 	case isManaged:
 		if r.refusalIsShort() {
-			return userErr("%s", r.guardRefusalBlock(plan, allowDelete, managedDeleteAdviceTerminal))
+			return userErr("%s", r.guardRefusalBlock(plan, allowDelete, managedDeleteAdviceTerminal, false))
 		}
 		advice := ""
 		if len(tf.Listable(plan, allowDelete)) > 0 {
@@ -3026,7 +3031,7 @@ func (r *initRun) guard(ctx context.Context, c *infra.Clients, plan *tf.Plan, al
 		return userErr("%s", tf.GuardWith(plan, allowDelete, advice))
 	}
 	if r.refusalIsShort() {
-		return userErr("%s", r.guardRefusalBlock(plan, allowDelete, tf.AllowDeleteAdvice))
+		return userErr("%s", r.guardRefusalBlock(plan, allowDelete, tf.AllowDeleteAdvice, true))
 	}
 	msg := err.Error()
 	for _, h := range infra.DeleteHints(plan, allowDelete) {

@@ -24,8 +24,10 @@ import (
 // So the standalone door prints this instead, to the person at the terminal
 // alone: what the plan does in Fugaro's words, the count, five of the refused
 // addresses with the log holding every one of them, and the one command that
-// goes on. A coding agent's session and a run with no terminal keep Guard's own
-// text (guard), which is what keeps --json byte for byte the document it was.
+// goes on — except in a managed project, where the block keeps Task 3.2's rule
+// and names no way past itself at all. A coding agent's session and a run with
+// no terminal keep Guard's own text (guard), which is what keeps --json byte
+// for byte the document it was.
 
 // refusalShown is how many refused addresses the block lists before it points
 // at the log: five, the number a person reads at a glance, and the rest are one
@@ -34,14 +36,19 @@ const refusalShown = 5
 
 // guardRefusalBlock is this run's guard refusal as the person at the terminal
 // reads it. advice is the sentence the caller's mode ends a refusal with (the
-// managed one or Guard's own), and the hints DeleteHints computes go under the
-// addresses: they are what says which flag would keep a delete, and they are
-// bounded by the number of flags rather than by the plan.
+// managed one or Guard's own).
+//
+// namesFlags is whether this mode's refusal may name a way past itself: the
+// hints DeleteHints computes (what says which flag would keep a delete) and the
+// one command that goes on. A managed project's refusal names no flag at all
+// (Task 3.2's rule, and its test reads every "--" out of the text), and the
+// next command is a fugaro command line — so the managed modes print neither,
+// and their block ends at what it refused and whose decision it is.
 //
 // It is built only where there is a log to keep the rest in (guard): a block
 // that pointed at nothing would be the same refusal with the addresses taken
 // away.
-func (r *initRun) guardRefusalBlock(plan *tf.Plan, allowDelete []string, advice string) string {
+func (r *initRun) guardRefusalBlock(plan *tf.Plan, allowDelete []string, advice string, namesFlags bool) string {
 	refused := tf.Refused(plan, allowDelete)
 	var b strings.Builder
 	fmt.Fprintf(&b, "this run would delete or replace %d %s, and nothing was applied.\n",
@@ -61,13 +68,15 @@ func (r *initRun) guardRefusalBlock(plan *tf.Plan, allowDelete []string, advice 
 			fmt.Fprintf(&b, "  +%d more, see %s\n", n, r.repLog.Path())
 		}
 	}
-	for _, h := range infra.DeleteHints(plan, allowDelete) {
-		fmt.Fprintf(&b, "hint: %s\n", h)
+	if namesFlags {
+		for _, h := range infra.DeleteHints(plan, allowDelete) {
+			fmt.Fprintf(&b, "hint: %s\n", h)
+		}
 	}
 	if advice != "" {
 		b.WriteString(advice + "\n")
 	}
-	if cmd := r.nextAfterRefusal(); cmd != "" {
+	if cmd := r.nextAfterRefusal(); namesFlags && cmd != "" {
 		fmt.Fprintf(&b, "Next command:\n  %s\n", cmd)
 	}
 	return strings.TrimRight(b.String(), "\n")
@@ -94,11 +103,18 @@ func (r *initRun) nextAfterRefusal() string {
 // which address is refused to the person who owns the project and stop" — is an
 // instruction to a reader who is neither the owner nor able to take the step,
 // and it is what the owner read about their own project on 2026-11-24. The
-// owner is told what is true of their own run instead: the decision is theirs,
-// and --allow-delete is the flag that makes it (guard hands the flag to
-// tf.Guard in every project, managed or not; what the managed project changes
-// is that a coding agent's session is refused rather than told the flag).
-const managedDeleteAdviceTerminal = "This is a managed project, so deleting or replacing fugaro's own resources here is your decision: a coding agent's session is refused and told to hand it to you, and nothing was applied. Name an address in --allow-delete if the deletion is intended."
+// owner is told the fact that is true of their own run instead, in the one
+// sentence a managed refusal is allowed (Task 3.2): nothing was applied and the
+// decision is the owner's. It names no flag, and with namesFlags false the
+// block names no way past itself at all, which is what the managed refusal says
+// in every project and at every call site.
+//
+// The way past a managed refusal that the text withholds is still the flag:
+// guard hands --allow-delete to tf.Guard in every project, managed or not, and
+// TestManagedInitApprovesExactlyWhatAnyInitApproves pins that meaning. What a
+// managed project changes is who may pass it: an agent's session is refused
+// whatever the address came from, which is why no managed refusal says it.
+const managedDeleteAdviceTerminal = "This is a managed project: deleting or replacing fugaro's own resources in it is its owner's decision, and nothing was applied."
 
 // managedReadFailedTerminal is the sentence the refusal above ends with when
 // whether the project is managed could not be read at all. It keeps the fact
