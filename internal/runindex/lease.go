@@ -130,6 +130,92 @@ func (l *Lease) Acquire(ctx context.Context) (LeaseDoc, bool, error) {
 	return LeaseDoc{}, false, fmt.Errorf("runindex: %d claims, each refused by a moved ETag: %w", leaseAttempts, last)
 }
 
+// Stop gives the lease up with the walk's position in it: the node keeps
+// cursor and carries an expiry in the past, so the index is free (no execution
+// holds it) while the unfinished walk is still there for the next sweep to
+// continue (F39, RI5).
+//
+// It is not Release: a released node is deleted, and the position would go
+// with it -- the next writer would begin at the top of history and re-upsert
+// everything this pass already did, and a walk cut off by its own timeout
+// would never finish. It is not Acquire either: a claim left fresh would stop
+// every sweep behind a writer that has already ended, which is the one state
+// the lease's expiry exists to end.
+//
+// at is the stamp Acquire returned. A node that has moved on -- the claim
+// lapsed and another writer took it, or it was freed -- is left alone: another
+// writer is walking, and its position is not this one's to overwrite.
+func (l *Lease) Stop(ctx context.Context, at time.Time, cursor string) error {
+	var last error
+	for attempt := 0; attempt < leaseAttempts; attempt++ {
+		var cur LeaseDoc
+		etag, found, err := l.db.GetETag(ctx, PathLease, &cur)
+		if err != nil {
+			return err
+		}
+		if !found || cur.Holder != l.holder || !cur.At.Equal(at) {
+			return nil
+		}
+		srv, ok := l.now()
+		if !ok {
+			return errors.New("runindex: the database's clock was not seen (no Date header), so the walk's position cannot be left with a lapsed lease; the pass stops with the lease as it stands")
+		}
+		// The write's own stamp is the claim's, so a release that a later pass
+		// reads as this one's compares equal and only this holder may stop it.
+		//
+		// The expiry is a minute behind the server's clock and not on it: the
+		// Date header has one-second resolution and ServerNow lags the true
+		// time by it, so an expiry written at `srv` would be judged fresh by a
+		// reader whose own `srv` is a few microseconds behind it -- the walk
+		// would stop behind a writer that has already ended, which is the one
+		// state the expiry exists to end.
+		err = l.db.PutIfMatch(ctx, PathLease, etag, LeaseDoc{Holder: l.holder, At: cur.At, ExpiresAt: srv.UTC().Add(-time.Minute), Cursor: cursor})
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, rtdb.ErrPrecondition) {
+			return err
+		}
+		last = err
+	}
+	return fmt.Errorf("runindex: %d stops, each refused by a moved ETag: %w", leaseAttempts, last)
+}
+
+// ClearCursor takes the walk's position out of the lease node and leaves the
+// node otherwise as it stands (RI5, U3): `fugaro update`'s step and
+// `fugaro runs reindex` both ask for a walk from the top of history, and a
+// cursor an earlier walk left would resume that one instead -- skipping
+// everything before it, which is exactly what the operator asked to have
+// redone.
+//
+// A node that is not there is nothing to clear, and a node another writer has
+// moved is re-read rather than overwritten: an execution walking right now
+// keeps a position it is using, and the walk the reset asks for is one every
+// later sweep continues. It writes with the ETag of the read it decided from,
+// so a claim landing in the same instant is not lost.
+func (l *Lease) ClearCursor(ctx context.Context) error {
+	var last error
+	for attempt := 0; attempt < leaseAttempts; attempt++ {
+		var cur LeaseDoc
+		etag, found, err := l.db.GetETag(ctx, PathLease, &cur)
+		if err != nil {
+			return err
+		}
+		if !found || cur.Cursor == "" {
+			return nil
+		}
+		err = l.db.PutIfMatch(ctx, PathLease, etag, LeaseDoc{Holder: cur.Holder, At: cur.At, ExpiresAt: cur.ExpiresAt})
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, rtdb.ErrPrecondition) {
+			return err
+		}
+		last = err
+	}
+	return fmt.Errorf("runindex: %d cursor clears, each refused by a moved ETag: %w", leaseAttempts, last)
+}
+
 // Release frees the lease this writer took, and only if the node still names
 // that claim.
 //
