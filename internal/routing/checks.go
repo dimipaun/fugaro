@@ -19,9 +19,10 @@ import (
 //
 // **Two kinds of question, asked of two different things.** The table's own
 // structure is judged once, entry by entry, because it is true of an entry
-// whatever model it answers: a chain whose only source is the launcher's pool
-// (D3180), a paid source after a pool with no enforcing budget behind it (R17),
-// and a pool or a provider the project does not declare. The rest is judged
+// whatever model it answers: a chain with no source at all (D3180), a chain
+// whose only source is the launcher's pool (D3180), a paid source after a pool
+// with no enforcing budget behind it (R17), and a pool or a provider the
+// project does not declare. The rest is judged
 // once per model a run can call (R22): whether an entry matches it at all, and
 // — for the entry that does match — whether each of the chain's sources reaches
 // that model, has a spelling for it, and may serve it at all (D3175, R3, and
@@ -87,6 +88,9 @@ const (
 	// CodeTwinPattern is two entries claiming one model with one pattern, which
 	// the resolver refuses (D3172).
 	CodeTwinPattern = "twin_pattern"
+	// CodeEmptyChain is an entry naming no source at all, so every model it
+	// matches is routed to nothing (D3180).
+	CodeEmptyChain = "empty_chain"
 	// CodeLauncherPoolOnly is a chain whose only source is the launcher's pool
 	// (D3180).
 	CodeLauncherPoolOnly = "launcher_pool_only"
@@ -188,9 +192,10 @@ func tableProblems(in Checks) []Problem {
 	return ps
 }
 
-// chainProblems are one entry's own problems: a chain of only the launcher's
-// pool (D3180), a paid source after a pool (R17), and a source naming a pool or
-// a provider the project does not declare.
+// chainProblems are one entry's own problems: a chain with no source at all
+// (D3180), a chain of only the launcher's pool (D3180), a paid source after a
+// pool (R17), and a source naming a pool or a provider the project does not
+// declare.
 //
 // They are asked of the entry and not of a model, which is what keeps them
 // about the table a person wrote: a chain that cannot serve anybody is worth
@@ -199,6 +204,20 @@ func tableProblems(in Checks) []Problem {
 func chainProblems(in Checks, i int, e Entry) []Problem {
 	var ps []Problem
 	at := func(j int) string { return fmt.Sprintf("model_routing[%d].chain[%d]", i, j) }
+	if len(e.Chain) == 0 {
+		// A run's model resolves to this entry and the entry names nothing, so
+		// which credential serves the call is a question with no answer at all:
+		// there is no source to skip and no reset for the walk to report an
+		// exhausted call against. R22 puts the refusal at launch, and this is
+		// where the fix is written (the table's own loader refuses an entry with
+		// no match and says nothing about a missing chain).
+		ps = append(ps, Problem{
+			Path:    fmt.Sprintf("model_routing[%d].chain", i),
+			Entry:   i,
+			Code:    CodeEmptyChain,
+			Message: fmt.Sprintf("the entry %q names no source at all, so every model it matches is routed to nothing: a run cannot be served by it and there is no source for the walk to fall through to. Name the source that serves this model — a pool, the project's Anthropic key, a provider key or Vertex (D3180)", e.Match),
+		})
+	}
 	if len(e.Chain) == 1 && e.Chain[0].Kind == KindLauncherPool {
 		ps = append(ps, Problem{
 			Path:    fmt.Sprintf("model_routing[%d].chain", i),

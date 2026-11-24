@@ -52,6 +52,19 @@ func TestProblems(t *testing.T) {
 		}
 	})
 
+	t.Run("empty_chain", func(t *testing.T) {
+		// D3180's other end: an entry that names no source at all. The table's
+		// own loader refuses an entry with no match and says nothing about a
+		// missing chain, so an entry a run's model resolves to can name nothing —
+		// and a chain with no source at all has no reset for the walk to report
+		// an exhausted call against (R22: refused at launch, not mid-run).
+		in := checksFixture(Table{{Match: "claude-*"}}, "claude-sonnet-5-5")
+		ps := wantProblems(t, in, CodeEmptyChain)
+		if ps[0].Path != "model_routing[0].chain" {
+			t.Errorf("the problem is at %s, want model_routing[0].chain: the entry's own chain is what is empty", ps[0].Path)
+		}
+	})
+
 	t.Run("launcher_pool_only_chain", func(t *testing.T) {
 		in := checksFixture(Table{{Match: "claude-*", Chain: []Source{{Kind: KindLauncherPool}}}},
 			"claude-sonnet-5-5")
