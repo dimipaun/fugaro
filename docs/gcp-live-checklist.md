@@ -822,7 +822,9 @@ applies and spikes have to answer). The reading is taken the way the paragraphs 
 this file is **663** (the always-on orchestrator's four), and above it **700 to 709** are
 `docs/orchestrator-graph-estimates`' (its README's *"checks **700–709** (700–703 used, 704–709 reserved)"*),
 **710 to 719** are `docs/console-improvements`' (*"checks **710 to 719** (710 to 712 used)"*) and **720 to 729**
-are `docs/workspace-projects-users`' (its reconciliation's *"checks take **Checks 720–729**"*). Nothing above
+are `docs/workspace-projects-users`' (its reconciliation's *"checks take **Checks 720–729**"*). The reading
+above is dated and stands as taken; **since it was taken that work's 720 and 721 have been written below**, so
+the claim's first two are settled and **722 to 729 stay claimed and unwritten**. Nothing above
 **729** is claimed by any document on `main` or on any open pull request's head, so **730 is the first free
 number past every claim** and this work takes **730–737**, the first eight of its own reservation. Like every
 claim above the highest written section it is **claimed, not reserved**: a claim is settled at its merge, and
@@ -1207,6 +1209,8 @@ probe account carries predefined grants only).
 | 890 | **The data layout of a real project** ([`docs/repo-coupling-audit/`](repo-coupling-audit/implementation-plan.md), its tasks **K1** and **K4**, read by **R1** and the reconciliation's **O2**): the project's three stores listed by **key only** — the Realtime Database (shallow), the runs bucket and Firestore's collection and `spendDaily` document ids — and every listed path with a repository slug in it compared with the storage-path rows of [report.md](repo-coupling-audit/report.md) (**RC40**–**RC50**, **RC52**–**RC56**, **RC99**–**RC102** and **RC106**); a slug-keyed path no row names is printed **UNNAMED** | See "Check 890" below; **one command**, run by **you**, on the Fugaro project **`fugaro`** (**never `belong`**): `bash scripts/live-checks/check-890-data-layout.sh fugaro`, with the hermetic test that drives it against fakes, `scripts/live-checks/check-890-data-layout_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** | It **only reads**: a few hundred reads, every one with stdin closed, no value printed and no token on an argv. **PASS** (exit 0) is every slug-keyed path named by a report row; **FAIL** (exit 1) names each **UNNAMED** path; exit **2** is stopped before it measured; exit **3** is a row **UNVERIFIED**. **RUN 2026-11-23 on `fugaro`: FAIL on one UNNAMED path, `creds/current/<slug>`, which is RC106 now (#3700); the result is in report.md §1.** |
 | 891 | **Where `fugaro update` and a launch read repository context** ([`docs/repo-coupling-audit/`](repo-coupling-audit/implementation-plan.md), its tasks **K2** and **K4**, which settle the reconciliation's **U4**): `fugaro update --plan-only --json --events --project fugaro` run once from an empty directory and once from each checkout named, every stage's state and detail compared between the two, and the `job` of each repository's newest `launch.json` read from the runs bucket (a shared `fugaro-p-…` job, or the repository's own, **RC76**) | See "Check 891" below; **one command**, run by **you**, on **`fugaro`** (**never `belong`**): `bash scripts/live-checks/check-891-update-trace.sh fugaro <each checkout>`, with the hermetic test that drives it against fakes, `scripts/live-checks/check-891-update-trace_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** | It launches nothing and applies nothing. Two side effects of `update --plan-only` are accepted: Terraform's plan takes the **state lock** (a `.tflock` object written and deleted in the state bucket, once per root it plans), and the run **records remembered checkouts** in the local config. **PASS** (exit 0) is every differing stage a blocker of report.md §4 (`repository`, `images`, `policy`, `plugin`, `checkout`, `secrets`); **FAIL** (exit 1) is a stage that differs and §4 does not name; exit **2** is stopped before it could compare; exit **3** is a row **UNVERIFIED** (no checkout named, or no `launch.json` read). **RUN 2026-11-23 on `fugaro` with three checkouts: PASS; both repos launch on their own jobs; the result is in report.md §1.** |
 | 892 | **The IAM a member and an admin hold** ([`docs/repo-coupling-audit/`](repo-coupling-audit/implementation-plan.md), its tasks **K3** and **K4**, which settle the reconciliation's **U3**): for each member named, whether it holds **TF-admin**, **DB-admin** and **operator** and the report rows those allow, then the whole matrix — each principal's role in the grants node `config/admin/access`, the local `terraform` lists, and the roles it holds on the GCP project, the Firebase project and every per-repository build and job account | See "Check 892" below; **one command**, run by **you**, on **`fugaro`** (**never `belong`**): `bash scripts/live-checks/check-892-iam.sh fugaro <a member's address>`, with the hermetic test that drives it against fakes, `scripts/live-checks/check-892-iam_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** | It **only reads**: IAM policies and the grants node, whose values are principals and roles. **PASS** (exit 0) is no principal the node places as operator or viewer, or scopes to repositories, holding `roles/owner`, `roles/editor` or `roles/resourcemanager.projectIamAdmin` on the GCP project; **FAIL** (exit 1) is one that does, or a grant whose role is not viewer, operator or admin; exit **2** is stopped before it could compare; exit **3** is a read part of the matrix needed that did not answer (**UNVERIFIED**). **RUN 2026-11-23 on `fugaro`: PASS; one admin, no member; the result is in report.md §1.** |
+| 720 | **The folder mechanism end to end, and R3's console page** ([`docs/workspace-projects-users/`](workspace-projects-users/implementation-plan.md), its **Check 720** and task **WU17**; the reconciliation's **U1**, **U3**, **U6** and **U8**, read under **R8**, **D2813**, **D2819**/**A6** and **D2825**): **U1** read three ways — the parent of the workspace's own project before and after `workspace init` (the CLI's own move; `init` creates that folder under the **first** organization its own search answers, **D2803**, so a credential that sees more than one stops the check with the row **UNVERIFIED** naming it), the parent of the member's project before and after `workspace project link` (the member owner's own move), and a `gcloud projects move` of a project created with **no parent at all**, Google's own answer about whether the CLI can move one; **U3** the string `workspace project rm` prints (`workspaceProjectRmWarning`) really is Google's shut-down page, printed in the block for you to open; **U6** the **return** itself — `workspace project unlink` on the member's own machine moves the member back to the parent the link record named, and the parent read after it (`FolderAuthority.Unlink`) — while U6's **own** case (a caller holding `roles/owner` on the folder and **no** rights on the member) is **recorded as a skip** on the `u6` row rather than claimed: both throwaway installations answer to the **one** `gcloud` account, which holds the member project's owner rights and the folder's owner binding at once, so no call the check can make is that caller, and the product keeps U6 open the same way (`project rm` on the folder mechanism prints the member owner's own command, `workspaceProjectRmAuthority`); **U8** whether Google grants a person `roles/owner` on a project by API outside an organization, or only by an invitation accepted in the console — the check makes exactly the call `SAAuthority.GrantOwner` makes, and a refusal carries the console step the CLI prints (`ErrSAOwnerInvite`) | See "Check 720" below; **one command**, run by **you**, at your own terminal with your own credentials, on a **test organization** (**never `belong`**): `bash scripts/live-checks/check-720.sh --org <org-id> --billing <account>`, with the hermetic test that drives it against fakes, `scripts/live-checks/check-720_test.sh` (run by `go test ./scripts`). **No agent runs any step of it**, and two of its steps (`setup --create-project`, `setup --link-billing`) need a real terminal, which it gives them itself (a pty, nothing typed). | It **creates and then deletes the projects of** a throwaway installation foundry: two `fugaro setup` runs (the workspace's own project and the member's, each with Firebase, its Realtime Database and the boring-cost baseline), one test folder under the organization, a test folder for the workspace, and a third project with no parent. That is **real money until the `teardown` row deletes them**; the two folders it made are **left behind on purpose** — Resource Manager refuses a folder delete while a project under it is still in `DELETE_REQUESTED` (about 30 days), and a folder costs nothing — and the row names the `gcloud resource-manager folders delete` commands for later; `--keep` leaves everything it made and says so. Nothing of **your** machine's installations is read or written: the check's whole config root is its own scratch directory (`XDG_CONFIG_HOME`), so `fugaro` cannot see a config of yours. **PASS** (exit 0) is every move happened and R3's page is the one printed; **FAIL** (exit 1) is a move that did not happen or another page; exit **2** is stopped before it could measure; exit **3** is a row it could not read (**UNVERIFIED**); a row reading **INFO** (the `u6` skip) is a reading and changes no exit. **USER-RUN, NOT RUN.** |
+| 721 | **The drift row's audit-log cross-check** ([`docs/workspace-projects-users/`](workspace-projects-users/implementation-plan.md), its **Check 721** and task **WU17**; the reconciliation's **U5**, read under **D2811**, **D2813**, **D2818** and **R13**): U5 is one question — can a workspace admin read the member's Admin Activity at all — and the check answers it in the drift row's own words: a row that could not read the log carries `... drift was not measured: Cloud Audit Logs of <project>: <Google's own words>`, which **is** U5's answer (no), measured rather than guessed; a row that did read it is asserted on both halves the plan's acceptance names — it names the change this check made, with the audit-log entry Google wrote for it (`changed in the console: <address> as <role> on <project> (<entry>)`), and it names **none** of the changes the member's **own** `fugaro update` made in the same window, because what an update applies is the record | See "Check 721" below; **one command**, run by **you**, at your own terminal with **both** of your credentials, on **your own workspace** and one of its members (**never `belong`** as the subject): `bash scripts/live-checks/check-721.sh --workspace <name> --project <member>`, with the hermetic test that drives it against fakes, `scripts/live-checks/check-721_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** | It **makes one real IAM change and takes it away again**: this check cannot drive your browser, so it makes the binding a Cloud Console edit adds (`gcloud projects add-iam-policy-binding`, `--condition=None`) for a fresh `chk721-<stamp>@example.com` nobody holds, and the `ungrant` row removes it — on every way out, `--keep` excepted. It then runs the member's **own** `fugaro update` (the documented command; `--no-update` skips it) and reads `fugaro workspace project status <member> --json` twice, before and after. It also reads the log itself, with the filter `internal/infra`'s `AuditLogs` uses, asking for the **newest** entries of the window (`--limit=200 --order=desc`: the check's own change and the update's are at that end), to tell the two changes apart — both are made by your account — and reports a third party's change as the cross-check working rather than as drift. **PASS** (exit 0) is the row read the log, named this check's change with Google's entry for it, and named nothing the member's own update applied; **FAIL** (exit 1) is a row that named the update's own change, missed the one Google logged, or a cloud call of its own that failed; exit **2** is stopped before it could measure; exit **3** is the log unreadable (U5's answer is no) or a window that held nothing to compare. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -26316,3 +26320,195 @@ copy back. Its last line is the verdict and the exit status:
 **OWNER-RUN: no agent runs any step of it.** Its own automated proof is
 `scripts/live-checks/check-892-iam_test.sh`, which drives it against a fake `gcloud`, `curl` and `fugaro` (no
 cloud, no database) and is run by `go test ./scripts`.
+
+## Check 720: the folder mechanism end to end, and R3's console page (a test organization, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **WU17** of
+[docs/workspace-projects-users/implementation-plan.md](workspace-projects-users/implementation-plan.md), its
+row for **720**. It settles the reconciliation's **U1**, **U3** and **U8**, and the **return** half of
+**U6** — while U6's **own** case is recorded as a **skip**, not claimed — and it is what the plan's task
+**WU20** (the SA mechanism) waits on: the folder is exercised before any SA link is tried live. It is
+**owner-run** and it is **never `belong`**: what it drives is a throwaway installation foundry in a **test
+organization**, and **no agent runs any step of it**.
+
+**What it settles.**
+
+- **U1: the exact permissions to move a project into a folder, and whether a project with no organization can
+  be moved by the CLI at all.** Read three ways, each with its own row: the parent of the workspace's own
+  project before and after `workspace init` (`init` — the CLI's own move, R8; `init` creates that folder under
+  the **first** organization its own search answers, `workspace_init.go`, **D2803**, so a credential that sees
+  more than one stops the check with the `init` row **UNVERIFIED** naming that, rather than reading the
+  organization it chose as a failed move); the parent of the member's
+  project before and after `workspace project link` (`move` — the member owner's own move, D2819/**A6**); and a
+  `gcloud projects move` of a third project created with **no parent at all** (`noorg`), which is Google's own
+  answer to whether such a project can be moved by API or only through Google's migration flow.
+- **U3: that R3's URL is Google's shut-down page for a project.** `workspace project rm` prints it
+  (`workspaceProjectRmWarning`, R3), and the `detach` row asserts the exact sentence and prints it in the
+  block. **A browser is the one thing this check cannot use**: opening it is yours, and the row is the whole
+  of U3.
+- **U6: the return, and what this check does *not* settle about it.** `workspace project unlink` on the
+  member's own machine moves the member back to the parent the link record named, and the parent read after it
+  (`return`; `FolderAuthority.Unlink`, D2822). U6's **own** case — whether a caller holding `roles/owner` on
+  the **folder** and **no** rights on the member's project can move it back — is **not measured**, and the
+  `u6` row is the skip: both throwaway installations answer to the **one** `gcloud` account, which holds the
+  member project's owner rights and the folder's owner binding at once, so no call this check can make is that
+  caller. U6 therefore **stays open** in
+  [docs/workspace-projects-users/reconciliation.md](workspace-projects-users/reconciliation.md), and the
+  product keeps U6 open with it: `project rm` on the folder mechanism prints the member owner's own command
+  (`workspaceProjectRmAuthority`, "a folder owner is not known to be able to do it for them (U6)"). To settle
+  it, grant a second identity `roles/owner` on the test folder **alone** and run the unlink as it.
+- **U8: whether Google lets a person be granted `roles/owner` on a project by API outside an organization, or
+  only by an invitation they accept in the console.** The check creates a project with no organization and
+  makes exactly the call `SAAuthority.GrantOwner` makes. **Either answer settles U8 and the row names which
+  one** — an acceptance, or Google's refusal and the invitation it carries — with the console step the CLI
+  prints in place of a grant it did not make beside it (`ErrSAOwnerInvite`, **D2825**).
+- **The add's own two records.** `add` and `pin` are the other rows the task's acceptance names: the member
+  entry written into the workspace's table, and the assertion key its pin carries.
+
+**What it creates, and what that costs.** The check is a **throwaway installation foundry**: two
+`fugaro setup` runs (the workspace's own project and the member's, each with Firebase, its Realtime Database
+and the boring-cost baseline behind them — the credentials service, the images and the daily check), a test
+folder under the organization, the workspace's own folder, and the third project with no parent. That is
+**real money until the projects are deleted**, which is what the `teardown` row does at the end. Both folders
+are **left behind on purpose**, because a folder cannot be deleted while a project under it is still in
+`DELETE_REQUESTED` (about 30 days): the row says so and names the `gcloud resource-manager folders delete`
+commands to run once the projects are really gone. `--keep` leaves every project and folder it made and says so
+rather than deleting them. **Nothing of your machine's
+installations is read or written**: the check's entire config root is its own scratch directory
+(`XDG_CONFIG_HOME`), so `fugaro` cannot see a config of yours, and the projects it moves are the ones it
+created itself. A fresh installation has no repository, so it has no job service account and no exchange URL:
+the member's entry is declared with well-formed values of the check's own (the `add` row names them) and the
+pin's assertion key is the check's own placeholder, which no command publishes.
+
+**What it needs before it runs.** An organization you may create folders in (`--org`, the numeric id
+`gcloud organizations list` prints — use a credential that sees **only** this one: `workspace init` creates
+the workspace's folder under the first organization its own search answers, **D2803**, so a second visible
+organization is not a move this check can read against `--org`) and a billing account the two throwaway
+projects may be created on
+(`--billing`). `--region` (default `us-east5`) and `--rigor` (default `poc`) say where and how the throwaway
+installations are built, `--grantee` names the address the U8 grant is attempted for (default: the account
+`gcloud` is authenticated as), and `--dir` works in a directory you name and keeps it.
+
+**The command.** It is **one command**, and it is **yours**:
+
+```sh
+bash scripts/live-checks/check-720.sh --org <org-id> --billing <account>
+```
+
+Two of its steps — `fugaro setup --create-project` and `setup --link-billing` — are confirmed by being at a
+real terminal (nothing is typed), so the check gives each of them one (a pty) rather than running it on a
+pipe. It refuses to start in a coding agent's session and in a traced shell; every child call runs with stdin
+closed and every `gcloud` call with `--quiet`. It needs `bash`, `mktemp`, `python3`, `gcloud` and `fugaro`.
+`--dry-run` prints the plan and calls nothing. **Expect 20 to 40 minutes**, most of it the two `setup` runs
+and Terraform's own applies.
+
+**Reading the result.** Progress goes to stderr; ONE block on stdout, headed `CHECK 720 RESULT`, is what you
+copy back. Its last line is the verdict and the exit status:
+
+- **PASS** (exit 0): every row settled its question — each move happened, R3's page is the one printed, and
+  U8's answer is named.
+- **FAIL** (exit 1): a move did not happen, the page is not R3's, or a read answered something else.
+- **INCOMPLETE** (exit 2): the run stopped before it could measure: a guard refused it, a tool or a flag is
+  missing, or a setup did not come up.
+- **INCOMPLETE** (exit 3): it measured, and a row could not be read (**UNVERIFIED**).
+- A row reading **INFO** is a reading, not a verdict, and changes no exit: the `u6` row is one, recording
+  what this check does not measure.
+
+**Restore.** The `teardown` row deletes the three projects the check made and names each one it deleted; the
+two folders are left on purpose (a folder delete while a project under it is still in `DELETE_REQUESTED`
+cannot succeed) and the row names the commands to run about 30 days later. The exit trap removes its scratch
+directory, so nothing of the foundry outlives the run. `--keep` skips the teardown and says so, with the list
+of what it left.
+
+**OWNER-RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check-720_test.sh`, which drives it against a fake `gcloud` and `fugaro` on `PATH` (no
+cloud, no project, no folder, and no terminal but the pty it gives itself) and is run by `go test ./scripts`.
+
+## Check 721: the drift row's audit-log cross-check (your own workspace and one of its members; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **WU17** of
+[docs/workspace-projects-users/implementation-plan.md](workspace-projects-users/implementation-plan.md), its
+row for **721**. It settles the reconciliation's **U5** — Cloud Audit Logs' Admin Activity entries for
+`SetIamPolicy` are readable with `roles/logging.viewer` on the member, which a workspace admin's `roles/owner`
+includes — and it is the check the drift comparison's console-change cross-check is read against (**D2811**,
+**D2813**, **D2818**, **R13**). It runs on **your own** workspace and one of its members, and **no agent runs
+any step of it**.
+
+**What it settles, and how.** U5 is one question — **can the workspace admin who runs `status` read the
+member's Admin Activity at all** — and the check answers it the way the row itself does, in the row's own
+words:
+
+- the check makes **one real IAM change** on the member: the write a Cloud Console edit makes (an IAM policy
+  binding added for one principal). This check cannot drive your browser, so it makes the call the console
+  makes and shows you Google's own record of it;
+- it runs `fugaro workspace project status <member>` with your own credentials and reads the `drift` row;
+- a row that **could not read the log** carries
+  `... drift was not measured: Cloud Audit Logs of <project>: <Google's own words>`. **That is U5's answer
+  (no), reported as measured** rather than guessed, and the run ends INCOMPLETE because that half of the
+  acceptance could not be shown;
+- a row that **did read the log** is asserted on both halves the task's acceptance names: it names the change
+  this check made, with the audit-log entry Google wrote for it (drift's own sentence,
+  `changed in the console: <address> as <role> on <project> (<entry>)`), and it names **none** of the changes
+  the member's **own** `fugaro update` made in the same window — what an update applies is the record, so
+  nothing it wrote is drift (`internal/workspace/drift.go`).
+
+**How the two changes are told apart, and what that is worth.** Both are made by the same account (yours), so
+the check reads Google's log itself, with the same filter `internal/infra`'s `AuditLogs` uses, asking for the
+**newest** entries of the window (`--limit=200 --order=desc` — both changes it is telling apart are at that
+end, and reading the window oldest-first would truncate them in a busy one), and keeps what it read: the entry
+for this check's own change (by principal and role) is the console change, and the entries
+the member's own update made are the rest by that same account. The second half cannot be shown at all when
+the window holds no such entry — a member whose grants are all applied has nothing to apply — and then the
+`silent` row reads **UNVERIFIED** naming the fix rather than passing on an empty comparison. A change somebody
+**else** made while the check ran is named for what it is: the cross-check working, not drift's own noise.
+
+**What it writes on your installation.** No config of yours is created or changed: it reads your workspace's
+own config and your member's. It runs two things: `fugaro update` for the member (**the member's own
+installation on this machine**, when there is one and unless `--no-update` is given — that is what applies the
+record's grants to the member's IAM, the change the drift row must **not** name), and one IAM binding on the
+member, which the `ungrant` row removes again — on every way out of the check, `--keep` excepted. It needs
+**both** of your logins: `gcloud auth login` is what the IAM write uses, and `gcloud auth application-default
+login` is what the CLI's own reads use, because drift reads the member's live IAM and its audit log through
+Application Default Credentials.
+
+**The command.** It is **one command**, and it is **yours**:
+
+```sh
+bash scripts/live-checks/check-721.sh --workspace <name> --project <member>
+```
+
+`--workspace` is the workspace's **own** project name on this machine (the config that holds the member
+table); `--project` is the member, as the member table names it. `--member-project` names the member's GCP
+project when it is not the domain of its job service accounts; `--grantee` (default a fresh
+`chk721-<stamp>@example.com` nobody holds, so the record cannot state the binding and the cross-check cannot
+skip it) and `--role` (default `roles/viewer`) say what the hand-made change is; `--since` (default 90
+minutes) is the window read, and it never starts after the member's own update this check ran; `--timeout`
+(default 45 minutes) bounds that update and `--wait` (default 180 seconds) is how long the change is waited
+for in Admin Activity; `--no-update` skips the update, `--dir` works in a directory you name and keeps it, and
+`--keep` leaves the binding and says so. It refuses to start in a coding agent's session and in a traced
+shell; every child call runs with stdin closed and every `gcloud` call with `--quiet`. It needs `bash`,
+`mktemp`, `python3`, `gcloud`, `fugaro` and your own installations — the workspace's config, and the member's
+for the update. **Expect a few minutes with `--no-update`, up to an hour with it.**
+
+**Reading the result.** Progress goes to stderr; ONE block on stdout, headed `CHECK 721 RESULT`, is what you
+copy back, and it opens with the console pages **you** open (U5): the member's IAM page, its Activity page,
+the console query for the entry Google logged, and the command that prints the drift row in your terminal.
+Its last line is the verdict and the exit status:
+
+- **PASS** (exit 0): the drift row read the log, named this check's change with Google's entry for it, and
+  named nothing the member's own update applied.
+- **FAIL** (exit 1): the row named the update's own change, missed the one Google logged, or one of this
+  check's own cloud calls failed.
+- **INCOMPLETE** (exit 2): the run stopped before it could measure: a guard refused it, a tool, a flag or a
+  credential is missing, or the workspace's member table does not name the member.
+- **INCOMPLETE** (exit 3): it measured, and a row could not be read (**UNVERIFIED**): the log was not readable
+  (U5's answer is **no**), or the window held nothing of the member's own update to compare against.
+
+**Restore.** The `ungrant` row removes the binding the check added and says so; a removal that failed is a
+FAIL naming the exact `gcloud projects remove-iam-policy-binding` to run yourself. The exit trap removes the
+scratch directory. `--keep` leaves the binding on purpose and prints the command that takes it away.
+
+**OWNER-RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check-721_test.sh`, which drives it against a fake `gcloud` (holding the member's project,
+the bindings its own writes make and Google's Admin Activity) and a fake `fugaro` (a member table and a drift
+row built from what that `gcloud` did) — no cloud, no installation, no log — and is run by `go test ./scripts`.
