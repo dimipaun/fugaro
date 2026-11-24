@@ -446,6 +446,13 @@ CHECK_JOB_PREFIX = "fugarochk-"
 
 
 def word(v, cap=80):
+    """One field of a document, for the block's own `key=value` shape. A field
+    the document does not carry is `-` and never the word `None`: the callers
+    read `-` as "nothing here", and a `None` printed as a word is an answer
+    they would take for a value — a build with no `_SLUG` substitution, which
+    is every catalog build, would be looked up as the repository named `None`."""
+    if v is None:
+        return "-"
     return WORD.sub("", str(v))[:cap] or "-"
 
 
