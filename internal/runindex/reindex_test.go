@@ -335,6 +335,104 @@ func TestSweepContinuesWalk(t *testing.T) {
 	}
 }
 
+// TestReindexResetIsWhatUpdateAndRunsReindexDo is the reset both `fugaro
+// update` and `fugaro runs reindex` run before they start anything (RI5, U3):
+// the cursor goes, the summary is latched incomplete, and the walk every later
+// sweep continues begins at the top -- including on an installation whose index
+// has never been folded, where there is no summary to latch and the reset seeds
+// one, because a reset is the command that says an index should exist.
+func TestReindexResetIsWhatUpdateAndRunsReindexDo(t *testing.T) {
+	e := newFoldEnv(t)
+	e.reindexTwoRuns()
+	// A walk cut off at its first run: a cursor is there to be cleared.
+	if _, err := e.walk(e.now); err != nil {
+		t.Fatal(err)
+	}
+	if e.lease()["cursor"] == nil {
+		t.Fatalf("the fixture left no cursor: %v", e.lease())
+	}
+	f := e.index()
+	live, err := ResetReindex(context.Background(), f.DB, f.FS, "fugaro-cli", e.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live {
+		t.Fatal("a lapsed walk was reported as a live one")
+	}
+	l := e.lease()
+	if l["cursor"] != nil {
+		t.Fatalf("the reset left the cursor behind: %v", l)
+	}
+	if l["holder"] != "fugaro-cli" {
+		t.Fatalf("the reset's node names nobody: %v", l)
+	}
+	if done, ok := e.summary()["complete"].(bool); !ok || done {
+		t.Fatalf("the reset left the index complete: %v", e.summary())
+	}
+	// The sweep behind it walks from the top rather than resuming.
+	rep, err := e.sweep(time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Walk == nil || rep.Walk.From != nil || !rep.Walk.Done || rep.Walk.Walked != 2 {
+		t.Fatalf("the sweep did not walk from the top: %+v", rep)
+	}
+
+	// An installation whose index has never been folded: no summary at all,
+	// and the reset is what makes the walk owed rather than the week a fold
+	// would reach back.
+	fresh := newFoldEnv(t)
+	fresh.reindexTwoRuns()
+	ff := fresh.index()
+	live, err = ResetReindex(context.Background(), ff.DB, ff.FS, "fugaro-cli", fresh.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live {
+		t.Fatal("an installation with no lease at all was reported as walked")
+	}
+	sum := fresh.summary()
+	if done, ok := sum["complete"].(bool); !ok || done {
+		t.Fatalf("the reset seeded no incomplete summary: %v", sum)
+	}
+	rep, err = fresh.sweep(time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Walk == nil || !rep.Walk.Done || rep.Walk.Walked != 2 {
+		t.Fatalf("the seeded reset did not walk: %+v", rep)
+	}
+
+	// A walk that IS going: its claim is left exactly as it stands, so the
+	// execution walking keeps the lease it is using.
+	going := newFoldEnv(t)
+	gf := going.index()
+	claim, held, err := func() (LeaseDoc, bool, error) {
+		l, err := NewLease(gf.DB, "exec-walking", gf.DB.ServerNow)
+		if err != nil {
+			return LeaseDoc{}, false, err
+		}
+		return l.Acquire(context.Background())
+	}()
+	if err != nil || !held {
+		t.Fatalf("the fixture took no claim: held=%v err=%v", held, err)
+	}
+	live, err = ResetReindex(context.Background(), gf.DB, gf.FS, "fugaro-cli", going.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !live {
+		t.Fatal("a fresh claim was not reported as a walk in flight")
+	}
+	l = going.lease()
+	if l["holder"] != "exec-walking" || l["at"] != claim.At.Format(time.RFC3339Nano) {
+		t.Fatalf("the reset stamped over a running writer's claim: %v", l)
+	}
+	if _, ok := going.fs.Value(SummaryCollection, SummaryDocument); ok {
+		t.Fatal("a reset that found a walk in flight wrote the summary")
+	}
+}
+
 // TestDeadLeaseLapses is the expiry's rule: a walk whose execution died leaves
 // a claim no one will ever release, and the next pass must take it over -- from
 // the position it left, which is the part of the walk that is not lost.

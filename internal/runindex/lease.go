@@ -181,39 +181,47 @@ func (l *Lease) Stop(ctx context.Context, at time.Time, cursor string) error {
 	return fmt.Errorf("runindex: %d stops, each refused by a moved ETag: %w", leaseAttempts, last)
 }
 
-// ClearCursor takes the walk's position out of the lease node and leaves the
-// node otherwise as it stands (RI5, U3): `fugaro update`'s step and
-// `fugaro runs reindex` both ask for a walk from the top of history, and a
-// cursor an earlier walk left would resume that one instead -- skipping
-// everything before it, which is exactly what the operator asked to have
-// redone.
+// Reset leaves the node naming the reset's own requester, holding nothing and
+// carrying no cursor (RI5, U3): the walk every later sweep continues begins at
+// the top of history, and a cursor an earlier walk left is gone rather than
+// resumed -- resuming it would skip everything before it, which is exactly
+// what the operator asked to have redone.
 //
-// A node that is not there is nothing to clear, and a node another writer has
-// moved is re-read rather than overwritten: an execution walking right now
-// keeps a position it is using, and the walk the reset asks for is one every
-// later sweep continues. It writes with the ETag of the read it decided from,
-// so a claim landing in the same instant is not lost.
-func (l *Lease) ClearCursor(ctx context.Context) error {
+// The node holds nothing because the pass it asks for has not started yet: the
+// expiry is a minute behind the server's clock (the writer lease's own rule,
+// Stop), so the execution the reset is followed by takes the node over rather
+// than waiting out a TTL on a claim nobody is using.
+//
+// A fresh claim is left exactly as it stands and returned with live=true: an
+// execution IS walking, that walk is the one the index is owed, and stamping
+// over a claim a running writer is using would tell it its own lease had
+// moved.
+func (l *Lease) Reset(ctx context.Context) (claim LeaseDoc, live bool, err error) {
 	var last error
 	for attempt := 0; attempt < leaseAttempts; attempt++ {
 		var cur LeaseDoc
 		etag, found, err := l.db.GetETag(ctx, PathLease, &cur)
 		if err != nil {
-			return err
+			return LeaseDoc{}, false, err
 		}
-		if !found || cur.Cursor == "" {
-			return nil
+		srv, ok := l.now()
+		if !ok {
+			return LeaseDoc{}, false, errors.New("runindex: the database's clock was not seen (no Date header), so a claim cannot be judged fresh or lapsed; nothing was reset")
 		}
-		err = l.db.PutIfMatch(ctx, PathLease, etag, LeaseDoc{Holder: cur.Holder, At: cur.At, ExpiresAt: cur.ExpiresAt})
+		if found && cur.ExpiresAt.After(srv) {
+			return cur, true, nil
+		}
+		claim = LeaseDoc{Holder: l.holder, At: srv.UTC(), ExpiresAt: srv.UTC().Add(-time.Minute)}
+		err = l.db.PutIfMatch(ctx, PathLease, etag, claim)
 		if err == nil {
-			return nil
+			return claim, false, nil
 		}
 		if !errors.Is(err, rtdb.ErrPrecondition) {
-			return err
+			return LeaseDoc{}, false, err
 		}
 		last = err
 	}
-	return fmt.Errorf("runindex: %d cursor clears, each refused by a moved ETag: %w", leaseAttempts, last)
+	return LeaseDoc{}, false, fmt.Errorf("runindex: %d resets, each refused by a moved ETag: %w", leaseAttempts, last)
 }
 
 // Release frees the lease this writer took, and only if the node still names

@@ -395,31 +395,49 @@ func (f *Fold) lease(ctx context.Context) (LeaseDoc, bool, error) {
 }
 
 // ResetReindex puts the index back to "a walk is owed, from the top": the
-// summary is latched incomplete (D3215, F39), so every later sweep walks until
-// one reaches the end, and the cursor in the lease is cleared, so the walk that
-// is owed begins at the top of history rather than resuming a position a
-// previous walk's operator has decided against (RI5, U3).
+// cursor is gone from the lease node and the summary carries complete: false
+// (D3215, F39), so every later sweep walks until one reaches the end and the
+// walk begins at the top of history rather than resuming a position an
+// operator has decided against (RI5, U3).
 //
 // It is the first half of both `fugaro update`'s step and `fugaro runs reindex`,
 // and it is what makes them work when the caller may not start the job at all
 // (O7): the walk the reset asks for is one every sweep of the history job
-// continues on its own, with no grant and no execution started.
+// continues on its own, with no grant and no execution started. live is true
+// when an execution is already walking -- its own fresh claim was left alone --
+// and the caller then starts nothing, because the walk it would start is
+// already going.
 //
-// A lease another writer still holds is left alone and reported: an operator
-// who resets while an execution is walking clears the position that execution
-// is working from, which costs the walk the part it has done and nothing
-// else -- the stamp and the latch are the state machine, and the cursor is
-// only where a pass resumes.
-func ResetReindex(ctx context.Context, db *rtdb.Client, st Store, holder string, now time.Time) error {
+// A summary that is not there at all is seeded: an installation whose index has
+// never been folded has no `complete` field to latch, and the reset is exactly
+// the command that says an index should exist, so the document it asks for is
+// written here rather than left for the next fold (which would fold the week
+// its discovery can see and call that the whole of history).
+func ResetReindex(ctx context.Context, db *rtdb.Client, st Store, holder string, now time.Time) (live bool, err error) {
 	if db == nil || st == nil {
-		return errors.New("runindex: a reindex reset needs the budget database and a Firestore client")
+		return false, errors.New("runindex: a reindex reset needs the budget database and a Firestore client")
 	}
 	lease, err := NewLease(db, holder, db.ServerNow)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if err := lease.ClearCursor(ctx); err != nil {
-		return err
+	if _, live, err = lease.Reset(ctx); err != nil {
+		return false, err
 	}
-	return MarkIncomplete(ctx, st, now)
+	if live {
+		return true, nil
+	}
+	if err := MarkIncomplete(ctx, st, now); err != nil {
+		return false, err
+	}
+	if _, found, err := summaryDoc(ctx, st); err != nil {
+		return false, err
+	} else if !found {
+		if _, err := st.Patch(ctx, SummaryCollection, SummaryDocument, map[string]any{
+			"version": int64(Version), "complete": false, "updated_at": now.UTC(),
+		}); err != nil {
+			return false, err
+		}
+	}
+	return false, nil
 }
