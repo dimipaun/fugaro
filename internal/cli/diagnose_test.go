@@ -162,8 +162,8 @@ func TestDiagnoseShowsThePauseAndItsResume(t *testing.T) {
 		if d.Row.ResumedBy != resumer {
 			t.Errorf("resumed_by = %q, want %q: the run whose task names this one under `resumes`", d.Row.ResumedBy, resumer)
 		}
-		// The members on the wire are the ones the console's Run screen reads
-		// (console/docs/json-contract.md), as RFC 3339 UTC and a run id.
+		// The members on the wire are the two the console's Run screen reads off
+		// this document's row, as RFC 3339 UTC and a run id.
 		out, _, err := execute(t, "diagnose", "--json", suspended)
 		if err != nil {
 			t.Fatal(err)
