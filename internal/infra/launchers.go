@@ -45,6 +45,15 @@ func launcherAccounts(members []string) []string {
 // person's, so no class of people may carry one.
 const serviceAccountSuffix = ".gserviceaccount.com"
 
+// classAddressBytes is the bound internal/credsvc's foldEmail holds every value
+// to (printableHeaderValue's maxHeaderTokenBytes, restated for the same reason
+// the suffix above is): an entry longer than this is a configuration error at
+// NewLaunchers rather than an entry nothing matches, so the intake's revision
+// exits on start. Nothing bounds a roster address — CanonicalAddress, the
+// schema and `fugaro workspace user add` all take one of any length — so the
+// only place this bound can be kept is the class list itself.
+const classAddressBytes = 512
+
 // IntakePeople is the intake's SECOND class list (WC3, R5): the people of a
 // workspace's roster, as the bare addresses a Google ID token's email claim
 // holds — sorted and each once, so two spellings of one roster give equal bytes.
@@ -61,8 +70,12 @@ const serviceAccountSuffix = ".gserviceaccount.com"
 // the apply that would have written it — a roster person the workspace added as
 // a `human` on a service account's address (neither `workspace user add` nor
 // CanonicalAddress refuses one) would break that installation's every later
-// `fugaro update`. The suffix is therefore dropped here, by the fold's own rule
-// and for it, and the module's validation refuses the shape a hand edit writes.
+// `fugaro update`. That shape and one past the fold's own byte bound (see
+// classAddressBytes, the other refusal NewLaunchers makes and for the same
+// reason) are therefore dropped here, by the fold's rules and for them, and the
+// module's validation refuses both in a hand edit; nothing else about an address
+// the roster can hold is, because a class list that dropped a value the module
+// takes — or took one it refuses — is the same broken update from the other side.
 //
 // Why a function of the roster and not of the launcher list. The two lists are
 // separate on purpose (F10): the same `launchers` variable is the workspace
@@ -81,17 +94,19 @@ const serviceAccountSuffix = ".gserviceaccount.com"
 // than a coincidence: the value this writes is planned by the installation root
 // a moment later, so a class list holding one address more or one fewer than
 // var.intake.people accepts is an update that fails — or a person the roster
-// named and the module's plan refuses. It is why the suffix above is the ONLY
-// shape dropped: an address with a `:` in its local part (which
-// workspace.CanonicalAddress keeps and `fugaro workspace user add` accepts)
-// stays, and the module's validation takes it as the bare address it is.
+// named and the module's plan refuses. It is why the shapes dropped here are the
+// two the PROCESS refuses and nothing else: an address whose local part carries a
+// `:` or begins `user:` (both of which workspace.CanonicalAddress keeps and
+// `fugaro workspace user add` accepts) stays, and the module's validation holds
+// these addresses to the roster's own canonical class, which takes them.
 func IntakePeople(roster *workspace.Roster) []string {
 	out := []string{}
 	if roster == nil {
 		return out
 	}
 	for _, p := range roster.People {
-		if p.Kind != workspace.KindHuman || strings.HasSuffix(strings.ToLower(p.Address), serviceAccountSuffix) {
+		folded := strings.ToLower(p.Address)
+		if p.Kind != workspace.KindHuman || strings.HasSuffix(folded, serviceAccountSuffix) || len(folded) > classAddressBytes {
 			continue
 		}
 		out = append(out, p.Address)

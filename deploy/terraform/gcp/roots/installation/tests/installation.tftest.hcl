@@ -3613,13 +3613,16 @@ run "an_installation_without_a_workspace_admits_its_launchers_only" {
   }
 }
 
-# A person on the second list is a bare address, and the plan refuses one that
-# is not: the class is matched against a Google ID token's email claim, so a
-# `user:` member (the spelling the invoker list takes), a group or a domain
-# would be an entry no token can match — a person `fugaro update` wrote out of
-# the roster and the intake could never admit. The refusal is at plan time, and
-# names the variable, rather than a revision that starts and refuses everybody.
-run "a_roster_person_must_be_a_bare_address" {
+# A person whose address READS like a member spelling is still a person's
+# address, and the plan takes it: `workspace.CanonicalAddress` keeps a local part
+# that begins `user:` or carries a `:`, nothing in `fugaro workspace user add`
+# refuses one, and `fugaro update` writes the roster's people into this variable
+# BEFORE the plan that reads it — so a rule that refused such an address would be
+# an update that fails and stays failed (WC3). What it costs is one entry the
+# class can never match, which is fail-closed and is the reading launcherAccounts
+# already takes for a group or a domain: the class is compared to a Google ID
+# token's email claim, and no token carries an address of this shape.
+run "a_roster_person_may_read_like_a_member_spelling" {
   command = plan
 
   module {
@@ -3632,6 +3635,36 @@ run "a_roster_person_must_be_a_bare_address" {
       service    = "fugaro-intake"
       image      = "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
       people     = ["user:ada@example.com"]
+    }
+  }
+
+  assert {
+    condition     = one([for e in google_cloud_run_v2_service.intake[0].template[0].containers[0].env : e.value if e.name == "FUGARO_LAUNCHER_ACCOUNTS"]) == "[\"user:ada@example.com\"]"
+    error_message = "a roster address that reads like a member spelling is written into the class as the roster holds it: the class is what the roster's own renderer writes, and refusing it here is an update that fails and stays failed"
+  }
+}
+
+# The other end of the same rule: an address PAST the fold's bound is refused.
+# internal/credsvc's foldEmail holds every value it reads to
+# printableHeaderValue's 512 bytes, so a longer address is a configuration error
+# at NewLaunchers — the intake's revision exits on start, the apply fails and
+# every later `fugaro update` of that workspace fails with it. The roster can
+# hold one (nothing in workspace.CanonicalAddress, `workspace user add` or the
+# roster schema bounds the length), so the guard belongs here and the renderer
+# drops the same shape (internal/infra's IntakePeople).
+run "a_roster_person_may_not_be_longer_than_the_fold_takes" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    intake = {
+      account_id = "fugaro-intake"
+      service    = "fugaro-intake"
+      image      = "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      people     = ["${join("", [for _ in range(501) : "a"])}@example.com"]
     }
   }
 

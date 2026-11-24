@@ -133,7 +133,12 @@ func TestLauncherAccountsAreThePeopleOfTheList(t *testing.T) {
 //     `workspace user add` defaults to human and neither validatePerson nor
 //     CanonicalAddress refuses the suffix, so a roster carrying one would make
 //     the intake's new revision exit on start, fail the apply that wrote it and
-//     fail every later `fugaro update` of that workspace.
+//     fail every later `fugaro update` of that workspace. The OTHER refusal
+//     NewLaunchers makes — an address past the fold's 512 bytes — is dropped
+//     for the same reason, and the two together are the whole of what the
+//     filter drops: an address the roster can hold that reads like a member
+//     spelling (a `:` in the local part, a `user:` prefix) stays, because the
+//     module's validation is the roster's own class and takes it.
 //   - The class the installation's launchers make is untouched by the roster:
 //     it names the launchers' own people and nobody from the workspace.
 //   - The intake's block carries the roster's people as the list of its own,
@@ -162,9 +167,22 @@ func TestRosterPeopleAreNotLaunchersOfTheWorkspaceProject(t *testing.T) {
 			// dropped and the module refused, or the other way round, is an
 			// update that fails on the roster's own content.
 			{Address: "a:b@example.com", Kind: workspace.KindHuman},
+			// ... and one whose local part begins `user:`, which is the same
+			// kind of address and not the member spelling it reads like:
+			// `fugaro workspace user add user:ada@example.com --external`
+			// stores it, and the module's validation takes it (the roster's own
+			// canonical class, not launcher_accounts' member class). The cost
+			// is one entry no ID token can match, which is fail-closed.
+			{Address: "user:ada@example.com", Kind: workspace.KindHuman},
+			// An address past the fold's 512 bytes is the OTHER shape
+			// internal/credsvc's NewLaunchers refuses outright — a
+			// configuration error, so the revision exits on start — and
+			// nothing bounds a roster address. The filter drops it here and
+			// the module's validation refuses it.
+			{Address: strings.Repeat("a", 501) + "@example.com", Kind: workspace.KindHuman},
 		},
 	}
-	want := []string{"a:b@example.com", "ada@example.com", "zoe@example.com"}
+	want := []string{"a:b@example.com", "ada@example.com", "user:ada@example.com", "zoe@example.com"}
 	if got := IntakePeople(roster); !slices.Equal(got, want) {
 		t.Errorf("IntakePeople(roster) = %v, want %v: the intake's second class is the roster's HUMANS, sorted and each once — a machine's address is a service account's and no interactive ID token carries one, whatever kind the roster spells beside it, and credsvc's foldLauncherAccounts refuses that shape outright (the revision would exit on start)", got, want)
 	}
