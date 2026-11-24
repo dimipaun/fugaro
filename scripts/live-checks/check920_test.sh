@@ -417,8 +417,8 @@ case_dir() { # case_dir <name>
 
 # One `fugaro review` appends a second row: the review's own run, on the same
 # job as the run it reviews.
-write_review_row() {
-  python3 - "$answers/rows-acme-sandbox.json" "$REVIEW_RID" "$REEXEC" "$JOB" <<'PY'
+write_review_row() { # write_review_row [FILE]
+  python3 - "${1:-$answers/rows-acme-sandbox.json}" "$REVIEW_RID" "$REEXEC" "$JOB" <<'PY'
 import json, sys
 path, rid, ex, job = sys.argv[1:5]
 doc = json.load(open(path))
@@ -629,6 +629,29 @@ PY
   [ "$status" -ne 0 ] || fail "the run's execution on the project copy: passed"
   expect_row "$out" run-mounts FAIL "the run's execution on the project copy: the row"
   expect_contains "$out" "exec-one feeds DEPLOY_CERT from fugaro-project-fugaro-is12-file-0123456789abcdef (the workflow secret is12-file)" "the run's execution on the project copy: the row names it"
+}
+
+# The runs bucket key is the repository's SLUG, and the `fugaro_repo` label is
+# it: `internal/task.Slug` turns every RUN of characters outside [a-z0-9] into
+# one "-", so `dimi/bmb_app` labels its jobs `dimi-bmb-app-<16 hex>`. A reading
+# that replaced only the "/" matched no job, fell back to a name-derived path
+# nobody writes, and left run-verify — the D3327/G3 evidence for the 0400 file —
+# UNVERIFIED on an ordinary class of repository names.
+test_a_repository_name_with_punctuation_finds_its_slug() {
+  case_dir slugged
+  python3 - "$answers/jobs.json" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+doc[0]["metadata"]["labels"]["fugaro_repo"] = "dimi-bmb-app-1111222233334444"
+json.dump(doc, open(sys.argv[1], "w"))
+PY
+  write_rows "$answers/rows-dimi-bmb_app.json" "$ONE_RID" "$EXEC" succeeded 77 ""
+  write_review_row "$answers/rows-dimi-bmb_app.json"
+  git -C "$CHECKOUT" remote set-url origin https://github.com/dimi/bmb_app.git
+  CHECK920_REPO=dimi/bmb_app run920
+  expect_status "$status" 0 "a repository name with punctuation: the verdict"
+  expect_row "$out" run-verify PASS "a repository name with punctuation: the verify record is read"
+  expect_contains "$(cat "$CALLS")" "gs://fugaro-dev-runs/runs/dimi-bmb-app-1111222233334444/$ONE_RID/result.json" "a repository name with punctuation: the slug is the label's, not the name's"
 }
 
 test_a_run_that_ran_as_the_build_identity_fails() {
@@ -1000,6 +1023,21 @@ test_a_catalog_build_that_did_not_succeed_fails() {
   expect_contains "$out" "its status is FAILURE" "a failed build: the status is named"
 }
 
+# A read that did not answer is a row this check could not measure, not an
+# accessor it found: the register's own row for 921 says exit 3 is a row
+# UNVERIFIED (a read that did not answer). The containers' policies read fine
+# here, so the row must NOT claim D3330 was violated.
+test_a_project_policy_that_could_not_be_read_is_not_measured() {
+  case_dir catnopolicy
+  write_catalog_answers ok
+  : >"$answers/no-project-iam"
+  run920_raw --catalog
+  expect_status "$status" 3 "an unreadable project policy: the verdict"
+  expect_row "$out" identity-accessors UNVERIFIED "an unreadable project policy: the row"
+  expect_contains "$out" "the project's IAM policy could not be read" "an unreadable project policy: the row says why"
+  expect_row "$out" build-identity PASS "an unreadable project policy: the identity is still read"
+}
+
 test_an_absent_build_identity_is_unverified() {
   case_dir catnoidentity
   write_catalog_answers noidentity
@@ -1180,6 +1218,7 @@ t test_a_job_mounting_the_project_copy_fails
 t test_a_job_mounting_another_secret_is_not_this_row
 t test_the_runs_own_job_that_mounts_one_fails
 t test_the_runs_own_execution_mounting_the_project_copy_fails
+t test_a_repository_name_with_punctuation_finds_its_slug
 t test_a_run_that_ran_as_the_build_identity_fails
 t test_a_run_that_did_not_succeed_fails
 t test_a_run_with_no_pull_request_fails
@@ -1213,6 +1252,7 @@ t test_an_identity_with_a_project_level_accessor_fails
 t test_a_catalog_build_with_an_available_secret_fails
 t test_no_build_as_the_identity_is_unverified
 t test_a_catalog_build_that_did_not_succeed_fails
+t test_a_project_policy_that_could_not_be_read_is_not_measured
 t test_an_absent_build_identity_is_unverified
 t test_an_agent_session_is_refused
 t test_an_xtrace_shell_is_refused

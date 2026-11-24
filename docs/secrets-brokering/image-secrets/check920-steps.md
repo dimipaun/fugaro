@@ -158,7 +158,10 @@ recorded; read them for what each row settles. This file is the commands and wha
 - **`run-verify`** — the run's own last verify record out of its `result.json`: `passed`, on a **clean** tree. The
   steps' `test:` command fails unless the file secret arrived as a **`0400` non-empty file** at the path its
   variable names, so that record passing **is** the file's arrival (**D3327**, **G3**). It is read only on a run
-  that succeeded: a failed run's verify says nothing about the file.
+  that succeeded: a failed run's verify says nothing about the file. The record is addressed at
+  `runs/<slug>/<run id>/result.json`, where the slug is the `fugaro_repo` label of the repository's own job (the
+  repository's name with every run of characters outside `[a-z0-9]` turned into one `-`, then 16 hex): a repository
+  whose job carries no such label leaves the row UNVERIFIED, because the path cannot be spelled from the name.
 - **`audited`** — the credentials service's own lines for that run, under the purpose `workflow-secret`: **exactly
   one line per fetch**, each naming one of the two containers. One fetch, one line (**G18**: a line is a name,
   never a value); a second line for the same container, a missing one, or one naming a container the check cannot

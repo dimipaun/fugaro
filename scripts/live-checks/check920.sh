@@ -575,18 +575,26 @@ elif cmd == "launch":
             print("%s=%s" % (key, word(v, 120)))
 elif cmd == "slug":
     # argv: `gcloud run jobs list --format=json`'s file, a repository
-    # (owner/name). Prints the key the repository's own runs are stored under in
-    # the runs bucket — the `fugaro_repo` label `fugaro update --repo` writes on
-    # its jobs, which IS that slug (readable path, then "-" and 16 hex of
-    # sha256(provider NUL canonical path)). The run's own record is read at
-    # `runs/<slug>/<run id>/result.json`, and a path spelled out of the
+    # (owner/name). Prints the `fugaro_repo` label `fugaro update --repo` writes
+    # on a repository's jobs, which IS the repository's slug: the canonical
+    # `owner/name` in lower case, every RUN of characters outside [a-z0-9]
+    # replaced by one "-", trimmed, cut to 46 characters and trimmed again, then
+    # "-" and 16 hex of sha256(provider NUL canonical path) (internal/task's
+    # Slug; gcp.RepoLabel leaves that alphabet alone). The run's own record is
+    # read at `runs/<slug>/<run id>/result.json`, and a path spelled out of the
     # repository's name is a prefix nobody writes.
-    want = str(sys.argv[3]).lower().replace("/", "-")
+    #
+    # The readable part is built by THAT rule and not by replacing "/" alone:
+    # the label of `dimi/bmb_app` is `dimi-bmb-app-<16 hex>`, so a reading that
+    # kept the "_" would match no job, fall back to a name-derived path nobody
+    # writes, and leave the run-verify row — the D3327/G3 evidence for the file
+    # secret — unmeasured on an ordinary class of repository names.
+    want = re.sub(r"[^a-z0-9]+", "-", str(sys.argv[3]).lower()).strip("-")[:46].rstrip("-") or "repo"
     for job in load(sys.argv[2]) or []:
         if not isinstance(job, dict):
             continue
         label = ((job.get("metadata") or {}).get("labels") or {}).get("fugaro_repo") or ""
-        if label.startswith(want + "-") and re.fullmatch(r"[0-9a-f]{16}", label[len(want) + 1:]):
+        if re.fullmatch(re.escape(want) + r"-[0-9a-f]{16}", label):
             print("slug=%s" % word(label, 100))
             break
 elif cmd == "mounts":
@@ -1168,7 +1176,13 @@ step_run_verify() {
   local slug rc=0
   slug=$(reader slug "$SCRATCH/jobs.json" "$REPO" 2>/dev/null | sed -n 's/^slug=//p' || true)
   if [ -z "$slug" ]; then
-    slug=$(printf '%s' "$REPO" | tr '/A-Z' '-a-z')
+    # No `fugaro_repo` label of this repository is in the job list, and the slug
+    # is not derivable from the name: its readable part is followed by 16 hex of
+    # a hash this script cannot compute. Asking the bucket for a name-derived
+    # path would read a prefix nobody writes and report the 404 as a record that
+    # could not be read.
+    unmeasured run-verify "none of the installation's jobs carries a fugaro_repo label of ${REPO}, so the slug its runs are stored under cannot be read and its result.json cannot be addressed. Run 'fugaro update --repo' for that repository, or read that run's own record yourself"
+    return 0
   fi
   if ! gcloud storage cat "gs://${BUCKET}/runs/${slug}/${RUN_ONE_ID}/result.json" --quiet </dev/null \
     >"$SCRATCH/result-one.json" 2>"$SCRATCH/result.err"; then
@@ -1368,7 +1382,7 @@ step_identity() {
 }
 
 step_accessors() {
-  local email=$IDENTITY_EMAIL bad="" read_ok=yes n=0
+  local email=$IDENTITY_EMAIL bad="" unread="" read_ok=yes n=0
   say "reading the project IAM policy of ${P}"
   if gcloud projects get-iam-policy "$P" --format=json --quiet </dev/null >"$SCRATCH/iam-project.json" 2>"$SCRATCH/iam-project.err"; then
     reader iam "$SCRATCH/iam-project.json" "$email" >"$SCRATCH/iam-project-one" || true
@@ -1381,8 +1395,14 @@ step_accessors() {
       esac
     done < <(sed -n 's/^grant=//p' "$SCRATCH/iam-project-one")
   else
+    # A read that did not answer is a row this check could not measure, not an
+    # accessor it found: it goes in its own variable, because `bad` is what the
+    # FAIL below is about. An accessor the containers DO hold still FAILs — a
+    # reading that found one is a violation whatever the project's own policy
+    # did — and a row with nothing found and the project's policy unread is
+    # UNVERIFIED, which is what the register says exit 3 is.
     read_ok=no
-    bad="${bad}${bad:+, }the project's IAM policy could not be read ($(first_line "$SCRATCH/iam-project.err"))"
+    unread="the project's IAM policy could not be read ($(first_line "$SCRATCH/iam-project.err")), so whether the identity holds an accessor AT THE PROJECT LEVEL is not read here"
   fi
   say "listing the Secret Manager containers of ${P}"
   if ! gcloud secrets list --project="$P" --format=json --quiet </dev/null >"$SCRATCH/secrets.json" 2>"$SCRATCH/secrets.err"; then
@@ -1416,7 +1436,7 @@ step_accessors() {
   if [ -n "$bad" ]; then
     fact identity-accessors FAIL "${bad}. After IS8 the catalog build reads its git credential from the credentials service and the identity holds NO accessor: D3330's whole point is that nothing but the service reads Secret Manager (spec §6, G6)"
   elif [ "$read_ok" != yes ]; then
-    unmeasured identity-accessors "${bad}"
+    unmeasured identity-accessors "${unread}. A read that did not answer is not an identity with no accessor"
   else
     fact identity-accessors PASS "read ${n} container policy(ies) and the project's own: the build identity ${email} holds no Secret Manager accessor anywhere"
   fi
