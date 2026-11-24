@@ -8716,6 +8716,105 @@ func TestLauncherAccountsReachTheServices(t *testing.T) {
 	}
 }
 
+// TestSharedJobAccountsReachTheCredentialsService pins the shared table to the
+// deployment rather than to a literal: FUGARO_SHARED_JOB_ACCOUNTS is the shared
+// coding class (B5.1, C3.9's coding half) — one {profile, provider, account,
+// repos} row per shared project job, from which the process derives the job
+// service account it verifies a shared caller as and the repositories that
+// profile is bound to — and the module carries it from
+// var.credentials_service.shared_job_accounts, which internal/infra derives
+// from the installation's profiles (internal/infra/tf's
+// CredentialsSharedJobAccounts).
+//
+// The member is declared in TWO files — the module's own variables.tf and the
+// installation root's — and the root's copy is what the tfvars decode against:
+// an attribute only the module's copy names is dropped in silence, so the plan
+// carries a service with no entry and nothing fails until a shared run's first
+// clone comes back refused. That is why both are read here.
+//
+// It is rendered the way every optional class list here is (credentials.tf's
+// FUGARO_PERSON_ACCOUNTS): a dynamic block, so an installation whose config
+// names no shared job writes no entry at all and the service starts with a
+// class that admits nobody rather than refusing to bind a port.
+func TestSharedJobAccountsReachTheCredentialsService(t *testing.T) {
+	const path = "gcp/modules/installation/credentials.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+	if !strings.Contains(code, "FUGARO_SHARED_JOB_ACCOUNTS") {
+		t.Fatalf("%s does not render FUGARO_SHARED_JOB_ACCOUNTS: the process reads it as its shared class, and one that is never set admits no shared caller — every clone of a shared project job comes back unverified_job_identity", path)
+	}
+	m := regexp.MustCompile(`(?s)dynamic "env" \{(.*?)name\s*=\s*"FUGARO_SHARED_JOB_ACCOUNTS"`).FindStringSubmatch(code)
+	if m == nil {
+		t.Fatalf("%s: FUGARO_SHARED_JOB_ACCOUNTS is not rendered by a dynamic env block, so an installation with no shared job gets an empty value rather than no entry (credentialsServiceSharedJobAccounts reads an absent entry as an empty class, and an empty string is refused)", path)
+	}
+	block := squash(m[1])
+	if !strings.Contains(block, "jsonencode(var.credentials_service.shared_job_accounts)") {
+		t.Errorf("%s: the shared class is not jsonencode(var.credentials_service.shared_job_accounts): the value is a JSON array of rows and it is derived from the installation's profiles, never written here:\n%s", path, block)
+	}
+	if !strings.Contains(block, "length(var.credentials_service.shared_job_accounts) == 0 ? [] :") {
+		t.Errorf("%s: the shared class is rendered whatever the list holds, so an installation with no shared job gets an empty entry where every other class list here gets none — and an entry the process reads as a document it cannot parse:\n%s", path, block)
+	}
+
+	// The member, in the module and in the root, with the four fields the Go
+	// side writes and the process reads: a name either side renames is a row
+	// the reader refuses with DisallowUnknownFields, which is a service that
+	// will not bind a port.
+	member := regexp.MustCompile(`(?m)^\s*shared_job_accounts\s*=\s*optional\(list\(object\(\{`)
+	for _, file := range []string{"gcp/modules/installation/variables.tf", "gcp/roots/installation/variables.tf"} {
+		src, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		vars := stripComments(string(src))
+		head := `variable "credentials_service" {`
+		i := strings.Index(vars, head)
+		if i < 0 {
+			t.Fatalf("%s holds no credentials_service variable", file)
+		}
+		open := i + len(head) - 1
+		end := matchBrace(vars, open)
+		if end < 0 {
+			t.Fatalf("%s: unbalanced braces in the credentials_service variable", file)
+		}
+		decl := vars[open+1 : end]
+		if !member.MatchString(decl) {
+			t.Errorf("%s: credentials_service declares no shared_job_accounts = optional(list(object({...})), so the key internal/infra writes into the installation's tfvars is dropped — silently in the root, whose type is what the document decodes against", file)
+			continue
+		}
+		for _, field := range []string{
+			`(?m)^\s*profile\s+=\s+string\s*$`,
+			`(?m)^\s*provider\s+=\s+string\s*$`,
+			`(?m)^\s*account\s+=\s+string\s*$`,
+			`(?m)^\s*repos\s+=\s+list\(string\)\s*$`,
+		} {
+			if !regexp.MustCompile(field).MatchString(decl) {
+				t.Errorf("%s: the shared_job_accounts row declares no %s, want the four members internal/infra's CredentialsSharedJob writes and internal/cli's credentialsServiceSharedJobAccounts reads", file, strings.TrimSuffix(strings.TrimPrefix(field, `(?m)^\s*`), `\s*$`))
+			}
+		}
+	}
+
+	// The validation holds each row to what the reader requires and to nothing
+	// more: a profile, a provider and a repositories list with no empty entry.
+	// The ACCOUNT is deliberately not held to anything — the empty string is
+	// the profile's no-account CODING job, the value the axis spells its
+	// default with, so a plan that refused it would refuse every profile that
+	// names no account.
+	mb, err := os.ReadFile("gcp/modules/installation/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	squashed := squash(stripComments(string(mb)))
+	if !strings.Contains(squashed, `alltrue([for r in var.credentials_service.shared_job_accounts : r.profile != "" && r.provider != ""`) {
+		t.Error("the module's credentials_service validation does not hold every shared row to a profile and a provider: a row the plan admits and the process refuses is an installation that cannot deploy its own service")
+	}
+	if !strings.Contains(squashed, `alltrue([for x in r.repos : x != ""])`) {
+		t.Error("the module's credentials_service validation does not hold every shared row's repositories to non-empty entries: the process refuses an empty one by name, so the plan would carry a service that will not bind a port")
+	}
+}
+
 // TestTheIntakesPeopleAreHeldToTheLauncherAccountsShape (WC3, R5) pins the one
 // rule the two class lists share to the deployment, because the two are ONE
 // list by the time anything reads them: intake.tf composes var.intake.people

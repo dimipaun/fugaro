@@ -2094,13 +2094,14 @@ var (
 // in the same binary — deploy/terraform is embedded — so the order is the
 // cover's and not a release's).
 //
-// FUGARO_SHARED_JOB_ACCOUNTS is on it now (B5.1): the service reads it as an
-// optional value (internal/cli's envSharedJobAccounts), and the module that
-// renders it from the shared jobs an installation deploys is the deployment
-// side's own step — which is why the name is here, on the allow-list ahead of
-// its module, rather than nowhere. Until that step every installation renders
-// the entry nowhere, the service starts with an empty shared set and the class
-// is refused whole: the fail-closed state B5.1 leaves production in. Before it,
+// It is EMPTY now, and FUGARO_SHARED_JOB_ACCOUNTS is the name that left it
+// last: the service reads it as an optional value (internal/cli's
+// envSharedJobAccounts) and the module that renders it from the shared jobs an
+// installation deploys is installation/credentials.tf, which sets it from
+// var.credentials_service.shared_job_accounts on the same switch every other
+// entry of that container is on (B5.1). It is kept as a function with a body
+// that can hold a name rather than deleted, because the next name the service
+// reads ahead of the module that renders it belongs here. Before it,
 // FUGARO_LAUNCHER_ACCOUNTS (the launcher class's list, D1938, F25) left this
 // list in the change that made installation/credentials.tf render it (DS2.2),
 // and FUGARO_REVIEW_JOB_ACCOUNTS left it the same way before that.
@@ -2122,9 +2123,7 @@ var (
 // is here and in the module's own source — so a name added ahead of its module
 // cannot be left behind once the module renders it.
 func CredentialsServiceEnvAwaitingTheModule() []string {
-	return []string{
-		"FUGARO_SHARED_JOB_ACCOUNTS",
-	}
+	return nil
 }
 
 // APITargets are the two services the Firebase web key may call, sorted;

@@ -605,9 +605,10 @@ PY
 
 write_service() { # dir
   # SVC_SHARED=yes puts the shared class's own table (FUGARO_SHARED_JOB_ACCOUNTS)
-  # in the deployed revision's environment, which is the day the class is live:
-  # nothing under deploy/terraform/ renders that name yet, so absent is what this
-  # release deploys and a shared project job's service-side rows stop on it.
+  # in the deployed revision's environment, which is a service the installation
+  # module has rendered the class onto; the default is a service not re-applied
+  # since that release, whose shared project job's service-side rows stop on the
+  # empty set.
   local shared_env=""
   if [ "${SVC_SHARED:-no}" = yes ]; then
     shared_env=', {"name": "FUGARO_SHARED_JOB_ACCOUNTS", "value": "[{\"profile\":\"shared\",\"provider\":\"github\",\"account\":\"team-a\",\"repos\":[\"github/acme/sandbox\"]}]"}'
@@ -1089,10 +1090,9 @@ test_a_job_whose_own_account_is_belong_is_refused() {
 # shared job carrying the URL IS the wiring and its row passes. What it cannot do
 # is go on: every claim below the row calls the service as the job's own account,
 # and the service admits a shared caller only from its own
-# FUGARO_SHARED_JOB_ACCOUNTS table — which no module under deploy/terraform/
-# renders yet, so the deployed service refuses the class whole. The run ends
-# there, exit 2, which is this check's "it could not tell", and no call to the
-# service was made.
+# FUGARO_SHARED_JOB_ACCOUNTS table — and the service this fixture deploys
+# carries none, so it refuses the class whole. The run ends there, exit 2, which
+# is this check's "it could not tell", and no call to the service was made.
 test_the_shared_project_job_with_the_wiring_in_place_stops_the_service_side() {
   setup_case profilejob
   JOB_PROFILE=yes write_job "$dir"

@@ -341,6 +341,16 @@ func initStages(e *initEngine) []initflow.Stage {
 	// both doors, like the service's own stage: an installation that has not
 	// turned the service on skips it with one line.
 	stages = append(stages, newCredentialsCopyStage(e))
+	// The required-CLI stamp, registered for both doors and immediately after
+	// the credentials copy: it is the last stage of the run that writes
+	// something a deployed reader sees, and it raises the node that refuses
+	// every fugaro below this release (update_version_stamp.go, D3260, R1). It
+	// is registered unconditionally because the stage's own Check is what
+	// decides whether this installation has a stamp to raise — a project whose
+	// database is not this installation's, or that records no shared backend at
+	// all, skips it with that reason rather than with a registration it does
+	// not have.
+	stages = append(stages, newVersionStampStage(e))
 	// The workspace's own project's root BEFORE the record, and both after the
 	// policy one: this stage creates the identity the workspace's own service
 	// runs as — its own service account and the one grant that reaches the
@@ -2461,7 +2471,7 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			// first apply's jobs carry the image the run started with. The same
 			// lag, and the same apply to close it, as the scheduled jobs beside
 			// them.
-			next, err := installSpec(e.r.o, e.lc, e.r.warn)
+			next, err := installSpec(e.r.o, e.lc, e.r.withheld)
 			if err != nil {
 				return err
 			}

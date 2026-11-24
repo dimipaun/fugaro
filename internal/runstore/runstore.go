@@ -1839,6 +1839,22 @@ type Record struct {
 	// existed, and a run that died before bootstrap — so an old reader sees
 	// the record it always saw.
 	Rigor *RigorRecord `json:"rigor,omitempty"`
+	// Plan is the plan the runner resolved for this run: one entry per step of
+	// the loop after implement, its kind and the rounds planOf resolved for it
+	// (docs/review-levels-ab-jobmax/implementation-plan.md V1.3). It is the
+	// only place a reader can find a level's cap: the resolution reads the
+	// recipe's text, the run's own configuration and the rigor mode, none of
+	// which the record keeps, so nothing else can replay it — the recipe member
+	// above names the recipe and never its steps. Written by the runner with the
+	// plan it runs, rebuilt with it when the security escalation turns level 3
+	// on, and rewritten where a raise moves the mode's own number for the senior
+	// or the adversarial step (refreshPlanRounds), so a level's cap here is the
+	// one its loop is held inside and never the one bootstrap resolved. Absent —
+	// never an empty list — for a run that built no plan (a mode: review or
+	// artifact run, which planOf is never called for) and in records from before
+	// this field existed, so a reader from before it sees the record it always
+	// saw.
+	Plan *PlanRecord `json:"plan,omitempty"`
 	// Security is the security escalation the run took: its own diff matched a
 	// row of the list in force, so the runner turned review level 3 on for it
 	// (docs/security-classification/implementation-plan.md SC6, D1507, D1509).
@@ -2597,6 +2613,23 @@ type RecipeRecord struct {
 	Name   string `json:"name"`
 	Source string `json:"source"` // repo | project | catalog
 	SHA256 string `json:"sha256"`
+}
+
+// PlanRecord is the plan the runner resolved for a run (Record.Plan): the steps
+// of the loop after implement, in the order the runner ran them.
+type PlanRecord struct {
+	Steps []PlanStepRecord `json:"steps"`
+}
+
+// PlanStepRecord is one step of a run's plan: its kind and the rounds the plan
+// resolved for it. kind is a recipe.StepKind ("first_line", "review",
+// "adversarial", "rebase", …) — the record's own string rather than the recipe
+// package's type, because the record's format outlives the package that wrote
+// it. rounds is the cap the runner holds the step's loop inside, which is the
+// figure the Run screen draws a level's bar against.
+type PlanStepRecord struct {
+	Kind   string `json:"kind"`
+	Rounds int    `json:"rounds"`
 }
 
 // ProjectLayerRecord traces a run to the exact project layer it was given.

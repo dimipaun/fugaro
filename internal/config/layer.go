@@ -399,6 +399,22 @@ func (l *ProjectLayer) SetsMergeJudgeCraft() bool {
 	return mergeJudgeCraftKey(d["agent"])
 }
 
+// SetsABRepos reports whether the layer's text writes ab.repos, at any value
+// (D3297): a runner or CLI before L8 decodes the layer with KnownFields and
+// refuses the member whatever it says, and an empty map's zero value cannot
+// tell an empty block from none, so the key being written is what the launch's
+// abReposSince gate (internal/cli/recipes_skew.go) judges the job image
+// against. The key sits in the top-level ab: block beside the rest of the
+// block, and the tree is read for that reason.
+func (l *ProjectLayer) SetsABRepos() bool {
+	if l == nil {
+		return false
+	}
+	a, _ := l.tree["ab"].(map[string]any)
+	_, ok := a["repos"]
+	return ok
+}
+
 // SetsGovernance reports whether the layer's text writes governance:, at any
 // value: a runner before governanceSince decodes the layer with KnownFields,
 // so the key alone is what it refuses, and Governance's zero value cannot

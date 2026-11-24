@@ -117,6 +117,13 @@ var cliStages = []cliStage{
 	// sentence naming the owner, which is a skip and not a question.
 	{stage: initflow.CredentialsCopy, ctor: "newCredentialsCopyStage(", self: true,
 		build: func(e *initEngine) initflow.Stage { return newCredentialsCopyStage(e) }},
+	// The required-CLI stamp (update_version_stamp.go, D3260/R1): its own
+	// confirmation and never the run's one (covered: no), because what it
+	// writes is a fence over every fugaro that may act on the project — and
+	// --yes does reach it, because it prompts for no value: the write is one
+	// conditional PUT of a version this binary already carries.
+	{stage: initflow.VersionStamp, ctor: "newVersionStampStage(", self: true,
+		build: func(e *initEngine) initflow.Stage { return newVersionStampStage(e) }},
 	{stage: initflow.WorkspaceProject, ctor: "newWorkspaceProjectStage(", noYes: true, self: true,
 		build: func(e *initEngine) initflow.Stage { return newWorkspaceProjectStage(e) }},
 	{stage: initflow.Workspace, ctor: "newWorkspaceStage(", self: true,

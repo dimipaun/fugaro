@@ -641,7 +641,7 @@ export function scrubDocument(raw: unknown, shiftMs: number = randomTimeShiftMs(
       case 'finished': case 'ready': {
         if (!Array.isArray(value)) refuse(path, `${key} is not an array`)
         out[key] = value.map((run, i) =>
-          scrubFinished(run, `${path}[${i}]`, i, now, repoIndex, inventedRepo, inventedSlug))
+          scrubFinished(run, `${path}[${i}]`, i, now, repoIndex, inventedRepo, inventedSlug, shiftMs))
         break
       }
     }
@@ -788,7 +788,7 @@ function scrubRun(
 
 function scrubFinished(
   run: unknown, path: string, i: number, now: string, repoIndex: (r: unknown, p: string) => number,
-  inventedRepo: (n: number) => string, inventedSlug: (n: number) => string,
+  inventedRepo: (n: number) => string, inventedSlug: (n: number) => string, shiftMs: number,
 ): Obj {
   if (!isObj(run)) return refuse(path, 'a finished run that is not an object')
   const n = repoIndex(run['repo'], `${path}.repo`)
@@ -804,6 +804,20 @@ function scrubFinished(
     pr_url: invent(`https://example.invalid/example-owner/example-repo/pull/${100 + i}`),
     pr_number: () => 100 + i,
     age_seconds: num,
+    // PR7 of model-credentials-routing: a paused run is a row of this shape --
+    // its execution is terminal and its chain is in flight -- and the two facts
+    // of its pause are the listing's own computation, not the run's records:
+    // the instant the orchestrator resumes the chain at (the credentials
+    // service's node under `paused/`) and the run that did resume it (another
+    // run's task naming this one under `resumes`). Both are a recording's own
+    // facts about the installation -- when a chain comes back, and which run
+    // picked it up -- so both are replaced: the instant is shifted with the
+    // rest of the clock, as `waiting_until` on the live shape is, and the
+    // resumer is invented as this shape's own `run` is. A rule the tables have
+    // not got is a key the scrub refuses, so a recording of a paused run would
+    // otherwise be unusable.
+    resume_at: instant(shiftMs),
+    resumed_by: invent(`${runStamp(now, typeof age === 'number' ? age : 0)}-ee${String(i + 1).padStart(2, '0')}`),
     ...JOB_RULES,
   })
 }

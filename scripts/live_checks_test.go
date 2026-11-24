@@ -24,9 +24,11 @@ import (
 // Check 91, fake `gcloud` and `fugaro` for Checks 27, 111, 146 and 401, fake `gcloud`,
 // `git`, `curl` and `fugaro` for Check 190, fake `gcloud`, `fugaro` and a fake
 // Realtime Database behind a fake `curl` for Checks 191 and 193 (193's fake
-// `gcloud` holds a Cloud Run job of each of two repositories, one of them
-// mounting a model credential when the case says the flip has not reached it,
-// and answers the check's Cloud Logging reads with the credentials service's
+// `gcloud` holds a Cloud Run job of each of two repositories — each running as
+// its own account, one of them mounting a model credential when the case says
+// the flip has not reached it, and the policy its `run services get-iam-policy`
+// read is answered with, whose roles/run.invoker binding is the other half of
+// the per-repository switch — and answers the check's Cloud Logging reads with the credentials service's
 // own `credsvc: audit` lines for the throwaway runs the fake `fugaro` records,
 // so a case can say what served a run, what the run declared and what it was
 // served instead), fake `gcloud`, `fugaro`
@@ -700,6 +702,17 @@ import (
 // blocker. 892's are a fake `gcloud` holding the projects' and the build and
 // job accounts' IAM policies and a fake `curl` serving the grants node, so a
 // case says which principal is an admin in all but name.
+// Check 920 is the image-secrets work's owner-run check. Its fakes are a fake
+// `gcloud` (the jobs of two repositories, a run's own executions, the service's
+// `credsvc: audit` lines and the run's record out of the runs bucket, the
+// build identity's account and the project's IAM policy, the containers'
+// accessors and the catalog build's steps), a fake `curl` answering the
+// projectsecrets record only through the 0600 config file the check hands over,
+// and a fake `fugaro` whose `version`, `doctor`, `runs ls`, `run` and `review`
+// the case bends -- so a case says which container a job and a run's own pods
+// mount, what the service served a run and its review, what an unlisted
+// repository was refused with, and that a catalog build resolves no accessor
+// for the build identity.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -830,6 +843,8 @@ var liveCheckScripts = []struct {
 	{"check-890-data-layout.sh", "check-890-data-layout_test.sh"},
 	{"check-891-update-trace.sh", "check-891-update-trace_test.sh"},
 	{"check-892-iam.sh", "check-892-iam_test.sh"},
+	{"check-900-version-stamp.sh", "check-900-version-stamp_test.sh"},
+	{"check920.sh", "check920_test.sh"},
 	{"check-390.sh", "check-390_test.sh"},
 	{"check-391.sh", "check-391_test.sh"},
 	{"check-392.sh", "check-392_test.sh"},

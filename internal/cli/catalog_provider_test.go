@@ -672,8 +672,15 @@ func TestImageBuildCatalogReadsTheBitbucketTokenFromTheSecret(t *testing.T) {
 	if !strings.Contains(out, "catalog-base@sha256:") {
 		t.Errorf("stdout = %q, want the built image and its digest", out)
 	}
-	if subs := catalogBuildSubs(t, fb); subs["_GIT_USER"] != "x-token-auth" {
-		t.Errorf("_GIT_USER = %v, want the Bitbucket clone's own user", subs["_GIT_USER"])
+	// The build's credential step asks the installation's service for its git
+	// credential (IS8, D3330), so the request carries the service's address
+	// and no user of the repository's: the clone's password and username are
+	// the answer's, and no substitution names them.
+	if subs := catalogBuildSubs(t, fb); subs["_GIT_USER"] != nil {
+		t.Errorf("_GIT_USER = %v, want no such substitution: the credential step is handed the service's address and not a user", subs["_GIT_USER"])
+	}
+	if subs := catalogBuildSubs(t, fb); subs["_CREDENTIALS_SERVICE_URL"] != catalogBuildServiceURL {
+		t.Errorf("_CREDENTIALS_SERVICE_URL = %v, want the installation's service %s", subs["_CREDENTIALS_SERVICE_URL"], catalogBuildServiceURL)
 	}
 	// The value reaches the provider and nothing else: not the built image
 	// line, not a warning, not the run's log.

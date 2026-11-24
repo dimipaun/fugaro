@@ -87,6 +87,11 @@ func catalogBuildWorkflowsYAML(secrets string) string {
 // catalogBuildBucket is the runs bucket the catalog fixture's config names.
 const catalogBuildBucket = "fugaro-runs-proj-1234"
 
+// catalogBuildServiceURL is the installation's credentials service as the
+// catalog fixture's config records it: the address an entry's build asks for
+// the git credential it clones with (IS8, D3330).
+const catalogBuildServiceURL = "https://credentials.example.com"
+
 // catalogBuildCheckout is catalogBuildCheckoutFor for a Bitbucket repository,
 // which is what a catalog build test needs unless it is about the credential
 // the copy is read with.
@@ -147,6 +152,11 @@ func catalogBuildCheckoutFor(t *testing.T, repo, catalog, provider, appID string
 		t.Fatal(err)
 	}
 	setBucketURL(t, f, "gs://other-bucket")
+	// The installation's credentials service, which the config of every
+	// installation that deployed one records (IS8, D3330): a catalog entry's
+	// build clones its source through it, so a config without the address
+	// submits no build at all (buildServiceURL's rule, one command along).
+	f.appendConfig(t, "credentials_service: { url: "+catalogBuildServiceURL+" }\n")
 	prev := openRecordBucket
 	openRecordBucket = func(_ context.Context, u string) (*blobx.Bucket, error) {
 		if u != "gs://"+catalogBuildBucket {
@@ -780,16 +790,17 @@ func TestCatalogBuildIsHandedNoWorkflowSecret(t *testing.T) {
 	if got := catalogBuildSubs(t, fb)["_SECRET_ENVS"]; got != "" {
 		t.Errorf("_SECRET_ENVS = %v, want empty: the build step's loop hands docker a --secret for every name in it, and an entry's build is handed none (B9, D2311)", got)
 	}
-	avail, _ := fb.Last()["availableSecrets"].(map[string]any)
-	mounted, _ := avail["secretManager"].([]any)
-	var envs []string
-	for _, raw := range mounted {
-		m, _ := raw.(map[string]any)
-		env, _ := m["env"].(string)
-		envs = append(envs, env)
+	// And no secret at all: the request carries no availableSecrets, no step
+	// carries a secretEnv, and the credential step asks the installation's
+	// service for the git credential it clones with (IS8, D3330).
+	if avail := fb.Last()["availableSecrets"]; avail != nil {
+		t.Errorf("the request mounts %v, want no availableSecrets at all: an entry's build names no secret of the entry's (B9, D2311) and none of the clone's either (IS8, D3330)", avail)
 	}
-	if !slices.Equal(envs, []string{"GIT_TOKEN"}) {
-		t.Errorf("availableSecrets mounts %v, want the clone credential alone: a workflow secret the entry's repository declares is not a secret of its build", envs)
+	for _, st := range fb.Last()["steps"].([]any) {
+		step, _ := st.(map[string]any)
+		if env := step["secretEnv"]; env != nil {
+			t.Errorf("step %v carries secretEnv %v, want none: the credential step is handed the service's address and the secrets come from it", step["id"], env)
+		}
 	}
 	body, err := json.Marshal(fb.Last())
 	if err != nil {

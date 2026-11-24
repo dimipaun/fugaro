@@ -107,7 +107,8 @@ func TestValidateNamesACraftModelProblemAtItsOwnPath(t *testing.T) {
 // reason: the price rule reaches the crafts' models in every mode now (AB1b,
 // D3009), so a model with no row in the shipped table would be a problem this
 // fixture contributed rather than the crafts-of-the-installation rule it is
-// about.
+// about. That price is the fixture's own (craftLocalExtra, AB4, D3020), and it
+// is not repeated here: the installation config carries one model_prices block.
 func TestValidateIgnoresTheCraftsNoRunReads(t *testing.T) {
 	craftFixtureWith(t, "budget: { allowed_models: [\"claude-opus-4-1\", \"claude-sonnet-5-5\"] }\n")
 	testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": validateCraftPinnedYAML})

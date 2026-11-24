@@ -690,6 +690,36 @@ resource "google_cloud_run_v2_service" "credentials" {
           value = env.value
         }
       }
+      # The shared coding class (B5.1): the installation's SHARED project jobs,
+      # as the same kind of document one axis over — the
+      # {profile, provider, account, repos} row each shared job's service
+      # account is derived from (credsvc.SharedJobAccountFor over
+      # gcp.ProjectServiceAccountID) plus the repositories the profile serves,
+      # which is what a call of this class is admitted against
+      # (projectpolicy.AdmitRepo on the canonical repository the run identity
+      # resolves to). Emails are not carried, for the reason the review table
+      # above states.
+      #
+      # It is the entry a shared caller is served by and it is the ONE that was
+      # missing (Check 580 of 2026-11-24: a run on a shared Bitbucket job came
+      # back 403 at its first clone, because the service fell through to the
+      # per-repository table and refused the identity whole). The account is
+      # the axis's OWN spelling and never the review table's mapping: the
+      # caller here holds the profile's coding job, whose no-account value is
+      # the empty string.
+      #
+      # It is rendered only on an installation that deploys a shared job, for
+      # the reason the review table is: the process reads the name as an
+      # optional value, so an installation with none starts with an EMPTY
+      # shared set — a service that admits no shared caller, which is the
+      # fail-closed state — rather than refusing to bind a port.
+      dynamic "env" {
+        for_each = length(var.credentials_service.shared_job_accounts) == 0 ? [] : [jsonencode(var.credentials_service.shared_job_accounts)]
+        content {
+          name  = "FUGARO_SHARED_JOB_ACCOUNTS"
+          value = env.value
+        }
+      }
       # The verifier list: the addresses that may ask the verify route whether
       # a verdict's signature is this service's (C3.9g1, D1068).
       #
