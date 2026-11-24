@@ -3,8 +3,16 @@
 Task **P6.1** of [the mobile plan](../../docs/mobile/implementation-plan.md), decided by **D164**
 (wake-word routing), **D161** (an agent is an endpoint the consumer advertises) and **D163** (the
 default agent). Two pure functions over values — `routeUtterance` and `defaultAgent` — plus
-`isConfirmation`. Nothing here reads a clock, a file, a database, a network or a random source,
-and the module imports nothing at all: the inputs are the whole input, which is what D126 asks of
+`isConfirmation`.
+
+Task **J4** of [the mobile identity and pairing plan](../../docs/mobile-identity-pairing/implementation-plan.md)
+added the module's other half: the phone's **job verbs** (`verbs.js`, re-exported from `index.js`),
+which answer what a session's role may send and the mailbox write each one composes — **D2787**
+(every project write goes through the mailbox), **D162** (a start is a launch message) and **D169**
+(a cancel is an action record).
+
+Nothing here reads a clock, a file, a database, a network or a random source, and the module's only
+dependency is between its own two files: the inputs are the whole input, which is what D126 asks of
 everything that can be a pure function.
 
 ```js
@@ -162,6 +170,44 @@ consumer advertises (D161), and nothing else — so the rule falls back to the f
 agent and says so through `source`. Refusing instead would leave the phone unable to switch to a
 project whose remembered agent was renamed, against D163's own "switching must be fast".
 
+## The phone's job verbs (J4)
+
+`verbs.js` holds the phone's end of start and cancel. It composes a write; it never makes one.
+`jobWrite(session, { verb, text, record })` returns `{ ok: true, verb, text, options }` where
+`options` is exactly what the app's mailbox client's `send` takes, and `maySend(session, verb)` is
+the boolean a screen asks before it draws the control.
+
+| Verb | What it makes | The write | Role |
+|---|---|---|---|
+| `launch` | **D162's launch**: an ordinary `message` carrying the owner's own words, no record and no confirmation | `{ verb: 'launch' }` — the classification the write path hands the lapse check (S6.3) | `operator` |
+| `cancel` | **D169's action record** (`kind: 'action'`), built by P6.2's machine and passed through here unchanged | `{ action: record }` — the record P5.1's consumer re-validates and runs | `operator` |
+
+**Why the composition is here and the write is not.** D2787 answers how the phone reaches a
+project — through the mailbox, consumed by the P5.1 orchestrator — so a start and a cancel are
+mailbox messages and there is no second way in. Composing the record is pure (no store, no gate, no
+key), and writing it is the app's one write path (`mobile/src/mailbox/client.js`, D113), where
+redaction, the lapse, the gate, the tag, the schema and the store already live; the client's
+`sendJob(session, request)` is the two joined, and `mobile/src/mailbox/write-path.test.js` walks
+`shared/` too so that a write composed out here is still inside that fence.
+
+The **record is not built here**, and must not be: "one confirmation authorises exactly one action"
+is the P6.2 machine's decision, and the record's id, target and confirmation are its answers, read
+back from the resolved target rather than parsed from anything a speaker said. What this module
+refuses is a record that is not a cancel of a run.
+
+**A role here is a display claim, never an authorisation** (F14, D2791). What a role may do is
+enforced at the consumer with `internal/access` (`ActionLaunch`, `ActionCancel`, both min
+`RoleOperator`) against the roster, never by a role in a message. This side reads the role for one
+thing — whether to draw the button, and whether to send at all — and `maySend` answers `false` for
+every way that can fail: not a session, a role outside the roster, a verb outside the closed set, or
+a role that is real and too low. Hiding is not authorisation: a modified client that sends anyway
+meets the consumer's refusal.
+
+The codes are the write path's shape, `{ ok: false, code, field }` with no `detail`, because the
+client returns them unchanged beside its own refusals and a screen switches on one vocabulary:
+`not-a-session`, `unknown-role`, `not-permitted`, `unknown-verb`, `unknown-field`, `bad-text`,
+`bad-record` (exported as `JOB_CODES`).
+
 ## Who consumes it
 
 - **P6.2** (the confirmation flow) and **P6.7** (the wire format's re-validation, in Go) are what
@@ -185,8 +231,18 @@ table, "confirm" and "cancel that" recognised only as app commands, the alias se
 vanished-agent fallback, and three properties worth naming: the router is a function of the values
 it is handed (the same input twice returns equal results, and it never mutates or hands back the
 caller's objects), `isConfirmation` says no to two hand-built objects that claim to be
-confirmations, and a source-level check that `index.js` imports nothing and reaches for no clock,
-no random source, no network, no timer and no process handle.
+confirmations, and a source-level check over **both** files that neither states an import, reaches
+for no clock, no random source, no network, no timer and no process handle, and depends on nothing
+outside this directory (the re-export is the module's one `from`, and it names its sibling).
+
+J4's cases are in the same file, under their own heading: the closed verb set and its role table,
+`maySend` on every way the question can be malformed, a start composed as D162's plain message, a
+cancel carrying the machine's record unchanged, a viewer's write refused before it is composed, and
+a sweep that every `JOB_CODES` code is reachable (the same sweep `REFUSAL` gets).
+
+**Not yet mutation-proved:** `mutation-proof.sh` plants its 29 one-line bugs in `index.js` only, so
+`verbs.js`'s guards are held by their named tests and not by that harness (see the task's pull
+request).
 
 **The red step** is P6.1's own: the "an unmatched Fugaro utterance is not forwarded" test, written
 against a stub router that forwards, failing on it before the real branch existed. It is
