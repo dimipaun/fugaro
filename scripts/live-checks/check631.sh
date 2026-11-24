@@ -590,8 +590,12 @@ step_agent_refusal() {
     unmeasured agent-refusal "there is no installation to run the CLI against: the row above says why"
     return 0
   fi
-  # `fugaro accounts add` takes no --project: the installation is chosen by the
-  # checkout it runs from, or by FUGARO_PROJECT.
+  # `accounts add` declares no --project (it is a write: the project is the
+  # checkout's own fugaro.yaml, which is the directory this runs in), so the act
+  # is run without one — passing it would exit 1 with 'unknown flag: --project'
+  # and the refusal this row measures would never be reached. A --project the
+  # owner gave still names the installation, through FUGARO_PROJECT; the reads
+  # below take the flag itself.
   local penv=()
   [ -z "$PROJECT_ARG" ] || penv=(FUGARO_PROJECT="$PROJECT_ARG")
   say "reading what a coding agent's session is told: CLAUDECODE=1 fugaro accounts add ${ANTHROPIC} --type anthropic"

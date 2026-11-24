@@ -107,6 +107,79 @@ mode=${FAKE_MODE:-default}
 updated=no
 [ -f "$FAKE_STATE/updated" ] && updated=yes
 
+# The real CLI is cobra, and cobra refuses a flag its command does not declare:
+# "fugaro: unknown flag: --project" on stderr, exit 1. A fake that shrugged the
+# extra argument off is exactly what let a check hand `accounts add` a --project
+# it does not take and still look healthy; these are the flags each command this
+# check calls declares (read off the release's own --help), and a call carrying
+# any other is refused in the same words.
+flag_set() { # flag_set SUBCOMMAND...
+  case "$1" in
+  version) printf '%s' "" ;;
+  doctor) printf '%s' "--all --check-bitbucket-token --check-github-app --config --dir --gcp-project --json --offline --plugin --project --region --security --strict" ;;
+  craft) printf '%s' "--config --gcp-project --json --project --region" ;;
+  accounts)
+    case "${2:-}" in
+    add) printf '%s' "--ask --claude --profile --repos --type" ;;
+    rm) printf '%s' "--no-apply --profile" ;;
+    ls) printf '%s' "--config --gcp-project --json --project --region --repo" ;;
+    pool)
+      case "${3:-}" in
+      add) printf '%s' "--allow-user --layer --owner --strategy" ;;
+      rm) printf '%s' "--layer" ;;
+      ls) printf '%s' "--config --gcp-project --project --region" ;;
+      esac
+      ;;
+    craft)
+      case "${3:-}" in
+      set) printf '%s' "--access --layer" ;;
+      rm) printf '%s' "--layer" ;;
+      esac
+      ;;
+    esac
+    ;;
+  config) printf '%s' "--json --offline --project-layer --workflow" ;;
+  project) printf '%s' "--config --delete --gcp-project --json --project --region --remove-routing --seed-repos" ;;
+  run) printf '%s' "--allow-duplicate --attach --attempts --batch --change-set --code-only --commit-reports --config --context --continues --gcp-project --json --max-review-rounds --max-time --max-tokens --max-usd --mode --no-budget-check --no-compression --owner-ruled --path --plan-task --pr --project --recipe --ref --region --repo --retry --review-levels --run-id --security --spec --task-file --tier --title --token --total-timeout --used-review-rounds --used-time --used-tokens --used-usd --workflow" ;;
+  runs)
+    case "${2:-}" in
+    show) printf '%s' "--config --gcp-project --json --project --region --repo" ;;
+    *) printf '%s' "--after --all --batch --config --debt --gcp-project --group-by --json --limit --mine --pr --project --region --repo --since --state --stream --watch" ;;
+    esac
+    ;;
+  update) printf '%s' "--admin --alert-email --allow-delete --allow-job-delete --anchor --answers-file --ask --bake-repos --base --base-image --billing-account --budget --budget-admin --budget-currency --budget-mode --check --check-github-app --config --config-only --coordinator --events --expect-digest --firebase-project --forget --gcp-project --github-app-id --image-source --json --location --name --no-build --no-log-isolation --onboard-repo --operator --plan-only --print-vars --project --publish-config --region --registry-cleanup --replace-image --repo --retire --rigor --runs-bucket --scheduler-region --state-bucket" ;;
+  esac
+}
+
+guard_flags() { # guard_flags — the whole call, command words first, then flags
+  local words=() f
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    -*) break ;;
+    *) words+=("$1"); shift ;;
+    esac
+  done
+  local set
+  set=$(flag_set "${words[@]+"${words[@]}"}")
+  for f in "$@"; do
+    case "$f" in
+    -*) ;;
+    *) continue ;;
+    esac
+    case "$f" in
+    --*=*) f=${f%=*} ;;
+    esac
+    case " $set " in
+    *" $f "*) ;;
+    *)
+      printf 'fugaro: unknown flag: %s\n' "$f" >&2
+      exit 1
+      ;;
+    esac
+  done
+}
+guard_flags "$@"
+
 case "${1:-}" in
 version) printf '%s\n' "${FAKE_VERSION:-0.28.0}" ;;
 doctor)

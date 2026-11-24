@@ -190,11 +190,19 @@ const ROW: RunRow = Object.freeze({
 function model(over: Partial<RunModel> = {}, rowOver: Partial<RunRow> = {}): RunModel {
   return {
     row: { ...ROW, ...rowOver },
-    ledger: { model: measured(1), compute: measured(0.5), total: measured(1.5), notional: unavailable(LEGACY_DOCUMENT) },
+    ledger: {
+      model: measured(1),
+      compute: measured(0.5),
+      total: measured(1.5),
+      notional: unavailable(LEGACY_DOCUMENT),
+      fallback: unavailable(LEGACY_DOCUMENT),
+    },
     spendStages: [],
     spendStagesDropped: measured(0),
     tolerated: null,
     levels: [],
+    switches: [],
+    fallback: false,
     stages: [],
     halt: null,
     pullRequest: { repository: TRACKED_REPO, number: 412, url: null, link: null, because: 'no link' },
@@ -654,7 +662,7 @@ describe('renderRun: the ledger', () => {
   })
 
   it('draws the bar as the model and the compute as shares of the total', () => {
-    const ledger = { model: measured(1.5), compute: estimated(0.5), total: measured(2), notional: notional(0.25) }
+    const ledger = { model: measured(1.5), compute: estimated(0.5), total: measured(2), notional: notional(0.25), fallback: unavailable(LEGACY_DOCUMENT) }
     const tree = renderRun(factory, model({ ledger }), 'light')
     expect(one(tree, 'run-ledger-bar').getAttribute('aria-hidden'), 'the legend carries the values as text').toBe('true')
     expect(all(tree, 'run-ledger-billed')[0]?.getAttribute('width')).toBe('75')
@@ -666,7 +674,7 @@ describe('renderRun: the ledger', () => {
     // The bar is two shares of the total; with one of them unknown there is no
     // second share to draw, and a bar of one segment would read as a run whose
     // compute was free.
-    const ledger = { model: measured(1.5), compute: unavailable(LEGACY_DOCUMENT), total: measured(2), notional: unavailable(LEGACY_DOCUMENT) }
+    const ledger = { model: measured(1.5), compute: unavailable(LEGACY_DOCUMENT), total: measured(2), notional: unavailable(LEGACY_DOCUMENT), fallback: unavailable(LEGACY_DOCUMENT) }
     const tree = renderRun(factory, model({ ledger }), 'light')
     expect(all(tree, 'run-ledger-bar')).toHaveLength(0)
     expect(one(tree, 'run-ledger-model-value').textContent).toBe('$1.50')
@@ -1015,7 +1023,7 @@ describe('renderRun: what the screen is allowed to set', () => {
         // The ledger's bar and the scrubber's track are the screen's two other
         // SVG drawings; without them the widening below would be a licence for
         // attributes nothing on this tree sets.
-        ledger: { model: measured(1), compute: estimated(0.5), total: measured(1.5), notional: notional(0.25) },
+        ledger: { model: measured(1), compute: estimated(0.5), total: measured(1.5), notional: notional(0.25), fallback: unavailable(LEGACY_DOCUMENT) },
         replay: {
           records: measured(2),
           windowSeconds: measured(900),

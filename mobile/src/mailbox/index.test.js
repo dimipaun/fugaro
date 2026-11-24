@@ -101,5 +101,6 @@ test('the client the door builds is the one the tests in this directory build', 
     ok: true,
     id: 'm-1',
     at: 1_700_000_000_000,
+    text: 'run 42 finished',
   });
 });

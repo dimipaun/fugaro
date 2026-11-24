@@ -10,3 +10,4 @@ cmd	run services get-iam-policy
 cmd	logging read
 flag	--freshness
 flag	--limit
+flag	--region
