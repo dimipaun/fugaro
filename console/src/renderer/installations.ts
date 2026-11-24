@@ -721,7 +721,8 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge, wind
    * Nothing is re-read after the click. Every other control here ends in a
    * `reRead` because the main process changed the list; this one asks for a
    * window, and the answer is either a refusal -- whose sentence is the main
-   * process's and is drawn verbatim -- or a window this one is leaving. */
+   * process's and is drawn verbatim -- or the dashboard coming up over this
+   * one, which stays where it is like it does through a choose. */
   const addProjectNodes = (view: InstallationView): PickerElement[] =>
     view.rows.length === 0
       ? []

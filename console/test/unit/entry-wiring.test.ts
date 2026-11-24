@@ -3056,6 +3056,47 @@ describe('the Add project door', () => {
     expect(currentViewButton(document)).toBe('Live')
   })
 
+  it('hands an issue screen back when the door was opened over one', async () => {
+    // The rail's foot is drawn on every screen, and two of the console's screens
+    // are not `show`'s five tabs: Cancel has to draw the issue the door replaced
+    // rather than a tab the operator was never standing on (review of SW3c).
+    const { bridge } = railBridge([orbitRow(true)])
+    const document = await boot(bridge, new FakeDocument())
+    expect(classed(panelOf(document), ISSUE_CLASS)).toHaveLength(1)
+
+    addProjectButton(document)?.click()
+    await flush()
+    expect(classed(panelOf(document), ADD_PROJECT_CLASS)).toHaveLength(1)
+
+    const screen = classed(panelOf(document), ADD_PROJECT_CLASS)[0] as FakeNode
+    buttonLabelled(screen, ADD_PROJECT_CANCEL_LABEL).click()
+    await flush()
+    expect(classed(panelOf(document), ADD_PROJECT_CLASS)).toHaveLength(0)
+    expect(classed(panelOf(document), ISSUE_CLASS), 'Cancel drew no issue back').toHaveLength(1)
+  })
+
+  it('hands a run’s detail back when the door was opened over that too', async () => {
+    const frame = syntheticDocuments()[syntheticDocuments().length - 1] as Readonly<Record<string, unknown>>
+    const { bridge } = railBridge([listRow('aurora', { open: true })], {}, undefined, {
+      subscribeLive: () => snapshotReply(frame),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const panel = panelOf(document)
+    ;(classed(panel, 'live-run')[0] as FakeNode).click()
+    await flush()
+    expect(panel.children[0]?.attributes.get('class')).toBe('run')
+
+    addProjectButton(document)?.click()
+    await flush()
+    const screen = classed(panel, ADD_PROJECT_CLASS)[0] as FakeNode
+    expect(screen, 'the door opened no Add project screen').toBeDefined()
+    buttonLabelled(screen, ADD_PROJECT_CANCEL_LABEL).click()
+    await flush()
+    expect(classed(panel, ADD_PROJECT_CLASS)).toHaveLength(0)
+    expect(panel.children[0]?.attributes.get('class'), 'Cancel drew no run back').toBe('run')
+    expect(classed(panel, 'run-id')[0]?.textContent).toBe('20261015-120000-aa01')
+  })
+
   it('opens the wizard at boot when the picker window asked for it', async () => {
     const { bridge } = railBridge([listRow('aurora', { open: true })])
     // The picker's door is a window request, not a process: main holds it until

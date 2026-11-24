@@ -3564,6 +3564,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * the read are held to. */
   const show = (id: string): void => {
     const mine = markCurrent(id)
+    backToView = () => show(id)
     rail.view(null)
     // A section's busy mark and its fifteen-second line belong to the tab the
     // operator is on: leaving Spend ends both, so nothing that was armed for a
@@ -7934,6 +7935,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // while it is up, and the Live poll stops -- a poll that kept running under
     // it would replace the run the operator opened a second later.
     markCurrent('run')
+    backToView = () => showRun(run)
     const mine = claim()
     const drawn = renderRunFrame(factory, theme, run)
     replace(drawn.root)
@@ -8259,13 +8261,22 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     )
   }
 
-  /** addProjectReturn is the view the Add project door was opened from: the
-   * installation's own screen, which Cancel returns to. The wizard is drawn **in
-   * place of** that view and not beside it (SW3c, R4), so the way back has to be
-   * remembered rather than recomputed -- the rail's selection is the same row
-   * either way, and "back to the current installation" means the tab the operator
-   * was standing on. */
-  let addProjectReturn = 'live'
+  /** backToView is the call that draws the screen the main area is showing
+   * again. The five tabs are `show`'s, and the two screens that are not tabs --
+   * an installation's issue and a run's detail -- record their own, because
+   * neither is reachable by a view id.
+   *
+   * **The Add project screen is its one reader** (SW3c, R4): it is drawn in
+   * place of the current view and not beside it, so the way back is remembered
+   * here rather than recomputed, and "back to the current installation" means
+   * the screen the operator was standing on. */
+  let backToView: () => void = () => show('live')
+
+  /** addProjectReturn is that call as the Add project door found it: the door
+   * remembers the screen it replaced rather than reading `backToView` when
+   * Cancel is clicked, because anything that drew in between would have moved
+   * it. */
+  let addProjectReturn: () => void = () => show('live')
 
   /** refreshRail is the rail's list read again, after a setup run ended: the
    * installation the wizard created is a row now, and the rail is the list that
@@ -8294,7 +8305,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * dashboard document's -- the picker window cannot ask them, which is why the
    * door hands over a request rather than drawing this screen itself. */
   const showAddProject = (): void => {
-    if (currentView !== 'add-project') addProjectReturn = currentView
+    if (currentView !== 'add-project') addProjectReturn = backToView
     markCurrent('add-project')
     rail.view(null)
     replace(
@@ -8302,7 +8313,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         ops,
         copy: clipboardCopy(navigator),
         cancel: () => {
-          show(addProjectReturn)
+          addProjectReturn()
         },
         applied: () => {
           void refreshRail()
@@ -8385,6 +8396,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * and no Live poll under it. */
   const showIssue = (row: RailRow, focus = false): void => {
     markCurrent('issue')
+    backToView = () => showIssue(row)
     rail.view(row.project)
     const drawn = drawIssue(surface, row, issueActions)
     replace(drawn.root)

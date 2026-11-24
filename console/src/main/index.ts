@@ -359,13 +359,6 @@ function storedCompatibility(): CliCompatibility {
  * refusal when the file could not be read.
  */
 function installationState(): ActiveInstallation | undefined {
-  const chosen = picker?.installation()
-  if (chosen === undefined) return undefined
-  // `withResolvedBinary` is where the direction of the join is decided and
-  // unit-tested; this file only supplies the two values.
-  const resolved = chosen.chosen ? resolvedBinaries.get(chosen.project) : undefined
-  const active = withResolvedBinary(chosen, resolved)
-  if (!active.chosen) return active
   // The picker's Add project request rides this read and is **spent** by it
   // (SW3c, R4): the picker window has no channel to the dashboard, so the only
   // way its door can reach the screen that shows the wizard is a fact main
@@ -373,8 +366,20 @@ function installationState(): ActiveInstallation | undefined {
   // asks exactly once, at boot, which is the boot the door asked for by
   // remaking the window. A later read (a reload, a second window) must not
   // open the wizard again, so the flag is cleared here and not kept.
+  //
+  // **A read that answers no installation spends it too** (a store with nothing
+  // chosen, or a picker that does not exist yet): the wizard is the dashboard's
+  // screen, so a request no window can carry out is over rather than waiting for
+  // the next window the console opens.
   const asked = addProjectPlease
   addProjectPlease = false
+  const chosen = picker?.installation()
+  if (chosen === undefined) return undefined
+  // `withResolvedBinary` is where the direction of the join is decided and
+  // unit-tested; this file only supplies the two values.
+  const resolved = chosen.chosen ? resolvedBinaries.get(chosen.project) : undefined
+  const active = withResolvedBinary(chosen, resolved)
+  if (!active.chosen) return active
   return asked ? { ...active, addProject: true } : active
 }
 
@@ -1397,6 +1402,12 @@ async function main(): Promise<void> {
     // The picker awaits this inside its own serial chain (review S6), so a
     // second choose cannot start until the window this one asked for is up.
     onChosen: (chosen) => {
+      // An Add project request the console could not carry out -- a refused
+      // installation is a refusal window and no dashboard, so nothing ever read
+      // the flag -- is dropped by the next real choice: the operator asked for
+      // the wizard on the console that was up, and this is a different console
+      // (SW3c).
+      addProjectPlease = false
       // Rule 11's "re-chosen": a launch names its own installation rather than
       // the active one, so the installation being chosen again is the window
       // that must close. Before `lifecycle.choose`, so the cancel is decided
@@ -1426,6 +1437,11 @@ async function main(): Promise<void> {
     // holds: nothing about which installation is active changes, and the
     // operator is put back on the console with the wizard in its main area.
     onAddProject: () => {
+      // A request already waiting for the window it asked for is not asked a
+      // second time: a second `choose` remakes the window the first one opened,
+      // and which of the two boots spends the flag is a race the operator would
+      // see as a console that flashed and came up on Live.
+      if (addProjectPlease) return
       addProjectPlease = true
       void lifecycle.choose(storedCompatibility()).catch(reportAndQuit)
     },

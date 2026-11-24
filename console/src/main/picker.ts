@@ -325,10 +325,14 @@ export interface InstallationPickerDeps {
   /**
    * onAddProject is the Add project row's seam (SW3c, R4): the picker states
    * that the operator asked for a new project and hands the request over, and
-   * the entry point does the rest -- close this window and bring the dashboard
-   * up on the wizard SW3b draws. The window is the dashboard's to open and this
-   * module knows nothing about it, which is why the seam exists rather than a
-   * call from here.
+   * the entry point does the rest -- remake the dashboard window on the wizard
+   * SW3b draws. The window is the dashboard's to open and this module knows
+   * nothing about it, which is why the seam exists rather than a call from here.
+   *
+   * **This window stays open**, exactly as it does through a choose: the
+   * dashboard's window comes up over it and the operator closes the picker when
+   * they are done with it. Nothing here closes it -- `close()` below is the
+   * entry point's seam and not a control this row has.
    */
   readonly onAddProject?: () => void
   /** onRemoved is the same seam for a removal that took the active installation
