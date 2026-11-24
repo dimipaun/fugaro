@@ -54,7 +54,7 @@ func isFailure(status string) bool {
 func finishedRow(f FinishedRun, now time.Time) RunRow {
 	return RunRow{
 		Run: clean(f.Run), Slug: budget.Key(f.Slug), Title: dash(clean(f.Title)), Stage: clean(f.Status),
-		Round: "-", Verify: "-", Models: "-", Auth: "-", Workflow: clean(f.Workflow),
+		Round: "-", Verify: "-", Models: "-", Auth: "-", Source: "-", Workflow: clean(f.Workflow),
 		LaunchedBy: safetext.Field(f.LaunchedBy),
 		Age:        max(now.Sub(f.FinishedAt), 0), HasAge: true,
 		Finished: true, Failed: isFailure(f.Status), Outcome: clean(f.Outcome),

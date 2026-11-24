@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -18,8 +19,9 @@ import (
 // SERVICES — the account the workspace's own bundle runs as, the one role that
 // names what that account reaches, the one grant that binds them, the
 // workspace's own credentials service running as that account (D2980), the ONE
-// bundle accessor that account reads its bundle through (F4) and one invoke
-// grant per member job account (F17)
+// bundle accessor that account reads its bundle through (F4), the ONE
+// conditioned accessor it reads a roster person's token through (R6) and one
+// invoke grant per member job account and per roster person (F17, D2971)
 // (deploy/terraform/gcp/roots/workspace) — and the SA fallback's IAM account,
 // which holds no role here at all (WorkspaceIAMAccountID).
 //
@@ -109,18 +111,27 @@ const (
 	WorkspaceIAMAccountID = "fugaro-workspace-iam"
 	// workspaceRoleType, workspaceAccountType and workspaceGrantType are the
 	// root's first three resource types: the role, the TWO accounts (the
-	// workspace's own service above and the IAM account) and the member
-	// resource that binds the role to the service. workspaceServiceType, workspaceAccessorType and
+	// workspace's own service above and the IAM account) and the project-level
+	// member resources — the ONE that binds the role to the service, and the
+	// ONE conditioned accessor the account reads a person's token through (R6).
+	// workspaceServiceType, workspaceAccessorType and
 	// workspaceInvokerType are the other three: the workspace's own credentials
 	// service, the ONE accessor grant on its bundle container, and the invoke
-	// grant a member's job account reaches that service through. A type outside
-	// these six is refused by name below.
+	// grant a member's job account or a roster person reaches that service
+	// through. A type outside these six is refused by name below.
 	workspaceRoleType     = "google_project_iam_custom_role"
 	workspaceAccountType  = "google_service_account"
 	workspaceGrantType    = "google_project_iam_member"
 	workspaceServiceType  = "google_cloud_run_v2_service"
 	workspaceAccessorType = "google_secret_manager_secret_iam_member"
 	workspaceInvokerType  = "google_cloud_run_v2_service_iam_member"
+	// workspacePersonPrefix is the IAM member class a roster person's invoke
+	// grant is bound to. A person is `user:<address>` and never a bare
+	// address, and the class is the whole of what tells one from a service
+	// account, a group, a domain or a public principal in a plan's member
+	// string: the roster's addresses are people's email addresses, and a bare
+	// one written into a member is a spelling IAM refuses rather than a person.
+	workspacePersonPrefix = "user:"
 	// WorkspaceBundleAccessorRole is the one role the workspace's own account
 	// holds on the workspace's own bundle container, and WorkspaceInvokerRole
 	// the one a member's job account holds on the workspace's service. Both are
@@ -207,10 +218,12 @@ func WorkspaceDatabaseRole(project string) string {
 // the workspace's own project, the single grant binds that role to the service
 // and to no other principal, the
 // workspace's service is the one bundle-reading process the workspace holds —
-// running as that account, digest-pinned, invoked by member job accounts alone
+// running as that account, digest-pinned, invoked by member job accounts and by
+// the roster's people alone
 // and inside R9's limits — its one accessor is on the workspace's own bundle
-// container, and every invoke grant is on that service for a member of the
-// table.
+// container, its one project accessor is under R6's fence, and every invoke
+// grant is on that service for a member of the
+// table or a person of the roster.
 //
 // It allows none of: a resource type outside the root (a job, a bucket, a
 // repository — spec §9), a second service, a data source or another mode, an
@@ -220,37 +233,50 @@ func WorkspaceDatabaseRole(project string) string {
 // in another project, a
 // service in another project, running as another identity or on an image that
 // is not digest-pinned, an environment outside the names the process reads, an
-// accessor on another container or with another role, or an invoke grant on
-// another service, with another role or to anything but a member's own job
-// account.
+// accessor on another container or with another role, a project accessor under
+// any condition but the one fence R6 names, or an invoke grant on another
+// service, with another role or to anything but a member's own job account or a
+// roster person's own address.
 //
-// It allows exactly ONE deletion (F25): a member's invoke grant. Removing a
-// member from the table deletes its grants, and the workspace's plan refusing
-// that would leave an operator repair — a state this design has none of
-// (the plan's own constraint "Removing a member needs no operator repair",
-// pinned by TestWorkspacePlanAdmitsRemovingAMembersInvokeGrant). That deletion
-// is held to the project, the role, the plan's own service name and a service
-// account principal, and deliberately not to memberAccounts: the caller passes
-// the table the workspace holds now, and the member who left is the account
-// already gone from it (workspaceInvokeGrant). Everything
-// else — the workspace's service, its accessor, its account, its role and its
-// database grant — is what the whole group's record and meter are kept by, and
+// It allows exactly TWO deletions (F25, WC2): a member's invoke grant and a
+// person's. Removing a member from the table or a person from the roster
+// deletes their grants, and the workspace's plan refusing that would leave an
+// operator repair — a state this design has none of
+// (the plan's own constraints "Removing a member needs no operator repair",
+// pinned by TestWorkspacePlanAdmitsRemovingAMembersInvokeGrant, and "Removing a
+// person needs no operator repair", pinned by
+// TestWorkspacePlanAdmitsRemovingAPersonsInvokeGrant). Each deletion
+// is held to the project, the role, the plan's own service name and the
+// principal CLASS — a service account, or a person — and deliberately not to
+// memberAccounts or people: the caller passes the table and the roster the
+// workspace holds now, and the member or person who left is the one already
+// gone from them (workspaceInvokeGrant). Everything
+// else — the workspace's service, its two accessors, its account, its role and
+// its
+// database grant — is what the whole group's record, meter and credentials are
+// kept by, and
 // a plan that deletes or replaces one of them is refused here by name.
 //
 // project is the workspace's own project, accountID its own service account's
 // id (WorkspaceIAMAccountID is the SA fallback's),
 // bundleSecret the Secret Manager ID of the workspace's own bundle container
-// (credsvc.WorkspaceBundleSecretID of the workspace's name) and memberAccounts
-// the job service accounts of the workspace's member table. All four are GIVEN
+// (credsvc.WorkspaceBundleSecretID of the workspace's name), memberAccounts
+// the job service accounts of the workspace's member table and people the
+// addresses of the roster's human entries (workspace.Roster's People, the
+// `human` kind alone). All five are GIVEN
 // rather than derived from the plan being judged: a rule that read the account's
-// own address, the container or the members out of the plan would accept
+// own address, the container, the members or the people out of the plan would
+// accept
 // whatever the plan named. An empty bundleSecret admits no accessor and an
-// empty memberAccounts admits no invoke grant, which is the fail-closed
+// empty memberAccounts or people admits no invoke grant, which is the
+// fail-closed
 // direction: a caller that knows neither the container nor the members is a
 // caller reading a plan that holds no service at all (WS6's own state, before
-// WS7 wires both from the workspace's config). memberAccounts is a reach being
-// made and not a deletion being admitted: the table is the one the workspace
-// holds now, so it is read for the grants a plan binds and never for the ones
+// WS7 wires both from the workspace's config). memberAccounts and people are
+// reaches being
+// made and not deletions being admitted: the table and the roster are the ones
+// the workspace
+// holds now, so they are read for the grants a plan binds and never for the ones
 // it removes.
 //
 // The receiver is the run's own cover, and it carries the fourth thing no plan
@@ -259,7 +285,7 @@ func WorkspaceDatabaseRole(project string) string {
 // build a Cover — the owner of a released pin is a recorded fact of the run's
 // config, and a rule that read it out of the reference being judged would accept
 // any owner.
-func (c Cover) WorkspaceNotCovered(p *Plan, project, accountID, bundleSecret string, memberAccounts []string) []string {
+func (c Cover) WorkspaceNotCovered(p *Plan, project, accountID, bundleSecret string, memberAccounts, people []string) []string {
 	if p == nil {
 		return []string{"no plan"}
 	}
@@ -286,12 +312,12 @@ func (c Cover) WorkspaceNotCovered(p *Plan, project, accountID, bundleSecret str
 			add(rc, "no actions")
 			continue
 		case allOf(acts, "delete"):
-			// F25's one admitted deletion, and only this one: a member's
-			// invoke grant, read from the state the workspace holds. Every
-			// other type falls through to the refusal below, the workspace's
-			// service and its accessor included.
+			// F25's and WC2's two admitted deletions, and only these: a
+			// member's or a person's invoke grant, read from the state the
+			// workspace holds. Every other type falls through to the refusal
+			// below, the workspace's service and its two accessors included.
 			if rc.Type == workspaceInvokerType {
-				if why := workspaceInvokeGrant(rc.Change, true, project, memberAccounts, service); why != "" {
+				if why := workspaceInvokeGrant(rc.Change, true, project, memberAccounts, people, service); why != "" {
 					add(rc, why)
 				}
 				continue
@@ -328,7 +354,7 @@ func (c Cover) WorkspaceNotCovered(p *Plan, project, accountID, bundleSecret str
 				add(rc, why)
 			}
 		case rc.Type == workspaceGrantType:
-			if why := workspaceGrant(p, rc, project, wantAccount, own); why != "" {
+			if why := workspaceProjectGrant(p, rc, project, wantAccount, own, bundleSecret); why != "" {
 				add(rc, why)
 			}
 		case rc.Type == workspaceServiceType:
@@ -350,11 +376,11 @@ func (c Cover) WorkspaceNotCovered(p *Plan, project, accountID, bundleSecret str
 				add(rc, why)
 			}
 		case rc.Type == workspaceInvokerType:
-			if why := workspaceInvokeGrant(rc.Change, false, project, memberAccounts, service); why != "" {
+			if why := workspaceInvokeGrant(rc.Change, false, project, memberAccounts, people, service); why != "" {
 				add(rc, why)
 			}
 		default:
-			add(rc, fmt.Sprintf("a %s, and the workspace's own project carries no resource but the workspace's own role, its own service account and that account's one grant, the workspace's credentials service, its one bundle accessor and its members' invoke grants: a workspace holds no job, no runs bucket and no repository (spec §9)", safetext.Field(rc.Type)))
+			add(rc, fmt.Sprintf("a %s, and the workspace's own project carries no resource but the workspace's own role, its own service account and that account's two grants, the workspace's credentials service, its one bundle accessor and the invoke grants of its members' job accounts and its roster's people: a workspace holds no job, no runs bucket and no repository (spec §9)", safetext.Field(rc.Type)))
 		}
 	}
 	return out
@@ -464,8 +490,38 @@ func workspaceCustomRole(ch Change, project string) string {
 	return ""
 }
 
-// workspaceGrant says why the one member resource of a plan is not the
-// workspace's one grant: another role, another project, or another principal.
+// workspaceProjectGrant says why a project-level member resource of a plan is
+// not one of the TWO the workspace root makes, "" when it is: the grant that
+// binds the workspace's database role to the workspace's own service account
+// (workspaceGrant), and the conditioned accessor that account reads a person's
+// token through (workspacePersonAccessor, R6).
+//
+// The role is what tells them apart, and it is read here rather than inside
+// either rule because it is the whole of what decides which one a plan's grant
+// is: a grant whose role terraform knows only at apply is refused before
+// anything else is read, since neither rule can hold a role it cannot see.
+func workspaceProjectGrant(p *Plan, rc ResourceChange, project, wantAccount, own, bundleSecret string) string {
+	ch := rc.Change
+	if unknown(ch, "role") {
+		return "a grant whose role terraform knows only at apply, in a root that writes both of its roles as the names it was given"
+	}
+	switch got := str(ch.After["role"]); {
+	case strings.HasSuffix(got, "/roles/"+WorkspaceDatabaseRoleID):
+		return workspaceGrant(p, rc, project, wantAccount, own)
+	case got == WorkspaceBundleAccessorRole:
+		return workspacePersonAccessor(p, rc, project, wantAccount, own, bundleSecret)
+	default:
+		return fmt.Sprintf("a grant of %q, and the workspace's own project carries two project grants and no third: its own service account holds %s on that project's database, and %s on the ONE personal name the workspace serves, under %s", safetext.Field(got), safetext.Field(WorkspaceDatabaseRole(project)), safetext.Field(WorkspaceBundleAccessorRole), gcp.WorkspacePersonTokenConditionTitle)
+	}
+}
+
+// workspaceGrant says why the member resource that binds the workspace's
+// database role is not the workspace's one grant: another project, another role
+// path, or another principal. The role ID is the dispatch's own business
+// (workspaceProjectGrant reads it before either rule runs) and the whole path is
+// this rule's: the root writes the role as the literal path
+// projects/<project>/roles/<id>, so a grant whose role carries another project
+// is a role that does not exist in this one, and the two are held apart here.
 //
 // A member the plan does not know is the root's own shape — terraform computes
 // the address the account will have — and it is accepted only while the same
@@ -479,19 +535,14 @@ func workspaceCustomRole(ch Change, project string) string {
 // person, a domain, allUsers or another account is refused by name.
 func workspaceGrant(p *Plan, rc ResourceChange, project, wantAccount, own string) string {
 	ch := rc.Change
-	if unknown(ch, "role") || unknown(ch, "project") {
-		return "a grant whose role or project terraform knows only at apply, in a root that writes both as the names it was given"
+	if unknown(ch, "project") {
+		return "a grant whose project terraform knows only at apply, in a root that writes it as the name it was given"
 	}
-	// The project is read before the role: a grant moved to another project
-	// arrives with that project's own role path, and "the workspace's own
-	// database is <project>'s" is the sentence that names what happened —
-	// the role check would answer "another role", which is true and less
-	// useful.
 	if got := str(ch.After["project"]); got != project {
 		return fmt.Sprintf("a grant in project %q, and the workspace's own database is %s's", safetext.Field(got), safetext.Field(project))
 	}
-	if want := WorkspaceDatabaseRole(project); str(ch.After["role"]) != want {
-		return fmt.Sprintf("a grant of %q, and the workspace's own service account holds %s and nothing else: a second role here is a reach nobody decided on", safetext.Field(str(ch.After["role"])), want)
+	if got := str(ch.After["role"]); got != WorkspaceDatabaseRole(project) {
+		return fmt.Sprintf("a grant of role %q, and the workspace's own database role is %s: the root writes it as the literal path projects/<project>/roles/<id>, and a role path that carries another project is a role this project does not have", safetext.Field(got), safetext.Field(WorkspaceDatabaseRole(project)))
 	}
 	if unknown(ch, "member") {
 		if own == "" {
@@ -507,6 +558,73 @@ func workspaceGrant(p *Plan, rc ResourceChange, project, wantAccount, own string
 		return ""
 	}
 	return fmt.Sprintf("a grant to %s, and the workspace's own database is reached by %s and by nobody else: a member's account, a person, a group, a domain or a public principal here is a client that can read the record and the admitted-token hashes", safetext.Field(m), wantAccount)
+}
+
+// workspacePersonAccessor says why a project-level grant of
+// WorkspaceBundleAccessorRole is not the ONE conditioned accessor the
+// workspace's own account holds on a person's token (R6, D2971), "" when it is.
+//
+// It is a project-level grant and not a per-container one because the container
+// it reads is a PERSON's: secretname.User builds it from the verified token's
+// own sub (`fugaro_u_<sub>_claude-oauth-token`), which no plan knows, so the
+// resource's own name is the only thing left to narrow the grant by — exactly
+// the shape the intake's own conditioned accessor has, one project over. What
+// the condition admits is the per-person prefix AND the one name this half
+// serves, so the account reads a person's Claude token and no other personal
+// secret a person keeps in the workspace's project, and none of the
+// project-shared class (a shared secret of the workspace's project is not
+// served to a member; what is shared is a shared entry, D2976).
+//
+// Everything wider is refused by name: no condition at all, which is every
+// secret of the workspace's own project; the prefix alone, which is every
+// personal name a person keeps there; the shared class; another name's suffix;
+// and any expression that merely contains the fence. A per-secret accessor on
+// a person's container is not this rule's business — the root writes none, and
+// workspaceBundleAccessor refuses one on any container but the workspace's own
+// bundle.
+//
+// The member is held the way the database grant's is (workspaceGrant): the root
+// writes google_service_account.workspace.member, so terraform knows the address
+// only at apply, and a member the plan does not know is admitted only while the
+// plan's configuration shows the member expression reading the account THIS plan
+// creates (workspaceComputedMember). A known one must be that account's address:
+// a member's job account, a person, a group or a domain here would read every
+// personal token the workspace serves, as the identity that serves them.
+func workspacePersonAccessor(p *Plan, rc ResourceChange, project, wantAccount, own, bundleSecret string) string {
+	ch := rc.Change
+	if bundleSecret == "" {
+		return "a project accessor, and this plan is read by a caller that named no bundle container: the workspace's own bundle is derived from the workspace's name (credsvc.WorkspaceBundleSecretID), a plan read without it is a plan that holds no service at all, and the personal token this accessor is fenced to is read by the service that serves it"
+	}
+	if unknown(ch, "project") {
+		return "a grant whose project terraform knows only at apply, in a root that writes it as the name it was given"
+	}
+	if got := str(ch.After["project"]); got != project {
+		return fmt.Sprintf("a project accessor in project %q, and the personal tokens the workspace serves are %s's: a grant in another project reads another project's secrets", safetext.Field(got), safetext.Field(project))
+	}
+	if unknown(ch, "member") {
+		if own == "" {
+			return fmt.Sprintf("a grant whose member terraform knows only at apply, and this plan does not create the workspace's own service account: the member could be anyone, and the personal token the workspace serves is read by %s alone", wantAccount)
+		}
+		return workspaceComputedMember(p, rc.Address, own, wantAccount)
+	}
+	m := str(ch.After["member"])
+	switch {
+	case m == "":
+		return "no member"
+	case !workspaceIsAccount(m, wantAccount):
+		return fmt.Sprintf("a project accessor for %s, and the personal token the workspace serves is read by %s and by nobody else: a member's job account, another person, a group, a domain or a public principal here reads every personal token the workspace serves", safetext.Field(m), wantAccount)
+	}
+	conds, why := grantConditions(ch, "a project accessor")
+	if why != "" {
+		return why
+	}
+	if len(conds) == 0 {
+		return fmt.Sprintf("grants %s on the workspace's own project with NO condition, which is every secret of it — every personal name a person keeps there and the project-shared class with them: the workspace's account reads the ONE personal name this half serves, under %s", WorkspaceBundleAccessorRole, gcp.WorkspacePersonTokenConditionTitle)
+	}
+	if title, expr := str(conds[0]["title"]), str(conds[0]["expression"]); title != gcp.WorkspacePersonTokenConditionTitle || expr != gcp.WorkspacePersonTokenCondition() {
+		return fmt.Sprintf("grants %s under a condition that is not %s: %s is the fence, byte for byte — the per-person prefix AND the one name this half serves — and a wider one (the prefix alone, the shared class, another name's suffix, or no name at all) hands the workspace's account every personal secret a person keeps in its project", WorkspaceBundleAccessorRole, gcp.WorkspacePersonTokenConditionTitle, gcp.WorkspacePersonTokenCondition())
+	}
+	return ""
 }
 
 // workspaceService says why the Cloud Run service a plan creates or updates is
@@ -746,44 +864,56 @@ func workspaceBundleAccessor(ch Change, project, wantAccount, bundleSecret strin
 }
 
 // workspaceInvokeGrant says why an invoke grant of a plan is not a member's own
-// (F17), in either of the two states the plan can hold it in: a create or an
-// update, read from the change; or the ONE deletion this cover admits (F25),
+// or a roster person's (F17, D2971), in either of the two states the plan can
+// hold it in: a create or an
+// update, read from the change; or one of the TWO deletions this cover admits
+// (F25, WC2),
 // read from the state the workspace held. A create or an update is held to four
-// facts — the project, the role, the service, and a member of the table the
+// facts — the project, the role, the service, and a principal of the table or
+// the roster the
 // caller passes — because it is a reach being made.
 //
-// The deletion is held to the project, the role, the service and to a member
-// that is a service account address, and to nothing else. It is NOT held to the
-// caller's table: that table is the one the workspace holds NOW, so the member
-// who left is exactly the account already absent from it, and a membership check
-// here would refuse every real removal — the operator repair F25 exists to
-// prevent (the plan's own constraint "Removing a member needs no operator
-// repair"). A deletion only narrows reach, which is why a service-account
-// principal on this plan's own service is the whole of what bounds it.
+// The deletion is held to the project, the role, the service and to a principal
+// that is a service account address or a person, and to nothing else. It is NOT
+// held to the
+// caller's table or roster: those are the ones the workspace holds NOW, so the
+// member or person
+// who left is exactly the one already absent from them, and a membership check
+// here would refuse every real removal — the operator repair F25 and WC2 exist
+// to
+// prevent (the plan's own constraints "Removing a member needs no operator
+// repair" and "Removing a person needs no operator repair"). A deletion only
+// narrows reach, which is why a principal of one of those two CLASSES on this
+// plan's own service is the whole of what bounds it — and why a group, a
+// domain, a principalSet, allUsers or an empty member is refused even there: a
+// grant to one of those is state this root never wrote.
 //
 // service is the name of the plan's own workspace service
-// (planWorkspaceServiceName): a member's grant is on THAT service and on no
+// (planWorkspaceServiceName): a member's or a person's grant is on THAT service
+// and on no
 // other, so a plan that binds the same role on a second service of the same
 // project is refused rather than admitted by its type. An empty one — a plan
 // with an invoke grant and no service — admits nothing.
-func workspaceInvokeGrant(ch Change, deletion bool, project string, memberAccounts []string, service string) string {
+func workspaceInvokeGrant(ch Change, deletion bool, project string, memberAccounts, people []string, service string) string {
 	if deletion {
 		if ch.Before == nil {
-			return "a deletion that carries no state, and the one deletion this root's plan makes is a member's invoke grant as the workspace holds it"
+			return "a deletion that carries no state, and the two deletions this root's plan makes are a member's and a person's invoke grant as the workspace holds them"
 		}
 		b := ch.Before
 		if got := str(b["project"]); got != project {
 			return fmt.Sprintf("an invoke grant in project %q deleted, and the workspace's own service is %s's: a deletion in another project is another workspace's grant, and this root's cover admits no change to it", safetext.Field(got), safetext.Field(project))
 		}
 		if got := str(b["role"]); got != WorkspaceInvokerRole {
-			return fmt.Sprintf("a grant of role %q deleted, and a member's run invokes the workspace's service as %s and no other: the invoke grant is the whole of what a member's job needs from Cloud Run, so a deletion here is a reach being taken away by a hand", safetext.Field(got), WorkspaceInvokerRole)
+			return fmt.Sprintf("a grant of role %q deleted, and a member's run and a person's invoke the workspace's service as %s and no other: the invoke grant is the whole of what a caller needs from Cloud Run, so a deletion here is a reach being taken away by a hand", safetext.Field(got), WorkspaceInvokerRole)
 		}
 		if got := str(b["name"]); got != service || service == "" {
 			return fmt.Sprintf("an invoke grant on the service %q deleted, and the workspace's own service is this plan's own workspace service (%s): a grant on another service is another service's caller table", safetext.Field(got), safetext.Field(service))
 		}
 		m := str(b["member"])
 		if _, ok := workspaceAccountOf(m); !ok {
-			return fmt.Sprintf("an invoke grant deleted for %s, which is not a service account address: the ONE change this root's cover admits beyond its own resources is a member's own job account leaving the workspace's table, and this root binds an invoke grant to an account and to nothing else — a person, a group, a domain, a principalSet or an empty member here is state this root did not write, so a deletion of it is not the table converging, and a deletion of anything else (the workspace's own service, its bundle accessor, its account or its role) is a repair nobody chose (F25)", safetext.Field(m))
+			if _, ok := workspacePerson(m); !ok {
+				return fmt.Sprintf("an invoke grant deleted for %s, which is neither a service account address nor a person: the TWO changes this root's cover admits beyond its own resources are a member's own job account leaving the workspace's table and a person leaving the workspace's roster, and this root binds an invoke grant to those two classes and to nothing else — a group, a domain, a principalSet, allUsers, allAuthenticatedUsers or an empty member here is state this root did not write, so a deletion of it is not the table or the roster converging, and a deletion of anything else (the workspace's own service, its two accessors, its account or its role) is a repair nobody chose (F25)", safetext.Field(m))
+			}
 		}
 		return ""
 	}
@@ -794,13 +924,13 @@ func workspaceInvokeGrant(ch Change, deletion bool, project string, memberAccoun
 		return fmt.Sprintf("an invoke grant in project %q, and the workspace's own service is %s's: a grant in another project admits another workspace's caller", safetext.Field(got), safetext.Field(project))
 	}
 	if service == "" {
-		return "an invoke grant in a plan that holds no workspace service: a member's job account is admitted to the workspace's own service and to nothing else"
+		return "an invoke grant in a plan that holds no workspace service: a member's job account and a roster person are admitted to the workspace's own service and to nothing else"
 	}
 	if got := str(ch.After["name"]); got != service {
-		return fmt.Sprintf("an invoke grant on the service %q, and the workspace's own service is this plan's own workspace service (%s): a member's job account is admitted to the workspace's service and to no other", safetext.Field(got), safetext.Field(service))
+		return fmt.Sprintf("an invoke grant on the service %q, and the workspace's own service is this plan's own workspace service (%s): a member's job account and a roster person are admitted to the workspace's service and to no other", safetext.Field(got), safetext.Field(service))
 	}
 	if got := str(ch.After["role"]); got != WorkspaceInvokerRole {
-		return fmt.Sprintf("a grant of role %q, and a member's run invokes the workspace's service as %s and no other: the invoke grant is the whole of what a member's job needs from Cloud Run — workspace mode serves the model and forge routes and refuses every other (R14) — so a second role here is a reach nobody decided on", safetext.Field(got), WorkspaceInvokerRole)
+		return fmt.Sprintf("a grant of role %q, and a member's run and a person's invoke the workspace's service as %s and no other: the invoke grant is the whole of what a caller needs from Cloud Run — workspace mode serves the model and forge routes and refuses every other (R14) — so a second role here is a reach nobody decided on", safetext.Field(got), WorkspaceInvokerRole)
 	}
 	m := str(ch.After["member"])
 	switch {
@@ -808,8 +938,10 @@ func workspaceInvokeGrant(ch Change, deletion bool, project string, memberAccoun
 		return "no member"
 	case workspaceIsMemberOf(m, memberAccounts):
 		return ""
+	case workspaceIsPersonOf(m, people):
+		return ""
 	}
-	return fmt.Sprintf("an invoke grant to %s, and the workspace's own service is invoked by a member's own job accounts alone: a person, a group, a domain, allUsers or another project's job here reaches the process that reads every model credential the workspace holds", safetext.Field(m))
+	return fmt.Sprintf("an invoke grant to %s, and the workspace's own service is invoked by a member's own job accounts and by the roster's own people alone: a group, a domain, allUsers or another project's job here reaches the process that reads every model credential the workspace holds, and a person the roster does not name is a grant nobody decided on (D2971)", safetext.Field(m))
 }
 
 // workspaceIsAccount reports whether an IAM member or a service's runtime
@@ -828,17 +960,38 @@ func workspaceIsMemberOf(got string, members []string) bool {
 }
 
 // workspaceAccountOf reads an IAM member as a service account address: the bare
-// address, or the serviceAccount:-prefixed one. Anything else — a person, a
-// group, a domain, allUsers, a principalSet — is not an account and reads as
-// not one.
+// address, or the serviceAccount:-prefixed one, and nothing else. The address
+// itself is what says so (saMember), not the absence of a prefix: a person, a
+// group, a domain, a principalSet, allUsers, allAuthenticatedUsers and an empty
+// member are all spelled without the `serviceAccount:` prefix and with no
+// account in them, and a reader that took the bare spelling on trust read every
+// one of them as an account address.
 func workspaceAccountOf(member string) (string, bool) {
-	if e, ok := strings.CutPrefix(member, "serviceAccount:"); ok {
-		return e, e != ""
+	e, ok := strings.CutPrefix(member, "serviceAccount:")
+	if !ok {
+		e = member
 	}
-	if member == "" || strings.Contains(member, ":") {
+	if !saMember.MatchString("serviceAccount:" + e) {
 		return "", false
 	}
-	return member, true
+	return e, true
+}
+
+// workspacePerson reads an IAM member as a person's address: the user:-prefixed
+// one, and only that. The prefix is required and never assumed, which is what
+// tells a person from the account class above in a plan's member string: a bare
+// address is not a person here, and a group, a domain, allUsers and a
+// principalSet all carry a class of their own and read as none.
+func workspacePerson(member string) (string, bool) {
+	e, ok := strings.CutPrefix(member, workspacePersonPrefix)
+	return e, ok && e != ""
+}
+
+// workspaceIsPersonOf reports whether an IAM member names one of the roster's
+// people, in the one spelling the root writes: user:<address>.
+func workspaceIsPersonOf(got string, people []string) bool {
+	e, ok := workspacePerson(got)
+	return ok && slices.Contains(people, e)
 }
 
 // workspaceComputedMember says why a grant whose member terraform knows only at

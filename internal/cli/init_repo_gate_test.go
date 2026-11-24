@@ -574,10 +574,12 @@ func TestSetupConvergeOnboardsAtTheGate(t *testing.T) {
 
 // TestSetupOutsideACheckoutSaysHowToEnrol: outside a checkout there is no
 // repository to ask about, so the question is skipped and the run says in one
-// line how to enrol one later, naming `fugaro setup` (W3.4, D5). A run that
-// cannot ask — --json, a pipe — prints nothing: it was not asked for a
-// repository, and a line about one is noise in a script's output. The update
-// door is not the wizard and says nothing either.
+// line how to enrol one later, naming `fugaro setup` (W3.4, D5). The line is
+// the run's own summary and not one of its steps: the gate prints nothing
+// about it, and the same rule decides both (asksEnrolNote). A run that cannot
+// ask — --json, a pipe — prints nothing: it was not asked for a repository,
+// and a line about one is noise in a script's output. The update door is not
+// the wizard and says nothing either.
 func TestSetupOutsideACheckoutSaysHowToEnrol(t *testing.T) {
 	old := selfCommand
 	selfCommand = func() string { return "fugaro" }
@@ -602,6 +604,10 @@ func TestSetupOutsideACheckoutSaysHowToEnrol(t *testing.T) {
 			e := &initEngine{r: run, lc: &localcfg.Config{Name: "aurora"}}
 			e.repo = newRepositoryStage(e)
 			e.gateEarly(t.Context())
+			if before := out.String(); before != "" {
+				t.Errorf("the gate printed something before the steps about a repository it was not asked for:\n%s", before)
+			}
+			e.announceEnrolNote()
 			line := strings.TrimSpace(out.String())
 			if !tc.want {
 				if line != "" {

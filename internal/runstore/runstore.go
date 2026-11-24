@@ -2315,11 +2315,13 @@ var ErrExists = errors.New("already exists")
 // ErrTooLarge means an object is larger than its read cap.
 var ErrTooLarge = errors.New("object is larger than its read cap")
 
-// ErrCorrupt means one of the run's own JSON objects is there and does not
-// decode. The object is the run's own and the run's own agent writes it, so a
-// reader that meets one is reading a run's problem rather than its own, which
-// is the distinction a caller draws between an unusable object and a read that
-// failed. It wraps the decoder's own error, which is the one that says why.
+// ErrCorrupt means one of the run's own JSON objects is there and is not one a
+// reader can use: it does not decode, or -- task.json -- it does not validate.
+// The object is the run's own and the run's own agent writes it, so a reader
+// that meets one is reading a run's problem rather than its own, which is the
+// distinction a caller draws between an unusable object and a read that failed.
+// It wraps the decoder's or the parser's own error, which is the one that says
+// why.
 var ErrCorrupt = errors.New("the run's own object does not decode")
 
 // Read caps. The job's service account, and so a run's agent, can
@@ -2561,7 +2563,16 @@ func (s *Store) ReadTask(ctx context.Context) (*task.Spec, error) {
 	if err != nil {
 		return nil, err
 	}
-	return task.Parse(data)
+	spec, err := task.Parse(data)
+	if err != nil {
+		// A task.json the parser will not take is the run's own object, the
+		// same classification launch.json and result.json carry: a reader
+		// that could not use it draws that reader's own conclusion from
+		// it rather than failing. task.Parse's error is kept in the chain,
+		// so a caller matching the decoder's own types goes on working.
+		return nil, fmt.Errorf("reading task.json: %w: %w", ErrCorrupt, err)
+	}
+	return spec, nil
 }
 
 // WriteRecord stores result.json.

@@ -250,7 +250,7 @@
       "additionalProperties": false,
       "required": ["name", "source", "sha256"],
       "properties": {
-        "name": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$" },
+        "name": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,44}[a-z0-9])?-[0-9a-f]{8})?$", "description": "The recipe the run's loop came from: a recipe name, or the name of the project's copy of one (recipe.IsNameOrCopy), which is what a migrated repository's runs carry." },
         "source": { "enum": ["repo", "project", "catalog"] },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
       }

@@ -50,12 +50,26 @@ func (s *statsIndex) List(_ context.Context, f runindex.Filter) (runindex.Page, 
 		if len(f.Slugs) > 0 && !slices.Contains(f.Slugs, e.Slug) {
 			continue
 		}
-		if !f.Since.IsZero() && e.UpdatedAt.Before(f.Since) {
-			continue
+		// The window is the run's start, which its id names -- the same bound the
+		// real reader applies and the bucket behind the record read offsets its
+		// listing by (runstore.ListRunIDs), never the entry's own last write.
+		if !f.Since.IsZero() {
+			at, err := runstore.RunTime(e.RunID)
+			if err != nil {
+				continue
+			}
+			if at.Before(f.Since) {
+				continue
+			}
 		}
 		kept = append(kept, e)
 	}
 	slices.SortFunc(kept, func(a, b runindex.Entry) int {
+		// A windowed page is ordered by the run id alone (contract-index.md, "The
+		// sort key, the cursor and the composite indexes").
+		if !f.Since.IsZero() {
+			return strings.Compare(b.RunID, a.RunID)
+		}
 		if c := b.UpdatedAt.Compare(a.UpdatedAt); c != 0 {
 			return c
 		}
@@ -65,7 +79,10 @@ func (s *statsIndex) List(_ context.Context, f runindex.Filter) (runindex.Page, 
 	if f.Limit > 0 && len(kept) > f.Limit {
 		page.Entries = kept[:f.Limit]
 		last := page.Entries[len(page.Entries)-1]
-		page.Next = &runindex.Cursor{UpdatedAt: &last.UpdatedAt, RunID: last.RunID}
+		page.Next = &runindex.Cursor{RunID: last.RunID}
+		if f.Since.IsZero() {
+			page.Next = &runindex.Cursor{UpdatedAt: &last.UpdatedAt, RunID: last.RunID}
+		}
 	}
 	return page, nil
 }
@@ -254,11 +271,49 @@ func TestRunsStatsCountsAnOverlayRowAsARunNotAsUnlaunched(t *testing.T) {
 	}
 }
 
+// TestRunsStatsUnreadableLaunchIsARunUnderTheIndex is the parity half of
+// TestRunsStatsUnreadableLaunchIsUnknownNotUnlaunched, on the read that reads no
+// object: a run whose launch.json the bucket holds and the fold could not read,
+// and which died before finalize, carries no launch, no record and no status --
+// three absences a never-launched run's entry also carries. What tells the two
+// apart is the entry's own LaunchUnreadable, and without it the index read
+// counts a run that did start among the runs that never did and drops it from
+// every by-user figure, where the record read puts it under 'unknown'. The two
+// reads must not disagree about whether the run happened.
+func TestRunsStatsUnreadableLaunchIsARunUnderTheIndex(t *testing.T) {
+	f := newCloudFixture(t)
+	env := envOn(t, f, gcpfake.NewGCS(t).Bucket(t, "runs"))
+	day := time.Now().UTC().Truncate(time.Second)
+	badLaunch, badRecord, neverLaunched := userStatsID(day, 1), userStatsID(day, 2), userStatsID(day, 3)
+	statsIndexInstall(t, &statsIndex{complete: true, entries: []runindex.Entry{
+		{RunID: badLaunch, Slug: appSlug, UpdatedAt: statsIndexMintTime(t, badLaunch), LaunchUnreadable: true},
+		{RunID: badRecord, Slug: appSlug, UpdatedAt: statsIndexMintTime(t, badRecord), RecordUnreadable: true},
+		{RunID: neverLaunched, Slug: appSlug, UpdatedAt: statsIndexMintTime(t, neverLaunched)},
+	}})
+
+	read, err := readUserStatsRuns(context.Background(), env, []string{appSlug}, day.Add(-7*24*time.Hour), userStatsMaxRuns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read.unlaunched != 1 {
+		t.Errorf("unlaunched = %d, want 1: only the entry with no unreadable object and no status never started", read.unlaunched)
+	}
+	res := userstats.Aggregate(userStatsRuns(read.runs))
+	if len(res.Rows) != 1 {
+		t.Fatalf("rows = %+v, want both unreadable-object runs in the unknown row alone", res.Rows)
+	}
+	if got := res.Rows[0]; got.User != userstats.UnknownUser || got.Runs != 2 || got.NoRecord != 2 {
+		t.Errorf("the unreadable-object runs = %+v, want two runs under %q with no record: both started, and their "+
+			"launchers and their money are what nobody can read", got, userstats.UnknownUser)
+	}
+}
+
 // TestRunsStatsDocumentSaysWhichReadItIs is the document half: index_complete is
 // true when the rows are the index's page, and false while the index has never
-// finished a walk -- when the run records are read instead, over the same window
-// and with the same figures, which is the read this command made before the
-// index existed.
+// finished a walk -- when the run records are read instead, which is the read
+// this command made before the index existed. The two reads are not the same
+// read (readUserStatsRuns): they window a run differently, and an unfolded run
+// reaches the index with no launcher.
 func TestRunsStatsDocumentSaysWhichReadItIs(t *testing.T) {
 	f := newCloudFixture(t)
 	userStatsPlace(t, f, "someone@example.com", nil, []string{"user:someone@example.com"})

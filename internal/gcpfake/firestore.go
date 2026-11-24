@@ -147,6 +147,15 @@ func (f *Firestore) DisabledReadsAfterCreate(n int) {
 	f.disabledAfterCreate = n
 }
 
+// DisabledReads is DisabledReadsAfterCreate without the create: the next n
+// reads of the database resource answer 403 SERVICE_DISABLED from now, which
+// is the read a run makes before it has created anything (RI2).
+func (f *Firestore) DisabledReads(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.disabledReads = n
+}
+
 // Credentials lists the Authorization header of each request in order.
 func (f *Firestore) Credentials() []string {
 	f.mu.Lock()

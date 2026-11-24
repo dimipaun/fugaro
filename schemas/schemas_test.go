@@ -578,6 +578,97 @@ func TestTaskSchemaTierMatchesTheGoRules(t *testing.T) {
 	}
 }
 
+// TestRecipeNamePatternsMatchTheGoRule is the same tie for R19's name rule,
+// which three schemas carry: the recipe schema's own `name`, and the
+// `recipe.name` a task and a run record hold. The rule is recipe.IsNameOrCopy —
+// a recipe name, or the project's copy of one (PR0's grammar, D3302) — and the
+// two records' schemas are the surface a repository's CI and every external
+// reader check a run against, so a copy the launcher embeds in a task.json and
+// the runner writes into a run record has to be a name they accept; a schema
+// left on the flat name would refuse a migrated repository's own records. The
+// three are the same grammar as schemas/recipe.schema.json, held to it name by
+// name so they cannot drift apart.
+//
+// Mutation (put any of the three patterns back to the flat name): the copy
+// names below are refused by that schema and this test fails.
+func TestRecipeNamePatternsMatchTheGoRule(t *testing.T) {
+	patternOf := func(file string, path ...string) string {
+		t.Helper()
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		}
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatal(err)
+		}
+		raw, ok := doc.Properties[path[0]]
+		if !ok {
+			t.Fatalf("%s has no %s property", file, path[0])
+		}
+		for _, key := range path[1:] {
+			var step struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			}
+			if err := json.Unmarshal(raw, &step); err != nil {
+				t.Fatal(err)
+			}
+			if raw, ok = step.Properties[key]; !ok {
+				t.Fatalf("%s's %s has no %s property", file, strings.Join(path[:len(path)-1], "."), key)
+			}
+		}
+		var prop struct {
+			Pattern string `json:"pattern"`
+		}
+		if err := json.Unmarshal(raw, &prop); err != nil {
+			t.Fatal(err)
+		}
+		if prop.Pattern == "" {
+			t.Fatalf("%s's %s property carries no pattern", file, strings.Join(path, "."))
+		}
+		return prop.Pattern
+	}
+	maxCopy := recipe.CopyName(strings.Repeat("n", 40), "github", "acme/"+strings.Repeat("m", 60))
+	bounds := []struct {
+		name string
+		ok   bool
+	}{
+		{"solo", true},
+		{recipe.CopyName("review", "github", "acme/app-web"), true},
+		{maxCopy, true},
+		{"Review.acme-app-web-12345678", false},
+		{"review.acme-app-web", false},
+		{"review..acme-app-web-12345678", false},
+		{"solo.acme-app-web-12345678.yaml", false},
+		{strings.Repeat("n", 41) + ".acme-app-web-12345678", false},
+		{maxCopy + "m", false},
+	}
+	want := patternOf("recipe.schema.json", "name")
+	for _, h := range []struct {
+		file string
+		path []string
+	}{
+		{"recipe.schema.json", []string{"name"}},
+		{"task.schema.json", []string{"recipe", "name"}},
+		{"result.schema.json", []string{"recipe", "name"}},
+	} {
+		got := patternOf(h.file, h.path...)
+		if got != want {
+			t.Errorf("%s's %s pattern %q is not the recipe schema's name pattern %q", h.file, strings.Join(h.path, "."), got, want)
+			continue
+		}
+		pattern := regexp.MustCompile(got)
+		for _, b := range bounds {
+			if recipe.IsNameOrCopy(b.name) != b.ok || pattern.MatchString(b.name) != b.ok {
+				t.Errorf("%s's %s pattern says %v of %q, want %v (recipe.IsNameOrCopy says %v)",
+					h.file, strings.Join(h.path, "."), pattern.MatchString(b.name), b.name, b.ok, recipe.IsNameOrCopy(b.name))
+			}
+		}
+	}
+}
+
 // TestTaskSchemaInputs: the attached-files list a launcher writes (design
 // artifact-runs.md §4, plan Task 6) is an array of closed {name, bytes,
 // sha256} objects, and an absent list stays absent. The name's own shape
