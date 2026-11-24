@@ -121,8 +121,10 @@ remove: it is a capability, not a boundary), and `secretVariables` needs a per-r
 secret, which is the rejected C2. **What the limit costs, stated plainly**: **an installation that
 mints budget tokens cannot launch any run on Batch.** Minting is a property of the installation and
 not of a run — `internal/cli/launch_budget.go`'s `budgetMintOn` mints for **every** launch of a
-configuration that names a budget database with budget mode on, or a published policy (a signer is
-required in both cases) — and an installation has **one** backend
+configuration that names a budget database, with the signer account it mints through (the two are
+what the installation's own `fugaro update` writes together, and the budget mode is not read at all:
+a database whose mode said `off` mints exactly as one that enforces — the always-a-budget plan's
+AB4) — and an installation has **one** backend
 (`localcfg.Config.Backend`, one value for the whole installation), so a minting installation that
 selects `cloud-batch` gets **every** launch refused, after its token was minted and dropped, and has
 to stay on `backend: cloud-run`, where the key travels in the override. There is no per-run fallback
