@@ -343,12 +343,16 @@ def job_doc(repo):
                      "valueSource": {"secretKeyRef": {
                          "secret": secret_id(job_name(repo), "claude-oauth-token-work"),
                          "version": "latest"}}})
-    if mode == "stage-account" and repo == (repos[1] if len(repos) > 1 else ""):
-        # A MIXED stage account, which is the one mount a switched job keeps: the
-        # stage's own Claude token and R12's second fact
-        # (config.StageAccountServedEnv) saying the container is served the
-        # stage's credential and not the run's (D2072's is_stage_account_token).
-        envs.append({"name": "FUGARO_STAGE_ACCOUNT_SERVED", "value": "1"})
+    if mode == "stage-account" and repo == (repos[0] if repos else ""):
+        # A MIXED stage account's own job, which is the one mount a switched job
+        # keeps (D2072's is_stage_account_token): the stage's own Claude token,
+        # and nothing else — and on the API-KEY repository, which is the only
+        # auth that builds such a job at all (mixedStageAccountJob reads
+        # cfg.Agent.Auth). The fixture carries NO FUGARO_STAGE_ACCOUNT_SERVED on
+        # purpose: that is whether the SERVICE selects the stage's account
+        # (local.StageAccountServedOn), a fact of its own, and the mount stays
+        # whether it is set or not — a check that asked the job for the flag
+        # would call this switched-and-correct job off the switch.
         envs.append({"name": "CLAUDE_CODE_OAUTH_TOKEN",
                      "valueSource": {"secretKeyRef": {
                          "secret": secret_id(job_name(repo), "claude-oauth-token-work"),
@@ -836,6 +840,13 @@ test_the_repos_guard() {
 # the same switch, infra.CredentialsServiceServes, that makes the launcher write
 # the address at all).
 #
+# The one mount a switched job KEEPS is a mixed stage account's own Claude token,
+# and the mix is api-key's alone (mixedStageAccountJob reads cfg.Agent.Auth), so
+# that mount is judged by the auth the repository's own RECORD names and never by
+# a flag on the job: under `api-key` it is the stage's credential and the job is
+# on the switch, under `oauth` the very same token is the run's own credential
+# and the job is off it.
+#
 # A repository whose job still mounts the credential the service serves and
 # whose account holds no invoker grant is OFF the switch: its runs are served by
 # nothing, so every row below it would be a row about a repository this check is
@@ -921,19 +932,39 @@ test_a_job_whose_template_carries_the_url_is_on_the_switch() {
 }
 
 # The one mount a switched job KEEPS: a mixed stage account's own Claude token,
-# which is the STAGE's credential and not the run's, and which the job declares
-# by carrying R12's second fact (FUGARO_STAGE_ACCOUNT_SERVED=1,
-# config.StageAccountServedEnv, D2072's is_stage_account_token). A row that read
-# every mount as one the service serves would fail a repository that is switched
-# and correct — which is why the exception is read and never guessed.
+# which is the STAGE's credential and not the run's (D2072's
+# is_stage_account_token) — and which the row has to judge by the repository's
+# AUTH, because the same single token is a correct stage variant on an api-key
+# repository and the run's own credential on an oauth one. The fixture carries
+# the mount and NOT R12's FUGARO_STAGE_ACCOUNT_SERVED (config.StageAccountServedEnv):
+# that fact says whether the SERVICE selects the account and is planned from a
+# record of its own, so an installation without it plans a switched job exactly
+# like this one — a row that asked the job for the flag fails a repository that
+# is switched and correct, which is the same false failure the URL reading was.
 test_a_stage_accounts_own_token_is_not_a_reason_to_call_a_job_off_the_switch() {
   local dir=$work/switchstage
   prepare "$dir"
   run193 "$dir" FAKE_GCLOUD_MODE=stage-account
   expect_status "$status" 0 "the stage account: the verdict"
   expect_contains "$out" "FACT switch: PASS" "the stage account: the row"
-  expect_contains "$err" "acme/sandbox-oauth: 1 of 1 job(s) on the credentials-service switch" \
-    "the stage account: the job is on the switch despite the token it keeps"
+  expect_contains "$err" "acme/sandbox-api: 1 of 1 job(s) on the credentials-service switch" \
+    "the stage account: the api-key repository's job is on the switch despite the token it keeps"
+}
+
+# The same single mount on the OTHER auth, which is the reading that must not be
+# lost to the exception above: on an `oauth` repository the account's token IS
+# the run's model credential — the credential the flip exists to take off the
+# job — and no job of such a repository is a stage variant (mixedStageAccountJob
+# answers false for every auth but api-key), so the job is OFF the switch.
+test_an_oauth_jobs_token_is_the_mount_the_flip_takes_away() {
+  local dir=$work/switchoauthtoken
+  prepare "$dir"
+  run193 "$dir" FAKE_GCLOUD_MODE=mounted-account
+  expect_status "$status" 1 "an oauth token mount: the verdict"
+  expect_contains "$out" "FACT switch: FAIL" "an oauth token mount: the row"
+  expect_contains "$out" "on=no why=mounts:fugaro-acme-sandbox-oauth-claude-oauth-token-work-b83d639928880e02" \
+    "an oauth token mount: the job is off it, with the container its env is fed from"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "an oauth token mount: no run was launched"
 }
 
 # A get-iam-policy that did not answer is not a policy without the grant: the
@@ -1542,6 +1573,7 @@ t test_a_job_account_without_the_invoker_grant_is_off_the_switch
 t test_an_invoker_grant_to_another_account_is_not_this_jobs_grant
 t test_a_job_whose_template_carries_the_url_is_on_the_switch
 t test_a_stage_accounts_own_token_is_not_a_reason_to_call_a_job_off_the_switch
+t test_an_oauth_jobs_token_is_the_mount_the_flip_takes_away
 t test_an_iam_read_that_failed_leaves_the_switch_unmeasured
 t test_an_iam_answer_that_is_no_policy_leaves_the_switch_unmeasured
 t test_a_policy_that_could_not_be_read_leaves_the_switch_unmeasured

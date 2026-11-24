@@ -14171,8 +14171,12 @@ half that only the flip can show:
 - **The switch is really on**, for both repositories, read off what the apply **changes** and never off an
   address a per-repository job template never carries: `gcloud run jobs list` holds a job of each (matched
   by the job's own `FUGARO_REMOTE`), that job's container mounts **no model credential** (**D2072**,
-  **G17** — the one mount a switched job keeps is a mixed stage account's own token, which the job
-  declares with `FUGARO_STAGE_ACCOUNT_SERVED=1`), and that job's own account is a member of a
+  **G17** — the one mount a switched job keeps is a mixed stage account's own `CLAUDE_CODE_OAUTH_TOKEN`,
+  and only an `api-key` repository's jobs have one: the mix is `api-key`'s alone
+  (`mixedStageAccountJob`), so that exception is judged by the auth each repository's own
+  `creds/repoauth` record names, which the check reads **before** this row — and never by the job's own
+  `FUGARO_STAGE_ACCOUNT_SERVED`, which says whether the service *selects* that account and leaves the
+  mount in place either way), and that job's own account is a member of a
   `roles/run.invoker` binding on the `fugaro-credentials` service's own IAM policy
   (`gcloud run services get-iam-policy`, **D135**, `modules/workflow/sa.tf`) — the two facts a
   repository root applied with the switch on writes. `FUGARO_CREDENTIALS_SERVICE_URL` is **not** read

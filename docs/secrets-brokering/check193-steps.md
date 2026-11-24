@@ -68,13 +68,15 @@ deletes. Read those before you start. This file is the commands.
    ```
 
    What it would do, in order: check that this is the `fugaro-dev` installation and that `fugaro
-   version` is not a development build; read `gcloud run jobs list` for the two repositories' jobs and
-   `gcloud run services get-iam-policy fugaro-credentials` for the invoker half of the switch (the other
-   half being that no job of either still mounts a model credential); read `fugaro project policy show
-   --json` for the budget mode; read each repository's `creds/repoauth`
-   record out of the installation's own database; launch one throwaway run in each repository (each
-   writes one line to `CHK193.md`, commits it and opens a pull request) and poll `fugaro runs ls` for
-   its row; then read the service's own `credsvc: audit` lines for those two runs out of Cloud Logging.
+   version` is not a development build; read `gcloud run jobs list` for the two repositories' jobs;
+   read each repository's `creds/repoauth` record out of the installation's own database — the row that
+   assigns the two auths, and the `switch` row below is read against them, which is why the records are
+   read **first**; then read `gcloud run services get-iam-policy fugaro-credentials` for the invoker
+   half of the switch (the other half being that no job of either still mounts a model credential) and
+   `fugaro project policy show --json` for the budget mode; launch one throwaway run in each repository
+   (each writes one line to `CHK193.md`, commits it and opens a pull request) and poll `fugaro runs ls`
+   for its row; then read the service's own `credsvc: audit` lines for those two runs out of Cloud
+   Logging.
    Its cleanup would run nothing: this check creates no cloud resource and writes no record, so the only
    thing it makes is the scratch directory its own exit trap removes.
 
@@ -107,9 +109,14 @@ deletes. Read those before you start. This file is the commands.
 
 - **`switch`** — every job of both repositories is on the credentials-service switch, read per repository
   off what the apply **changes**: the job mounts **no model credential** (D2072/G17 — the one mount a
-  switched job keeps is a mixed stage account's own token, which the job declares with
-  `FUGARO_STAGE_ACCOUNT_SERVED=1`), and the job's own account is a member of the `roles/run.invoker`
-  binding on the `fugaro-credentials` service's own IAM policy (`gcloud run services get-iam-policy`,
+  switched job keeps is a mixed stage account's own `CLAUDE_CODE_OAUTH_TOKEN`, and only an **`api-key`
+  repository's** jobs have one — the mix is `api-key`'s alone, so the row judges that mount by the auth
+  the repository's own record names, which is why the `record` row is read first, and never by the job's
+  `FUGARO_STAGE_ACCOUNT_SERVED`, which says whether the service *selects* that account and leaves the
+  mount in place either way; the same single token on an `oauth` repository's job is the run's own
+  credential, the one the flip takes away, and is a FAIL), and the job's own account is a member of the
+  `roles/run.invoker` binding on the `fugaro-credentials` service's own IAM policy
+  (`gcloud run services get-iam-policy`,
   D135). And the published budget mode is not `off` (D2071: the mode is read at `fugaro update`, and a
   switched repository whose mode is off has nothing to be served from). **Not**
   `FUGARO_CREDENTIALS_SERVICE_URL`: no per-repository job template carries it — the launcher writes the

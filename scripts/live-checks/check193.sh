@@ -368,25 +368,35 @@ jobs   argv: `gcloud run jobs list --format=json`'s file, a repository. Prints
        spec.template.spec.template.spec) — the model containers its env is fed
        from, the model env names it carries, whether the URL is in its env, and
        the ACCOUNT its containers run as.
-switch argv: the same job list's file, a repository, and the credentials
+switch argv: the same job list's file, a repository, the credentials
        service's own `gcloud run services get-iam-policy --format=json`
-       document. Prints `found=yes` when that document is a policy at all, one
+       document, and the auth that repository's own record names
+       (`api-key`, `oauth` or `cascade`; the record row reads it). Prints
+       `found=yes` when that document is a policy at all, one
        `job=<name> on=<yes|no> why=<word> account=<email>` line per job of the
        repository — the per-repository credentials-service switch, read off the
-       job TEMPLATE and the service's IAM policy (there is no URL on a
-       per-repository job: see `job` above) — and the totals `jobs=`, `on=`,
+       job TEMPLATE, the service's IAM policy and that auth (there is no URL on
+       a per-repository job: see `job` above) — and the totals `jobs=`, `on=`,
        `off=`. `on=yes` requires BOTH that the job no longer holds the model
        credential the service serves for this repository's auth (mounts_of and
-       model_envs_of both empty, the mixed stage account's own token being the
-       one mount that stays — D2072's is_stage_account_token) and that the job's
-       account is a member of a roles/run.invoker binding on that service
-       (modules/workflow/sa.tf's google_cloud_run_v2_service_iam_member
-       .credentials, planned exactly when the repository root's
-       credentials_service is non-null — the same switch
+       model_envs_of both empty, D2072) and that the job's account is a member
+       of a roles/run.invoker binding on that service (modules/workflow/sa.tf's
+       google_cloud_run_v2_service_iam_member.credentials, planned exactly when
+       the repository root's credentials_service is non-null — the same switch
        infra.CredentialsServiceServes answers the launcher with, which is what
-       puts the address on each run's execution). A job whose template carries
-       the URL is `on=yes why=url` on that alone: that is the shared project
-       job's shape, where the address is baked.
+       puts the address on each run's execution).
+       The ONE model mount a switched job keeps is a mixed stage account's own
+       CLAUDE_CODE_OAUTH_TOKEN (dropModelMounts' anthropic arm,
+       config.IsServiceHeldModelEnv): the mix is `api-key`'s alone
+       (mixedStageAccountJob), so a job of an API-KEY repository whose only
+       model mount is the account's token is that variant and is `on=yes
+       why=stage-account`, while the same mount on an `oauth` repository is the
+       credential the flip takes away and is `on=no`. R12's
+       FUGARO_STAGE_ACCOUNT_SERVED is NOT read: it says whether the service
+       SELECTS the stage's account, and the mount stays whether it is set or
+       not.
+       A job whose template carries the URL is `on=yes why=url` on that alone:
+       that is the shared project job's shape, where the address is baked.
 slug   argv: the same job list's file, a repository. Prints the key that
        repository's creds/repoauth record is written under, which is the
        `fugaro_repo` label of its own jobs — the repository's SLUG
@@ -417,14 +427,13 @@ MODEL_SECRETS = ("anthropic-api-key", "claude-oauth-token")
 SECRET_HASH_RE = re.compile(r"-[0-9a-f]{16}$")
 
 # The credentials service's URL, the role its IAM policy grants a job's account
-# (modules/workflow/sa.tf), and R12's second fact — the one the job carries when
-# the release decided the service SELECTS the stage's account, which is also the
-# one arm in which a switched job keeps a model mount at all
-# (config.IsServiceHeldModelEnv's anthropic arm).
+# (modules/workflow/sa.tf), and the one auth whose repository may build a mixed
+# stage account's own job — which is the one arm in which a switched job keeps a
+# model mount at all (config.IsServiceHeldModelEnv's anthropic arm,
+# mixedStageAccountJob).
 SERVICE_URL_ENV = "FUGARO_CREDENTIALS_SERVICE_URL"
 INVOKER_ROLE = "roles/run.invoker"
-STAGE_ACCOUNT_ENV = "FUGARO_STAGE_ACCOUNT_SERVED"
-SERVED_VALUE = "1"
+API_KEY_AUTH = "api-key"
 
 
 def word(v, cap=80):
@@ -495,18 +504,6 @@ def invoker_emails(doc):
         for m in b.get("members") or []:
             out.add(bare_member(m))
     return out
-
-
-def served(containers, name):
-    """Whether the job carries the served-fact variable with the value the
-    module writes (config.ServedValue): an absent entry and one carrying another
-    value are both "not served" (internal/infra plans a false fact as no entry
-    at all)."""
-    for c in containers:
-        e = env(c).get(name) or {}
-        if (e.get("value") or "") == SERVED_VALUE:
-            return True
-    return False
 
 
 def account_of(doc):
@@ -814,9 +811,11 @@ elif cmd == "jobs":
     print("urls=%s" % urls)
 elif cmd == "switch":
     # argv: the job list's file, a repository, the service's IAM policy
-    # document. The per-repository switch, read off each job's own TEMPLATE and
-    # the service's own policy (see the docstring's `switch`).
+    # document, and the auth that repository's own record names. The
+    # per-repository switch, read off each job's own TEMPLATE, the service's own
+    # policy and that auth (see the docstring's `switch`).
     doc = load(sys.argv[4])
+    auth = sys.argv[5] if len(sys.argv) > 5 else ""
     if not isinstance(doc, dict):
         print("found=no")
     else:
@@ -829,12 +828,18 @@ elif cmd == "switch":
             envs = model_envs_of(containers)
             # D2072's is_stage_account_token: the one mount that STAYS on a
             # switched job is a mixed stage account's own Claude token, which is
-            # the stage's credential and not the run's — and the job says so by
-            # carrying R12's second fact (config.StageAccountServedEnv), so the
-            # exception is read and never guessed. Every other model container
-            # or variable is a credential the service serves this repository's
-            # auth, and a job that still holds one is not switched.
-            stage_only = (served(containers, STAGE_ACCOUNT_ENV)
+            # the stage's credential and not the run's. The mix is `api-key`'s
+            # alone (mixedStageAccountJob reads the repository's auth and
+            # answers false for every other: under `oauth` the key keeps the
+            # meaning the accounts design gives it, and the account's token is
+            # the run's own, served like every other), so the auth is what
+            # decides it — the mount alone cannot, because the same single token
+            # is a correct stage variant on an `api-key` repository and the
+            # credential the flip takes away on an `oauth` one. R12's
+            # FUGARO_STAGE_ACCOUNT_SERVED is deliberately not read: it is
+            # whether the SERVICE selects that account, which is a different
+            # fact, and the mount stays whether it is set or not.
+            stage_only = (auth == API_KEY_AUTH
                           and envs == ["CLAUDE_CODE_OAUTH_TOKEN"]
                           and all("claude-oauth-token" in m for m in mounts))
             if any(SERVICE_URL_ENV in env(c) for c in containers):
@@ -1164,6 +1169,28 @@ auth_record() { # auth_record SLUG OUT
 }
 
 # ------------------------------------------------------------------ the steps
+# step_jobs: the installation's own job list, which the record row and the
+# switch row both stand on — the record row reads the slug each repository's jobs
+# carry (record_key) and the switch row reads the jobs themselves. It is a step
+# of its own, and the first of the two, because the switch now needs the auth the
+# record row assigns (step_switch below).
+step_jobs() {
+  gcloud run jobs list --project="$P" --region="$L" --format=json >"$SCRATCH/jobs.json" 2>"$SCRATCH/jobs.err" || {
+    fact switch FAIL "gcloud run jobs list exited non-zero: $(last_lines "$SCRATCH/jobs.err"). Nothing about the switch is settled by it"
+    SWITCH_STOP=yes
+  }
+}
+
+# repo_auth REPO: the auth that repository's own record names, as the record row
+# left it. This reads the row's own answer and never decides one: a repository
+# the record row could not assign has no auth here, and the switch row is what
+# says so.
+repo_auth() { # repo_auth REPO
+  if [ "$1" = "$API_REPO" ]; then printf 'api-key'
+  elif [ "$1" = "$OAUTH_REPO" ]; then printf 'oauth'
+  fi
+}
+
 # step_switch: each of the two repositories is ON the credentials-service
 # switch, and the block reads that with D2071's third leg (B2.3): the published
 # budget mode is one the gateway exists in — `observe` or `enforce` (off is not
@@ -1184,9 +1211,8 @@ auth_record() { # auth_record SLUG OUT
 #
 #   * the model credential is GONE from the job (dropModelMounts, D2072/G17) —
 #     the one exception being a mixed stage account's own CLAUDE_CODE_OAUTH_TOKEN,
-#     which is the STAGE's credential and not the run's and which the job
-#     declares by carrying FUGARO_STAGE_ACCOUNT_SERVED=1 (R12, F44,
-#     config.IsServiceHeldModelEnv's anthropic arm);
+#     which is the STAGE's credential and not the run's (config.IsServiceHeldModelEnv's
+#     anthropic arm);
 #   * the job's own account holds roles/run.invoker on the credentials service
 #     (modules/workflow/sa.tf's google_cloud_run_v2_service_iam_member
 #     .credentials), read off the service's own IAM policy — planned exactly
@@ -1195,17 +1221,29 @@ auth_record() { # auth_record SLUG OUT
 #     the address on the execution. The reader answers this per job; a
 #     repository is on the switch when EVERY job of it is.
 #
+# That exception is judged by the repository's AUTH and never by a flag on the
+# job: the mix is `api-key`'s alone (mixedStageAccountJob reads cfg.Agent.Auth
+# and answers false for every other repository, so under `oauth` an account's
+# token is the run's own credential and the flip takes it away) — and R12's
+# FUGARO_STAGE_ACCOUNT_SERVED says something else again, whether the SERVICE
+# selects the stage's account, which is planned from a record of its own
+# (local.StageAccountServedOn, spec.go) and leaves the mount in place whether it
+# is set or not. So THIS ROW NEEDS THE RECORDS: the auth is what the record row
+# reads (step_records, which runs first), and a switch judged before it would
+# call a correct stage variant off the switch — the same false failure this
+# reading exists to remove, one shape further in.
+#
 # The URL reading stays where the address really is baked: a SHARED project job
 # (internal/infra's projectJobEnv) carries it in its template, and the reader
 # counts such a job as switched on the URL alone. A per-repository job never
 # does, so nothing below requires it.
 step_switch() {
   local listed=$SCRATCH/jobs.json got n
-  gcloud run jobs list --project="$P" --region="$L" --format=json >"$listed" 2>"$SCRATCH/jobs.err" || {
-    fact switch FAIL "gcloud run jobs list exited non-zero: $(last_lines "$SCRATCH/jobs.err"). Nothing about the switch is settled by it"
+  if [ -z "$API_REPO" ] || [ -z "$OAUTH_REPO" ]; then
+    unmeasured switch "this row is read per repository off its jobs' template, ${SVC}'s own IAM policy AND the auth that repository's record names (creds/repoauth/<slug>, the record row): the one model mount a switched job keeps is a mixed stage account's own Claude token, and only an api-key repository's jobs have one (mixedStageAccountJob), so a job still mounting a token cannot be judged without the auth. The records were not assigned (see the record row) and neither run is launched on this row"
     SWITCH_STOP=yes
     return 0
-  }
+  fi
   # The service's own IAM policy: the invoker grant is the per-repository half
   # the template cannot show, and a read that did not answer is not a policy
   # without the grant — it is this row unmeasured, because a repository called
@@ -1219,7 +1257,7 @@ step_switch() {
   fi
   local repo off
   for repo in "$REPO_ONE" "$REPO_TWO"; do
-    got=$(reader switch "$listed" "$repo" "$iam")
+    got=$(reader switch "$listed" "$repo" "$iam" "$(repo_auth "$repo")")
     if [ "$(field_of found "$got")" != yes ]; then
       unmeasured switch "the credentials service's own IAM policy came back as no policy at all, so the invoker grant half of the switch is not read: read it yourself ('gcloud run services get-iam-policy ${SVC} --project=${P} --region=${L}') and run this check again"
       SWITCH_STOP=yes
@@ -1727,14 +1765,13 @@ step_inflight() {
 
 # ---------------------------------------------------------------------- 193
 run_193() {
-  step_switch
-  # A switch that is off, unread, or on an installation whose budget mode is not
-  # one the gateway exists in is a state this check cannot read a served run out
-  # of, and each run it launches commits to a sandbox repository and opens a
-  # pull request: the rows
-  # below read `not reached` rather than costing two of them.
-  [ -z "$SWITCH_STOP" ] || return 0
+  # The job list, then the records, then the switch: the switch reads each
+  # repository's jobs out of the list and judges the one mount a switched job
+  # keeps by the auth the record names (step_switch), so it is the LAST of the
+  # three reads and not the first.
+  step_jobs
   step_records
+  step_switch
   if [ -z "$API_REPO" ] || [ -z "$OAUTH_REPO" ]; then
     unmeasured served-api-key "the two repositories could not be assigned to their auths (see the record row), so no run was launched"
     unmeasured served-oauth "the two repositories could not be assigned to their auths (see the record row), so no run was launched"
@@ -1742,6 +1779,12 @@ run_193() {
     unmeasured proxy "the two repositories could not be assigned to their auths (see the record row), so no run was launched"
     return 0
   fi
+  # A switch that is off, unread, or on an installation whose budget mode is not
+  # one the gateway exists in is a state this check cannot read a served run out
+  # of, and each run it launches commits to a sandbox repository and opens a
+  # pull request: the rows below read `not reached` rather than costing two of
+  # them.
+  [ -z "$SWITCH_STOP" ] || return 0
   step_run "$API_REPO" api-key one served-api-key
   step_run "$OAUTH_REPO" oauth two served-oauth
   step_declared_account
@@ -1750,8 +1793,9 @@ run_193() {
 
 # ---------------------------------------------------------------------- 193 after the flip
 run_193_flip() {
-  step_switch
+  step_jobs
   step_records
+  step_switch
   step_mounts
   step_inflight "$INFLIGHT"
   if [ -z "$API_REPO" ] || [ -z "$OAUTH_REPO" ]; then
@@ -1773,9 +1817,9 @@ run_193_flip() {
 print_plan() {
   say "dry run: NOTHING below was run, and no tool was called at all — not gcloud, not fugaro, not curl. A real run would first check that this is the fugaro-dev installation (fugaro doctor --project fugaro --all, and that fugaro version is not a development build), then read the installation's Realtime Database URL out of the local config, then:"
   say "  [network] gcloud run jobs list --project=${P} --region=${L} --format=json  (each repository's own jobs, matched by their FUGARO_REMOTE: the account each runs as, and that no job mounts a model credential — a per-repository job template carries no FUGARO_CREDENTIALS_SERVICE_URL: the launcher writes that on each run's execution)"
+  say "  [network, read only] gcloud auth print-access-token, then GET ${RTDB:-<budget.rtdb_url>}/creds/repoauth/<slug>.json for each repository — the slug being the repository's own task slug ('<readable>-<16 hex>'), which the check reads off its jobs' 'fugaro_repo' label and never spells out of the repository's name — the record 'fugaro update --repo' writes; READ, never written, the check narrows no record. It is read first, because the switch row judges the one model mount a switched job keeps by the auth that record names"
   say "  [network] gcloud run services get-iam-policy ${SVC} --project=${P} --region=${L} --format=json  (who may invoke the credentials service: each job account's roles/run.invoker is the other half of the per-repository switch, D135)"
   say "  [network] fugaro project policy show --project fugaro --json  (the budget mode must be one the gateway exists in, observe or enforce, D2071)"
-  say "  [network, read only] gcloud auth print-access-token, then GET ${RTDB:-<budget.rtdb_url>}/creds/repoauth/<slug>.json for each repository — the slug being the repository's own task slug ('<readable>-<16 hex>'), which the check reads off its jobs' 'fugaro_repo' label and never spells out of the repository's name — the record 'fugaro update --repo' writes; READ, never written, the check narrows no record"
   if [ "$MODE" = flip ]; then
     say "  [network] gcloud run jobs list … (each job's container: no ANTHROPIC_API_KEY, no CLAUDE_CODE_OAUTH_TOKEN, no env fed from anthropic-api-key or claude-oauth-token*)"
     say "  [network] fugaro runs ls --repo <the repository of CHECK193_INFLIGHT> --no-cache --json  (that run's row: terminal, succeeded, started before the job's own updateTime, and the execution it names)"
