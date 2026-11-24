@@ -52,9 +52,9 @@ export const GAUGE_STATES = Object.freeze({
 
 /**
  * Why a gauge has no figure. One value today, from Z0's capability list: the
- * only reporter is `/context`, which the app cannot read without spending a
- * turn, no screen or status line carries a figure, and whether a hook receives
- * one is UNVERIFIED -- so no source is wired and there is nothing to draw.
+ * only thing that reports a fullness is `/context`, no screen or status line
+ * carries a figure, and whether a hook receives one is UNVERIFIED -- so no
+ * source is wired and there is nothing to draw.
  */
 export const GAUGE_REASONS = Object.freeze({
   NOT_REPORTED: 'not-reported',
