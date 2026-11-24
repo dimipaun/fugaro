@@ -538,10 +538,10 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 		r.warn("budget.mode is off in the project config, so jobs don't use the backend yet: fugaro update --firebase-project " + fp + " --budget-mode observe turns it on (then fugaro update --repo for each repository)")
 	}
 	// D3027: the budget database and the local config that records it are
-	// written, and only now is the run history reached. A location left for a
-	// person therefore holds back the Firestore database and nothing else: the
-	// installation has its budget database, this machine records it, and what
-	// waits is the database the history job writes into.
+	// written, and only now is the run history reached. Nothing here waits on
+	// a person: deployFirestore prints the line saying where the database goes
+	// and creates it there with nothing asked, in every session this stage may
+	// run in (D3090).
 	return r.deployFirestore(ctx, fsStep)
 }
 
