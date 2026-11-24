@@ -139,7 +139,7 @@ func (s *computeStage) updateSkip(ctx context.Context) (string, error) {
 		// be read and one that is not on the roster are the same fact for a
 		// person reading this line -- the root is not theirs to apply -- and
 		// neither is a reason to stop the update (R2).
-		return "skipped: only an operator applies the compute root, and this machine's credential is not one; ask an operator to run fugaro update", nil
+		return "skipped: only an operator applies the compute root, and this machine's credential is not one", nil
 	}
 	if err := s.prepare(ctx); err != nil {
 		return "", err
