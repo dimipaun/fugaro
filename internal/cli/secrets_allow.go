@@ -199,21 +199,27 @@ func secretsPolicyWriteRecord(cmd *cobra.Command, lc *localcfg.Config, name stri
 // secretsPolicyWriteAllRepos moves the record's own all_repos member for the
 // name and writes nothing to the local block, which has no spelling for a
 // wildcard owner (O2). A `deny` emptied list is left alone: the switch and the
-// list are two reaches, and turning one off says nothing about the other.
+// list are two reaches, and turning one off says nothing about the other — so
+// the line it prints is read back out of the record the write left, not built
+// from the switch that was passed: `--all-repos=false` on a name whose entry
+// still lists repositories leaves those repositories admitted, and a line
+// saying "no repository" would be a reach the record does not hold.
 func secretsPolicyWriteAllRepos(cmd *cobra.Command, lc *localcfg.Config, name string, on bool) error {
 	db, err := secretsPolicyRecordDB(cmd, lc)
 	if err != nil {
 		return err
 	}
+	var after creds.ProjectSecretRule
 	err = creds.WriteProjectSecrets(cmd.Context(), db, func(cur creds.ProjectSecrets, _ bool) (creds.ProjectSecrets, error) {
 		rule, _ := cur.Rule(name)
 		rule.AllRepos = on
+		after = rule
 		return cur.WithRule(name, rule), nil
 	})
 	if err != nil {
 		return dbErr(lc, err, true)
 	}
-	fmt.Fprintln(cmd.OutOrStdout(), secretsPolicyRecordLine(name, nil, on))
+	fmt.Fprintln(cmd.OutOrStdout(), secretsPolicyRecordLine(name, after.Repos, after.AllRepos))
 	return nil
 }
 

@@ -142,14 +142,41 @@ func TestSecretsAllowAllReposRecordOnly(t *testing.T) {
 		t.Errorf("no line names the record the run wrote:\n%s%s", out, errOut)
 	}
 
-	// --all-repos=false takes the reach away again, and it too writes nothing
-	// local: the switch is the record's own member, not the block's.
-	if _, _, err := execute(t, "secrets", "allow", "deploy-token", "--all-repos=false"); err != nil {
+	// A list write is the record's other reach, and it is the one --all-repos
+	// leaves alone: the switch and the list are two members of one entry. So
+	// this leg writes a pattern first, which the local block keeps, and reads
+	// the two back.
+	if _, _, err := execute(t, "secrets", "allow", "deploy-token", "acme/web"); err != nil {
+		t.Fatalf("secrets allow deploy-token acme/web: %v", err)
+	}
+	before = readFileString(t, path)
+
+	// --all-repos=false takes the switch away and not the list, and it too
+	// writes nothing local: the switch is the record's own member, not the
+	// block's. The line it prints is the reach the record is left with — the
+	// entry's repositories are still there and still admitted by Allows, so a
+	// line naming none of them would be a reach no reader of the record would
+	// find.
+	out, errOut, err = execute(t, "secrets", "allow", "deploy-token", "--all-repos=false")
+	if err != nil {
 		t.Fatalf("secrets allow deploy-token --all-repos=false: %v", err)
 	}
 	rec, _ = projectSecretsOf(t, db)
-	if rule, _ := rec.Rule("deploy-token"); rule.AllRepos {
+	rule, _ = rec.Rule("deploy-token")
+	if rule.AllRepos {
 		t.Errorf("--all-repos=false left the switch on: %+v", rule)
+	}
+	if !slices.Equal(rule.Repos, []string{"acme/app", "acme/web"}) {
+		t.Errorf("the record's deploy-token = %v, want the list the write before it left", rule.Repos)
+	}
+	if !rec.Allows("deploy-token", "acme/app") {
+		t.Error("the record admits no repository after --all-repos=false, and its list names two")
+	}
+	if !strings.Contains(out+errOut, "acme/app, acme/web") {
+		t.Errorf("the line the write ends on does not name the repositories the record still admits:\n%s%s", out, errOut)
+	}
+	if strings.Contains(out+errOut, "no repository") {
+		t.Errorf("the line says the name reaches no repository, and the record admits two:\n%s%s", out, errOut)
 	}
 	if after := readFileString(t, path); after != before {
 		t.Fatalf("--all-repos=false wrote the local block:\n%s", after)
@@ -274,6 +301,70 @@ func TestSecretsAllowRefusedInAgentSession(t *testing.T) {
 				t.Errorf("the session wrote the record: %v", v)
 			}
 		})
+	}
+}
+
+// TestSecretsAllowAllReposRefusedInAgentSession: `--all-repos` is the reach
+// that admits every repository of the project, so it meets the family's fence
+// on its own path too (D1552) — the branch returns before the local file is
+// read, so a session leaves the file AND the record untouched, and the refusal
+// prints the command to run at a terminal. The switch is the record's own
+// member, so the command is the one that writes it, not the local key a
+// pattern write names.
+func TestSecretsAllowAllReposRefusedInAgentSession(t *testing.T) {
+	path, db := secretsWorkflowRecordFixture(t)
+	noTerminal(t)
+	before := readFileString(t, path)
+	t.Setenv(accountsAddAgent, "1")
+
+	_, _, err := execute(t, "secrets", "allow", "deploy-token", "--all-repos")
+	if err == nil {
+		t.Fatal("--all-repos widened the record in a coding agent's session")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+	}
+	for _, want := range []string{accountsAddAgent, creds.PathProjectSecrets(), "secrets allow deploy-token --all-repos=true", "nothing was written"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not carry %q:\n%v", want, err)
+		}
+	}
+	if after := readFileString(t, path); after != before {
+		t.Errorf("the session changed the local block:\n%s", after)
+	}
+	if v := db.Value(creds.PathProjectSecrets()); v != nil {
+		t.Errorf("the session wrote the record: %v", v)
+	}
+}
+
+// TestSecretsAllowAllReposRefusesAPatternBesideIt: `--all-repos` admits every
+// repository of the project and a PATTERN names one, so the two are two edits
+// and the run is refused before either is made. The refusal matters: read as
+// one run, a PATTERN beside the switch would be dropped, and the operator would
+// be told their repository was admitted while the record's whole-project member
+// was the only thing written.
+func TestSecretsAllowAllReposRefusesAPatternBesideIt(t *testing.T) {
+	path, db := secretsWorkflowRecordFixture(t)
+	noTerminal(t)
+	before := readFileString(t, path)
+
+	for _, args := range [][]string{
+		{"secrets", "allow", "deploy-token", "acme/web", "--all-repos"},
+		{"secrets", "allow", "deploy-token", "--all-repos", "--proxy"},
+	} {
+		_, _, err := execute(t, args...)
+		if err == nil {
+			t.Fatalf("%v was accepted: two edits of one entry were made in one run", args)
+		}
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("%v: exit %d, want a user error: %v", args, ExitCode(err), err)
+		}
+		if after := readFileString(t, path); after != before {
+			t.Errorf("%v changed the local block:\n%s", args, after)
+		}
+		if v := db.Value(creds.PathProjectSecrets()); v != nil {
+			t.Errorf("%v wrote the record: %v", args, v)
+		}
 	}
 }
 

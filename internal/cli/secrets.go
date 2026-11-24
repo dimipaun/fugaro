@@ -1230,19 +1230,6 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 		return userErr("%s", problems[0].Message)
 	}
 
-	// The record, for a workflow secret: the list the credentials service
-	// admits a version-2 fetch by, written beside the local block the same run
-	// writes (IS3, D3328). Nothing is written to the record until the bytes the
-	// file would hold have passed the block's own rules, so a pattern the local
-	// block refuses leaves both halves untouched. The project block has no
-	// record entry — the record names workflow secrets — and a dry run writes
-	// neither half.
-	if block == secretsBlockWorkflow && !o.dryRun {
-		if err := secretsPolicyWriteRecord(cmd, lc, name, secretsPolicyEntryOf(after, block, name).AllowDataTo); err != nil {
-			return err
-		}
-	}
-
 	typed, why := secretsPolicyTyped(o, block, name, proxy)
 	what := secretsPolicyWhat(o, block, name, secretsPolicyEntryOf(after, block, name), proxy)
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
@@ -1259,6 +1246,22 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 	}); err != nil {
 		return err
 	}
+
+	// The record, for a workflow secret: the list the credentials service
+	// admits a version-2 fetch by, written beside the local block the same run
+	// writes (IS3, D3328). It comes after the file's own compare-and-swap, not
+	// before it: the record is the authority the service enforces, and a run
+	// that lost the file's race — refused with `changed since it was read:
+	// nothing was written` — must not have widened the record on its way there.
+	// The list written is the one the file now holds, so the two halves cannot
+	// come to say different things. The project block has no record entry — the
+	// record names workflow secrets — and a dry run writes neither half.
+	if block == secretsBlockWorkflow && !o.dryRun {
+		if err := secretsPolicyWriteRecord(cmd, lc, name, secretsPolicyEntryOf(after, block, name).AllowDataTo); err != nil {
+			return err
+		}
+	}
+
 	// `secrets allow` and `secrets deny` end on the one line every settings
 	// write ends on, and only when the write happened: a run that named a
 	// pattern the entry already holds, or one it does not hold, is the "no
