@@ -6726,12 +6726,6 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		return res, remote(fmt.Errorf("launching %s: the outcome is unknown (%w); don't relaunch before %s: fugaro run --retry %s launches the task only if it never started, and refuses with nothing launched, naming the run's pull request, if it did",
 			res.Run, err, now.Add(claimTTL).UTC().Format(time.RFC3339), res.Run))
 	}
-	// The pull-request index entry of a `--pr` launch, written here: the run
-	// really exists from the line above, and a follow-up started on a job
-	// image older than the index writes none of its own (followup.go's
-	// writePRIndex). The runner's own write of the same run is a no-op
-	// against this one, whichever lands first.
-	writePRIndex(ctx, env, slug, spec, now, launchWarn)
 	// The backend the launch actually used, from the seam, as above: the
 	// launch succeeded on env.be, so env.be's codec is what names it.
 	l := &runstore.Launch{Version: 1, RunID: spec.RunID, Backend: launchBackend(env.be), Execution: ref.Name, Job: ref.Job, LogURL: ref.LogURL, LaunchedBy: spec.RequestedBy, PlanTask: spec.PlanTask, LaunchedAt: now.UTC()}
