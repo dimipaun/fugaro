@@ -448,32 +448,42 @@ func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
 	// inside rigor.Resolve, and a repository's own file and a run's own --mode
 	// are not things this layer may be compared against (D21's precedence).
 	//
-	// The area form carries the two baselines that resolution cannot see: the
-	// mode of the rule the edit addresses, for a glob that does not match its own
-	// literal text (rigorRuleLowered), and the level the write's own repository
-	// resolves to, for a rule it does not carry yet (rigorRuleIsNew).
+	// A write that names a repository is read against what that repository
+	// resolves to today instead (rigorRepoTargets): its two forms state a level
+	// at a rank the resolution over the flags' own inputs never reaches, because
+	// the map's entry replaces a project-wide area for the whole repository and a
+	// member promotes the whole rule above that entry, while a wide area matches
+	// by path — and the map form names no path at all, the member form's glob
+	// need not name the area's own, and a glob need not match its own literal
+	// text. The level the write leaves for the paths it names is the mode itself,
+	// whatever that resolution says.
+	//
+	// The project-wide area form carries the two baselines the resolution cannot
+	// see: the mode of the rule the edit addresses, for a glob that does not match
+	// its own literal text (rigorRuleLowered), and the level a rule the layer does
+	// not carry yet falls back to (rigorRuleIsNew).
 	baseline := rigorResolve(prev.block, repo, o.area)
 	after := rigorResolve(edited.block, repo, o.area)
+	if repo != "" {
+		baseline, after = rigorRepoTargets(prev.block, repo), mode
+	}
 	typed, lowered, why := false, "", ""
 	switch {
 	case after.Rank() < baseline.Rank():
 		typed = true
 		lowered = fmt.Sprintf("%s from %s to %s", rigorModeSubject(repo), baseline, after)
 	case o.area != "" && rigorRuleIsNew(prev.block.areas, o) && mode.Rank() < baseline.Rank():
-		// A rule the layer does not carry yet is the one lowering the two cases
-		// around this one cannot see. Where the new rule is added to one rank
-		// beside whatever already matches — the project-wide form, and the member
-		// form for a rule the layer carries — adding it never lowers a resolution,
-		// since the strictest of the rank's rules decides: with the layer's default
-		// at `critical`, `--area docs/** poc` is a real lowering that neither the
-		// resolution above nor the rule's own mode (there is no rule yet) reports.
-		// A MEMBER rule is the exception, and it is read at the rank that replaces
-		// the project's entry for the repository (D3294): a new member below that
-		// entry lowers this repository's paths even where the project's own default
-		// is below the mode written, which is why the baseline here is what THIS
-		// repository resolves to and not the layer's default. The baseline is the
-		// level those paths fall back to today, so a new rule a stricter existing
-		// rule already covers is flagged too, and no real lowering is missed.
+		// A rule the layer does not carry yet is the one lowering the case above
+		// cannot see where the write names no repository. A rule added to the
+		// project's own rank beside whatever already matches never lowers a
+		// resolution by itself — the strictest of the rank's rules decides — so
+		// the lowering is the mode against what those paths fall back to today:
+		// with the layer's default at `critical`, `--area docs/** poc` is a real
+		// lowering that neither the resolution above nor the rule's own mode
+		// (there is no rule yet) reports. The safe direction is to read a new
+		// rule a stricter existing rule already covers as a lowering too: a
+		// sentence too many, and no real lowering missed. The member form is read
+		// by the case above, whose baseline is what the repository resolves to.
 		typed = true
 		lowered = fmt.Sprintf("the new rule %s, which sets %s where %s resolves to %s today", safetext.Field(o.area), mode, rigorWhere(repo), baseline)
 	case o.area != "" && rigorRuleLowered(prev.block.areas, o, mode):
@@ -693,6 +703,57 @@ func rigorResolve(block rigorBlock, repo, glob string) rigor.Rigor {
 		ProjectAreas: block.areas,
 		ProjectRepos: block.repos,
 	}, req).Level
+}
+
+// rigorRepoTargets is what the repository the flags name resolves to today for
+// the ranks a write of one of its own keys replaces (D3294): the project layer's
+// entry for it (rank 4) where the layer carries one — the rank the map form
+// states and the one a promoted member is read over — and otherwise the
+// strictest of the layer's own default (rank 2) and its project-wide areas
+// (rank 3, a rule carrying a match, in effect for every repository of the
+// project). A rule that names this repository in a member is not among them: it
+// is read above both ranks, so neither form moves the paths such a rule answers
+// for.
+//
+// The answer is an envelope rather than one path's level: a write naming a
+// repository does not know which paths of it the runs touch, and a project-wide
+// area matches by path, so where the layer carries no entry for the repository
+// the strictest of the wide areas is read whatever the write's own glob names —
+// the map form carries none at all, and a member's glob need not name the area's
+// own. That is the safe direction: no level a path of the repository really
+// falls to today is above this answer, so no real lowering is missed, and the
+// price is a sentence at the owner's terminal, or a refusal in a session, for a
+// write whose every path a stricter rule already covers.
+func rigorRepoTargets(block rigorBlock, repo string) rigor.Rigor {
+	if lvl, ok := block.repos[repo]; ok && rigor.Known(lvl) {
+		return lvl
+	}
+	def := block.def
+	if !rigor.Known(def) {
+		def = rigor.Default
+	}
+	levels := []rigor.Rigor{def}
+	for _, a := range block.areas {
+		if a.Match == "" || rigorAreaNamesRepo(a, repo) {
+			continue
+		}
+		levels = append(levels, a.Level)
+	}
+	return rigor.Strictest(levels...)
+}
+
+// rigorAreaNamesRepo is rigor.namesRepo read from here (D3294): whether a rule
+// lists this repository in one of its members, whatever paths of it the member
+// names. It is a property of the rule, and it is what tells a project-wide area
+// — a rule in effect for every repository through its match — from a rule that
+// answers for a named part of this one.
+func rigorAreaNamesRepo(a rigor.Area, repo string) bool {
+	for _, m := range a.Members {
+		if m.Repo == repo {
+			return true
+		}
+	}
+	return false
 }
 
 // rigorModeSubject names the mode a widening write drops, for the sentence the

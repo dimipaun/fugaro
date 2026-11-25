@@ -285,6 +285,88 @@ func TestRigorSetMemberFormFence(t *testing.T) {
 	}
 }
 
+// TestRigorSetRepoFormFenceReadsTheRanksItReplaces pins the two lowerings the
+// forms that name a repository make and a resolution over their own inputs
+// cannot see (D3294): the map form's entry is read at the rank that REPLACES a
+// project-wide area for the whole repository, whatever paths of it the runs
+// touch, and adding a member to a rule that carries a match promotes the whole
+// rule above the project's entry for it, replacing that entry for the paths the
+// member names. Each world below is built so that a run of that repository
+// resolves through exactly the rank the write replaces — and so that the
+// resolution over the glob as a PATH reads no change at all, a wide area
+// matching no literal glob. A coding agent's session may make neither lowering,
+// and the owner's own terminal makes it and says which level it lowers (D832,
+// D1180).
+func TestRigorSetRepoFormFenceReadsTheRanksItReplaces(t *testing.T) {
+	settingsWriteHome(t)
+	noTerminal(t)
+
+	for _, tc := range []struct {
+		what  string
+		block string
+		args  []string
+		check func(t *testing.T, path string)
+	}{
+		{
+			// owner/repo-a resolves through the wide area alone: src/** at
+			// critical, every other path at the layer's own default, which the
+			// entry replaces for the whole repository at once.
+			"the map's entry over a project-wide area",
+			"defaults:\n  rigor:\n    default: poc\n    areas:\n      - name: src\n        match: src/**\n        level: critical\n",
+			[]string{"rigor", "set", "poc", "--repo", "owner/repo-a"},
+			func(t *testing.T, path string) {
+				t.Helper()
+				if got := rigorLayerRigor(t, path).Repos["owner/repo-a"]; got != rigor.POC {
+					t.Errorf("the entry reads %q, want %q:\n%s", got, rigor.POC, readFileString(t, path))
+				}
+			},
+		},
+		{
+			// The rule answers for every repository through its match today, at
+			// startup, and the map holds owner/repo-a at critical: naming that
+			// repository in the member reads the rule above the entry, so the
+			// paths the member lists fall to the rule's own level.
+			"a member added to a rule carrying a match",
+			"defaults:\n  rigor:\n    default: poc\n    repos:\n      owner/repo-a: critical\n    areas:\n      - name: src\n        match: src/**\n        level: startup\n",
+			[]string{"rigor", "set", "startup", "--area", "docs/{a,b}/**", "--name", "src", "--repo", "owner/repo-a"},
+			func(t *testing.T, path string) {
+				t.Helper()
+				rule := rigorLayerRule(t, path, "src")
+				if rule.Level != rigor.Startup {
+					t.Errorf("the rule reads level %q, want %q:\n%s", rule.Level, rigor.Startup, readFileString(t, path))
+				}
+				if member := rigorMemberOf(t, rule, "owner/repo-a"); len(member.Paths) != 1 || member.Paths[0] != "docs/{a,b}/**" {
+					t.Errorf("the member's paths read %v:\n%s", member.Paths, readFileString(t, path))
+				}
+				if got := rigorLayerRigor(t, path).Repos["owner/repo-a"]; got != rigor.Critical {
+					t.Errorf("the write moved the repository's own entry to %q:\n%s", got, readFileString(t, path))
+				}
+			},
+		},
+	} {
+		path := rigorReposFile(t, tc.block)
+		before := readFileString(t, path)
+		agentSession(t)
+		out, _, err := execute(t, tc.args...)
+		if err == nil || !strings.Contains(err.Error(), "coding agent's session") {
+			t.Fatalf("%s: a coding agent's session lowered a repository's paths: %v\n%s", tc.what, err, out)
+		}
+		if readFileString(t, path) != before {
+			t.Fatalf("%s: the refused write changed the layer file", tc.what)
+		}
+		noAgentSession(t)
+		out, _, err = execute(t, tc.args...)
+		if err != nil {
+			t.Fatalf("%s: the owner's own terminal was refused a lowering: %v\n%s", tc.what, err, out)
+		}
+		assertNoPrompt(t, out)
+		if !strings.Contains(out, "lowers") || !strings.Contains(out, "critical") {
+			t.Errorf("%s: the write does not say what it lowers from the level the repository resolves to:\n%s", tc.what, out)
+		}
+		tc.check(t, path)
+	}
+}
+
 // TestRigorSetLayerRepoRefused is R15's other half (F23): a repository's own
 // fugaro.yaml states neither key any more, so the layer this command used to
 // write them into is refused — with the one sentence C1 holds for the key in
