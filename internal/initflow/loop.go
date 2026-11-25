@@ -1044,7 +1044,10 @@ func (l *loop) record(r StageResult) {
 	}
 	l.res.Stages = append(l.res.Stages, r)
 	l.emitStage(r)
-	l.emitRepos(r)
+	// The per-repository lines go under the stage's own line, which is the
+	// header they belong to, and that line is the last thing record prints
+	// (endStep): handed over here they would go above it (U13, spec §Output).
+	defer l.emitRepos(r)
 	if l.o.Report == nil || !l.executing {
 		return
 	}

@@ -3,8 +3,11 @@ package initflow
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/report"
 )
 
 // reporting is a stage that does per-repository work: it hands the loop the
@@ -104,6 +107,44 @@ func TestLoopReadsRepoReporter(t *testing.T) {
 			t.Errorf("OnRepos was handed %d times for a stage that reports nothing, want none", handed)
 		}
 	})
+}
+
+// TestRepoLinesPrintUnderTheirStageLine: a stage's per-repository lines go out
+// under the stage's own line — the header they belong to — and not above it,
+// which is where handing them over while the stage is recorded would put them
+// (U13, spec §Output).
+func TestRepoLinesPrintUnderTheirStageLine(t *testing.T) {
+	var log []string
+	var b bytes.Buffer
+	s := &reporting{fake: &fake{name: "secrets", log: &log}, lines: threeRepos()}
+	opts := yesOpts()
+	opts.Out = &b
+	opts.Report = reporterTo(&b, report.Options{})
+	opts.OnRepos = func(ls []RepoLine) { fmt.Fprintf(&b, "repos: %d\n", len(ls)) }
+	if _, err := Run(context.Background(), []Stage{s}, opts); err != nil {
+		t.Fatal(err)
+	}
+
+	view := b.String()
+	stage := reporterMarks(t).line(view, "secrets")
+	if stage == "" {
+		t.Fatalf("the run printed no line for the stage at all:\n%s", view)
+	}
+	step, repos := -1, -1
+	for i, l := range outputLines(view) {
+		if l == stage {
+			step = i
+		}
+		if l == "repos: 3" {
+			repos = i
+		}
+	}
+	if step < 0 || repos < 0 {
+		t.Fatalf("the view has no stage line (%d) or no per-repository lines (%d):\n%s", step, repos, view)
+	}
+	if repos < step {
+		t.Errorf("the per-repository lines are above the stage's own line, want them under it:\n%s", view)
+	}
 }
 
 // TestLoopRedactsRepoLines: a repository name and a detail can quote a value
