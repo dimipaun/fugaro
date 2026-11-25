@@ -11,19 +11,26 @@
 # names each credential's serving path, its pools listing answers from the state
 # the check's own pool add writes, and its record and the credentials service's
 # audit line both name the credential the check declared. The cases that matter
-# are the ones where that model is bent: a command that echoes the value it was
-# handed, the value written into the config directory and into a shell history, a
-# session that is not refused, a refusal that names no step, a pool write that
-# fails, a publish that fails, a launch that fails, a run that never ends, a
+# are the ones where that model is bent: a command that echoes a key shape, a key
+# shape written into the config directory and into a shell history, a session
+# that is not refused, a refusal in words the check does not know, a pool write
+# that fails, a publish that fails, a launch that fails, a run that never ends, a
 # record that is another run's, an audit line that names another credential, a
 # removal that is accepted while a pool lists the credential, and a craft with no
 # access to take over.
 #
 # The two pastes are real pastes: the terminal cases start a pty (python3's
 # pty.openpty) and hand the check its slave device through CHECK631_TTY, with the
-# two values written into it — the check's own hidden prompt reads the first and
-# the command's own hidden prompt reads the second, in the order the check makes
-# them. A value never becomes an argument of any process here either.
+# two values written into it — the first command's own hidden prompt reads the
+# first and the second command's reads the second, in the order the check makes
+# them. The check never holds either value. A value never becomes an argument of
+# any process here either.
+#
+# The fake `fugaro` carries the gate the real one carries: `accounts add --type`
+# on a managed project is created at the owner's own terminal, and a caller whose
+# stdin is a pipe is refused in the gate's own words. A check that read the value
+# itself and handed it over on a pipe therefore fails here, which is the whole
+# point of that fence: it is what the release does.
 #
 # Usage: bash scripts/live-checks/check631_test.sh
 set -euo pipefail
@@ -64,11 +71,14 @@ pool=chk631-pool
 craft=coder
 owner=owner@example.com
 run_id=r-631
-# The two values the check is handed. Neither is shaped like a provider key: the
-# shape sweep of the prompt row is the one place a key-shaped string is needed,
-# and that case builds it from parts (see test_a_prompt_that_echoes_a_key_shape).
+# The two values the two commands read at their own hidden prompts. Neither is
+# shaped like a provider key: the shape sweeps need one, and the cases that bend
+# them build it from parts or use the one literal below.
 value_one=chk631-not-a-real-key-one
 value_two=chk631-not-a-real-key-two
+# What a key-shaped line looks like to the sweeps. Not a key: no provider issues
+# one of these, and nothing here talks to a provider.
+key_shape=sk-or-v1-not-a-real-key
 
 # --------------------------------------------------------------------- fakes
 write_fake_fugaro() { # dir
@@ -206,32 +216,48 @@ crafts_listing() {
 
 accounts_add() { # accounts_add NAME TYPE
   local name=$1 type=$2 value=""
-  if [ -n "${CLAUDECODE:-}" ] && [ "$mode" != session-accepts ]; then
-    if [ "$mode" = session-unnamed ]; then
-      printf 'fugaro: this command cannot be run here\n' >&2
+  # The gate, in the words the release prints it in
+  # (internal/cli/accounts_managed.go: accountsAddOwnTerminal, accountsAddRefusal).
+  # A managed project's credential is created at the owner's own terminal: a
+  # coding agent's session is refused the grant by name and told the step that
+  # unblocks it, and a caller whose stdin is a pipe — a run, a --yes, a check that
+  # read the value itself — is refused the owner's terminal. A check that handed
+  # the value over on a pipe fails here exactly as it fails against the release.
+  if [ "$mode" != session-accepts ]; then
+    if [ -n "${CLAUDECODE:-}" ]; then
+      if [ "$mode" = session-unnamed ]; then
+        printf 'fugaro: this command cannot be run here\n' >&2
+        exit 1
+      fi
+      if [ "$mode" = session-other-words ]; then
+        printf 'fugaro: a key is written for the person it belongs to and for nobody else: %s was declared, and its value was not read\n' "$name" >&2
+        exit 1
+      fi
+      printf "fugaro: This creates the credential credentials.%s, and a managed project's owner is the one who creates credentials.\nDeclare the account without --type, or run this in your own terminal.\n" "$name" >&2
       exit 1
     fi
-    if [ "$mode" = session-other-words ]; then
-      printf 'fugaro: a key is written for the person it belongs to and for nobody else: %s was declared, and its value was not read\n' "$name" >&2
+    if [ ! -t 0 ]; then
+      printf "fugaro: This creates the credential credentials.%s, and a managed project's owner is the one who creates credentials.\nRun this in your own terminal.\n" "$name" >&2
       exit 1
     fi
-    printf 'fugaro: No key was stored for credential %s: a session may write the declaration, and never the key.\nRun this in your own terminal, not in an agent session.\n' "$name" >&2
-    exit 1
   fi
   if [ "$mode" = add-fails ]; then
     printf 'fugaro: the value is too short to be a key\n' >&2
     exit 1
   fi
-  if [ "$type" = openrouter ] && [ "$mode" != add-openrouter-no-prompt ]; then
+  # Both types are read at the command's own hidden prompt, which is the sentence
+  # the acceptance names (internal/cli/secrets.go: readHiddenLine). The mode that
+  # drops it models a command that read the value some other way.
+  if [ "$mode" != add-no-prompt ]; then
     printf 'Paste the value for credential-%s-key (input hidden), then press Enter: ' "$name" >&2
   fi
   IFS= read -r value || true
-  if [ "$mode" = add-echoes-value ]; then
-    printf 'fugaro: storing the value %s now\n' "$value"
-  fi
-  if [ "$mode" = add-openrouter-echoes-shape ]; then
+  if [ "$mode" = add-echoes-shape ]; then
     # The key-shaped string this case is about is built here, from parts: no
     # literal in this repository is shaped like a credential.
+    printf 'fugaro: storing the value sk-ant-%s now\n' "not-a-real-key" >&2
+  fi
+  if [ "$mode" = add-openrouter-echoes-shape ]; then
     printf 'fugaro: the value sk-or-v1-%s was accepted\n' "not-a-real-key" >&2
   fi
   if [ "$name" = "$anthropic" ]; then
@@ -589,19 +615,9 @@ run_check() { # run_check DIR ENV... [-- ARGS...]
   scratch=$(sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$dir/err" | head -n 1)
 }
 
-# A run in CHECK631_VALUE_FILE mode: no terminal is needed, the value is read
-# from a file the test wrote, and the command's own hidden prompt is not made.
-# CHECK631_TEST_VALUE names the value when a case needs one of its own.
-run_check_with_value_file() { # run_check_with_value_file DIR ENV... [-- ARGS...]
-  local dir=$1
-  shift
-  printf '%s\n' "${CHECK631_TEST_VALUE:-$value_one}" >"$dir/value.txt"
-  run_check "$dir" CHECK631_VALUE_FILE="$dir/value.txt" "$@"
-}
-
-# A run with a terminal: the check reads its own value at its hidden prompt and
-# the command reads the second at its own. CHECK631_TEST_VALUE_ONE and
-# CHECK631_TEST_VALUE_TWO name the two, where a case needs its own.
+# A run with a terminal: each command reads its value at its own hidden prompt,
+# which is the only door the check leaves it. CHECK631_TEST_VALUE_ONE and
+# CHECK631_TEST_VALUE_TWO name the two values, where a case needs its own.
 run_check_with_terminal() { # run_check_with_terminal DIR ENV... [-- ARGS...]
   local dir=$1
   shift
@@ -638,9 +654,9 @@ test_dry_run_needs_no_terminal() {
   run_check "$dir" CHECK631_DRY_RUN=1
   expect_status "$status" 0 "a dry run"
   expect_contains "$out" "FACT dry-run: PASS" "a dry run: the row"
-  expect_contains "$out" "FACT value-read: INFO" "a dry run: the planned rows are not measured"
+  expect_contains "$out" "FACT add-anthropic: INFO" "a dry run: the planned rows are not measured"
   expect_contains "$err" "[write] fugaro accounts add $anthropic --type anthropic" "a dry run: the plan names the declaration it would make"
-  expect_contains "$err" "[YOU] paste the value for $openrouter" "a dry run: the plan names the second paste"
+  expect_contains "$err" "[YOU] paste the value at the COMMAND's own hidden prompt" "a dry run: the plan names the pastes"
   expect_absent "$fugaro_calls" "accounts add" "a dry run: nothing is declared"
   expect_absent "$fugaro_calls" "fugaro run" "a dry run: no run is launched"
   assert_scratch_removed "a dry run"
@@ -652,13 +668,14 @@ test_the_happy_path_at_a_terminal() {
   run_check_with_terminal "$dir"
   expect_status "$status" 0 "the happy path"
   local key
-  for key in fugaro-version xtrace agent-session belong installation declaration agent-refusal value-read add-anthropic nothing-echoed add-openrouter prompt-hidden no-file no-history serving-path wiring publish run-launched terminal record served-by unwiring rm-refusal rm-clears restore scratch-removed; do
+  for key in fugaro-version xtrace agent-session belong installation declaration agent-refusal add-anthropic add-openrouter prompt-hidden nothing-echoed no-file no-history serving-path wiring publish run-launched terminal record served-by unwiring rm-refusal rm-clears restore scratch-removed; do
     expect_contains "$out" "FACT $key: PASS" "the happy path: the $key row"
   done
   expect_absent "$out" ": FAIL" "the happy path: no row failed"
   expect_contains "$out" "CHECK 631 RESULT END (exit 0)" "the happy path: the block ends"
-  expect_contains "$out" "the command's own hidden prompt line ('Paste the value for credential-$openrouter-key (input hidden), then press Enter:')" "the happy path: the prompt row names the command's own prompt"
+  expect_contains "$out" "each declaration carries the command's own hidden prompt on the command's own output (credential-$anthropic-key, credential-$openrouter-key)" "the happy path: the prompt row names both commands' own prompts"
   expect_contains "$fugaro_calls" "fugaro accounts add $anthropic --type anthropic (in $dir/sandbox)" "the happy path: the Anthropic change is declared from the checkout"
+  expect_contains "$fugaro_calls" "fugaro accounts add $openrouter --type openrouter (in $dir/sandbox)" "the happy path: the second type is declared from the checkout too"
   expect_contains "$fugaro_calls" "fugaro accounts pool add $pool $anthropic --owner $owner (in $dir/sandbox)" "the happy path: the check's own pool names the credential and the owner"
   expect_contains "$fugaro_calls" "fugaro accounts craft set $craft --access $pool (in $dir/sandbox)" "the happy path: the craft is pointed at the check's pool"
   expect_contains "$fugaro_calls" "fugaro run --repo $dir/sandbox --json" "the happy path: one run is launched"
@@ -672,91 +689,109 @@ test_the_happy_path_at_a_terminal() {
   fi
 }
 
-test_the_value_never_reaches_a_file_or_a_history() {
+test_no_key_shape_reaches_a_file_or_a_history() {
   local dir=$work/sweeps
   prepare "$dir"
-  run_check_with_value_file "$dir"
+  run_check_with_terminal "$dir"
   expect_status "$status" 0 "the sweeps"
-  expect_contains "$out" "FACT no-file: PASS" "the sweeps: the config directory holds no value"
-  expect_contains "$out" "is in none of the" "the sweeps: the config sweep says what it read"
-  expect_contains "$out" "FACT no-history: PASS" "the sweeps: the history holds no value"
+  expect_contains "$out" "FACT no-file: PASS" "the sweeps: the config directory holds no key shape"
+  expect_contains "$out" "is shaped like a provider key" "the sweeps: the config sweep says what it read"
+  expect_contains "$out" "FACT no-history: PASS" "the sweeps: the history holds no key shape"
   expect_contains "$out" "$dir/home/.bash_history" "the sweeps: the history file it read is named"
-  # The block names the files it looked at and never the value itself.
-  expect_absent "$out" "$value_one" "the sweeps: the value is in no line of the block"
-  expect_absent "$err" "$value_one" "the sweeps: the value is in no line of the progress output"
+  # The block names the files it looked at and never a line of one.
+  expect_absent "$out" "$key_shape" "the sweeps: no key shape is in any line of the block"
+  expect_absent "$err" "$key_shape" "the sweeps: no key shape is in any line of the progress output"
 }
 
-test_a_value_in_the_config_directory_is_a_finding() {
+test_a_key_shape_in_the_config_directory_is_a_finding() {
   local dir=$work/config-holds
   prepare "$dir"
-  printf '{"note":"%s"}\n' "$value_one" >"$dir/home/.config/fugaro/cache.json"
-  run_check_with_value_file "$dir"
-  expect_status "$status" 1 "a value in the config directory"
-  expect_contains "$out" "FACT no-file: FAIL" "a value in the config directory: the row"
-  expect_contains "$out" "is in 1 file(s) under" "a value in the config directory: the row says how many"
-  expect_contains "$out" "cache.json" "a value in the config directory: the file is named"
-  expect_absent "$out" "$value_one" "a value in the config directory: the value itself is never printed"
+  printf '{"note":"%s"}\n' "$key_shape" >"$dir/home/.config/fugaro/cache.json"
+  run_check_with_terminal "$dir"
+  expect_status "$status" 1 "a key shape in the config directory"
+  expect_contains "$out" "FACT no-file: FAIL" "a key shape in the config directory: the row"
+  expect_contains "$out" "is in 1 file(s) under" "a key shape in the config directory: the row says how many"
+  expect_contains "$out" "cache.json" "a key shape in the config directory: the file is named"
+  expect_absent "$out" "$key_shape" "a key shape in the config directory: the shape itself is never printed"
 }
 
-test_a_value_in_a_shell_history_is_a_finding() {
+test_a_key_shape_in_a_shell_history_is_a_finding() {
   local dir=$work/history-holds
   prepare "$dir"
-  printf 'fugaro accounts add %s --type anthropic %s\n' "$anthropic" "$value_one" >>"$dir/home/.bash_history"
-  run_check_with_value_file "$dir"
-  expect_status "$status" 1 "a value in a shell history"
-  expect_contains "$out" "FACT no-history: FAIL" "a value in a shell history: the row"
-  expect_contains "$out" ".bash_history" "a value in a shell history: the file is named"
+  printf 'fugaro accounts add %s --type anthropic %s\n' "$anthropic" "$key_shape" >>"$dir/home/.bash_history"
+  run_check_with_terminal "$dir"
+  expect_status "$status" 1 "a key shape in a shell history"
+  expect_contains "$out" "FACT no-history: FAIL" "a key shape in a shell history: the row"
+  expect_contains "$out" ".bash_history" "a key shape in a shell history: the file is named"
+  expect_absent "$out" "$key_shape" "a key shape in a shell history: the shape itself is never printed"
 }
 
-test_a_command_that_echoes_the_value_is_a_finding() {
+test_a_command_that_echoes_a_key_shape_is_a_finding() {
   local dir=$work/echoes
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=add-echoes-value
-  expect_status "$status" 1 "a command that echoes the value"
-  expect_contains "$out" "FACT nothing-echoed: FAIL" "a command that echoes the value: the row"
-  expect_contains "$out" "holds the value this check handed it" "a command that echoes the value: the row says so"
-  expect_absent "$out" "$value_one" "a command that echoes the value: the value is not reprinted by the check"
+  run_check_with_terminal "$dir" FAKE_MODE=add-echoes-shape
+  expect_status "$status" 1 "a command that echoes a key shape"
+  expect_contains "$out" "FACT nothing-echoed: FAIL" "a command that echoes a key shape: the row"
+  expect_contains "$out" "carries a line shaped like a provider key" "a command that echoes a key shape: the row says so"
+  expect_contains "$out" "$anthropic(" "a command that echoes a key shape: the row names the command it read"
+  expect_absent "$out" "$key_shape" "a command that echoes a key shape: the shape is not reprinted by the check"
 }
 
-test_a_prompt_that_echoes_a_key_shape_is_a_finding() {
-  local dir=$work/shape
+test_the_second_command_echoing_a_key_shape_is_a_finding() {
+  local dir=$work/echoes-second
   prepare "$dir"
   run_check_with_terminal "$dir" FAKE_MODE=add-openrouter-echoes-shape
-  expect_status "$status" 1 "a prompt that echoes a key shape"
-  expect_contains "$out" "FACT prompt-hidden: FAIL" "a prompt that echoes a key shape: the row"
-  expect_contains "$out" "carries a line shaped like a provider key" "a prompt that echoes a key shape: the row says so"
-  # The check names the stream and never the line: the shape it reports is the
-  # file it found it in, not the string.
-  expect_absent "$out" "sk-or-v1-not-a-real-key" "a prompt that echoes a key shape: the check does not reprint the string"
+  expect_status "$status" 1 "the second command echoing a key shape"
+  expect_contains "$out" "FACT nothing-echoed: FAIL" "the second command echoing a key shape: the row"
+  expect_contains "$out" "$openrouter(" "the second command echoing a key shape: the row names the command it read"
+  expect_absent "$out" "$key_shape" "the second command echoing a key shape: the shape is not reprinted by the check"
 }
 
-test_the_two_pastes_are_read_at_two_different_prompts() {
+test_a_command_that_prints_no_prompt_is_a_finding() {
+  local dir=$work/no-prompt
+  prepare "$dir"
+  run_check_with_terminal "$dir" FAKE_MODE=add-no-prompt
+  expect_status "$status" 1 "a command that prints no prompt"
+  expect_contains "$out" "FACT prompt-hidden: FAIL" "a command that prints no prompt: the row"
+  expect_contains "$out" "does not carry the command's own hidden prompt" "a command that prints no prompt: the row says what is missing"
+}
+
+test_both_commands_read_at_their_own_prompts() {
   local dir=$work/prompts
   prepare "$dir"
   run_check_with_terminal "$dir"
   expect_status "$status" 0 "the two prompts"
-  expect_contains "$out" "the value was read at this check's own hidden prompt on your terminal" "the two prompts: the check's own prompt is the one its value came from"
-  expect_contains "$out" "carries the command's own hidden prompt line" "the two prompts: the command's own prompt is the one its value came from"
+  expect_contains "$out" "FACT prompt-hidden: PASS" "the two prompts: the row"
+  expect_contains "$out" "never handed over by this check on a pipe, a flag or an argument" "the two prompts: the row says the value was read at the command's own prompt"
+  expect_contains "$out" "FACT add-anthropic: PASS" "the two prompts: the first type was declared"
   expect_contains "$out" "FACT add-openrouter: PASS" "the two prompts: the second type was declared"
+  # Neither declaration is handed a --project, which accounts add does not take,
+  # and neither is handed the value on its command line.
+  expect_contains "$fugaro_calls" "fugaro accounts add $anthropic --type anthropic (in $dir/sandbox)" "the two prompts: the first declaration carries nothing but its own words"
+  expect_contains "$fugaro_calls" "fugaro accounts add $openrouter --type openrouter (in $dir/sandbox)" "the two prompts: the second declaration carries nothing but its own words"
+  expect_absent "$fugaro_calls" "$value_one" "the two prompts: no value reaches any command line"
+  expect_absent "$fugaro_calls" "$value_two" "the two prompts: no value reaches any command line"
 }
 
-test_with_no_terminal_and_no_value_file_the_check_stops() {
+test_with_no_terminal_the_check_stops() {
   local dir=$work/no-terminal
   prepare "$dir"
   run_check "$dir"
-  expect_status "$status" 1 "no terminal and no value file"
-  expect_contains "$out" "FACT aborted: FAIL" "no terminal and no value file: the run is aborted"
-  expect_contains "$out" "this check needs your own terminal" "no terminal and no value file: the message"
-  expect_absent "$fugaro_calls" "accounts add" "no terminal and no value file: nothing is declared"
+  expect_status "$status" 1 "no terminal"
+  expect_contains "$out" "FACT aborted: FAIL" "no terminal: the run is aborted"
+  expect_contains "$out" "this check needs your own terminal" "no terminal: the message"
+  expect_absent "$fugaro_calls" "accounts add" "no terminal: nothing is declared"
 }
 
 test_a_session_that_is_refused() {
   local dir=$work/session
   prepare "$dir"
-  run_check_with_value_file "$dir"
+  run_check_with_terminal "$dir"
   expect_status "$status" 0 "a session that is refused"
   expect_contains "$out" "FACT agent-refusal: PASS" "a session that is refused: the row"
-  expect_contains "$out" "No key was stored for credential $anthropic" "a session that is refused: the refusal's own sentence is quoted"
+  # The refusal a session that asks for a credential reads is the grant refusal:
+  # the credential by its own name, and the step that unblocks the session.
+  expect_contains "$out" "This creates the credential credentials.$anthropic, and a managed project" "a session that is refused: the refusal's own sentence is quoted"
   expect_contains "$out" "names $anthropic no" "a session that is refused: the row says the declaration was not written either"
   expect_contains "$fugaro_calls" "fugaro accounts add $anthropic --type anthropic" "a session that is refused: the act was run"
 }
@@ -764,7 +799,7 @@ test_a_session_that_is_refused() {
 test_a_session_that_is_not_refused_is_a_finding() {
   local dir=$work/session-accepts
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=session-accepts
+  run_check_with_terminal "$dir" FAKE_MODE=session-accepts
   expect_status "$status" 1 "a session that is not refused"
   expect_contains "$out" "FACT agent-refusal: FAIL" "a session that is not refused: the row"
   expect_contains "$out" "exited 0 with CLAUDECODE set" "a session that is not refused: the row says what happened"
@@ -773,16 +808,16 @@ test_a_session_that_is_not_refused_is_a_finding() {
 test_a_session_refusal_that_names_nothing_is_a_finding() {
   local dir=$work/session-unnamed
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=session-unnamed
+  run_check_with_terminal "$dir" FAKE_MODE=session-unnamed
   expect_status "$status" 1 "a session refusal that names nothing"
   expect_contains "$out" "FACT agent-refusal: FAIL" "a session refusal that names nothing: the row"
-  expect_contains "$out" "do not name the session it refused" "a session refusal that names nothing: the row says what is missing"
+  expect_contains "$out" "not this build's refusal of a credential entry" "a session refusal that names nothing: the row says what is missing"
 }
 
 test_the_project_flag_is_passed_through() {
   local dir=$work/with-project
   prepare "$dir"
-  run_check_with_value_file "$dir" CHECK631_PROJECT="$installation"
+  run_check_with_terminal "$dir" CHECK631_PROJECT="$installation"
   expect_status "$status" 0 "a named project"
   expect_contains "$fugaro_calls" "fugaro craft ls --json --project $installation" "a named project: the crafts read names it"
   expect_contains "$fugaro_calls" "fugaro accounts pool ls --project $installation" "a named project: the pools read names it"
@@ -802,7 +837,7 @@ test_the_project_flag_is_passed_through() {
 test_the_agent_refusal_row_reads_the_refusal_own_words() {
   local dir=$work/session-words
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=session-other-words
+  run_check_with_terminal "$dir" FAKE_MODE=session-other-words
   expect_status "$status" 1 "a refusal in other words"
   expect_contains "$out" "FACT agent-refusal: FAIL" "a refusal in other words: the row"
   expect_contains "$out" "a key is written for the person it belongs to and for nobody else: $anthropic was declared, and its value was not read" "a refusal in other words: the row quotes the refusal's own words"
@@ -811,7 +846,7 @@ test_the_agent_refusal_row_reads_the_refusal_own_words() {
 test_a_craft_with_no_access_is_not_measured() {
   local dir=$work/craft-no-access
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=craft-no-access
+  run_check_with_terminal "$dir" FAKE_MODE=craft-no-access
   expect_status "$status" 2 "a craft with no access"
   expect_contains "$out" "FACT declaration: FAIL" "a craft with no access: the row"
   expect_contains "$out" "declares no access" "a craft with no access: the row says what is missing"
@@ -824,7 +859,7 @@ test_a_craft_with_no_access_is_not_measured() {
 test_an_installation_with_no_craft_is_not_measured() {
   local dir=$work/no-craft
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=no-craft
+  run_check_with_terminal "$dir" FAKE_MODE=no-craft
   expect_status "$status" 2 "an installation with no craft"
   expect_contains "$out" "names no craft '$craft'" "an installation with no craft: the row names the craft it looked for"
   expect_absent "$fugaro_calls" "accounts pool add" "an installation with no craft: no pool is declared"
@@ -833,7 +868,7 @@ test_an_installation_with_no_craft_is_not_measured() {
 test_a_read_that_does_not_answer_is_not_measured() {
   local dir=$work/crafts-fail
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=crafts-fail
+  run_check_with_terminal "$dir" FAKE_MODE=crafts-fail
   expect_status "$status" 2 "a crafts read that does not answer"
   expect_contains "$err" "could NOT measure declaration" "a crafts read that does not answer: it is named as unmeasured"
   expect_absent "$fugaro_calls" "accounts pool add" "a crafts read that does not answer: no pool is declared"
@@ -842,7 +877,7 @@ test_a_read_that_does_not_answer_is_not_measured() {
 test_a_pool_that_cannot_be_declared_is_not_measured() {
   local dir=$work/pool-add-fails
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=pool-add-fails
+  run_check_with_terminal "$dir" FAKE_MODE=pool-add-fails
   expect_status "$status" 2 "a pool that cannot be declared"
   expect_contains "$out" "FACT wiring: FAIL" "a pool that cannot be declared: the row"
   expect_contains "$err" "could NOT measure wiring, publish, run-launched" "a pool that cannot be declared: nothing is published and no run is launched"
@@ -853,7 +888,7 @@ test_a_pool_that_cannot_be_declared_is_not_measured() {
 test_a_publish_that_fails_is_not_measured() {
   local dir=$work/publish-fails
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=publish-fails
+  run_check_with_terminal "$dir" FAKE_MODE=publish-fails
   # The unmeasured publish row stands the run down, and the same refusal meets
   # the publish that puts the node back: a write this check cannot undo is a
   # finding, so a FAIL outranks the unmeasured row and the exit is 1.
@@ -868,7 +903,7 @@ test_a_publish_that_fails_is_not_measured() {
 test_a_launch_that_fails_is_a_finding() {
   local dir=$work/launch-fails
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=launch-fails
+  run_check_with_terminal "$dir" FAKE_MODE=launch-fails
   expect_status "$status" 1 "a launch that fails"
   expect_contains "$out" "FACT run-launched: FAIL" "a launch that fails: the row"
   expect_contains "$out" "never started" "a launch that fails: the row says so"
@@ -878,7 +913,7 @@ test_a_launch_that_fails_is_a_finding() {
 test_a_run_that_never_ends_is_not_measured() {
   local dir=$work/never-ends
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=run-never-ends \
+  run_check_with_terminal "$dir" FAKE_MODE=run-never-ends \
     CHECK631_RUN_TIMEOUT_SECONDS=2 CHECK631_POLL_SECONDS=1
   expect_status "$status" 2 "a run that never ends"
   expect_contains "$out" "FACT terminal: FAIL" "a run that never ends: the row"
@@ -889,7 +924,7 @@ test_a_run_that_never_ends_is_not_measured() {
 test_a_record_that_is_another_runs_is_a_finding() {
   local dir=$work/record-other
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=record-wrong-run
+  run_check_with_terminal "$dir" FAKE_MODE=record-wrong-run
   expect_status "$status" 1 "a record that is another run's"
   expect_contains "$out" "FACT record: FAIL" "a record that is another run's: the row"
   expect_contains "$out" "the record at that key is another run's" "a record that is another run's: the row says so"
@@ -899,7 +934,7 @@ test_a_record_that_is_another_runs_is_a_finding() {
 test_a_record_that_cannot_be_read_is_a_finding() {
   local dir=$work/record-fails
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=record-fails
+  run_check_with_terminal "$dir" FAKE_MODE=record-fails
   expect_status "$status" 1 "a record that cannot be read"
   expect_contains "$out" "FACT record: FAIL" "a record that cannot be read: the row"
   expect_contains "$out" "could not be read" "a record that cannot be read: the row says so"
@@ -908,7 +943,7 @@ test_a_record_that_cannot_be_read_is_a_finding() {
 test_an_audit_line_naming_another_credential_is_a_finding() {
   local dir=$work/audit-other
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=audit-other
+  run_check_with_terminal "$dir" FAKE_MODE=audit-other
   expect_status "$status" 1 "an audit line naming another credential"
   expect_contains "$out" "FACT served-by: FAIL" "an audit line naming another credential: the row"
   expect_contains "$out" "some-other-credential" "an audit line naming another credential: the row names what served it"
@@ -917,7 +952,7 @@ test_an_audit_line_naming_another_credential_is_a_finding() {
 test_an_audit_read_that_does_not_answer_falls_back_to_the_record() {
   local dir=$work/audit-fails
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=audit-fails
+  run_check_with_terminal "$dir" FAKE_MODE=audit-fails
   expect_status "$status" 0 "an audit read that does not answer"
   expect_contains "$out" "FACT served-by: PASS" "an audit read that does not answer: the record's own stages carry the reading"
   expect_contains "$out" "the run's own record names $anthropic as the credential its stages were served by" "an audit read that does not answer: the row says where it read it"
@@ -926,7 +961,7 @@ test_an_audit_read_that_does_not_answer_falls_back_to_the_record() {
 test_an_audit_line_that_names_no_credential_is_a_finding() {
   local dir=$work/audit-refused
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=audit-refused \
+  run_check_with_terminal "$dir" FAKE_MODE=audit-refused \
     FAKE_RECORD_CREDENTIAL=none
   expect_status "$status" 1 "an audit line that names no credential"
   expect_contains "$out" "FACT served-by: FAIL" "an audit line that names no credential: the row"
@@ -935,7 +970,7 @@ test_an_audit_line_that_names_no_credential_is_a_finding() {
 test_a_removal_accepted_while_a_pool_lists_it_is_a_finding() {
   local dir=$work/rm-accepts
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=rm-accepts
+  run_check_with_terminal "$dir" FAKE_MODE=rm-accepts
   expect_status "$status" 1 "a removal that is accepted"
   expect_contains "$out" "FACT rm-refusal: FAIL" "a removal that is accepted: the row"
   expect_contains "$out" "exited 0 while the pool $pool listed it" "a removal that is accepted: the row says so"
@@ -944,7 +979,7 @@ test_a_removal_accepted_while_a_pool_lists_it_is_a_finding() {
 test_a_removal_refused_without_a_next_step_is_a_finding() {
   local dir=$work/rm-unnamed
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=rm-unnamed
+  run_check_with_terminal "$dir" FAKE_MODE=rm-unnamed
   expect_status "$status" 1 "a removal refused without a next step"
   expect_contains "$out" "FACT rm-refusal: FAIL" "a removal refused without a next step: the row"
   expect_contains "$out" "names no step that clears it" "a removal refused without a next step: the row says what is missing"
@@ -953,7 +988,7 @@ test_a_removal_refused_without_a_next_step_is_a_finding() {
 test_a_credential_still_declared_after_the_removals_is_a_finding() {
   local dir=$work/removal-sticks
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=removal-does-not-stick
+  run_check_with_terminal "$dir" FAKE_MODE=removal-does-not-stick
   expect_status "$status" 1 "a credential still declared after the removals"
   expect_contains "$out" "FACT rm-clears: FAIL" "a credential still declared after the removals: the row"
   expect_contains "$out" "still names $anthropic" "a credential still declared after the removals: the row names it"
@@ -972,7 +1007,7 @@ test_the_session_guard_stops_the_check() {
 test_a_doctor_read_that_names_belong_stops_the_check() {
   local dir=$work/belong-project
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=doctor-belong
+  run_check_with_terminal "$dir" FAKE_MODE=doctor-belong
   expect_status "$status" 1 "an installation naming belong"
   expect_contains "$out" "FACT aborted: FAIL" "an installation naming belong: the run is aborted"
   expect_contains "$out" "belongs to belong-sandbox" "an installation naming belong: the message names the project"
@@ -982,7 +1017,7 @@ test_a_doctor_read_that_names_belong_stops_the_check() {
 test_a_credential_naming_belong_is_refused() {
   local dir=$work/belong-cred
   prepare "$dir"
-  run_check_with_value_file "$dir" CHECK631_POOL=belong-pool
+  run_check_with_terminal "$dir" CHECK631_POOL=belong-pool
   expect_status "$status" 1 "a pool naming belong"
   expect_contains "$out" "FACT belong: FAIL" "a pool naming belong: the row"
   expect_contains "$out" "names belong: this check is never run there" "a pool naming belong: the message says so by name"
@@ -992,18 +1027,18 @@ test_a_credential_naming_belong_is_refused() {
 test_a_doctor_read_that_answers_no_project_is_not_measured() {
   local dir=$work/no-project
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=doctor-no-project
+  run_check_with_terminal "$dir" FAKE_MODE=doctor-no-project
   expect_status "$status" 2 "a doctor read with no project line"
   expect_contains "$out" "FACT installation: FAIL" "a doctor read with no project line: the row"
-  expect_contains "$err" "could NOT measure installation, declaration" "a doctor read with no project line: the value is never asked for"
-  expect_contains "$err" "value-read, add-anthropic" "a doctor read with no project line: the paste step is unmeasured too"
+  expect_contains "$err" "could NOT measure installation, declaration" "a doctor read with no project line: no credential is declared"
+  expect_contains "$err" "add-anthropic, add-openrouter" "a doctor read with no project line: the paste steps are unmeasured too"
   expect_absent "$fugaro_calls" "accounts add" "a doctor read with no project line: nothing is declared"
 }
 
 test_a_doctor_read_that_does_not_answer_is_not_measured() {
   local dir=$work/doctor-fail
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=doctor-fail
+  run_check_with_terminal "$dir" FAKE_MODE=doctor-fail
   expect_status "$status" 2 "a doctor read that does not answer"
   expect_contains "$err" "could NOT measure installation" "a doctor read that does not answer: it is named as unmeasured"
   expect_absent "$fugaro_calls" "accounts add" "a doctor read that does not answer: nothing is declared"
@@ -1012,7 +1047,7 @@ test_a_doctor_read_that_does_not_answer_is_not_measured() {
 test_xtrace_refused() {
   local dir=$work/xtrace
   prepare "$dir"
-  run_check_with_value_file "$dir" -- --xtrace
+  run_check_with_terminal "$dir" -- --xtrace
   expect_status "$status" 1 "a traced shell"
   expect_contains "$out" "FACT xtrace: FAIL" "a traced shell: the row"
   expect_contains "$out" "this shell is tracing" "a traced shell: the message"
@@ -1031,26 +1066,16 @@ test_a_path_that_is_not_a_checkout_is_refused() {
   local dir=$work/not-a-checkout
   prepare "$dir"
   rm -f "$dir/sandbox/fugaro.yaml"
-  run_check_with_value_file "$dir"
+  run_check_with_terminal "$dir"
   expect_status "$status" 2 "a path that is not a checkout"
   expect_contains "$err" "carries no fugaro.yaml" "a path that is not a checkout: the message"
   expect_absent "$fugaro_calls" "accounts add" "a path that is not a checkout: nothing is declared"
 }
 
-test_an_empty_value_file_is_not_measured() {
-  local dir=$work/empty-value
-  prepare "$dir"
-  printf '\n' >"$dir/value.txt"
-  run_check "$dir" CHECK631_VALUE_FILE="$dir/value.txt"
-  expect_status "$status" 2 "an empty value file"
-  expect_contains "$out" "FACT value-read: FAIL" "an empty value file: the row"
-  expect_contains "$err" "could NOT measure value-read, add-anthropic" "an empty value file: nothing is declared"
-}
-
 test_kept_scratch_is_reported() {
   local dir=$work/kept
   prepare "$dir"
-  run_check_with_value_file "$dir" CHECK631_KEEP_SCRATCH=1
+  run_check_with_terminal "$dir" CHECK631_KEEP_SCRATCH=1
   expect_status "$status" 1 "a kept scratch directory"
   expect_contains "$out" "FACT scratch-removed: FAIL" "a kept scratch directory: the row"
   expect_contains "$out" "is still there, at $scratch" "a kept scratch directory: the row names the directory"
