@@ -2492,6 +2492,11 @@ describe('the spawn table and the argv it builds', () => {
     // the same question of either subcommand -- carries the same one phase word
     // and still no terminator. The two spellings differ by the subcommand word
     // and the layer, and by nothing else.
+    //
+    // **And the `repo` layer is the one that names its checkout** (RC80, L12):
+    // `--repo <directory>` follows the layer word, so the file written is the
+    // installation's own directory rather than whichever checkout the child's
+    // cwd happens to be in (`settingsRepoFile`).
     expect([
       ...argvFor(
         'settings.edit',
@@ -2504,10 +2509,119 @@ describe('the spawn table and the argv it builds', () => {
       'rigor.areas',
       '--layer',
       'repo',
+      '--repo',
+      '/Users/owner/src/fugaro',
       '--no-apply',
       '--project',
       'chosen',
     ])
+  })
+
+  it('names the installation’s directory on a `repo`-layer edit at either phase, and on no other layer', () => {
+    // **The one layer whose document is a repository's names which repository**
+    // (RC80, L12). The layer word alone says *a checkout's `fugaro.yaml`* and
+    // not *which*, and a write that names no checkout is written into whatever
+    // directory the child runs in -- a file the confirmation window could not
+    // name. The value is `context.directory`, the installation's own recorded
+    // directory: never a renderer's, and the same word the two project flags
+    // beside it come from.
+    const args = { op: 'set', key: 'budget.cap_usd', value: '25' }
+    const dry = [
+      ...argvFor('settings.edit', args, {
+        ...safeContext({ project: 'chosen', directory: '/Users/owner/src/checkout' }),
+        settingsEdit: { phase: 'dry-run', layer: 'repo', noApply: true },
+      }),
+    ]
+    expect(dry).toEqual([
+      'settings',
+      'set',
+      'budget.cap_usd',
+      '--layer',
+      'repo',
+      '--repo',
+      '/Users/owner/src/checkout',
+      '--dry-run',
+      '--json',
+      '--project',
+      'chosen',
+      '--',
+      '25',
+    ])
+    // The pair is in front of the terminator, so the child reads it as a flag
+    // and a value spelled `--repo` behind `--` is still a value.
+    expect(dry.indexOf('--repo')).toBeLessThan(dry.indexOf('--'))
+    expect(dry.indexOf('--repo')).toBe(dry.indexOf('--layer') + 2)
+    // Both phases carry the same pair (D1107): the write is the dry run's own
+    // line with the phase words swapped, so what the window showed is what is
+    // spawned word for word.
+    const write = [
+      ...argvFor('settings.edit', args, {
+        ...safeContext({ project: 'chosen', directory: '/Users/owner/src/checkout' }),
+        settingsEdit: { phase: 'narrowing', layer: 'repo' },
+      }),
+    ]
+    expect(write).toEqual([
+      'settings',
+      'set',
+      'budget.cap_usd',
+      '--layer',
+      'repo',
+      '--repo',
+      '/Users/owner/src/checkout',
+      '--project',
+      'chosen',
+      '--',
+      '25',
+    ])
+    // The two layers that are files of the machine or of the project carry no
+    // such word: their document is not a checkout's, and a `--repo` there would
+    // be a flag the CLI refuses (`--repo` names a repository's `fugaro.yaml`).
+    for (const layer of ['local', 'project']) {
+      expect([
+        ...argvFor('settings.edit', args, {
+          ...safeContext({ project: 'chosen' }),
+          settingsEdit: { phase: 'narrowing', layer },
+        }),
+      ], layer).not.toContain('--repo')
+    }
+    // **A `repo`-layer plan with no directory is refused rather than spawned**:
+    // the WSL route answers no directory at all until Part D translates one
+    // (`WslRoute.directory`), and an edit whose target cannot be named is one
+    // nobody can confirm.
+    expect(() =>
+      argvFor('settings.edit', args, {
+        ...safeContext({ project: 'chosen' }),
+        directory: undefined,
+        settingsEdit: { phase: 'narrowing', layer: 'repo' },
+      }),
+    ).toThrow(/needs the installation/)
+    // And the value is held to the installation-value rule like the project name
+    // and the config path beside it, so a directory a document or a hostile
+    // source wrote cannot become a command word.
+    expect(() =>
+      argvFor('settings.edit', args, {
+        ...safeContext({ project: 'chosen', directory: '/tmp/x\n--project' }),
+        settingsEdit: { phase: 'narrowing', layer: 'repo' },
+      }),
+    ).toThrow(/not a value this console will pass/)
+    // **A renderer cannot supply it**: `repo` is not a key of the operation's
+    // schema, so a payload naming one is refused before a word is built, and the
+    // argv built from the rest of that payload carries the installation's own
+    // directory and nothing the renderer wrote.
+    expect(() =>
+      argvFor('settings.edit', { op: 'set', key: 'k', value: 'v', repo: '/tmp/elsewhere' }, {
+        ...safeContext({ project: 'chosen' }),
+        settingsEdit: { phase: 'narrowing', layer: 'repo' },
+      }),
+    ).toThrow(/does not declare/)
+    const fromPayload = [
+      ...argvFor('settings.edit', { op: 'set', key: 'k', value: 'v' }, {
+        ...safeContext({ project: 'chosen' }),
+        settingsEdit: { phase: 'narrowing', layer: 'repo' },
+      }),
+    ]
+    expect(fromPayload).not.toContain('/tmp/elsewhere')
+    expect(fromPayload).toContain('/Users/owner/src/fugaro')
   })
 
   it('carries the installation’s config path and `--no-apply` on a settings write, and refuses every word a renderer could not be trusted with', () => {
@@ -2544,7 +2658,7 @@ describe('the spawn table and the argv it builds', () => {
       ...safeContext({ project: 'chosen' }),
       settingsEdit: { phase: 'narrowing' as const, layer: 'project', noApply: true },
     }
-    for (const key of ['layer', 'phase', 'yes', 'dir', 'project', 'config', 'add', 'remove']) {
+    for (const key of ['layer', 'phase', 'repo', 'yes', 'dir', 'project', 'config', 'add', 'remove']) {
       expect(() => argvFor('settings.edit', { op: 'set', key: 'k', value: 'v', [key]: 'x' }, context), key).toThrow(
         /does not declare/,
       )
@@ -2881,6 +2995,25 @@ describe('the spawn table and the argv it builds', () => {
     // and no other guard reads the column.
     expect(() => assertSpawnSurface(replacingRow('roadmap.move', { expectFlag: undefined }))).toThrow(
       /has no compare-and-set/,
+    )
+    expect(() => assertSpawnSurface(SPAWN_COMMANDS)).not.toThrow()
+  })
+
+  it('fails a table that lends the repository flag to another row, or spells it on a row with no layer (RC80, L12)', () => {
+    // The column is the only thing that makes `argvFor` emit `--repo <directory>`
+    // for a `repo`-layer edit, and the pair with `layerFlag` is what makes the
+    // target a value the window can name -- so both halves are mutations here.
+    expect(() => assertSpawnSurface(replacingRow('graph.read', { repoFlag: '--repo' }))).toThrow(
+      /carries a repository flag/,
+    )
+    // A repository flag with no layer to qualify is a document named and not a
+    // layer: `--repo` decides *which* checkout of the layer written, and a row
+    // that emits it with no `--layer` names a file the CLI resolves its own way.
+    expect(() =>
+      assertSpawnSurface(replacingRow('settings.edit', { repoFlag: '--repo', layerFlag: undefined })),
+    ).toThrow(/names a layer's document and not a layer/)
+    expect(() => assertSpawnSurface(replacingRow('settings.edit', { repoFlag: '--dir' }))).toThrow(
+      /--dir, which is not a flag this console may spawn/,
     )
     expect(() => assertSpawnSurface(SPAWN_COMMANDS)).not.toThrow()
   })
