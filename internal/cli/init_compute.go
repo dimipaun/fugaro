@@ -7,7 +7,6 @@ import (
 	"os"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
@@ -18,7 +17,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/runstore"
-	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
 // The compute stage: the Batch backend's installation-level provisioning
@@ -769,17 +767,18 @@ func (s *computeStage) prepare(ctx context.Context) error {
 // describes the provisioning that is already there.
 //
 // A fact the block no longer carries leaves the file HERE, in place, whatever
-// else this run writes: retireBlockFacts runs first, by name as text, so the
-// key fact a release behind wrote is gone from an installation this run has
-// nothing else to say about, and gone even where the block cannot be formed at
-// all (R10, the acceptance's own case). What is left of the block after both
-// is published, so no other machine reads the retired facts either.
+// else this run writes. The block is written whenever the file still names the
+// retired key: the merge this stage writes through has stopped carrying it, so
+// the write is what removes it, and the file's own text is what decides that
+// there is a write to make. Nothing else could: the merged block and the
+// effective one compare EQUAL in every field this stage reads -- which is why
+// the check is a name read off the text (retiredBlockFacts) rather than a
+// comparison of the two blocks -- so without it a machine whose block is
+// otherwise current would keep the key fact for good, its update having nothing
+// left to say about it (R10). The publish at the end carries the same removal
+// to every other machine.
 func (s *computeStage) recordBatchBlock(ctx context.Context) error {
 	r := s.e.r
-	old, err := s.retireBlockFacts()
-	if err != nil {
-		return err
-	}
 	block, why := s.batchBlock()
 	if block == nil {
 		// The terminal, not the log: every one of these lines names something
@@ -789,9 +788,13 @@ func (s *computeStage) recordBatchBlock(ctx context.Context) error {
 		fmt.Fprintln(r.w, why)
 		return nil
 	}
-	if old == nil {
+	if s.e.path == "" {
 		fmt.Fprintln(r.w, "the batch block was not recorded: this run has no project config file to write it to (the project is read from somewhere else, such as --config with no file of its own)")
 		return nil
+	}
+	old, err := os.ReadFile(s.e.path)
+	if err != nil {
+		return userErr("reading the local config to record the batch block: %v", err)
 	}
 	cur, err := localcfg.Parse(old)
 	if err != nil {
@@ -804,7 +807,7 @@ func (s *computeStage) recordBatchBlock(ctx context.Context) error {
 	// installation's for good.
 	owner := s.e.lc.Batch
 	merged := mergeBatch(owner, block)
-	if sameBatch(merged, owner) {
+	if sameBatch(merged, owner) && !namesRetiredBlockFact(old) {
 		if why != "" {
 			fmt.Fprintln(r.w, why)
 		}
@@ -825,80 +828,47 @@ func (s *computeStage) recordBatchBlock(ctx context.Context) error {
 	return nil
 }
 
-// retiredBlockKeys are the facts the `batch:` block no longer carries, by their
-// name in the config file's own text: the key fact `fugaro update` wrote before
-// a Batch run's identity came from the claims service, and `secrets`, the
-// Secret Manager mounts a launch stopped carrying (D3104, R10).
+// retiredBlockFacts are the facts the `batch:` block no longer carries, by the
+// name the config file's own text gives them: the key fact a Batch launch
+// carried before a run's identity came from the claims service. Each is a key
+// this stage's own writing never contains, so a file that still names one is a
+// file the release behind wrote and this run has to rewrite (R10).
 //
-// They are named as TEXT and never as the Go field and its type. Those have to
-// stay in internal/localcfg until the deletion that follows this task runs -- a
-// file that still carries them has to load (O10) -- and a writer that named them
-// would be a file that deletion has to reach into: what it removes is the field,
-// its validation and its doc, and this stage's own copy of the name is text.
-var retiredBlockKeys = []string{"seal_key", "secrets"}
+// The name is TEXT and never the Go field and its type. Those have to stay in
+// internal/localcfg until the deletion that follows this task runs -- a file
+// still carrying them has to load (O10) -- and a writer that named them would be
+// a file that deletion has to reach into: what it removes is the field, its
+// validation and its doc, so this stage knows the fact only as the word the
+// config file spells.
+var retiredBlockFacts = []string{"seal_key"}
 
-// dropRetiredBlockFacts splices the retired facts out of a project config's own
-// text: a key and the lines below it, taken out of the file where they stand,
-// with every other byte left as it was (internal/yamledit, the way the local
-// config's other removals are made).
-//
-// The result is the ORIGINAL bytes when the file names neither fact, byte for
-// byte, so a caller that has to tell "nothing to do" from "wrote the same bytes"
-// asks yamledit.Changed.
-func dropRetiredBlockFacts(src []byte) ([]byte, error) {
-	out := src
-	for _, key := range retiredBlockKeys {
-		next, err := yamledit.RemoveKey(out, []string{"batch", key})
-		if err != nil {
-			return src, err
+// namesRetiredBlockFact reports whether the project config's text still names a
+// retired fact inside its `batch:` block. It reads the file as lines rather than
+// as a document because that is all it needs to be: what it answers is whether
+// there is a write to make, and the write itself is the block this stage would
+// have written anyway, whose merge has stopped carrying those facts.
+func namesRetiredBlockFact(src []byte) bool {
+	const block = "batch:"
+	in := false
+	for _, line := range strings.Split(string(src), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.HasPrefix(line, block) {
+			in = true
+			continue
 		}
-		out = next
+		if in && line != "" && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			in = false
+		}
+		if !in || strings.HasPrefix(line, "#") {
+			continue
+		}
+		for _, name := range retiredBlockFacts {
+			if strings.HasPrefix(strings.TrimLeft(line, " \t"), name+":") {
+				return true
+			}
+		}
 	}
-	return out, nil
-}
-
-// retireBlockFacts takes the block's retired facts out of this machine's project
-// config, in place, and returns the file as it now is: nil when this run has no
-// file to write to, which is the case the caller reports in its own words.
-//
-// It runs before the block is formed and before anything else judges the file,
-// because the facts leave it whether or not this run has a block to write and
-// whether or not the block it forms is the one already there: the installation
-// that comes through this door is one the release behind provisioned, so its
-// file carries a key fact that no reader wants and that nothing would otherwise
-// overwrite -- an update whose root plan is empty writes no block at all (R10).
-//
-// The write is the local config's own: the file's text as the splice leaves it,
-// backed up, written atomically, and reported in one line. A file that names
-// neither fact is not written at all.
-func (s *computeStage) retireBlockFacts() ([]byte, error) {
-	r := s.e.r
-	if s.e.path == "" {
-		return nil, nil
-	}
-	old, err := os.ReadFile(s.e.path)
-	if err != nil {
-		return nil, userErr("reading the local config to record the batch block: %v", err)
-	}
-	trimmed, err := dropRetiredBlockFacts(old)
-	if err != nil {
-		return nil, userErr("%s: %v", s.e.path, err)
-	}
-	if !yamledit.Changed(old, trimmed) {
-		return old, nil
-	}
-	backup, err := backupFile(s.e.path, old, time.Now())
-	if err != nil {
-		return nil, userErr("backing up the local config: %v", err)
-	}
-	r.res.Backup = backup
-	if err := writeFileAtomic(s.e.path, trimmed); err != nil {
-		return nil, userErr("writing the local config: %v", err)
-	}
-	r.res.Config = s.e.path
-	fmt.Fprintf(r.stageDetail(), "backed up the old local config to %s\n", backup)
-	fmt.Fprintf(r.w, "%s: the batch block's retired fields are gone\n", s.e.path)
-	return trimmed, nil
+	return false
 }
 
 // batchBlock is the block this provisioning answers for, and the line saying
