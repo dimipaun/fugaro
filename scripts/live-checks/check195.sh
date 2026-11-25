@@ -239,6 +239,7 @@ SCRATCH_MARKER=".chk195-mine"
 SERVICE_MINE=""
 ACCOUNT_MINE=""
 BUCKET_MINE=""
+BUCKET_MADE=""
 BUILD_ID=""
 SCRATCH_REMOVED=no
 PRINTED=""
@@ -255,6 +256,7 @@ scratch_up() {
   SERVICE_MINE="$SCRATCH/service-mine"
   ACCOUNT_MINE="$SCRATCH/account-mine"
   BUCKET_MINE="$SCRATCH/bucket-mine"
+  BUCKET_MADE="$SCRATCH/bucket-made"
   say "scratch directory: $SCRATCH (mode 0700, removed at the end)"
   fact scratch PASS "$SCRATCH (mode 0700, made by this check, removed by its Restore)"
 }
@@ -350,11 +352,13 @@ delete_account_retrying() {
 # removed BEFORE the account, because a binding that outlives its member reads
 # back as `deleted:serviceAccount:...` and could never be removed again. It runs
 # from the exit trap too, so a Ctrl-C in the middle still leaves nothing behind.
-# The bucket is deleted only when this run's own record of creating it is there
-# AND the bucket's own label says it is this run's: the record is written before
-# the create returns, so an interrupt in that window leaves a record beside a
-# bucket of that NAME that can be somebody else's. A bucket whose label cannot be
-# read is left alone and reported, never read as somebody else's.
+# The bucket is deleted when this run's own record of the create is there AND
+# either the create returned SUCCESS (BUCKET_MADE — a bucket of this run's own
+# name, whose label write is a second call that may not have landed) or the
+# bucket's own label says it is this run's. The first record is written before the
+# create returns, so an interrupt in that window leaves a record beside a bucket of
+# that NAME that can be somebody else's: that one is left alone. A bucket whose
+# label cannot be read is left alone and reported, never read as somebody else's.
 restore_run() {
   if [ ! -f "$SERVICE_MINE" ] && [ ! -f "$ACCOUNT_MINE" ] && [ ! -f "$BUCKET_MINE" ]; then
     fact restore PASS "nothing of this check's was created, so there is nothing to delete"
@@ -378,8 +382,9 @@ restore_run() {
     # The label is read HERE as well as after a failed create: the record is
     # written before the create call returns, so an interrupt in that window
     # leaves a record with no bucket of this run's behind it — and a bucket of
-    # that NAME can be somebody else's. Only a bucket carrying this run's own
-    # label is ever deleted, whatever the record says. Deleted BEFORE the account
+    # that NAME can be somebody else's. Only a bucket this run's create returned
+    # SUCCESS for, or one carrying this run's own label, is ever deleted.
+    # Deleted BEFORE the account
     # below, so the bucket's own roles/storage.objectCreator binding goes with it:
     # a binding that outlives its member reads back as deleted:serviceAccount:...
     # and could never be removed. The object the step wrote — the whole reason the
@@ -408,7 +413,18 @@ restore_run() {
         bucket_deleted=yes
         ;;
       other)
-        owner "not deleting gs://${BUCKET}: it does not carry this run's own label chk195=${BUCKET_NONCE}, so it is not this run's bucket"
+        if [ -f "$BUCKET_MADE" ]; then
+          # The create returned success, so a bucket of this run's own name is
+          # this run's whatever the label says — and it says nothing here because
+          # the label write is a second call that did not land. Deleting it is what
+          # makes the two calls one outcome; the label gates the other case, a
+          # bucket this run's create did NOT return success for.
+          owner "deleting gs://${BUCKET}: this run's create returned success for it and the label chk195=${BUCKET_NONCE} is not on it, because the labelling call did not land"
+          gcloud storage rm --recursive "gs://${BUCKET:?}" --quiet >&2 || true
+          bucket_deleted=yes
+        else
+          owner "not deleting gs://${BUCKET}: it does not carry this run's own label chk195=${BUCKET_NONCE} and this run's create never returned success for it, so it is not this run's bucket"
+        fi
         ;;
       *)
         owner "not deleting gs://${BUCKET}: whether it carries this run's own label chk195=${BUCKET_NONCE} could not be read"
@@ -721,12 +737,19 @@ bucket_owner_state() {
 # its name: the name carries this run's own moment and process id, and a create
 # that reported failure may have been refused because that name is already taken —
 # which is not this run's bucket to delete.
+#
+# The label is a SECOND call, because `buckets create` has no --labels flag at all
+# (the API's create takes no labels; only `buckets update --update-labels` writes
+# them). Two calls, two records: BUCKET_MINE says "a create of that name was
+# started" and is written before the call returns, and BUCKET_MADE says "the create
+# returned SUCCESS, so a bucket of this run's own name is this run's" — which is
+# what the Restore goes by for a bucket whose labelling never landed.
 step_line_bucket() {
   : >"$BUCKET_MINE"
   local create_err=$SCRATCH/bucket-create.err rc=0
   say "creating the throwaway bucket gs://${BUCKET} for the step's own line"
   gcloud storage buckets create "gs://${BUCKET:?}" --project="${P:?}" --location="${L:?}" \
-    --uniform-bucket-level-access --labels="chk195=${BUCKET_NONCE}" --quiet >&2 2>"$create_err" || rc=$?
+    --uniform-bucket-level-access --quiet >&2 2>"$create_err" || rc=$?
   if [ "$rc" != 0 ]; then
     local why
     why=$(last_lines "$create_err")
@@ -748,8 +771,7 @@ step_line_bucket() {
         stop "the bucket create reported failure and gs://${BUCKET} IS there, but whether it is this run's cannot be read (the label describe failed), so the record of it is KEPT: this run's Restore reads the label again and deletes only a bucket that carries chk195=${BUCKET_NONCE}. Check it by hand with 'gcloud storage buckets describe gs://${BUCKET} --format=value(labels.chk195)' and delete it yourself only if it carries that label. What gcloud said: ${why}"
         ;;
       *)
-        rm -f "$BUCKET_MINE" || true
-        stop "the bucket create reported failure and gs://${BUCKET} IS there without this run's label chk195=${BUCKET_NONCE}, so it is somebody else's and this check never touches it: nothing of this check's is in ${P}, its record is removed again, and the service is deleted by this run's Restore. What gcloud said: ${why}"
+        stop "the bucket create reported failure and gs://${BUCKET} IS there without this run's own label chk195=${BUCKET_NONCE} — a create refused because that name is somebody else's — and this check never touches a bucket it did not create: the record is KEPT so this run's Restore reads the label again and says so. What gcloud said: ${why}"
         ;;
       esac
       ;;
@@ -758,6 +780,17 @@ step_line_bucket() {
       stop "the bucket gs://${BUCKET} could not be created (${rc}): ${why}. No bucket of that name is in ${P} (read from a listing), so nothing of this check's is there: its record is removed again, and the service is deleted by this run's Restore. YOUR account needs storage.buckets.create and, on this project, storage.buckets.list (a project Owner has them)"
       ;;
     esac
+  fi
+  # The create returned: a bucket of this run's own name is this run's, and the
+  # record says so before the label is asked for — the label write is a second
+  # call that can fail, and the Restore may not read this run's own bucket as
+  # somebody else's just because its labelling did not land.
+  : >"$BUCKET_MADE"
+  local label_err=$SCRATCH/bucket-label.err
+  if ! gcloud storage buckets update "gs://${BUCKET:?}" \
+    --update-labels="chk195=${BUCKET_NONCE}" --quiet >&2 2>"$label_err"; then
+    fact line-bucket FAIL "gs://${BUCKET} was created but could not be labelled chk195=${BUCKET_NONCE}: $(last_lines "$label_err")"
+    stop "gs://${BUCKET} was created but could not be LABELLED chk195=${BUCKET_NONCE}, and the label is what a person reads to tell this check's own bucket from a stranger's of the same name: YOUR account needs storage.buckets.update on it (an Owner has it). Nothing else ran; the create returned success, so the record is KEPT and this run's Restore deletes the bucket, with the object in it"
   fi
   fact line-bucket PASS "gs://${BUCKET} is this run's — created here, labelled chk195=${BUCKET_NONCE}, private (--uniform-bucket-level-access) — and it exists for one reason: the build's step writes its one line into ${LINE_URI}, so the reading does not go through Cloud Logging at all. It is deleted, with the object in it, by this run's Restore"
 }
@@ -1475,7 +1508,8 @@ call_from_step_exit_code() {
 # curl is called, so this mode is safe on a machine with no credentials at all.
 print_plan() {
   say "dry run: NOTHING below was run, and no tool was called at all — not gcloud, not fugaro, not curl. A real run would first check that this is the fugaro-dev installation (fugaro doctor --project fugaro), then read whether the two names below already exist — a filtered list for the service, a filtered list for the account, and the project's own IAM policy, which must not already name the account — and stop there on a name that is already there or on a list that could not be read; then run, in this order:"
-  say "  [network, writes] gcloud storage buckets create gs://${BUCKET} --project=${P} --location=${L} --uniform-bucket-level-access --labels=chk195=${BUCKET_NONCE}  (the throwaway bucket the step writes its one line into; the name carries the moment this run started and this shell's process id, and the label is what says a bucket of that name is this run's — a bucket without it is never deleted)"
+  say "  [network, writes] gcloud storage buckets create gs://${BUCKET} --project=${P} --location=${L} --uniform-bucket-level-access  (the throwaway bucket the step writes its one line into; the name carries the moment this run started and this shell's process id, and `buckets create` has no --labels flag, so the label is the separate call below)"
+  say "  [network, writes] gcloud storage buckets update gs://${BUCKET} --update-labels=chk195=${BUCKET_NONCE}  (the label is what says a bucket of that name is this run's — a bucket without it is never deleted unless this run's own create returned success for it)"
   say "  [network, writes] gcloud run deploy ${SVC} ${DEPLOY_FLAGS[*]}"
   say "  [network] gcloud run services describe ${SVC} --project=${P} --region=${L} --format=value(status.url)  (the URL the token's audience is)"
   say "  [network] gcloud run services get-iam-policy ${SVC} --project=${P} --region=${L} --format=json  (no public member, or the run stops)"

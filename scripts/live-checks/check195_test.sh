@@ -152,7 +152,10 @@ ALLOWED = {
     ("run", "services", "delete"): ("--project", "--region", "--quiet"),
     ("run", "services", "get-iam-policy"): ("--project", "--region", "--format"),
     ("run", "services", "add-iam-policy-binding"): ("--project", "--region", "--member", "--role", "--quiet"),
-    ("storage", "buckets", "create"): ("--project", "--location", "--uniform-bucket-level-access", "--labels", "--quiet"),
+    # `buckets create` takes no --labels: the real CLI answers one with
+    # "unrecognized arguments", and the label is written by the update below.
+    ("storage", "buckets", "create"): ("--project", "--location", "--uniform-bucket-level-access", "--quiet"),
+    ("storage", "buckets", "update"): ("--update-labels", "--quiet"),
     ("storage", "buckets", "list"): ("--project", "--format"),
     ("storage", "buckets", "describe"): ("--format"),
     ("storage", "buckets", "get-iam-policy"): ("--format"),
@@ -378,12 +381,32 @@ elif sub == ("projects", "remove-iam-policy-binding"):
 # ---------------- keeps it; the label is what the check reads to tell its own
 # ---------------- bucket from a stranger's of the same name.
 elif sub == ("storage", "buckets", "create"):
+    # No --labels here: the API's create takes no labels at all, and the real CLI
+    # answers `--labels=...` with "unrecognized arguments" (the whitelist refuses
+    # it before this line is reached, like every other flag the check may not
+    # pass). The label is the separate `buckets update --update-labels` below.
     if mode == "bucket-create-fails":
         die("storage.buckets.create denied on resource")
+    if mode == "bucket-other-label":
+        # A name somebody else holds, which is the one refusal that leaves a REAL
+        # bucket of that name behind: the create is refused "already exists" and
+        # the bucket is not this check's to touch, whatever it does next.
+        state_set("bucket", positionals[3] if len(positionals) > 3 else "")
+        state_set("bucketlabel", "somebody-elses-nonce")
+        die("409 %s already exists" % (positionals[3] if len(positionals) > 3 else "the bucket"))
     if not has("--uniform-bucket-level-access"):
         die("this check's bucket must not be public: --uniform-bucket-level-access")
     state_set("bucket", positionals[3] if len(positionals) > 3 else "")
-    state_set("bucketlabel", flag("--labels").split("chk195=")[-1])
+elif sub == ("storage", "buckets", "update"):
+    if mode == "bucket-label-fails":
+        die("storage.buckets.update denied on resource")
+    if not flag("--update-labels"):
+        die("this check's bucket is labelled with --update-labels and nothing else")
+    if "chk195=" not in flag("--update-labels"):
+        die("this check writes the label chk195=<nonce> and nothing else")
+    if state_get("bucket") in ("", "0"):
+        die("NOT_FOUND: %s not found" % (positionals[3] if len(positionals) > 3 else "the bucket"))
+    state_set("bucketlabel", flag("--update-labels").split("chk195=")[-1])
 elif sub == ("storage", "buckets", "list"):
     if mode == "bucket-list-fails":
         die("storage.buckets.list was refused: the session has expired")
@@ -1179,7 +1202,14 @@ test_happy_path() {
   # The throwaway bucket the step writes its one line into: created by this run,
   # granted roles/storage.objectCreator alone, read back out of, deleted again.
   expect_contains "$calls" "storage buckets create gs://fugaro-dev-chk195-" "happy path: the throwaway bucket is created"
-  expect_contains "$calls" "--uniform-bucket-level-access --labels=chk195=" "happy path: the bucket carries this run's own label and is not public"
+  # The label is a SECOND call: `buckets create` has no --labels flag at all, and
+  # the real CLI refuses one with "unrecognized arguments".
+  local create_line
+  create_line=$(grep 'storage buckets create' "$dir/logs/gcloud.calls")
+  expect_contains "$create_line" "--uniform-bucket-level-access" "happy path: the bucket create is not public"
+  expect_absent "$create_line" "--labels" "happy path: the create carries no label flag"
+  expect_contains "$calls" "storage buckets update gs://fugaro-dev-chk195-" "happy path: the bucket is labelled by the update call"
+  expect_contains "$calls" "--update-labels=chk195=" "happy path: the update writes this run's own label"
   expect_absent "$calls" "--predefined-acl" "happy path: no ACL the bucket-level policy cannot see"
   expect_contains "$calls" "storage buckets add-iam-policy-binding gs://fugaro-dev-chk195-" "happy path: the grant is on the bucket itself"
   expect_contains "$calls" "--member=serviceAccount:fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com --role=roles/storage.objectCreator" "happy path: objectCreator, on the bucket, for the throwaway account"
@@ -1189,8 +1219,9 @@ test_happy_path() {
   # fake refuses it the same way, so a regression to buckets delete fails here.
   expect_contains "$calls" "storage rm --recursive gs://fugaro-dev-chk195-" "happy path: the bucket goes with the object in it"
   expect_absent "$calls" "storage buckets delete" "happy path: not with buckets delete, which a non-empty bucket refuses"
-  # ... and only after its label is read: the record of creating it is written
-  # before the create returns, so the Restore may not go by the record alone.
+  # ... and only after its label is read, which is what says a bucket of that name
+  # is this run's: the first record is written before the create returns, so a
+  # bucket of that NAME can be somebody else's and the record alone does not say.
   local label_line bucket_delete_line
   label_line=$(grep -n 'storage buckets describe' "$dir/logs/gcloud.calls" | head -n 1 | cut -d: -f1)
   bucket_delete_line=$(grep -n 'storage rm --recursive' "$dir/logs/gcloud.calls" | head -n 1 | cut -d: -f1)
@@ -1665,18 +1696,19 @@ test_a_service_that_cannot_be_deleted_is_a_failure() {
   if [ -d "$scratch" ]; then fail "leftover: the scratch directory survived"; fi
 }
 
-# The label is the Restore's gate, and not only the failed-create path's: the
-# record of creating the bucket is written before the create returns, so an
-# interrupt in that window leaves a record with no bucket of this run's behind it
-# — and a bucket of that NAME can be somebody else's. Here the bucket does not
-# carry this run's label, so the Restore must leave it alone, say so, and not tell
-# the owner to delete a stranger's bucket.
+# The label is the Restore's gate for a bucket this run's create did NOT return
+# success for: the record of starting one is written before the create call
+# returns, so an interrupt in that window leaves a record with no bucket of this
+# run's behind it — and a bucket of that NAME can be somebody else's, which is what
+# a refused create leaves when the name is taken. Here the create is refused
+# because the name is somebody else's, and the Restore must leave the bucket alone,
+# say so, and not tell the owner to delete a stranger's bucket.
 test_a_bucket_that_is_not_this_runs_is_left_alone() {
   local dir=$work/bucketother
   prepare "$dir"
   run195 "$dir" FAKE_GCLOUD_MODE=bucket-other-label
-  expect_status "$status" 0 "not this run's bucket: the verdict (nothing of this check's is left)"
-  expect_contains "$out" "FACT line-bucket: PASS" "not this run's bucket: the check's own bucket row"
+  expect_status "$status" 1 "not this run's bucket: the verdict (the create is refused and the run stops)"
+  expect_contains "$err" "a create refused because that name is somebody else's" "not this run's bucket: the stop says whose it is"
   expect_contains "$out" "FACT bucket-deleted: PASS" "not this run's bucket: the row"
   expect_contains "$out" "does not carry this run's own label chk195=" "not this run's bucket: why it was left"
   expect_contains "$out" "this check deletes only its own" "not this run's bucket: the rule"
@@ -1719,6 +1751,26 @@ test_a_refused_bucket_create_is_not_a_leftover() {
   expect_absent "$out" "FACT bucket-deleted: FAIL" "refused create: no leftover is claimed"
   expect_contains "$out" "FACT restore: PASS" "refused create: nothing of this check's was created"
   expect_absent "$(cat "$dir/logs/gcloud.calls")" "storage rm --recursive" "refused create: no delete was issued"
+}
+
+# The label is a SECOND call, which is why the create's own success is a record of
+# its own: here the create returns success and the labelling never lands, so the
+# bucket is this run's although its label says nothing. The run stops — a bucket
+# this check cannot mark as its own is not one to measure against — and the Restore
+# must still delete it, on the create's record, rather than read it as a stranger's.
+test_a_bucket_that_cannot_be_labelled_is_still_deleted() {
+  local dir=$work/bucketlabelfails
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=bucket-label-fails
+  expect_status "$status" 1 "label fails: the verdict"
+  expect_contains "$out" "FACT line-bucket: FAIL" "label fails: the row"
+  expect_contains "$err" "could not be LABELLED chk195=" "label fails: the stop names what did not land"
+  expect_contains "$err" "storage.buckets.update" "label fails: the stop names the permission this needs"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "builds submit" "label fails: no build was submitted"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "storage buckets update gs://fugaro-dev-chk195-" "label fails: the label call was made"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "storage rm --recursive gs://fugaro-dev-chk195-" "label fails: the bucket is deleted anyway"
+  expect_contains "$out" "FACT bucket-deleted: PASS" "label fails: the bucket row"
+  expect_contains "$out" "FACT restore: PASS" "label fails: nothing of this check's is left"
 }
 
 # And the order is the guard: with the label read FIRST — the shape before the list
@@ -1905,6 +1957,7 @@ t test_a_service_that_cannot_be_deleted_is_a_failure
 t test_a_bucket_that_is_not_this_runs_is_left_alone
 t test_a_bucket_whose_label_cannot_be_read_is_not_deleted
 t test_a_refused_bucket_create_is_not_a_leftover
+t test_a_bucket_that_cannot_be_labelled_is_still_deleted
 t test_a_refused_bucket_create_read_by_the_label_first_is_a_false_leftover
 t test_an_objectcreator_grant_that_fails_leaves_nothing_behind
 t test_a_bucket_that_cannot_be_deleted_is_a_failure
