@@ -465,7 +465,7 @@ func (s *secretsStage) resolve(ctx context.Context) {
 	// repoPolicyInput gives the repository stage: a node the operator cannot
 	// reach must not be taken for one that admits nobody, and the repository
 	// stage stops the run on the same error.
-	p, found, err := s.e.r.policy.read(ctx, lc)
+	p, found, err := s.e.r.policyMemo().read(ctx, lc)
 	s.node = repoPolicyInput(lc, p, found, err)
 	// A repository-level secret (D2313) is one no shared job mounts, so it is
 	// not a name this stage may take. The ruling closed the stores that would

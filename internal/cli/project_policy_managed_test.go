@@ -98,7 +98,7 @@ func newPolicyFixture(t *testing.T, extra string, managedProject bool) *managedP
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 	writeRunsMarker(t, filepath.Join(r.dir, "runs"), "aurora", initProject)
 	if managedProject {
-		markPolicyProjectManaged(t, r)
+		markManagedProject(t, r)
 	}
 	// The account a record names, and the day it is written: both are read out
 	// of the world at the write, so a test that wants to read the day's
@@ -114,10 +114,13 @@ func newPolicyFixture(t *testing.T, extra string, managedProject bool) *managedP
 	return f
 }
 
-// markPolicyProjectManaged puts BOTH halves of the mark on the rig: the
-// creation fact in its runs bucket, which the read proves against the project
-// number and the bucket's own label, and the label on the project itself.
-func markPolicyProjectManaged(t *testing.T, r *initRig) {
+// markManagedProject puts BOTH halves of the mark on the rig: the creation fact
+// in its runs bucket, which the read proves against the project number and the
+// bucket's own label, and the label on the project itself. It is the world every
+// read of the marks answers "managed" about — the gate's (accounts_managed.go)
+// and D1541's fence's alike (managed_require.go), which is why a test whose
+// subject is what a command does on a managed project starts here.
+func markManagedProject(t *testing.T, r *initRig) {
 	t.Helper()
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{gcp.LabelManaged: gcp.ManagedValue})
 	r.gcs.Put(initRunsBucket, managed.MarkerObject, policyMarker())
@@ -893,11 +896,12 @@ func TestPolicyPublishReadsTheGateBeforeAnyWrite(t *testing.T) {
 	}
 }
 
-// The other side of the same boundary, and the sentence a project that is NOT
-// managed keeps: today's refusal, byte for byte, before anything is read. The
-// marks are what make a managed project, and a project without them is every
-// ordinary project — its steps are a person's, and an agent's session is
-// refused exactly as it was before this design existed.
+// The other side of the same boundary: a project that is NOT managed is
+// refused by D2217's fence, before anything is read or written, in the same
+// sentence a person at their own terminal reads there — the marks are what make
+// a managed project, and a project without them is every ordinary project.
+// What refuses it is the project and not the session, which is why the fence's
+// clause is what this asserts and not an agent refusal.
 func TestPolicyPublishUnmanagedProjectKeepsTheAgentRefusal(t *testing.T) {
 	f := newUnmanagedPolicyFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
@@ -908,9 +912,7 @@ func TestPolicyPublishUnmanagedProjectKeepsTheAgentRefusal(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a coding agent's session published the policy of a project that is not managed:\n%s", out)
 	}
-	if !strings.Contains(err.Error(), "nothing was written") || !strings.Contains(err.Error(), initflow.AgentRefusal("CLAUDECODE")) {
-		t.Errorf("the refusal is not today's: %v", err)
-	}
+	checkFenceRefusal(t, err, "project policy publish")
 	if got := ExitCode(err); got != ExitUserError {
 		t.Errorf("exit %d, want %d", got, ExitUserError)
 	}
@@ -928,8 +930,9 @@ func TestPolicyPublishUnmanagedProjectKeepsTheAgentRefusal(t *testing.T) {
 // Half a mark is not a managed project, and this is the half that is easy to
 // write and hard to notice: the creation fact is in the runs bucket, with the
 // label the read proves the bucket by, and the project itself carries no
-// fugaro_managed label. The gate requires BOTH, so the session reads today's
-// refusal and nothing is recorded — an implementation that accepted the object
+// fugaro_managed label. The read requires BOTH — it answers "not managed" from
+// the label alone, without looking in the bucket — so D2217's fence refuses the
+// publish and nothing is recorded: an implementation that accepted the object
 // alone would admit a publish in a project its owner never put into managed
 // mode.
 func TestPolicyPublishOneMarkIsNotManaged(t *testing.T) {
@@ -944,9 +947,7 @@ func TestPolicyPublishOneMarkIsNotManaged(t *testing.T) {
 	if err == nil {
 		t.Fatalf("half a mark admitted a coding agent's publish:\n%s", out)
 	}
-	if !strings.Contains(err.Error(), initflow.AgentRefusal("CLAUDECODE")) {
-		t.Errorf("the refusal is not today's: %v", err)
-	}
+	checkFenceRefusal(t, err, "project policy publish")
 	if got := ExitCode(err); got != ExitUserError {
 		t.Errorf("exit %d, want %d", got, ExitUserError)
 	}
@@ -1020,14 +1021,16 @@ func TestPolicyPublishOwnerOfAManagedProjectPaysNothingForTheGate(t *testing.T) 
 	}
 }
 
-// The other half of the same property, and the half a failed read cannot
-// state: a person's session skips readManagedGate even when the marks ARE
-// there and readable. The test above shows a person's run is unaffected by a
-// read that fails; this one shows the read is never made — the world is a
-// managed project whose marks answer, and a person's publish still sends the
-// storage and Resource Manager fakes nothing at all. A gate read that only
-// happened to work would be a read this installation pays for on every
-// publish, for a property that is the coding agent's session's business.
+// The other half of the same property: a person's session skips readManagedGate
+// even when the marks ARE there and readable — no verdict, no record, and no
+// refusal the gate would have made. What the publish reads is the fence's own
+// question instead (D2217): a fenced command asks whether the project is managed
+// before it opens a client, for a person at their own terminal exactly as for a
+// session, because what refuses an unmanaged project is the project and not the
+// session. It is asked at each cloud seam this command opens — the with-open and
+// the budget one — so what the run adds is the fence's read, twice, and nothing
+// else: the creation fact and the bucket it lives in, and the project's own
+// labels. A publish that reached the gate, or any third thing, shows up here.
 func TestPolicyPublishOwnersOwnSessionReadsNoMark(t *testing.T) {
 	f := newManagedPolicyFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
@@ -1042,11 +1045,15 @@ func TestPolicyPublishOwnersOwnSessionReadsNoMark(t *testing.T) {
 	if got := f.policyOf(t).Budget.PerRunUSD; got != 5 {
 		t.Errorf("the published per-run ceiling is %v, want the config's", got)
 	}
-	if got := len(f.gcs.Requests()); got != gcsBefore {
-		t.Errorf("a person's own publish made %d storage calls, want none: the marks are the gate's, and the gate is not read for a session that gives its own confirmation", got-gcsBefore)
+	for _, r := range f.gcs.Requests()[gcsBefore:] {
+		if r.Method != http.MethodGet || (!strings.HasSuffix(r.Path, "/b/"+initRunsBucket) && !strings.Contains(r.Path, "/o/"+managed.MarkerObject)) {
+			t.Errorf("a person's own publish asked storage for %s %s, want the fence's read of the creation fact and of the bucket it lives in and nothing else", r.Method, r.Path)
+		}
 	}
-	if got := len(f.crm.Requests()); got != crmBefore {
-		t.Errorf("a person's own publish made %d Resource Manager calls, want none: the labels are read by the gate, which a person's session does not reach", got-crmBefore)
+	for _, r := range f.crm.Requests()[crmBefore:] {
+		if r.Method != http.MethodGet || !strings.HasSuffix(r.Path, "/projects/"+initProject) {
+			t.Errorf("a person's own publish asked Resource Manager for %s %s, want the fence's read of the project's own labels and nothing else", r.Method, r.Path)
+		}
 	}
 	if got := f.audits(t); len(got) != 0 {
 		t.Errorf("a person's own publish left %d audit records, want none: a write nothing was admitted for has nothing to file", len(got))

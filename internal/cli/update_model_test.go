@@ -29,9 +29,11 @@ func modelAccessorAddr(name string) string {
 // service exists in `observe` and `enforce` alone). The node admits
 // acme/sandbox and does NOT proxy it, so the delete in play is the model
 // credential's and nothing about the Bitbucket token is in this file (the two
-// flips are separate, G22). mode overrides the published mode — the negative
-// control below publishes `off`, which holds the repository off the switch
-// whatever the bundle holds.
+// flips are separate, G22). mode overrides the published mode, which every row
+// below takes as `enforce`: the vocabulary has one other live mode and both
+// serve the bundle, so a mode is no longer a way to hold a repository off the
+// switch (D3009, F26) and the negative controls below reach that state through
+// the probe instead (modelFlipRig's served).
 func publishServedNode(t *testing.T, db *gcpfake.RTDB, mode string, repos ...string) {
 	t.Helper()
 	node := map[string]any{"version": projectpolicy.Version, "allow_repos": []string{"bitbucket/acme/sandbox"}, "budget": map[string]any{"mode": mode}}
@@ -52,14 +54,22 @@ func publishServedNode(t *testing.T, db *gcpfake.RTDB, mode string, repos ...str
 // record comes out on and Readiness plans `model_secrets_served = anthropic`
 // for this repository (credentialsBundleServes is judged per auth, so `oauth`
 // needs the account's token where `api-key` needs the paid key).
-func modelFlipRig(t *testing.T, auth, credential, mode, addr string) *initRig {
+//
+// served is the probe's own answer, and false is the second state D2071 names:
+// the outputs carry no credentials_service, so the probe drops the block and
+// nothing is served for this repository, whatever the node's mode says.
+func modelFlipRig(t *testing.T, auth, credential, mode string, served bool, addr string) *initRig {
 	t.Helper()
 	r, db := proxiedRepoRig(t)
 	// The bundle has to be READABLE for the switch's record to be judged: the
 	// probe takes the block off the installation's outputs (credentialsServiceProbe)
 	// and drops it when the outputs carry no URL, and a repository the probe
 	// cannot find a service for is one nothing is served (D2071).
-	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"credentials_service": credentialsServiceOutput()})}
+	if served {
+		r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"credentials_service": credentialsServiceOutput()})}
+	} else {
+		r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{})}
+	}
 	publishServedNode(t, db, mode, proxiedRepoCanonical(t))
 	putSwitchBundle(t, r, []byte(credential+": "+credsValue(t, "model")+"\n"))
 	// A plan with something in it: repoReady leaves the rig up to date, and a
@@ -100,7 +110,7 @@ func TestUpdateConvergesTheModelFlipOnAProjectThatIsNotManaged(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			addr := modelAccessorAddr(tc.credential)
-			r := modelFlipRig(t, tc.auth, tc.credential, config.BudgetEnforce, addr)
+			r := modelFlipRig(t, tc.auth, tc.credential, config.BudgetEnforce, true, addr)
 			out, errOut, err := executeStdin(t, "", "update", "--repo", "--no-build")
 			if err != nil {
 				t.Fatalf("one plain fugaro update --repo did not converge B2.7's flip for %s, so the one command is not the whole upgrade for it: %v\nstdout:\n%s\nstderr:\n%s", name, err, out, errOut)
@@ -136,16 +146,19 @@ func TestUpdateConvergesTheModelFlipOnAProjectThatIsNotManaged(t *testing.T) {
 //     proxy this repository, so the token's own flip (G22) takes nothing away
 //     and the guard must weigh this delete as it always has.
 //   - the job account's accessor on the same Claude credential of a repository
-//     the switch holds OFF — the node's mode is `off`, so Readiness plans
+//     the installation serves nothing — the outputs carry no credentials
+//     service, so the probe drops the block, Readiness plans
 //     `model_secrets_served = none` and the drop this allowance exists for is
-//     not one this repository's plan makes. The state is the one every
-//     installation is in the moment its mode is lowered (D2071), and the
-//     delete there is the operator's own change, which `--allow-delete` is
-//     still the way past.
+//     not one this repository's plan makes. The state is D2071's own second
+//     one, and it is the one this row reads since a mode cannot express it any
+//     more: `off` is gone (D3009), and the two live modes both serve a
+//     switched repository whose bundle is ready (F26), so no published mode
+//     holds a repository off the flip. The delete there is the operator's own
+//     change, which `--allow-delete` is still the way past.
 func TestUpdateRefusesADeleteTheModelFlipDoesNotMake(t *testing.T) {
 	t.Run("an accessor this spec still produces is refused", func(t *testing.T) {
 		other := modelAccessorAddr(config.BitbucketSecret)
-		r := modelFlipRig(t, config.AuthAPIKey, config.AnthropicSecret, config.BudgetEnforce, other)
+		r := modelFlipRig(t, config.AuthAPIKey, config.AnthropicSecret, config.BudgetEnforce, true, other)
 		out, errOut, err := executeStdin(t, "", "update", "--repo", "--no-build")
 		text := out + errOut + ErrorText(err)
 		if err == nil {
@@ -158,13 +171,13 @@ func TestUpdateRefusesADeleteTheModelFlipDoesNotMake(t *testing.T) {
 			t.Errorf("the refusal does not name %s and the flag that admits it, so a reader cannot tell what stopped the run:\n%s", other, text)
 		}
 	})
-	t.Run("the repository the switch holds off is refused", func(t *testing.T) {
+	t.Run("the repository the installation serves nothing is refused", func(t *testing.T) {
 		addr := modelAccessorAddr(config.AnthropicSecret)
-		r := modelFlipRig(t, config.AuthAPIKey, config.AnthropicSecret, config.BudgetOff, addr)
+		r := modelFlipRig(t, config.AuthAPIKey, config.AnthropicSecret, config.BudgetObserve, false, addr)
 		out, errOut, err := executeStdin(t, "", "update", "--repo", "--no-build")
 		text := out + errOut + ErrorText(err)
 		if err == nil {
-			t.Fatalf("the run applied a plan that deletes %s for a repository whose project mode holds it off the switch: no flip takes that accessor away there — Readiness plans model_secrets_served = none and the job keeps every mount — so the delete is the operator's own and the guard must weigh it as it always has\nstdout:\n%s\nstderr:\n%s", addr, out, errOut)
+			t.Fatalf("the run applied a plan that deletes %s for a repository the installation serves nothing: no flip takes that accessor away there — Readiness plans model_secrets_served = none and the job keeps every mount — so the delete is the operator's own and the guard must weigh it as it always has\nstdout:\n%s\nstderr:\n%s", addr, out, errOut)
 		}
 		if n := len(r.ran(t, "apply")); n != 0 {
 			t.Errorf("the run applied the repository's root %d time(s) after refusing: %q", n, r.calls(t))

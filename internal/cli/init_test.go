@@ -1803,7 +1803,7 @@ func TestInitRepoShowsCeilingAndClamps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, append(data, "budget: { mode: observe, per_run_usd: 5, max_run_tokens: 1000 }\nbase_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc}\n"...), 0o600); err != nil {
+	if err := os.WriteFile(path, append(data, "budget: { mode: enforce, per_run_usd: 5, max_run_tokens: 1000 }\nbase_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc}\n"...), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	yaml := func(block string) string {
@@ -1821,12 +1821,18 @@ func TestInitRepoShowsCeilingAndClamps(t *testing.T) {
 		}
 		return out, errOut
 	}
-	out, errOut := run("budget: { mode: off, per_run_usd: 20 }\n")
-	want := "Budget ceiling for aurora from project aurora: per_run_usd 5, mode observe, max_run_tokens 1000"
+	// The file that is looser than the ceiling names a mode the ceiling really
+	// is stricter than. The word that was a looser mode is gone (AB2, D3009):
+	// a repository file that says it is refused at budget.mode before any
+	// clamp is measured (D3022, internal/config's TestOffIsRefusedWithTheFix),
+	// and observe is the loosest mode there is — so the ceiling here enforces,
+	// which is the one direction a checkout's own mode can be looser than it.
+	out, errOut := run("budget: { mode: observe, per_run_usd: 20 }\n")
+	want := "Budget ceiling for aurora from project aurora: per_run_usd 5, mode enforce, max_run_tokens 1000"
 	if !strings.Contains(errOut, want) {
 		t.Errorf("stderr lacks %q:\n%s", want, errOut)
 	}
-	for _, w := range []string{"budget.per_run_usd: 20 is above the project's ceiling of 5", "budget.mode: off is looser than the project's observe"} {
+	for _, w := range []string{"budget.per_run_usd: 20 is above the project's ceiling of 5", "budget.mode: observe is looser than the project's enforce"} {
 		if !strings.Contains(errOut, w) {
 			t.Errorf("stderr lacks %q:\n%s", w, errOut)
 		}

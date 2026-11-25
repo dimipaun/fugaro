@@ -28,7 +28,7 @@ import (
 // Two directions decide an entry, and leaving one out is the safe one: a
 // refused plan falls back to a confirmation, which is a working program, while
 // a permitted plan that should not have been is the failure this gate exists
-// to avoid. So the list is smaller than init's — the eighteen entries in
+// to avoid. So the list is smaller than init's — the twenty-one entries in
 // managedDropped are Fugaro's own plumbing, the project-level IAM authority
 // the deployer must not hold, or a type whose resources GCP names on the
 // server's side, where no prefix condition can tell the agent's from Fugaro's.
@@ -108,6 +108,20 @@ var managedDropped = map[string]string{
 	"google_firebase_project":                "the owner-run creating path (infra.AddFirebase) and the owner-run Firebase root own it, and adding Firebase is never by itself what makes a project managed (D73)",
 	"google_firebase_database_instance":      "the owner-run Firebase root owns it, as its project does",
 	"google_firestore_index":                 "the owner-run Firebase root owns the run index's composite indexes (docs/console-fixes/contract-index.md, C-INDEX; plan task RI2), which serve the whole installation's listings: a managed project's own plans are not what the console's lists read, and the deployer holds no datastore.indexes.* permission at all, so a plan containing one could not be applied anyway",
+	// The consumer's signing key (mobile-identity-pairing plan task J6; O17),
+	// dropped together and for one reason: it is the installation's own
+	// identity, created by the owner-run installation root (mailbox_key.tf),
+	// and an agent-authored plan holding a key of its own would be a second
+	// signing identity in the project — a key whose public half no phone
+	// pinned, which nothing published and no update can revoke, while the
+	// grant beside it would hand a managed project's account the ability to
+	// sign as the installation. The deployer holds no cloudkms.* permission at
+	// all (Task 1.5's roles), so a plan carrying any of the three could not be
+	// applied anyway; dropping them is the fail-closed default, and keeping one
+	// is the owner's decision.
+	"google_kms_crypto_key":                  "the installation's consumer signing key (installation/mailbox_key.tf, plan task J6): Fugaro's own identity, applied by the owner-run installation root, and a key a managed plan created would be a second signing identity no phone pinned",
+	"google_kms_crypto_key_iam_member":       "a grant on the consumer's signing key (installation/mailbox_key.tf, plan task J6): the signing reach over Fugaro's own identity, bound to the installation's consumer alone (mailboxSignerGrant), and a managed plan binds no project-level IAM at all (D75 (iii))",
+	"google_kms_key_ring":                    "the ring the consumer signing key lives in (installation/mailbox_key.tf, plan task J6), applied by the owner-run installation root",
 	"google_logging_log_view":                "Fugaro's own log plumbing (installation/logging.tf), applied by the owner-run installation root",
 	"google_logging_log_view_iam_member":     "Fugaro's own log plumbing, applied by the owner-run installation root",
 	"google_logging_project_bucket_config":   "Fugaro's own log plumbing, applied by the owner-run installation root",
@@ -188,7 +202,7 @@ var managedGrantRules = map[string]bool{
 //     object the change removes (tf.Approves), and only when the resource it
 //     removes or creates is one the rules below admit — neither the address nor
 //     the list alone admits one (NotCovered);
-//   - the type: managedTypes rather than allowedTypes, so the eighteen
+//   - the type: managedTypes rather than allowedTypes, so the twenty-one
 //     entries of managedDropped ask for a confirmation instead;
 //   - the resource: every name a managed resource carries must carry
 //     ManagedPrefix, and the accounts a job or a scheduler runs as must be the

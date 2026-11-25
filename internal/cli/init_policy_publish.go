@@ -250,6 +250,18 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 	craftPools, _ := publishedCraftPools(lc, p, craftCreds)
 	add("craft_pools", craftPools, p.CraftPools, false)
 	add("crafts", publishedCrafts(lc, p), p.Crafts, false)
+	// The routing table is the same case one key over (RT4, R21, F49): the
+	// key's presence on the node is what tells the credentials service the
+	// installation is migrated (PL3), and the node is where a run reads it —
+	// no job's environment carries a table — so a config that states one where
+	// the node carries none is exactly the gap this stage exists to close:
+	// without the row the owner's own `model_routing:` block would reach no run
+	// until they ran the explicit publish, which is the second command the HARD
+	// RULE forbids. It is compared through the publisher's own merge, the craft
+	// rows' reason, and it is handed the craft_pools this publish would write
+	// (craftPools above): the pools travel in both blocks, so the row and the
+	// node cannot come to describe different projects.
+	add("model_routing", modelRoutingForPublish(lc, p, craftPools), p.ModelRouting, false)
 	// The cascade and the model grades are the same case one block over
 	// (D2607, F5, F6): the local config is their carrier from this release on,
 	// so a config that states a member the node does not carry is exactly the
@@ -288,6 +300,22 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 	// to carry.
 	if lc.ReviewAgainstTask != nil {
 		add("review_against_task", lc.ReviewAgainstTaskEffective(p.ReviewAgainstTask), p.ReviewAgainstTask, false)
+	}
+	// The member's switch for the personal half of a workspace's credentials
+	// reaches the workspace's service off this node and nowhere else (R9 of
+	// docs/workspace-credentials/, WC6, D2972) — the service reads the member's
+	// PUBLISHED policy, never anything on the member's disk — so a config that
+	// states it where the node states the other answer is a difference a publish
+	// closes, and it is compared the triage switch's way: the node's value is
+	// handed to the publisher's keep rule, so a config that writes nothing is
+	// not reported as a difference — nil would read as one against a node that
+	// states either answer — while a written true against a node that says
+	// nothing (or false) is exactly the edit this stage exists to carry. Without
+	// the row the member's admin's own act would reach no run: `settings set`
+	// writes the local config, and `fugaro update` — the one command that brings
+	// an installation forward — is where the node learns it.
+	if lc.PersonalWorkspaceTokens != nil {
+		add("personal_workspace_tokens", lc.PersonalWorkspaceTokensEffective(p.PersonalWorkspaceTokens), p.PersonalWorkspaceTokens, false)
 	}
 	// The pools' subscription switch reaches a run off this node too (F22,
 	// D1636), so a config that states it where the node states the other answer
@@ -734,6 +762,16 @@ func policyNodeForPublish(ctx context.Context, lc *localcfg.Config, old *project
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	// The routing table is the one member the builder above does not assemble:
+	// it is built here, from the installation's own `model_routing:` block and
+	// the pools this publish has just written into craft_pools, and it is
+	// refused here as well as by the writer's own read-back below — the decode's
+	// sentence for a broken node is the block's own, while this one names the
+	// table the operator is about to publish and the fix the check carries.
+	pol.ModelRouting = modelRoutingForPublish(lc, old, pol.CraftPools)
+	if problems, _ := pol.ModelRoutingProblems(); len(problems) > 0 {
+		return nil, nil, nil, userErr("the routing table this publish would write is not one a run can be served by, so nothing was written: %s %s", problems[0].Path, problems[0].Message)
+	}
 	if err := policyContextRefusal(pol, imageContextShipped); err != nil {
 		return nil, nil, nil, err
 	}
@@ -748,6 +786,77 @@ func policyNodeForPublish(ctx context.Context, lc *localcfg.Config, old *project
 		return nil, nil, nil, err
 	}
 	return body, pol, sources, nil
+}
+
+// modelRoutingForPublish is the node's `model_routing` member: the table the
+// installation's runs are routed by and the project's pools in their new shape
+// (RT4, contract-table.md). It is the one key whose presence tells the
+// credentials service the installation is migrated (PL3), so its two rules are
+// what makes a publish safe:
+//
+// The key is written when the config states a table, and kept when the node
+// carries one — the keep direction every other member of the node is written in
+// (clone_urls, binaries, the craft blocks). A machine whose config predates the
+// key, and an owner who declined to write it, keep a project routed exactly as
+// it was: un-routing an installation is never something a publish infers from a
+// silence, and a node that carries the key and no entry keeps carrying it (what
+// MG2 wrote is what the next publish writes back). A project with neither is
+// written no key at all — its pools stay inert and its calls are served as they
+// are today, which is the state an installation that has not migrated is in.
+//
+// Each pool is the `craft_pools` entry this publish writes — the very pool the
+// node carries in the old shape — with the three members `craft_pools` may not
+// carry (rule, principal, threshold) taken from the config's own pool where it
+// states one and from the node's own `model_routing` member where it does not.
+// Nothing else is read back off the node: the entry itself is the published one,
+// so an edit to a pool's members, its owner or its allowed users moves the two
+// blocks together. A pool left out of craft_pools (an ownerless one this
+// machine's config states) is left out here, which is what keeps the service
+// from resolving a source to a pool no run may be served from.
+func modelRoutingForPublish(lc *localcfg.Config, old *projectpolicy.Policy, pools []config.Pool) *projectpolicy.ModelRouting {
+	var out projectpolicy.ModelRouting
+	node := make(map[string]config.Pool)
+	if old != nil && old.ModelRouting != nil {
+		out.Entries = old.ModelRouting.Entries
+		for _, q := range old.ModelRouting.Pools {
+			node[q.Name] = q
+		}
+	}
+	if len(lc.ModelRouting) > 0 {
+		out.Entries = lc.ModelRouting
+	}
+	if len(out.Entries) == 0 && (old == nil || old.ModelRouting == nil) {
+		return nil
+	}
+	stated := make(map[string]config.Pool, len(lc.Pools))
+	for _, c := range lc.Pools {
+		stated[c.Name] = c
+	}
+	for _, q := range pools {
+		pub := q
+		// The three members come off the node only where the config states none
+		// of its own: craft_pools may not carry them, so the node's member of
+		// that name is the only copy of what the migration wrote — and never a
+		// zero written over a member this machine's file says nothing about,
+		// which would be the migration's principal dropped by a config that
+		// merely predates it.
+		if held, ok := node[q.Name]; ok {
+			pub.Rule, pub.Principal, pub.Threshold = held.Rule, held.Principal, held.Threshold
+		}
+		if c, ok := stated[q.Name]; ok {
+			if c.Rule != "" {
+				pub.Rule = c.Rule
+			}
+			if c.Principal != nil {
+				pub.Principal = c.Principal
+			}
+			if c.Threshold != nil {
+				pub.Threshold = c.Threshold
+			}
+		}
+		out.Pools = append(out.Pools, pub)
+	}
+	return &out
 }
 
 // policyCeiling is one member a publish loosens: the node's key, and the two

@@ -231,8 +231,9 @@ function aView(overrides: Partial<ConfirmFields> = {}): ConfirmFields {
 }
 
 /** SETTINGS_ARGV is the exact command line the confirmed write spawns, in the
- * order `argvFor` builds it (`settings set KEY --layer L <phase> --project P --
- * VALUE`): the window shows it rather than a summary of it. */
+ * order `argvFor` builds it (`settings set KEY --layer L [--repo DIRECTORY]
+ * <phase> --project P -- VALUE`): the window shows it rather than a summary of
+ * it. */
 const SETTINGS_ARGV: readonly string[] = Object.freeze([
   '/usr/local/bin/fugaro',
   'settings',
@@ -257,6 +258,7 @@ function aSettingsView(overrides: Partial<SettingsFields> = {}): SettingsFields 
     oldValue: '25',
     newValue: '30',
     layer: 'project',
+    target: '',
     wins: 'project',
     sentence: '',
     widening: false,
@@ -662,6 +664,41 @@ describe('the settings question the same document draws', () => {
     expect(launch.element('confirm-title').textContent).toBe(TITLE_LAUNCH)
     expect(launch.element('confirm-task-heading').textContent).toBe(TASK_HEADING)
     expect(fieldValue(launch.document, 'Run id')).toBe(aView().runId)
+  })
+
+  it('draws the target row of a `repo`-layer edit, and nothing of it for another layer (RC80, L12)', async () => {
+    // The layer names the document's *kind*; the target names the file. It is
+    // drawn from the view's `target`, which `settingsview.ts` reads out of the
+    // very argv this window shows and the source is handed, so the line and the
+    // spawn cannot name two files.
+    const repo = await mount({
+      fields: {
+        ok: true,
+        data: aSettingsView({
+          layer: 'repo',
+          target: 'writes fugaro.yaml in /Users/owner/src/checkout',
+          argv: [
+            '/usr/local/bin/fugaro',
+            'settings',
+            'set',
+            'budget.cap_usd',
+            '--layer',
+            'repo',
+            '--repo',
+            '/Users/owner/src/checkout',
+            '--project',
+            'sandbox',
+            '--',
+            '30',
+          ],
+        }),
+      },
+    })
+    expect(fieldValue(repo.document, 'Written at')).toBe('repo')
+    expect(fieldValue(repo.document, 'Target')).toBe('writes fugaro.yaml in /Users/owner/src/checkout')
+
+    const bare = await mount({ fields: { ok: true, data: aSettingsView() } })
+    expect(fieldValue(bare.document, 'Target')).toBeNull()
   })
 
   it('draws the shadowed sentence and the CLI’s why only where the view carries them', async () => {

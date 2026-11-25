@@ -102,7 +102,7 @@
     "source": "catalog",
     "sha256": "0c42726a0cc37a5415cfac83a74d25cfc041eb1d5a52a7d0533fcdcffb5202fc"
   },
-  "config_sha256": "349efb767552b6445adaec5719e59cbbfeb4fc074e33c530db2998052004651f",
+  "config_sha256": "692ff053e0bb1ae788ffc36517aa2a754bcdb0d8b727bcfe556ab3be6ba7b8b1",
   "changed_files": {
     "paths": [
       "feature.txt"

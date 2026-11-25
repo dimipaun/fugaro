@@ -2865,6 +2865,13 @@ func TestOrchestratorAccountIsItsOwnPrincipalKind(t *testing.T) {
 		// reversed on 2026-11-17. It is the installation's OWN service and the
 		// class is what answers the call.
 		"google_cloud_run_v2_service_iam_member|roles/run.invoker",
+		// ... nor this one, which the signing-key task added (mobile-identity
+		// pairing plan task J6; O17): the consumer IS this account, so the one
+		// grant of the installation's consumer key is its. The cell names the
+		// principal kind and the role, and mailboxSignerGrant is what closes it
+		// to this installation's one key — the row alone would admit a grant of
+		// this role on any key of the project.
+		"google_kms_crypto_key_iam_member|" + customKey + MailboxSignerRole,
 	}
 	var got []string
 	for typ, row := range grantRules {

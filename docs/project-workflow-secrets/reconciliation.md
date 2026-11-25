@@ -358,10 +358,9 @@ tree already makes, restated in one place so the new block cannot become a way *
 
 **Claim of the issue:** "a project copy never widens to a repository the operator did not list".
 
-**What the code does.** `SECURITY.md:32`: *"A wildcard means every current AND future repository it
-matches. A repository onboarded into that workspace later mounts this value on its next `fugaro
-setup`, with no further edit to the list, and nobody is asked again — that is the point of writing
-one entry instead of fifty, and it is the risk."*
+**What the code does.** `SECURITY.md:34`: *"**A wildcard means every current AND future repository it
+matches:** a repository onboarded into that workspace later mounts the value on its next `fugaro
+setup`, with no further edit and nobody asked again."*
 
 **Consequence.** For a reserved name the subject is a model credential or a git token; for a
 workflow secret it is whatever the repository's build and tests read — the 65 services' Nexus
