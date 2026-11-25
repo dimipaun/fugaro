@@ -362,6 +362,34 @@ func TestBuildEnvScrubs(t *testing.T) {
 	}
 }
 
+// TestBuildEnvFileSecretIsThePathAndNoSecret (D3327, G3): a declared secret the
+// repository exposes as a file reaches the stage as the PATH of the file the
+// runner wrote the value to, and the path is not what the redactor is handed.
+// The value is registered where the file is written -- by the fetch that
+// answered it, or by the writer itself for a value the job mounted -- and the
+// path is no credential to redact: a redactor holding it would rewrite the path
+// in everything the run publishes.
+//
+// Hand mutation this fails on: dropping the FileSecrets arm, which sends the
+// path down the declared-secret path and registers it (secrets would hold it).
+func TestBuildEnvFileSecretIsThePathAndNoSecret(t *testing.T) {
+	const (
+		path = "/tmp/fugaro-secrets-1f2e/FIXTURE_MARKER"
+		v    = "FIXTURE_MARKER"
+	)
+	env, secrets, err := BuildEnv([]string{"PATH=/bin", v + "=" + path},
+		EnvSpec{Auth: "api-key", Gateway: testGateway, Secrets: []string{v}, FileSecrets: []string{v}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := envValue(env, v); got != path {
+		t.Errorf("%s = %q, want the path the value was written to", v, got)
+	}
+	if len(secrets) != 0 {
+		t.Errorf("secrets = %v, want none: a file secret's variable holds a path, and its value is registered where the file is written", secrets)
+	}
+}
+
 func TestBuildEnvAuthModes(t *testing.T) {
 	env, _, err := BuildEnv([]string{"CLOUD_ML_REGION=us-east5", "ANTHROPIC_VERTEX_PROJECT_ID=p"}, EnvSpec{Auth: "vertex"})
 	if err != nil || !slices.Contains(env, "CLAUDE_CODE_USE_VERTEX=1") || !slices.Contains(env, "CLOUD_ML_REGION=us-east5") {
