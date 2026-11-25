@@ -809,11 +809,11 @@ built-in `vertex` at the floor of the layers.
 
 `fugaro craft ls` is the read that answers the question the three documents answer only by hand:
 
-Its columns are `CRAFT`, `MODEL`, `MODEL FROM`, `ACCESS`, `ACCESS FROM` and `SERVES`, one row per
-craft: the **model** and where it came from (the layer that wrote it — `repo`, `local` or `project`
-— the craft it was inherited from, or `default`), the **access** and where that came from, and
-whether it **serves** anything yet, which is `yes` or `no: the subscription-spread switch is off`
-for the inert pool of §13. It is **offline**: it reads this checkout's
+Its columns are `CRAFT`, `MODEL`, `MODEL FROM`, `CHAIN` and `SERVES`, one row per craft: the
+**model** and where it came from (the layer that wrote it — `repo`, `local` or `project` — the craft
+it was inherited from, or `default`), the **chain** the project's routing table resolves that model
+to (`docs/model-credentials-routing`), and whether a run **serves** it — `yes`, or `no:` and the
+first refusal, a model no entry of the table matches among them. It is **offline**: it reads this checkout's
 `fugaro.yaml`, this installation's own config and the project layer file the last cloud read cached,
 and reaches no bucket, no database and no host. `--json` prints the versioned document the console
 reads.

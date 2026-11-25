@@ -38,7 +38,7 @@ Subcommands:
 - `fugaro completion` -- Generate the autocompletion script for the specified shell
 - `fugaro config` -- Work with fugaro.yaml
 - `fugaro coordinator` -- The coordinator's project view: what is in flight, and what collides
-- `fugaro craft` -- Show the model and the credential or pool each craft runs on
+- `fugaro craft` -- Show the model each craft runs and the chain it goes out on
 - `fugaro creds` -- Set and list the credentials service's one bundle secret (the owner)
 - `fugaro diagnose` -- Explain how a run went: status, tests, review findings, the agent's last word, logs
 - `fugaro doctor` -- Check that Fugaro is set up and ready, without changing anything
@@ -3356,22 +3356,23 @@ This command has no subcommands.
 
 ## `fugaro craft`
 
-Show the model and the credential or pool each craft runs on
+Show the model each craft runs and the chain it goes out on
 
 Show the crafts: the coder, the first-line review, the senior review,
 the security review and the merge judge.
 
-Each craft runs a model and sends its calls out on a credential or a pool, and
-the two halves inherit separately: the first-line review and the merge judge
-follow the coder, and the security review follows the senior review, so a craft
-that sets only one half keeps the other half it follows. A craft that sets no
-access anywhere resolves to the project's default credential.
+Each craft runs a model, and the chain the project's routing table resolves that
+model to is where its calls go out: the sources of the entry that matches it, in
+order, first usable one wins. A model no entry matches has no chain and no run
+can call it. A project that publishes no routing table is served the release-1
+way, so its crafts have no chain to show.
 
-Every half names where it came from: the layer that wrote it (repo, local or
-project), the craft it was inherited from, or default when nothing set it. A
-pool holding two or more Claude OAuth credentials serves nothing until the
-project's subscription-spread switch is on — the switch this machine's own
-config writes — and the row says so.
+A craft's model inherits separately from the chain: the first-line review and
+the merge judge follow the coder, and the security review follows the senior
+review, so a craft that names only a model keeps the model of the craft it
+follows. The model names where it came from — the layer that wrote it (repo,
+local or project), the craft it was inherited from, or default when nothing set
+it. The chain is the project's and comes from no layer of a craft.
 
 The read is offline: it reads this checkout's fugaro.yaml, the installation's
 own config and the project layer file the last cloud read cached, and reaches
@@ -3387,11 +3388,11 @@ Flags:
 
 Subcommands:
 
-- `fugaro craft ls` -- Show each craft's effective model and access, and where each came from
+- `fugaro craft ls` -- Show each craft's effective model, the chain it goes out on, and where the model came from
 
 ## `fugaro craft ls`
 
-Show each craft's effective model and access, and where each came from
+Show each craft's effective model, the chain it goes out on, and where the model came from
 
 Usage: `fugaro craft ls`
 
