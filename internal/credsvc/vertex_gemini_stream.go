@@ -77,7 +77,9 @@ package credsvc
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -94,9 +96,11 @@ const (
 
 	// vertexGeminiMintedCallID is the ID a tool call gets when Vertex answered
 	// it without a thought signature. Vertex's `v1` functionCall carries no ID
-	// of its own, so one is minted here — the call's own position in the answer
-	// — and an ID is what the harness echoes back when it replays the call, so
-	// the same ID comes back on the request side (GV1).
+	// of its own, so one is minted here — the call's position in the answer and
+	// the answer's own identity (vertexGeminiMint), because an ID must be unique
+	// across the conversation and not only inside one answer — and an ID is what
+	// the harness echoes back when it replays the call, so the same ID comes
+	// back on the request side (GV1).
 	vertexGeminiMintedCallID = "toolu_vrtx_"
 
 	// vertexGeminiMessageID is the answer's own id when Vertex sent no
@@ -489,6 +493,9 @@ type vertexGeminiSaid struct {
 	finish  string
 	usage   vertexGeminiCounts
 	blocked string
+	// mint is the answer's own identity (vertexGeminiMint), which is what a
+	// minted call id is made unique across the conversation's turns by.
+	mint string
 }
 
 // vertexGeminiSaid accumulates the chunks of one answer, and it is where every
@@ -502,7 +509,52 @@ func vertexGeminiAccumulate(chunks []json.RawMessage) (*vertexGeminiSaid, error)
 			return nil, err
 		}
 	}
-	return said, nil
+	// The mint is read here and not as the chunks come, because Vertex's
+	// responseId may sit in any of them and only the whole answer has it.
+	said.mint = vertexGeminiMint(said, chunks)
+	return said, vertexGeminiCallIDs(said)
+}
+
+// vertexGeminiMint is the answer's own identity, which is what a minted call id
+// is made unique across the conversation's turns by: Vertex's responseId, and —
+// for an answer that carried none — the digest of its bytes.
+//
+// The responseId is the answer's name for itself and Vertex sends a fresh one
+// for every answer, which is exactly the property an id needs; it is answered
+// as read, and the id it is built into is opaque to the harness, which only
+// echoes it. The digest stands in only where the answer has no name of its own,
+// the same fallback the Messages answer's `id` takes (vertexGeminiMessageID),
+// and it leaves one case: two answers that carry no responseId AND are byte for
+// byte the same answer mint one id, because there is nothing else in them to
+// tell them apart. They are the same answer at that point; nothing measured is
+// lost by it.
+func vertexGeminiMint(said *vertexGeminiSaid, chunks []json.RawMessage) string {
+	if said.id != vertexGeminiMessageID {
+		return strings.TrimPrefix(said.id, vertexGeminiAnthropicIDPrefix)
+	}
+	h := sha256.New()
+	for _, raw := range chunks {
+		h.Write(raw)
+	}
+	return hex.EncodeToString(h.Sum(nil)[:6])
+}
+
+// vertexGeminiCallIDs gives every call of the answer its tool_use id, once the
+// whole answer has been read: a call's id is its signature when Vertex sent one,
+// and the answer's own mint otherwise, so nothing here may run before the last
+// chunk — the answer is what a minted id is unique by.
+func vertexGeminiCallIDs(said *vertexGeminiSaid) error {
+	for _, piece := range said.pieces {
+		if piece.call == nil {
+			continue
+		}
+		id, err := vertexGeminiCallID(piece.call, said.mint, piece.call.where)
+		if err != nil {
+			return err
+		}
+		piece.call.id = id
+	}
+	return nil
 }
 
 // vertexGeminiChunk reads one chunk of an answer. A member Vertex sends that
@@ -738,6 +790,10 @@ func vertexGeminiTextPiece(text string, said *vertexGeminiSaid) {
 // never the call before it continued — merging them would answer the harness
 // one call where the model made two, and the first call's arguments would be
 // gone with no error to show it.
+//
+// The piece is appended without its id: a call's id is read off the WHOLE
+// answer (vertexGeminiCallIDs), which is the only place the answer's mint is
+// known.
 func vertexGeminiCallPiece(raw []byte, signature, at string, said *vertexGeminiSaid) error {
 	call, err := vertexGeminiFunctionCall(raw, signature, at)
 	if err != nil {
@@ -745,11 +801,6 @@ func vertexGeminiCallPiece(raw []byte, signature, at string, said *vertexGeminiS
 	}
 	said.calls++
 	call.ordinal = said.calls
-	id, err := vertexGeminiCallID(call, at)
-	if err != nil {
-		return err
-	}
-	call.id = id
 	said.pieces = append(said.pieces, vertexGeminiPiece{call: call})
 	return nil
 }
@@ -793,20 +844,29 @@ func vertexGeminiFunctionCall(raw []byte, signature, where string) (*vertexGemin
 // rather than carried as it came because an id is not a place for `+`, `/` or
 // `=`, and GV1 decodes exactly this form.
 //
-// A minted id is the call's ordinal in the answer and never its name: two calls
-// to the same function in one answer are two calls, and two blocks sharing one
-// id would leave the tool_result the harness sends back answering both. The id
-// is opaque to the harness — it echoes it — and GV1 reads the NAME off the call
-// for a functionResponse, so only its uniqueness matters.
+// A minted id is the call's ordinal in the answer and the answer's own identity
+// (vertexGeminiMint), and never the function's name. Both halves are needed,
+// and the Messages wire is why: an id must be unique across the whole
+// conversation and not only inside one answer, so the ordinal alone would
+// collide on every turn of it — the harness pairs a tool_result with its
+// tool_use by id, and one id over two turns leaves a result answering a call it
+// was never run for.
+//
+// The id is opaque to the harness — it echoes it — and GV1 reads the NAME off
+// the call for a functionResponse, so nothing but uniqueness turns on its shape
+// — except for one thing: the ordinal stands first, because a digit can never
+// open the id with vertexGeminiThoughtSignatureID, which is what GV1 reads a
+// thought signature off. A minted id is an unsigned call and must be read back
+// as one.
 //
 // A signature that is not base64 is a typed refusal and not a call without one:
 // Gemini 3 checks the signature of a functionCall replayed to it, so an
 // unreadable one is a call the harness cannot send back, and refusing it here
 // names the member where a later 400 would name nothing an operator could act
 // on.
-func vertexGeminiCallID(call *vertexGeminiCall, where string) (string, error) {
+func vertexGeminiCallID(call *vertexGeminiCall, mint, where string) (string, error) {
 	if call.signature == "" {
-		return vertexGeminiMintedCallID + strconv.Itoa(call.ordinal), nil
+		return vertexGeminiMintedCallID + strconv.Itoa(call.ordinal) + "_" + mint, nil
 	}
 	raw, err := base64.StdEncoding.DecodeString(call.signature)
 	if err != nil || len(raw) == 0 {

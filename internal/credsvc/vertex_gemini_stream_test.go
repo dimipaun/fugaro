@@ -160,7 +160,8 @@ func geminiEvents(t *testing.T, raw []byte) []geminiEvent {
 //
 // Mutation (run, restore): read `totalTokenCount` as the output count, leave the
 // thought tokens out, carry the signature as it came rather than re-encoding it,
-// or map a safety block onto a stop reason of its own, and a pair is red.
+// map a safety block onto a stop reason of its own, or mint an unsigned call's id
+// from its position alone, and a case here is red.
 func TestGeminiAnswerTranslation(t *testing.T) {
 	for _, name := range []string{"text", "tool_call", "refusal", "cached"} {
 		t.Run(name, func(t *testing.T) {
@@ -268,6 +269,60 @@ func TestGeminiAnswerTranslation(t *testing.T) {
 			}
 		})
 	}
+
+	// The harness pairs a tool_result with the call it answers BY ID, and the
+	// ids it sees span the whole conversation, not one answer: a model whose
+	// calls carry no thought signature — every call of a model that sends none,
+	// and each parallel call of a Gemini 3 answer — would otherwise mint the
+	// same id in every turn, and a harness keying on it would hand one turn's
+	// result to another turn's call. So a minted id carries the answer's own
+	// identity (vertexGeminiMint) and two answers never mint the same one, and
+	// it never opens with vertexGeminiThoughtSignatureID, which is what GV1
+	// reads a thought signature off — a minted id is an unsigned call and must
+	// be read back as one.
+	t.Run("two answers never mint the same call id", func(t *testing.T) {
+		answer := func(tail string) []byte {
+			return []byte(`{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"read_file","args":{"path":"a.go"}}}]},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":4}` + tail + `}`)
+		}
+		theID := func(t *testing.T, raw []byte) string {
+			t.Helper()
+			got, err := vertexGeminiAnswer(raw, geminiAnswerModel)
+			if err != nil {
+				t.Fatalf("the answer was refused: %v", err)
+			}
+			doc, _ := geminiDoc(t, got).(map[string]any)
+			content, _ := doc["content"].([]any)
+			if len(content) != 1 {
+				t.Fatalf("the answer carries %d blocks, want one tool_use: %s", len(content), got)
+			}
+			block, _ := content[0].(map[string]any)
+			if block["type"] != "tool_use" {
+				t.Fatalf("the answer's one block is %v, want tool_use: %s", block["type"], got)
+			}
+			id, _ := block["id"].(string)
+			if id == "" {
+				t.Fatalf("the tool_use block carries no id: %s", got)
+			}
+			if strings.HasPrefix(id, vertexGeminiThoughtSignatureID) {
+				t.Errorf("the minted id %q opens with the thought-signature prefix: GV1 reads a signature off every id that does, so this unsigned call would be read back as a signed one", id)
+			}
+			return id
+		}
+		one, two := theID(t, answer(`,"responseId":"answerOne"`)), theID(t, answer(`,"responseId":"answerTwo"`))
+		if one == two {
+			t.Errorf("two answers that name themselves differently minted the same id %q: the answer's own identity is what makes a minted id unique across the conversation's turns", one)
+		}
+		// The fallback for an answer that names itself with no responseId: its
+		// bytes are its identity, so two answers that differ still mint
+		// different ids.
+		unnamed, other := theID(t, answer("")), theID(t, answer(`,"modelVersion":"gemini-3-flash-001"`))
+		if unnamed == other {
+			t.Errorf("two answers with no responseId minted the same id %q: an answer's own bytes are its identity when it names nothing", unnamed)
+		}
+		if unnamed == one {
+			t.Errorf("an answer with a responseId and one without minted the same id %q", one)
+		}
+	})
 }
 
 // TestGeminiStreamTranslation: a streamed answer becomes one Anthropic event
