@@ -2398,6 +2398,11 @@ func TestDiscoverInstallationAdoptsARetiredCopyItsConfigPlans(t *testing.T) {
 	f := newCloud(t)
 	inst := installationSpecWith(t, projectSecretLCBlock)
 	id := gcp.ProjectSecretID(inst.FugaroProject, "bitbucket-token")
+	// The first config of the two: one that does not plan the name at all, so
+	// this run's discovery never looks at the container.
+	if _, err := DiscoverInstallation(context.Background(), f.c, installationSpec(t)); err != nil {
+		t.Fatalf("DiscoverInstallation with a config that plans nothing = %v", err)
+	}
 	// The mark retirement leaves: the installation's labels with the logical
 	// name on LabelRetired in place of the LabelSecret the module's own
 	// resource writes.

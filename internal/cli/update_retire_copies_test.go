@@ -57,10 +57,12 @@ func retiredCopiesRig(t *testing.T) (r *convergeRig, db creds.DB, goneID, keptID
 	t.Helper()
 	r = newConvergeRigYAML(t, v7Node(), retireCopiesYAML)
 	// The installation's own local config, which is what makes planned-token
-	// the name a run leaves alone: project_secrets is operator-local, so this
-	// operator still derives the container and the release dropped nothing for
-	// them.
-	r.appendConfig(t, "project_secrets:\n  planned-token: { allow_data_to: [acme/app] }\n")
+	// the name a run leaves alone: the block is operator-local, so this
+	// operator still derives the container for the name and the release
+	// dropped nothing for them. registerInstallation copies the file the rig
+	// appends to into the project file the update door reads.
+	r.appendConfig(t, "workflow_secrets:\n  planned-token: { allow_data_to: [acme/app] }\n")
+	registerInstallation(t, r.initRig)
 
 	// The grammar: the names a copy may be retired for, with the marker the
 	// write path puts on a workflow's own value (G2) and one enabled version.
