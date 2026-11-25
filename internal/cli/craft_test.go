@@ -60,8 +60,11 @@ providers:
 
 // craftRepoYAML is the checkout's own fugaro.yaml: it selects the first-line
 // review's access — a name the installation config defines, which is the
-// ordinary case a repository's file writes (F12, D1628) — and the security
-// review's model, so the two halves of one craft come from two layers.
+// ordinary case a repository's file writes (F12, D1628). The access is the half
+// a repository's file still decides: a craft's model is a lifted key since S1
+// (D3237) — config.Resolve drops agent.crafts.<craft>.model — so the security
+// review's model is craftLsLayer's, the project answer, while its access stays
+// the one it inherits from the senior review.
 const craftRepoYAML = `version: 1
 project: aurora
 git: { provider: github }
@@ -69,8 +72,39 @@ agent:
   auth: api-key
   crafts:
     review: {access: anthropic-key}
-    security-review: {model: claude-opus-4-1}
 `
+
+// craftLsLayer is craftProjectLayer with the security review's model, which
+// these fixtures' checkout file wrote before S1 (D3237): a repository's file
+// may not name a craft's model, so the row's model is the project layer's and
+// the row is the spec's own example of the halves parting — the model from the
+// layer, the access the senior review's.
+var craftLsLayer = strings.Replace(craftProjectLayer,
+	"      review: {model: claude-sonnet-5-5}\n",
+	"      review: {model: claude-sonnet-5-5}\n      security-review: {model: claude-opus-4-1}\n", 1)
+
+// craftLocalCoderModel rewrites the installation's own answer for the coder —
+// the narrowest layer that may still name a craft's model — to model. A
+// repository's file may not name a craft's model since S1 (D3237), and the
+// project layer answers below the installation's own crafts, so the arms that
+// judge a model by its route, its price or the auth the run is under write the
+// model they disagree about here.
+func craftLocalCoderModel(t *testing.T, model string) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const old = "coder: {model: deepseek/deepseek-v4.1-flash, access: openrouter-main}"
+	if !bytes.Contains(data, []byte(old)) {
+		t.Fatalf("%s does not hold the fixture's coder craft", path)
+	}
+	repl := strings.Replace(string(data), old, "coder: {model: "+model+", access: openrouter-main}", 1)
+	if err := os.WriteFile(path, []byte(repl), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // craftProjectLayer is the project layer file the last cloud read cached, the
 // third layer the read resolves: the only place a craft's MODEL may be set
@@ -199,8 +233,10 @@ func craftRows() []craftLsRow {
 			Access: "claude-pool", AccessFrom: craft.SourceLocal, Inert: true, Servable: true,
 		},
 		{
-			// The spec's own example of the halves parting the other way.
-			Craft: config.CraftSecurityReview, Model: "claude-opus-4-1", ModelFrom: craft.SourceRepo,
+			// The spec's own example of the halves parting the other way: the
+			// model the project layer's (a repository's file may not name it
+			// since S1, D3237) and the access the senior review's.
+			Craft: config.CraftSecurityReview, Model: "claude-opus-4-1", ModelFrom: craft.SourceProject,
 			Access: "claude-pool", AccessFrom: craft.InheritedFrom(config.CraftSeniorReview), Inert: true,
 			Servable: true,
 		},
@@ -213,6 +249,7 @@ func craftRows() []craftLsRow {
 // so on the rows that name it, including the row that inherits it.
 func TestCraftLsTheThreeLayers(t *testing.T) {
 	craftFixture(t)
+	writeCraftLayer(t, craftLsLayer)
 	out, errOut, err := execute(t, "craft", "ls")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -316,6 +353,7 @@ func craftLine(t *testing.T, out, craft string) string {
 // reads it), and holds its rows to what the three layers mean.
 func TestCraftLsJSONMatchesSchema(t *testing.T) {
 	pkg := craftFixture(t)
+	writeCraftLayer(t, craftLsLayer)
 	out, _, err := execute(t, "craft", "ls", "--json")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -444,7 +482,10 @@ func TestCraftLsReportsAnAccessThatNamesNothing(t *testing.T) {
 // craftRepoUnservedModelYAML is the checkout's file with the coder's model set
 // to one no route claims: a provider model reaches a call only through a
 // provider entry the installation declares (config.craftRouteProblems), and the
-// fixture's route claims deepseek/* alone.
+// fixture's route claims deepseek/* alone. The file's model is dropped before
+// the merge (S1, D3237) — a craft's model is a lifted key — so the arms using
+// this file judge the model their layer answers, and the file is here for what
+// its own model cannot do.
 const craftRepoUnservedModelYAML = `version: 1
 project: aurora
 git: { provider: github }
@@ -478,10 +519,11 @@ agent:
 
 // craftRepoUnpricedModelYAML is the same accepted file without an agent.auth of
 // its own -- the project layer answers that, which is the arm's subject -- under
-// a mode that prices (observe) and naming a model no price row covers. It is
-// the one shape in which the price gate is visible: a run under a mode that
-// prices and an auth with a gateway would refuse this model, and a run whose
-// project answered oauth would charge nothing for it.
+// a mode that prices (observe) and naming a model no price row covers; that
+// model is dropped (S1, D3237, as above) and the layer's is the one the row is
+// judged by. It is the one shape in which the price gate is visible: a run under
+// a mode that prices and an auth with a gateway would refuse this model, and a
+// run whose project answered oauth would charge nothing for it.
 const craftRepoUnpricedModelYAML = `version: 1
 project: aurora
 gcp_project: aurora-gcp
@@ -560,6 +602,12 @@ func craftRowServes(t *testing.T, out, craft string) (bool, string) {
 func TestCraftLsRowNamesWhyAModelCannotBeServed(t *testing.T) {
 	t.Run("no route claims the model", func(t *testing.T) {
 		craftFixture(t)
+		// The model the row is judged by is the project layer's: a repository's
+		// file may not name a craft's model since S1 (D3237), so the file's own
+		// copy of it is dropped and only the layer's reaches the run. The file
+		// is written as well, because a file whose model never arrives is
+		// exactly what the lift makes of it.
+		craftLocalCoderModel(t, "qwen/qwen3-coder")
 		testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": craftRepoUnservedModelYAML})
 		out, _, err := execute(t, "craft", "ls", "--json")
 		if err != nil {
@@ -616,6 +664,9 @@ func TestCraftLsRowNamesWhyAModelCannotBeServed(t *testing.T) {
 		// charges for the craft — an auth with a gateway, which is now the whole
 		// of the gate (AB4, D3020: the mode is not read).
 		craftFixtureWith(t, "budget: { mode: observe }\n")
+		// As above: the model is the project layer's, and the file's own copy
+		// of it is dropped before the merge (S1, D3237).
+		craftLocalCoderModel(t, "deepseek/deepseek-v9")
 		testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": strings.Replace(craftRepoUnservedModelYAML,
 			"qwen/qwen3-coder", "deepseek/deepseek-v9", 1)})
 		out, _, err := execute(t, "craft", "ls", "--json")
@@ -640,6 +691,7 @@ func TestCraftLsRowNamesWhyAModelCannotBeServed(t *testing.T) {
 		// mode down — and it is what makes the read's own answer the run's: a
 		// run with a gateway prices its calls in every mode.
 		craftFixtureWith(t, "budget: { mode: off }\n")
+		craftLocalCoderModel(t, "deepseek/deepseek-v9")
 		testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": craftRepoUnpricedModelYAML})
 		out, _, err := execute(t, "craft", "ls", "--json")
 		if err != nil {
@@ -660,14 +712,16 @@ func TestCraftLsRowNamesWhyAModelCannotBeServed(t *testing.T) {
 		// The auth the price gate reads is the resolved one, and it is the
 		// project's to write: this checkout's file names no auth at all, and
 		// the layer answers oauth -- no gateway, nothing charged, so no price
-		// row is required of a craft. The file names the same model the arm
-		// above refuses, under an auth whose gateway would price it, so a gate
-		// read off the checkout's own block (api-key by default) reports a
-		// refusal where a run would charge nothing. The file is one
-		// config.Resolve accepts because a refused file contributes no layer and
-		// there would be no resolved auth to read at all.
+		// row is required of a craft. The coder names the same model the arm
+		// above refuses -- from the installation's own crafts, since a
+		// repository's file may not set one (S1, D3237) -- so a gate read off
+		// the checkout's own block (api-key by default) reports a refusal where a
+		// run would charge nothing. The file is one config.Resolve accepts
+		// because a refused file contributes no layer and there would be no
+		// resolved auth to read at all.
 		craftFixture(t)
 		writeCraftLayer(t, craftProjectOAuthLayer)
+		craftLocalCoderModel(t, "deepseek/deepseek-v9")
 		testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": craftRepoUnpricedModelYAML})
 		out, _, err := execute(t, "craft", "ls", "--json")
 		if err != nil {
