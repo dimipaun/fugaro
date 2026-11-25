@@ -53,6 +53,11 @@ only when the caller asked for those paths. A stage reads nothing it did not ask
 reader takes the extra paths as an option, so a stage that needs a file says so in the input rather
 than reading one behind the list's back.
 
+Under a memo the paths are the run's, not the stage's: the run's own read carries them
+(`e.repoExtras`) and every stage and step gets the views that read took, so a step that asks for a
+path of its own is answered before it asks. A file the run reads for one stage is carried by every
+view the run hands out.
+
 An extra file is read the way a checkout's own files are (`config.ReadRegular`,
 `config.MaxCheckoutFile`): only a regular file, at most the bound, opened without following a
 symlink and without blocking. A checkout is somebody else's, so a symlink, a FIFO or a device is

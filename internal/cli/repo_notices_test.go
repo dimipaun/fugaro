@@ -94,6 +94,54 @@ func TestBudgetOffNoticeFromDefaultBranch(t *testing.T) {
 	}
 }
 
+// TestNoticeSurvivesAnEarlierReadOfTheRun: the run reads the repositories once
+// and every later call is answered with the views that first read took, so the
+// two files the notices are judged from are asked for on the run's own read
+// (e.repoExtras) and not at the step's. A stage that read the list first must
+// not cost the owner the notice (U6a).
+func TestNoticeSurvivesAnEarlierReadOfTheRun(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		yaml string
+		// plant makes the checkout hold the dead value the case is about.
+		plant func(t *testing.T, root string)
+		want  string
+	}{
+		{
+			name: "the plugin pin",
+			yaml: refreshYAML,
+			plant: func(t *testing.T, root string) {
+				checkoutFile(t, filepath.Join(root, repoNoticePinFile), pinnedAmongOthers)
+			},
+			want: repoNoticePinFile + ": " + repoNoticePinEdit,
+		},
+		{
+			name:  "budget.mode: off",
+			yaml:  refreshYAML + offRepoYAML,
+			plant: func(*testing.T, string) {},
+			want:  repoNoticeYAMLFile + ": " + repoNoticeBudgetEdit,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := repoCheckout(t, githubOrigin, tc.yaml)
+			t.Chdir(root)
+			tc.plant(t, root)
+			e, out := checkoutEngine(t, nil)
+			// The door's own context, which is what every stage of a real
+			// update reads under: it is what makes the run read through the
+			// dead word instead of refusing the file (markTheUpdateReads).
+			ctx := theUpdateLeavesTheRemoval(t.Context())
+
+			e.repos(ctx)
+
+			e.noticeRepoValues(ctx)
+			if seen := out.String(); !strings.Contains(seen, tc.want) {
+				t.Fatalf("a stage read the list first, and the notice went with it:\n%s", seen)
+			}
+		})
+	}
+}
+
 // A checkout is somebody else's, and the extra files this step reads are read
 // the way a checkout's own files are (config.ReadRegular): a settings file that
 // is a symlink is not followed — it could name any file the reader can read —

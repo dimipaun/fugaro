@@ -29,6 +29,12 @@ const repoNoticePinFile = ".claude/settings.json"
 // in.
 const repoNoticeYAMLFile = "fugaro.yaml"
 
+// repoNoticeExtra are the two files the notices are judged from, which the
+// run's own read of the list asks the reader for (e.repoExtras): the run reads
+// the repositories once and every later call gets the views that first read
+// took (C1 §Memoized per run), so the paths have to be on that read.
+var repoNoticeExtra = []string{repoNoticePinFile, repoNoticeYAMLFile}
+
 // The two exact edits the notices name, and the same text in `update` and in
 // `doctor` (D3340, R15): what a person has to do, and why the value is dead.
 const (
@@ -96,8 +102,8 @@ func noticeRepoLines(views []repoView) []initflow.RepoLine {
 
 // noticeRepoValues is the step `update` runs after the stage loop: it reads
 // every enrolled repository's default branch — the .claude/settings.json and
-// the fugaro.yaml this step asks the reader for beside the view's own — and
-// reports one line per dead value it finds (D3340).
+// the fugaro.yaml the run's own read asked the reader for beside each view's
+// own (e.repoExtras) — and reports one line per dead value it finds (D3340).
 //
 // It writes nothing, which is the change U6a makes: the plugin stage's diff
 // offer and the budget.mode line's removal are gone, and the value is the
@@ -115,11 +121,7 @@ func (e *initEngine) noticeRepoValues(ctx context.Context) {
 	if o.doorName() != updateDoor.name {
 		return
 	}
-	views, _ := enrolledRepos(ctx, enrolledIn{
-		LC:    e.lc,
-		Memo:  &e.reposState,
-		Extra: []string{repoNoticePinFile, repoNoticeYAMLFile},
-	})
+	views, _ := e.repos(ctx)
 	lines := noticeRepoLines(views)
 	if len(lines) == 0 {
 		return

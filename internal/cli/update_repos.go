@@ -98,7 +98,9 @@ type enrolledIn struct {
 	// Extra are the repository-relative files the caller needs read beside
 	// fugaro.yaml (.claude/settings.json), which the view carries under their
 	// own path (C1 §Extra files). A caller asks for what it reads, and the
-	// reader reads nothing it was not asked for.
+	// reader reads nothing it was not asked for. Under a Memo it is the run's
+	// set (e.repoExtras), because the first read answers every later one: a
+	// caller that needs a file the run's read did not ask for is too late.
 	Extra []string
 }
 
@@ -178,7 +180,22 @@ func repoSortKey(repo string) string {
 // repos is this run's enrolled repositories, and the admit patterns the
 // reader could not list.
 func (e *initEngine) repos(ctx context.Context) ([]repoView, []string) {
-	return enrolledRepos(ctx, enrolledIn{LC: e.lc, Memo: &e.reposState})
+	return enrolledRepos(ctx, enrolledIn{LC: e.lc, Memo: &e.reposState, Extra: e.repoExtras()})
+}
+
+// repoExtras are the extra files the run's own read of the list asks the
+// reader for beside each fugaro.yaml: the two `update`'s notices are judged
+// from (repo_notices.go, U6a), and nothing else.
+//
+// They are asked for here, on the read every stage goes through, and not at
+// the step that needs them: the memo answers every later call with the views
+// its first read took (C1 §Memoized per run), so a step asking at its own call
+// is answered before it asks, with Files it never got.
+func (e *initEngine) repoExtras() []string {
+	if e.r.o.doorName() != updateDoor.name {
+		return nil
+	}
+	return repoNoticeExtra
 }
 
 // reportRepos records the lines a stage or a step after the loop reports
