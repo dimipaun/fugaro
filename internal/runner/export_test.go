@@ -96,6 +96,12 @@ const PRAttempts = prAttempts
 // MaxCredentialResumes exposes maxCredentialResumes.
 const MaxCredentialResumes = maxCredentialResumes
 
+// SlipClaimAttempts is the bound on one claim's attempts: the first call and
+// the retries slipRetryDelays names (identity_claim.go's claimRetryCall, which
+// the slip's own retry shares the shape of). A test asserts the service sees no
+// more than this, so an unbounded retry is visible.
+var SlipClaimAttempts = len(slipRetryDelays) + 1
+
 // CredentialsServiceURLEnv and MetadataHostEnv are where a cascade run reads
 // its upstream from, exposed so a runner_test run can be pointed at a
 // stand-in the same way a job is pointed at the real service.

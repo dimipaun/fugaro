@@ -19,6 +19,14 @@
 // door (`input.js`, which this task does not own) needs no change and the client
 // stays the app's one write path.
 //
+// **The draft and the detail are here too** (X2). `composer.js` holds the one
+// string the owner has typed or pasted and not sent -- outside the view, so a
+// switch to the voice screen and back or a rotation does not lose it -- and
+// `detail.js` is the other half of the text interface's spec sentence: a reply
+// too dense to follow by ear (a list of ids, a table) is announced with one
+// sentence and put on the screen, as a line of the same transcript the text
+// view already draws. Neither writes anything.
+//
 // **What is deliberately NOT exported here: anything that writes.** There is no
 // store, no paths and no client in this module's exports: the mail is the
 // caller's client, and this screen is handed it rather than building one. The
@@ -43,6 +51,10 @@ export {
   createTypedInput,
   typedReadBack,
 } from './input.js';
+
+export { COMPOSER_CODES, LONG_PASTE_CHARS, createComposer } from './composer.js';
+
+export { DETAIL_KINDS, DETAIL_SPEECH, detailKind, detailOnScreen } from './detail.js';
 
 export {
   CONVERSATION_LABEL,
