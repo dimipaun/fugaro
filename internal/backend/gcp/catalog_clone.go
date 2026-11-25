@@ -47,7 +47,8 @@ import (
 // cover it, and protocol.file and protocol.ext are set to never, so neither a
 // path nor a program is a transport at all. Then the credential's own end:
 // GitHub revokes the token at its own endpoint, and a Bitbucket build holds no
-// token to revoke (rule 7, R6).
+// token to revoke (rule 7, R6): its clone spends the proxy grant instead
+// (catalogCloneGrantStep).
 const (
 	// catalogCloneStepID is the clone step's id in a catalog build's step list,
 	// where the checkout an entry with a build context used to get one.
@@ -187,6 +188,28 @@ func catalogCloneDockerfile(s CatalogBuildSpec) string {
 func catalogBakedOwn(s CatalogBuildSpec) imagebake.Repo {
 	return s.Baked[len(s.Baked)-1]
 }
+
+// catalogCloneGitxStore is the git wrapper a GitHub build's clone runs under: the
+// credential-store file the credential step wrote, which carries the token.
+const catalogCloneGitxStore = "gitx() {\n" +
+	"  GIT_TERMINAL_PROMPT=0 git \\\n" +
+	"    -c credential.helper= \\\n" +
+	"    -c \"credential.helper=store --file=$CRED\" \\\n" +
+	"    -c protocol.file.allow=never \\\n" +
+	"    -c protocol.ext.allow=never \\\n" +
+	"    \"$@\"\n}\n"
+
+// catalogCloneGitxGrant is the wrapper a Bitbucket build's clone runs under
+// (R6): no credential helper at all, and the one git config file the grant was
+// written into, whose insteadOf sends every bitbucket.org URL to the credentials
+// service's proxy and whose header presents the build identity's ID token there.
+// Nothing else reads a credential, and a token for another host is not in it.
+const catalogCloneGitxGrant = "gitx() {\n" +
+	"  GIT_TERMINAL_PROMPT=0 GIT_CONFIG_GLOBAL=\"$CRED\" git \\\n" +
+	"    -c credential.helper= \\\n" +
+	"    -c protocol.file.allow=never \\\n" +
+	"    -c protocol.ext.allow=never \\\n" +
+	"    \"$@\"\n}\n"
 
 // catalogCloneScriptHelpers is the part of the generated script every catalog
 // build runs, up to the clone: every git it runs goes through gitx, so the
@@ -416,7 +439,14 @@ func catalogCloneScript(s CatalogBuildSpec) (string, error) {
 		}
 	}
 	fmt.Fprintf(&b, "COVERED='%s'\n", strings.Join(covered, " "))
-	b.WriteString(catalogCloneScriptHelpers)
+	helpers := catalogCloneScriptHelpers
+	if s.GitProvider == gitprov.KindBitbucket {
+		if !strings.Contains(helpers, catalogCloneGitxStore) {
+			return "", errors.New("the generated clone script no longer carries the git wrapper a Bitbucket build replaces")
+		}
+		helpers = strings.Replace(helpers, catalogCloneGitxStore, catalogCloneGitxGrant, 1)
+	}
+	b.WriteString(helpers)
 	if len(s.Baked) == 0 {
 		b.WriteString(catalogCloneScriptOwn)
 	} else {
@@ -587,6 +617,9 @@ func catalogCloneStep(s CatalogBuildSpec, buildCwd string) (*cloudbuild.BuildSte
 	if s.Context != "" {
 		env = append(env, "CONTEXT_DIR=${_CONTEXT_DIR}", "BUILD_CWD="+buildCwd)
 	}
+	if s.GitProvider == gitprov.KindBitbucket {
+		env = append(env, "CREDENTIALS_SERVICE_URL=${_CREDENTIALS_SERVICE_URL}")
+	}
 	return &cloudbuild.BuildStep{
 		Id:         catalogCloneStepID,
 		Name:       "gcr.io/cloud-builders/docker",
@@ -635,6 +668,9 @@ func catalogCloneStepScript(s CatalogBuildSpec) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "set -eu\nexport LC_ALL=C\ninstall -d -m 0700 %s\ntrap 'rm -f %s' EXIT\n", catalogCloneWork, catalogCloneCredential)
 	fmt.Fprintf(&b, "nd=$1\nshift\nprintf '%%s' \"${@:1:nd}\" > %s\nshift \"$nd\"\nprintf '%%s' \"$@\" > %s\nset --\n", catalogCloneDockerfilePath, catalogCloneScriptPath)
+	if s.GitProvider == gitprov.KindBitbucket {
+		b.WriteString(catalogCloneGrantStep)
+	}
 	b.WriteString(`base=$(docker image inspect --format '{{index .RepoDigests 0}}' "$FUGARO_BASE") \
   || { echo "the base image $FUGARO_BASE is not on this worker" >&2; exit 1; }
 docker build ` + catalogCloneBuildFlags + `  --target checkout --tag ` + catalogCloneImage + ` \
@@ -651,6 +687,38 @@ docker build ` + catalogCloneBuildFlags + `  --target checkout --tag ` + catalog
 	}
 	return b.String()
 }
+
+// catalogCloneGrantStep is the part of a Bitbucket build's clone step that
+// spends the proxy grant (R6, rule 9). The credential step wrote the grant as one
+// git config section; this step reads the build identity's own ID token from the
+// metadata server, for the credentials service's own address as the audience,
+// and appends the header that presents it to the same file, which the build the
+// step runs is handed as a secret and no other build is.
+//
+// It fails closed at every point it can see: the section the credential step
+// wrote must be exactly this installation's proxy (the address the step itself
+// was given), the token must be one clean value of the characters a Google ID
+// token is made of, and nothing is retried or defaulted. The token is never an
+// argument, never printed and never in the environment of anything but this
+// step's own shell.
+const catalogCloneGrantStep = `case "$CREDENTIALS_SERVICE_URL" in
+  https://*) ;;
+  *) echo "the credentials service's address is not https: the build identity is offered there alone" >&2; exit 1 ;;
+esac
+svc=${CREDENTIALS_SERVICE_URL%/}
+proxy="$svc/v1/bitbucket/proxy/"
+[ "$(sed -n 1p ` + catalogCloneCredential + `)" = "[url \"$proxy\"]" ] \
+  || { echo "the proxy grant the credential step wrote is not this installation's proxy" >&2; exit 1; }
+idtoken=$(curl --silent --show-error --fail --max-time 30 --header "Metadata-Flavor: Google" \
+  --get --data-urlencode "audience=$svc" \
+  "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity") \
+  || { echo "the build identity's ID token could not be read from the metadata server" >&2; exit 1; }
+case "$idtoken" in
+  ""|*[!A-Za-z0-9._-]*) echo "the build identity's ID token is not one clean value" >&2; exit 1 ;;
+esac
+(umask 077 && printf '[http "%s"]\n\textraHeader = Authorization: Bearer %s\n' "$proxy" "$idtoken" >> ` + catalogCloneCredential + `)
+unset idtoken
+`
 
 // catalogArgChunk is how many bytes of a generated file one argument of the
 // clone step carries. Cloud Build refuses a step argument over 10000 characters,
