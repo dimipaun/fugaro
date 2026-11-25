@@ -1677,12 +1677,25 @@ const NO_OLDER: LiveOlder = Object.freeze({
   because: null,
 })
 
-/** liveOlderOf is the caller's empty section: `supported` is the answer
+/**
+ * liveOlderOf is the caller's empty section: `supported` is the answer
  * `runsListOlderSupported` gave for the CLI this console is driving, and
- * `cursor` is the last run id of the runs the Live list already drew -- the
- * oldest run of the window the console read. There is no control without a
- * cursor: the first page is the one *after* the newest rows on screen, and a
- * read that named no run would hand back the rows already drawn. */
+ * `cursor` is **the oldest run the Live list already drew** -- the bottom of
+ * the window on screen, which is where the older history begins.
+ *
+ * **It is the oldest and not the newest**, and that is `runs ls`'s own order:
+ * the listing prints newest first and `--after=<run id>` continues *after* that
+ * run's position in it, so naming the oldest run drawn asks for the runs older
+ * than it -- naming the newest would hand back the rows already on screen. The
+ * Live list's own rows are the frame's, which `buildLiveModel` leaves in the
+ * document's order (earliest start first), so a caller reading them takes the
+ * **first** row; a caller reading a `runs ls` page, whose order is newest
+ * first, takes its last (`olderPageOf`).
+ *
+ * There is no control without a cursor: a window that drew no run has no row to
+ * page after, and a read that named no run at all would hand back the day's
+ * rows a second time.
+ */
 export function liveOlderOf(supported: boolean, cursor: string | null): LiveOlder {
   return { supported, rows: [], cursor, more: true, reading: false, because: null }
 }

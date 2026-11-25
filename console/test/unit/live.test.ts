@@ -2185,7 +2185,7 @@ const OLDEST_OF_THE_WINDOW = '20261015-120000-aa01'
 
 /** withOlder is the screen drawn for one older section, over the fixture's last
  * frame. */
-function withOlder(older: LiveOlder): FakeScreen {
+function withOlder(older: LiveOlder): ScreenElement {
   return renderLive(factory, buildLiveModel(theLastFrame(), new BurnHistory(), null, undefined, undefined, older), 'light')
 }
 
