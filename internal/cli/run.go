@@ -6896,17 +6896,22 @@ func servicesLaunchEnv(entry config.Entry) string {
 // path of such a run reads: its own flip is config.ServiceHeldSecretNames'
 // (#907, G22).
 //
-// ONE THING A SHARED JOB KEEPS OUT OF ITS PROFILE'S ANSWER, and it is the auth
-// the service does not serve: a `vertex` run reads no credential of the
-// service's (its model calls go through the gateway on the job's own Google
-// credentials) and its git traffic is served by the App key the drop leaves
-// mounted, so the address would move a path that works onto a mint that
-// repository has no use for. Its model mounts are gone all the same — the drop
-// is the profile's and reads no auth — and neither of the two it takes is one a
-// `vertex` run reads (internal/runner's providers), so the state that leaves is
-// a job whose own auth needs neither. A repository whose auth IS one the
-// service serves, and the documentless launch whose auth this read does not
-// know, are told: withholding there is the mountless, addressless run above.
+// ONE THING A SHARED JOB KEEPS OUT OF ITS PROFILE'S ANSWER, and it is an auth
+// the service does not serve on a repository the table does not place: a
+// `vertex` file the project's routing table names no chain for reads no
+// credential of the service's (its model calls go through the gateway on the
+// job's own Google credentials) and its git traffic is served by the App key
+// the drop leaves mounted, so the address would move a path that works onto a
+// mint that repository has no use for. Its model mounts are gone all the same —
+// the drop is the profile's and reads no auth — and neither of the two it takes
+// is one such a `vertex` run reads (internal/runner's providers), so the state
+// that leaves is a job whose own auth needs neither, and its run is still
+// refused under `enforce` on both sides (the table's own gate). A repository
+// the table serves is told whatever its file says — a chain naming Vertex above
+// all, which the service calls on its own identity and prices as a key's
+// (D3174, CS6) — and so are a repository whose auth IS one the service serves
+// and the documentless launch whose auth this read does not know: withholding
+// there is the mountless, addressless run above.
 //
 // The DOCUMENTLESS launch is where the two arms differ most, and it is why this
 // one reads neither a record nor a tfvars: an empty auth is a launcher that
@@ -6991,7 +6996,19 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, sharedProfile, repo, auth,
 		if !installed || !declared || !infra.CredentialsServiceServesProfile(lc, pr) {
 			return nil
 		}
-		if auth != "" && auth != config.AuthCascade && !runner.ServiceSwitchedAuth(auth) {
+		// Two answers, one arm: the project's table, which serves this
+		// repository whatever its file names (D3174 — a `vertex` repository
+		// whose chain names Vertex above all, since CS6), and the release-1
+		// bridge's own list (config.ServiceServedAuths, and the cascade, which
+		// the mode never holds off). The runner's predicate is deliberately not
+		// read here: since CS6 it admits `vertex` off the job's own address, and
+		// a shared job is judged on its profile, which reads no address at all.
+		// The profile's answer above stands in for this repository's record in
+		// the table's half, because this job's mounts were dropped on the
+		// profile.
+		tableServes := infra.CredentialsServiceServesChains(installed, true, infra.ChainPlanFor(lc, repo))
+		bridgeServes := auth == config.AuthCascade || slices.Contains(config.ServiceServedAuths, auth)
+		if auth != "" && !tableServes && !bridgeServes {
 			// An auth the service does not serve: the address would open this
 			// job's git provider keyless for a credential a run of that auth
 			// reads from the App key the drop leaves mounted, and its model

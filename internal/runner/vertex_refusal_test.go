@@ -16,12 +16,12 @@ package runner
 // the auth alone: the launch's address on the job is what says the table serves
 // this repository (B2.2/D2072), and CS6 put `vertex` in that set (D3174), so a
 // `vertex` run carrying the address is served while one without it is not.
-// What is left refusing is the CLI's half of the same rule (validate and
-// update --repo's checkVertexBudget), which reads the local config rather than
-// a run: it still refuses a `vertex` file outright, so a migrated vertex
-// repository cannot be launched at all. That half is reported as a
-// follow-up in the PR of this task rather than moved here, and internal/cli's
-// TestTheVertexRefusalAgreesWithTheRunner holds the two answers on one fixture.
+// The CLI's half of the same rule (validate and update --repo's
+// checkVertexBudget) reads the local config rather than a run, and it answers
+// from the table itself: a repository the table serves is accepted and one it
+// does not is refused exactly as before. internal/cli's
+// TestTheVertexRefusalAgreesWithTheRunner holds the two answers on one fixture,
+// which is why neither side can move alone.
 
 import (
 	"context"

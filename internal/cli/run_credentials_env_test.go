@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/routing"
 )
 
 // launchCredsURL is the URL an opted-in installation's config carries in
@@ -449,6 +450,17 @@ func TestCredentialsServiceLaunchEnv(t *testing.T) {
 		"acme/app": {Provider: "github", CredentialsServiceReady: localcfg.RecordSwitch(false)},
 		"acme/lib": {Provider: "github", CredentialsServiceReady: localcfg.RecordSwitch(true)},
 	}
+	// servedByTable is the same config with the project's routing table
+	// published: one entry whose single source is Vertex, admitted to the
+	// repository this launch works on — the table's own fact, which the arm
+	// reads beside the profile's (infra.ChainPlanFor).
+	servedByTable := func(repos map[string]localcfg.Repo) *localcfg.Config {
+		lc := sharedJob(repos)
+		lc.ModelRouting = routing.Table{{Match: "claude-*", Chain: []routing.Source{
+			{Kind: routing.KindVertex, Admit: []string{"acme/app"}},
+		}}}
+		return lc
+	}
 	for name, tc := range map[string]struct {
 		lc       *localcfg.Config
 		auth     string
@@ -470,16 +482,22 @@ func TestCredentialsServiceLaunchEnv(t *testing.T) {
 			lc:   sharedJob(appOn),
 			want: true,
 		},
-		// CS6 put `vertex` in the set the service serves (D3174), so the auth
-		// arm of this function now lets a vertex document through; this row was
-		// the one auth that arm turned away. The deployer's own list is
-		// narrower still -- config.ServiceServedAuths names api-key and oauth,
-		// and the plan's CS11 leaves it until the owner says otherwise -- so
-		// the launch's answer and the profile's mounts disagree for a vertex
-		// document. That reconciliation is the table's, which the plan gives to
-		// CS10 and CS11; this row pins today's answer.
-		"a served profile, a vertex document (served since CS6)": {
+		// A `vertex` document is told nothing on a profile whose project
+		// publishes no routing table: the file's own Vertex path is the one
+		// that runs (the job's GCP identity), its git traffic reads the App key
+		// the drop leaves mounted, and the address would move a path that works
+		// onto a mint that repository has no use for.
+		"a served profile, an auth the service cannot serve": {
 			lc:   sharedJob(appOn),
+			auth: config.DefaultAgentAuth,
+		},
+		// The arm's other half, and the reason it reads the table: the same
+		// `vertex` document IS told on a repository the project's table serves
+		// (D3174, CS6) — a chain naming Vertex is the service calling Vertex on
+		// its own identity and pricing the call as a key's, so the address is
+		// what the run's model path turns on and the file's own path is not it.
+		"a served profile, a vertex document the table serves": {
+			lc:   servedByTable(appOn),
 			auth: config.DefaultAgentAuth,
 			want: true,
 		},

@@ -5365,7 +5365,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		}
 	}
 	if !o.forget {
-		if err := checkVertexBudget(lc, cfg); err != nil {
+		if err := checkVertexBudget(lc, repo, cfg); err != nil {
 			return err
 		}
 	}
@@ -5941,6 +5941,33 @@ func (o *initOptions) requireCheckoutProject(ctx context.Context, dir string) er
 // that enforces: the gateway can't yet be relied on to cap Vertex spend.
 const vertexBudgetRefusal = runner.VertexBudgetRefusal
 
+// servedByTheTable reports whether the project's routing table puts this
+// repository's runs on the credentials service: a chain of the table admits
+// the repository and the installation's own installed-and-ready pair is on —
+// the same two facts, read the same way, as the repository root's plan
+// (internal/infra's resolve, CredentialsServiceServesChains).
+//
+// It is the fact D3174's lift of the two Vertex refusals hangs on, and every
+// answer it cannot give is a refusal: a command that cannot name the
+// repository, an installation with no service, and a repository the update has
+// not recorded a bundle for are all "not served", which is the fail-closed
+// direction. An unmigrated repository keeps both refusals, because its file is
+// the whole of what runs it (R3).
+//
+// A source of the two pool kinds answers yes here for every repository, and
+// that is the contract's own direction rather than this reader's: which member
+// serves one is walked at the call (ChainPlanFor), and the launch hands the
+// address on the same answer, so the gate and the job it judges are one
+// (internal/cli's credentialsServiceLaunchEnv).
+func servedByTheTable(lc *localcfg.Config, repo string) bool {
+	if lc == nil || repo == "" {
+		return false
+	}
+	local, _ := lc.RepoFor(repo)
+	return infra.CredentialsServiceServesChains(lc.CredentialsService != nil, local.CredentialsServiceOn(),
+		infra.ChainPlanFor(lc, repo))
+}
+
 // gateCatalogSwitches is repoEngine's route-switch version gate (price-catalog
 // plan Task 4 step 2): refuseCatalogSwitches, unless there is nothing to
 // refuse it for — --forget tears the repository down, and --plan-only shows
@@ -6260,16 +6287,15 @@ func (r *initRun) gateWorkflowAB(o *initOptions, repo string, lc *localcfg.Confi
 // the agent through Vertex AI (agent.auth: vertex) under a project budget
 // in enforce mode. observe and off are allowed.
 //
-// D3174's lift of this refusal belongs to the run the credentials service
-// serves, so it comes with CS6 ("the run's model path follows the table") and
-// not with this gate: the runner answers the same question off the path the run
-// is on (vertexServedByTheService), and a `vertex` file's coding run is on no
-// such path while the service serves api-key, oauth and cascade runs alone
-// (runner.ServiceSwitchedAuth), so the runner's checkBudget refuses the run at
-// bootstrap. Lifting it here alone would green-light a run that dies —
+// D3174's lift belongs to the run the credentials service serves, which is
+// servedByTheTable's answer here and the run's own model path in the runner
+// (vertexServedByTheService, off the address the launch hands on that same
+// answer): such a run's Vertex calls are the service's, capped and priced as a
+// key's, so nothing is left to refuse. A `vertex` file the table does not place
+// authenticates with the job's own account and is refused exactly as before —
 // TestTheVertexRefusalAgreesWithTheRunner holds the two answers together.
-func checkVertexBudget(lc *localcfg.Config, cfg *config.Config) error {
-	if cfg.Agent.Auth != "vertex" {
+func checkVertexBudget(lc *localcfg.Config, repo string, cfg *config.Config) error {
+	if cfg.Agent.Auth != "vertex" || servedByTheTable(lc, repo) {
 		return nil
 	}
 	// The ceiling's mode and the file's, the stricter of the two, as the
