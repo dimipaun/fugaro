@@ -452,7 +452,7 @@ run196() { # dir mode — the script's own arguments are in run_args, extra env 
   if [ -n "${CHECK196_TEST_XTRACE:-}" ]; then runner=(bash -x); fi
   status=0
   env \
-    PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    PATH="$dir/bin:$PATH" HOME="$dir/home" XDG_CONFIG_HOME="$dir/home/.config" TMPDIR="$dir/tmp" \
     FAKE_LOG_DIR="$dir/logs" FAKE_GCLOUD_MODE="$mode" \
     CHECK196_REPO=acme/sandbox CHECK196_BITBUCKET=acme/bb-sandbox \
     CHECK196_LOG_WAIT_SECONDS=0 CHECK196_LOG_POLL_SECONDS=0 \
