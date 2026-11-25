@@ -161,6 +161,12 @@ func routeAct(path string) (purpose, credential string) {
 		// tier — and naming one would be recording a fact the route does not
 		// have.
 		return PurposeSlipClaim, ""
+	case PoolDesignatePath:
+		// A designation's line is the grant's own shape (PL4): the launcher's
+		// act, writing a record of names — the principal, the project and the
+		// pool — and issuing no credential at all, so there is no name of one
+		// for the line to carry (credentiallessPurpose, callerWithoutJobPurpose).
+		return PurposePoolDesignate, ""
 	case WorkflowSecretsPath:
 		// The workflow-secrets route's credential is the CONTAINER the value
 		// was read from, and THAT NAME IS NOT IN THE PATH: it is the record's
@@ -263,7 +269,7 @@ func servedRoute(r *http.Request) bool {
 		return false
 	}
 	switch r.URL.Path {
-	case MessagesPath, CountTokensPath, ProviderRoutePath, ProviderCountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath:
+	case MessagesPath, CountTokensPath, ProviderRoutePath, ProviderCountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath, PoolDesignatePath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath:
 		return true
 	// The five identity routes (C1, R2): a run's identity is issued here, with
 	// every one of them answered ahead of the shared parse below.
@@ -1144,6 +1150,15 @@ func NewServer(cfg Config) (*Server, error) {
 		}
 		s.shared[folded] = sa
 	}
+	// The launcher's pool (C2's lookup, PL4): the real one, in place of the stub
+	// launcherPool() answers while the seam is nil. It is assigned here and not
+	// in an init because the lookup reads THIS deployment — the project, the
+	// published policy and the designation subtree are the Server's own — and a
+	// process builds one server for the installation or the workspace it serves
+	// (Config). The seam itself is C2's and is package-level (chain.go), so a
+	// process that built two servers would have the later one's lookup answer
+	// for both: no deployment does, and a test builds one per fixture.
+	LauncherPools = launcherPools{s: s}
 	return s, nil
 }
 
@@ -1215,7 +1230,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+ProviderRoutePath+", "+ProviderCountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+WorkflowSecretsPath+", "+BuildTokenPath+", "+BuildCredentialsPath+", "+identitywire.TicketPath+", "+identitywire.ClaimPath+", "+identitywire.PairingPath+", "+identitywire.DevicePath+" and "+identitywire.ProbePath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+ProviderRoutePath+", "+ProviderCountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+PoolDesignatePath+", "+WorkflowSecretsPath+", "+BuildTokenPath+", "+BuildCredentialsPath+", "+identitywire.TicketPath+", "+identitywire.ClaimPath+", "+identitywire.PairingPath+", "+identitywire.DevicePath+" and "+identitywire.ProbePath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
 		return
 	}
 	// The scope this call is served under (R1, C1), asked once and before any
@@ -1390,6 +1405,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.slipGrant(ctx, w, r)
+		return
+	}
+	if r.URL.Path == PoolDesignatePath {
+		// The designation route, answered before the shared parse for the
+		// launcher class's own reason one step further (PL4): its caller is a
+		// person or a roster service account recording what its OWN runs are
+		// served from, which is an act no run of this installation carries —
+		// the runs it answers for do not exist yet — so RequestFromHTTP would
+		// refuse the call for the identity headers it never had. The body is
+		// this route's own read (readDesignateRequest).
+		//
+		// It is not a workspace's route: a workspace's service resolves it to
+		// the unserved scope (aheadOfTheSharedParse, servesWorkspaceRoute), and
+		// the member's own pool is the installation's answer, not the
+		// workspace's.
+		s.poolDesignate(ctx, w, r)
 		return
 	}
 	if _, isIdentity := identitywire.RouteFor(r.URL.Path); isIdentity {
