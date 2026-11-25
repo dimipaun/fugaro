@@ -186,6 +186,26 @@ func TestGeminiAnswerTranslation(t *testing.T) {
 		}
 	})
 
+	// The acceptance is a fact about the SERVICE and not about the
+	// translation: what the agent's harness receives is the translated answer,
+	// in the media type the harness reads it by, and the answer's `model` is
+	// the ID the agent asked with — what the gateway's own ledger prices by —
+	// and not the spelling Vertex's path carries.
+	t.Run("the service hands the agent the translated answer", func(t *testing.T) {
+		s, _, _ := vertexGeminiFixture(t, geminiWhole(t, "tool_call"))
+		cl := vertexCall(t, MessagesPath, string(geminiPair(t, "tools", "anthropic")))
+		done, _, rec, _ := serveVertexCall(t, s, vertexIdentity(s, testProject), cl, testVertexSource())
+		if !done || rec.Code != http.StatusOK {
+			t.Fatalf("the call is answered %d (%v), want it served: %s", rec.Code, done, rec.Body)
+		}
+		if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, contentTypeJSON) {
+			t.Errorf("the served answer's media type is %q, want %q: what the service hands on is its own JSON", got, contentTypeJSON)
+		}
+		if want := geminiDoc(t, geminiAnswerSide(t, "tool_call", "anthropic.json")); !reflect.DeepEqual(geminiDoc(t, rec.Body.Bytes()), want) {
+			t.Errorf("the answer the agent read is not the translated one:\ngot  %s\nwant %s", rec.Body.String(), indent(t, want))
+		}
+	})
+
 	for _, tc := range []struct {
 		name   string
 		answer string
@@ -278,6 +298,26 @@ func TestGeminiStreamTranslation(t *testing.T) {
 			}
 		})
 	}
+
+	// What the agent's own reader switches on is the media type and the shape
+	// of the events, and both are this service's: Vertex answered a JSON array
+	// (the media type the fake labels it with), and the agent must read an
+	// event stream.
+	t.Run("a served stream arrives as an event stream", func(t *testing.T) {
+		s, _, _ := vertexGeminiFixture(t, geminiStreamed(t, "stream_text"))
+		cl := vertexCall(t, MessagesPath, string(geminiPair(t, "sampling", "anthropic")))
+		done, _, rec, _ := serveVertexCall(t, s, vertexIdentity(s, testProject), cl, testVertexSource())
+		if !done || rec.Code != http.StatusOK {
+			t.Fatalf("the streamed call is answered %d (%v), want it served: %s", rec.Code, done, rec.Body)
+		}
+		if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/event-stream") {
+			t.Errorf("the served stream's media type is %q, want text/event-stream: Vertex answers this method with a JSON array, and what the agent reads is an event stream", got)
+		}
+		want := geminiEvents(t, geminiAnswerSide(t, "stream_text", "anthropic.sse"))
+		if events := geminiEvents(t, rec.Body.Bytes()); !reflect.DeepEqual(events, want) {
+			t.Errorf("the stream the agent read is not the translated one:\ngot  %s\nwant %s", indent(t, events), indent(t, want))
+		}
+	})
 
 	t.Run("a chunk that cannot be translated writes nothing at all", func(t *testing.T) {
 		stream := `[
