@@ -12,7 +12,7 @@ Fugaro runs one coding task in a fleeting cloud worker: it checks out the reposi
 
 ## At the start of a session
 
-Run `fugaro doctor --offline --json` once. If its `ok` is false, or a check is `ok: false` with a `severity` other than `info`, tell the user in one sentence what it is — in plain words, not the check's own text — and offer the fix that check prints, for the user to run in their own terminal window, not through the agent: where that `fix` is `fugaro update`'s, the command below; otherwise that `fix` itself, as printed — a pin newer than this binary names `brew upgrade`.
+Run `fugaro doctor --offline --json` once. If its `ok` is false, or a check is `ok: false` with a `severity` other than `info`, tell the user in one sentence what it is — in plain words, not the check's own text — and offer the fix that check prints, for the user to run in their own terminal window, not through the agent: where that `fix` is `fugaro update`'s, the command below; otherwise that `fix` itself, as printed — a pin newer than this binary names `brew upgrade`. A project command refused with `this project requires fugaro <X> or newer` is the same fix: hand the user `brew upgrade dimipaun/tap/fugaro` and then `fugaro update` for their own terminal, never running `brew` yourself, retrying the command, or looking for a way around the refusal.
 
 ```bash user-runs
 fugaro update
