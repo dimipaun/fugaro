@@ -30,6 +30,14 @@ import (
 // the pool inert while the project's subscription-spread switch is off
 // (D1622), which is one of the four things a row has to be able to say.
 //
+// The table is the project's own answer about where each model goes, and it is
+// one RT3 accepts whatever budget the arms below write: the Claude entry puts
+// the launcher's own credentials before the project's pool (D3176) and names no
+// paid source at all, because a paid source after a pool is R17's refusal
+// without an enforcing budget — which is what `validate` reports a table for
+// (RT6) and what these arms are not about. The arms that answer the budget
+// append their own block to this config, so this one may not write one.
+//
 // The model_prices block is the owner's own answer for the two Opus IDs the
 // crafts pin, and the shape every installation of one is in now: a craft's model
 // is judged by its price wherever a run has a gateway, whatever the budget mode
@@ -63,8 +71,8 @@ model_routing:
       - {kind: provider, provider: openrouter-main}
   - match: claude-*
     chain:
+      - {kind: launcher-pool}
       - {kind: pool, pool: claude-pool}
-      - {kind: anthropic}
 `
 
 // craftRepoYAML is the checkout's own fugaro.yaml: it selects the first-line
@@ -179,10 +187,10 @@ func writeCraftLayer(t *testing.T, layer string) {
 // tests below cannot disagree about what the layers mean. It is the spec's own
 // example read through the command: the coder is a DeepSeek model the table
 // routes to the OpenRouter provider, the three Claude models resolve to the
-// pool of two subscriptions and then the project's Anthropic key (D3180: a
-// chain is written, and the second source is what the first falls back to), the
-// first-line review keeps the model the project layer set, and the security
-// review takes a model of its own.
+// launcher's own credentials and then the project's pool of two subscriptions
+// (D3176, D3180: a chain is written, and the second source is what the first
+// falls back to), the first-line review keeps the model the project layer set,
+// and the security review takes a model of its own.
 //
 // Every row is servable here, which is the one thing this fixture has to say
 // about MC16's member: the coder's model is claimed by the route the fixture's
@@ -203,18 +211,18 @@ func craftRows() []craftLsRow {
 			// The model is the project layer's (nothing narrower sets one), and
 			// the chain is the table's, which no layer of a craft writes.
 			Craft: config.CraftReview, Model: "claude-sonnet-5-5", ModelFrom: craft.SourceProject,
-			Chain: []string{"pool:claude-pool", "anthropic"}, Servable: true,
+			Chain: []string{"launcher-pool", "pool:claude-pool"}, Servable: true,
 		},
 		{
 			Craft: config.CraftSeniorReview, Model: "claude-opus-4", ModelFrom: craft.SourceLocal,
-			Chain: []string{"pool:claude-pool", "anthropic"}, Servable: true,
+			Chain: []string{"launcher-pool", "pool:claude-pool"}, Servable: true,
 		},
 		{
 			// The spec's own example of a craft that keeps a model it inherits
 			// nothing of: its model is the repository's and its chain the
 			// table's, like every other row's.
 			Craft: config.CraftSecurityReview, Model: "claude-opus-4-1", ModelFrom: craft.SourceRepo,
-			Chain: []string{"pool:claude-pool", "anthropic"}, Servable: true,
+			Chain: []string{"launcher-pool", "pool:claude-pool"}, Servable: true,
 		},
 	}
 }
