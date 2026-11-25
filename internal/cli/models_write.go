@@ -142,6 +142,16 @@ type modelsPin struct {
 // config alone, and all three report the second list rather than assuming the
 // unreadable repositories select nothing.
 func projectCheckoutConfigs(lc *localcfg.Config) (map[string]*config.Config, []string) {
+	cfgs, _, unseen := projectCheckoutResolved(lc)
+	return cfgs, unseen
+}
+
+// projectCheckoutResolved is projectCheckoutConfigs with the resolution each
+// config resolved to: the source of every key a layer set, which the routing
+// migration reads for one question the resolved config cannot answer — whether
+// an `agent.auth` is the file's own answer or the default config.Resolve fills
+// in when nothing wrote one (MG2, F49).
+func projectCheckoutResolved(lc *localcfg.Config) (map[string]*config.Config, map[string]*config.Resolution, []string) {
 	checkouts, err := localcfg.LoadCheckouts(os.Getenv)
 	if err != nil {
 		checkouts = localcfg.EmptyCheckouts()
@@ -152,6 +162,7 @@ func projectCheckoutConfigs(lc *localcfg.Config) (map[string]*config.Config, []s
 	}
 	layer := modelsLayer(lc.Name)
 	out := map[string]*config.Config{}
+	resolved := map[string]*config.Resolution{}
 	var unseen []string
 	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
 		dir := remembered[checkoutKeyFor(name, remembered)]
@@ -164,14 +175,15 @@ func projectCheckoutConfigs(lc *localcfg.Config) (map[string]*config.Config, []s
 			unseen = append(unseen, name)
 			continue
 		}
-		cfg, _, ps := config.Resolve(data, layer)
+		cfg, res, ps := config.Resolve(data, layer)
 		if len(ps) > 0 {
 			unseen = append(unseen, name)
 			continue
 		}
 		out[name] = cfg
+		resolved[name] = res
 	}
-	return out, unseen
+	return out, resolved, unseen
 }
 
 // modelsModelPinned is the repositories whose fugaro.yaml pins id in one of the

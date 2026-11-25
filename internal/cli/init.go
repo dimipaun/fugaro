@@ -796,6 +796,11 @@ type initRun struct {
 	// providers every repository may use: the converge's repository stage
 	// runs the repo engine too, and the note belongs once.
 	notedOpenProviders bool
+	// migratedRouting is the once-per-run guard on the routing migration
+	// (update_routing_migrate.go): a converge writes the local config more
+	// than once, and the report and the warning about the migration belong to
+	// the run and not to one write of the file.
+	migratedRouting bool
 	// notedCatalogSecrets is the once-per-run guard on the warning about a
 	// published catalog entry that asks for a secret of its own (D2311): the
 	// fact is the entry's and not a repository's, and a converge that reaches
@@ -4453,6 +4458,11 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 	// the confirmation: the notes describe the file as it now is, and a config
 	// the migration converted whole has none.
 	migrationNotes := migrateCraftKeys(next)
+	// The routing migration (update_routing_migrate.go) runs here for the same
+	// reason and before the write it is about: it writes the table, the pools
+	// and the admissions MG1 answers for this installation, and it prints what
+	// changes — and what does not — before the file is written.
+	r.migrateRouting(next)
 	data, err := next.Marshal()
 	if err != nil {
 		return err
