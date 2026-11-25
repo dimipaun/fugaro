@@ -34,6 +34,7 @@ import (
 	"testing"
 	"time"
 
+	"gocloud.dev/blob"
 	"gocloud.dev/blob/memblob"
 
 	"github.com/dimipaun/fugaro/internal/agent"
@@ -608,11 +609,12 @@ func TestReviewRecordCarriesTheIndependentTier(t *testing.T) {
 	}
 }
 
-// TestReviewWritesThePullRequestIndexEntry: the artifact stage is what puts a
-// review on a pull request, so it is what writes the review's entry in that
-// pull request's index. Without it an old finished review is a row the scan
-// lists and a listing that reads the index cannot find (D2962, D2964).
-func TestReviewWritesThePullRequestIndexEntry(t *testing.T) {
+// TestRunnerWritesNoPRIndexFromTheReviewArtifact: the artifact stage is what
+// puts a review on a pull request, and it writes the number into the run's own
+// record and nothing under runs/<slug>/pr-index/ (D3204). The run index holds
+// a review whose record names a pull request, which is what `runs ls --pr N`
+// reads now, so a review needs no object of its own.
+func TestRunnerWritesNoPRIndexFromTheReviewArtifact(t *testing.T) {
 	bucket := memblob.OpenBucket(nil)
 	t.Cleanup(func() { _ = bucket.Close() })
 	r, _ := reviewJobRun(t, func(r *run) { r.d.Bucket = &blobx.Bucket{Bucket: bucket} })
@@ -620,25 +622,18 @@ func TestReviewWritesThePullRequestIndexEntry(t *testing.T) {
 	if err := r.writeReviewArtifact(context.Background(), res); err != nil {
 		t.Fatalf("writeReviewArtifact: %v", err)
 	}
-	entries, err := runstore.ListPRIndex(context.Background(), bucket, svcSlug, reviewJobPR, nil)
-	if err != nil {
-		t.Fatal(err)
+	if r.rec.PR == nil || r.rec.PR.Number != reviewJobPR {
+		t.Fatalf("the artifact's record names PR %v, want %d", r.rec.PR, reviewJobPR)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("the index holds %d entries for PR %d, want this run's one: %+v", len(entries), reviewJobPR, entries)
-	}
-	e := entries[0]
-	if e.RunID != svcRunID || e.Slug != svcSlug || e.PR != reviewJobPR {
-		t.Errorf("the entry is %+v, want run %s of %s on #%d", e, svcRunID, svcSlug, reviewJobPR)
-	}
-	if e.Kind != runstore.PRIndexReviewed {
-		t.Errorf("the entry's kind is %q, want %q: a review neither opened nor followed the pull request", e.Kind, runstore.PRIndexReviewed)
-	}
-	if want := r.d.Now(); !e.At.Equal(want) {
-		t.Errorf("the entry's time is %v, want the run's own clock, %v", e.At, want)
-	}
-	if e.At.Location() != time.UTC {
-		t.Errorf("the entry's time is %v, want UTC", e.At)
+	it := bucket.List(&blob.ListOptions{Prefix: "runs/" + svcSlug + "/pr-index/"})
+	for {
+		obj, err := it.Next(context.Background())
+		if err != nil {
+			break
+		}
+		if !obj.IsDir {
+			t.Errorf("the artifact stage wrote %s", obj.Key)
+		}
 	}
 }
 
