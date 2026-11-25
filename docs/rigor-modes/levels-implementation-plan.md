@@ -146,6 +146,7 @@ Edges from the **Depends on** lines. Levels (tasks in one level run concurrently
 | `internal/runner/prompts.go`, `persona.go` | LV2.2: 2 only |
 | `internal/runner/prflow.go` | LV4.3: 3; LV5.2: 5 |
 | `internal/runner/outcome.go` | LV5.1: 4; LV5.2: 5 |
+| `internal/runner/runner.go`, `shadow.go` | LV5.1: 4 only |
 | `internal/runstore/runstore.go`, `schemas/result.schema.json`, console schema | LV1.1: 0; LV5.2: 5 |
 | `internal/recipe/` | LV6.1: 1 only |
 | `internal/cli/run.go`, `internal/task/task.go`, `cli-reference.md` | LV1.1: 0 (reference only); LV7.1: 4 |
