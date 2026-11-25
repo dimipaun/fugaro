@@ -62,7 +62,7 @@ proves nothing.
 
 | Kind | May carry | Must carry | What it is |
 |---|---|---|---|
-| `message` (or no `kind`) | — | — | something said to, or by, an agent (§3.1) — including **a launch**, which D162 sends with no read-back |
+| `message` (or no `kind`) | — | — | something said to, or by, an agent (§3.1) |
 | `prompt` | `options` | — | a question the agent wants answered (§3.2), with or without choices |
 | `answer` | — | `reply_to` | the answer to a prompt; the chosen words are `text`, because the answer is *spoken*, not selected |
 | `action` | `reply_to` | `action` | D169's destructive command |
@@ -77,20 +77,26 @@ exists to refuse.
 
 ```js
 { id: 'a-0001',                       // the action's own id, a database key
-  verb: 'cancel' | 'merge' | 'confirm',
+  verb: 'cancel' | 'merge' | 'confirm' | 'launch',
+  mode: 'pro',                        // launch only: the mode the start would run in (O10)
   target: { run: '20261018-125859-d3c8' }            // cancel, confirm
-        | { repo: 'owner/name', pr: 532 },           // merge, confirm
+        | { repo: 'owner/name', pr: 532 }            // merge, confirm
+        | { repo: 'owner/name' },                    // launch: the repository alone
   head_sha: '…40 or 64 hex…',         // merge only: the head read back at confirmation
-  confirmation: { id: 'c-0001', at: 1700000000000 } }
+  confirmation: { id: 'c-0001', at: 1700000000000 } }  // every verb but launch, where a costly
+                                                       // start's read-back may carry one (D2786)
 ```
 
-Everything in it is required, because everything in it is **executed**: the consumer
-runs `fugaro cancel RUN` or `gh pr merge <n> --repo <owner/name>` from these fields and
-nothing else. Two rules are security rules rather than tidiness:
+Everything in it is required — `mode` on a launch alone, and `confirmation` on every verb
+but a launch, where it is optional — because everything in it is **executed**: the
+consumer runs `fugaro cancel RUN`, `gh pr merge <n> --repo <owner/name>` or the start the
+record asks for, from these fields and nothing else. Two rules are security rules rather
+than tidiness:
 
 - **A verb and its target must agree.** A cancel resolves to a run id, a merge to a
-  repository and a pull request; `confirm` — the ruling's third verb, confirming an
-  action — takes either, because what it confirms may be either.
+  repository and a pull request, a launch to the repository alone; `confirm` — the
+  ruling's third verb, confirming an action — takes either of the first two, because
+  what it confirms may be either.
 - **No target can be read as a command-line flag.** The values are passed as ARGV
   elements, so a leading `-` or `.` is a flag or a path to whatever parser sees it, and
   a space, a slash where a slash does not belong, a newline or a NUL is not a run id or
@@ -99,10 +105,15 @@ nothing else. Two rules are security rules rather than tidiness:
   fix. A merge's head SHA is re-read by the consumer before it merges: the record names
   a state of the world, not just an intention.
 
-A launch is deliberately **not** a verb: D162 answered that "kick off …" goes through
-without a read-back, so it travels as an ordinary `message`. Every other destructive
-verb — the kill switch, budget writes, deletes — stays refused by voice and so has no
-verb here at all (§3.1).
+A launch **is** a verb (J5a, O10): a start names the `mode` it would run in beside its
+target, and its target is the repository alone — a start has no run id yet and no pull
+request to name. D162's answer stands for a plain start: it goes through with no
+read-back, so its `confirmation` is optional, and the one thing the field set cannot say
+is which starts are the costly ones — that is the session's own `costly_modes`, read by
+the consumer's gate (D2786, `ConfirmValidateLaunch` in the Go consumer), which refuses a
+start in a costly mode that carries no confirmation. Every other destructive verb — the
+kill switch, budget writes, deletes — stays refused by voice and so has no verb here at
+all (§3.1).
 
 ### The registration
 
@@ -231,15 +242,17 @@ is narrow, which is exactly why a port that used `.sort()` would otherwise ship 
 
 That is the hard part of this task, because the two ends are JavaScript (the phone) and
 Go (the consumer), and the Go end cannot call into JavaScript. It reimplements the
-serialisation and **tests against [`vectors.json`](vectors.json)**: 25 cases — the five
+serialisation and **tests against [`vectors.json`](vectors.json)**: 29 cases — the five
 kinds, the heartbeat, the argv-shaped targets, HTML characters Go escapes by default,
-an emoji, an unknown field inside the bytes, the key order above, and the swaps a
+an emoji, an unknown field inside the bytes, the key order above, O10's typed launch (a
+costly start with its read-back and a plain one without), and the swaps a
 token-holder without the key would try (text, options, option order, `reply_to`, answer,
-agents, agent name, target, head SHA, confirmation, verb) and the three reflections across directions — each pinning the message,
-the exact bytes, the tag and whether it verifies — three `direction_pairs`, and **39 schema refusals**
+agents, agent name, target, head SHA, mode, confirmation, verb) and the three reflections across directions — each pinning the message,
+the exact bytes, the tag and whether it verifies — three `direction_pairs`, and **48 schema refusals**
 (`refusals`: an unsigned message of every kind and an unsigned heartbeat, a short, long,
 uppercase or null tag, an unknown verb, a short or uppercase head SHA, a merge without
-one, too many options, an oversize body, an unknown field, a parsed `__proto__`, a field
+one, a launch without a mode, a target or a mode on a verb that takes neither, a mode
+past its bound or carrying a space, too many options, an oversize body, an unknown field, a parsed `__proto__`, a field
 on the wrong kind, an answer without `reply_to`, a float time, a registration without its
 token, its platform or one of its switches, a token on a plain message and one a code
 unit past its bound, an unknown platform, a zone that is not a name or carries a path
@@ -361,7 +374,7 @@ from a malformed write instead of seeing "no message" for both:
 | `bad-character` | a control character (line breaks are allowed in `text`, not in a single-line field), DEL, an unpaired surrogate, U+2028/U+2029, or a character outside a run id's, a repository's or an identity string's alphabet |
 | `bad-timestamp` | `at` is **a number but not a time**: a float, `NaN`, `Infinity`, `-1` |
 | `unknown-kind` | a `kind` outside `message` · `prompt` · `answer` · `action` · `registration` · `stop` |
-| `unknown-verb` | an action's verb outside `cancel` · `merge` · `confirm` |
+| `unknown-verb` | an action's verb outside `cancel` · `merge` · `confirm` · `launch` |
 | `unknown-platform` | a registration's `platform` outside `ios` · `android` |
 | `field-not-allowed` | a field on a kind of message that does not carry it (a `reply_to` on a prompt, an `action` on an answer, a head SHA on a cancel) |
 | `bad-target` | a target that is not one of the two shapes, or that its verb cannot resolve to |
@@ -436,31 +449,32 @@ installed, nothing is fetched, and the entry point the phone loads imports nothi
 all. The tests are the plan's verification list (a missing
 id, a wrong type, an oversize body and an unknown field refused; a well-formed message
 accepted) plus the fail-closed families above and P6.3's kind, action, tag and
-canonical-byte cases: 62 tests across the module's two test files — the 58 in
+canonical-byte cases: 63 tests across the module's two test files — the 59 in
 `index.test.js`, and the four in `bounds.test.js`, which replays
 [`vectors.bounds.json`](vectors.bounds.json), the bound vectors **both** ends
 consume (`internal/mailbox`'s `TestTheSharedBoundVectorsHold` is the Go half).
 
-**Every guard is mutation-proved**, not merely covered — 113 mutations over `index.js`
+**Every guard is mutation-proved**, not merely covered — 121 mutations over `index.js`
 and `mac.js`: one for most guards, and two for the bounds that can be missed in
 either direction — a comparison narrowed by a code unit, and the same one widened:
 
 ```sh
 shared/mailbox-schema/mutation-proof.sh
-# control       the pristine suite passes, 521 tests, 0 failures
+# control       the pristine suite passes, 602 tests, 0 failures
 # killed        control: refuse() always succeeds (must be killed)
 # killed        not-an-object guard (null/array/primitive)
-# ...                                                       (112 more)
-# --- control killed; 113 guards: 113 killed, 0 survived, 0 not applied
+# ...                                                       (120 more)
+# --- control killed; 121 guards: 121 killed, 0 survived, 0 not applied
 ```
 
-That block is the run's own output with the middle elided: the harness prints **114**
+That block is the run's own output with the middle elided: the harness prints **122**
 `killed` lines — the negative control's, then one per guard — of which the two above
-are the first, so 112 follow. The script disables one guard at a time — the object check,
+are the first, so 120 follow. The script disables one guard at a time — the object check,
 the unknown-field check, each type check, each bound, each character rule, the surrogate
 and separator rules, the timestamp range, the ack's type check, the deep freeze and the
 copy, then P6.3's: the kind vocabulary and its (kind, field) table, the agent and
-option shapes, the action record's verbs and both target shapes, the argv alphabets and
+option shapes, the action record's verbs and both target shapes, the launch's mode and
+the shape a launch's target takes (O10), the argv alphabets and
 the head SHA, the required tag, the canonical serialisation — including the code-point
 sort and the strings it refuses — and, in `mac.js`, that the tag is computed over the
 canonical bytes and that `verifyMac` answers `false` rather than throwing. P5.2.1's
@@ -468,16 +482,16 @@ are the last twelve: the registration's required token and platform, the two-sid
 (kind, field) table, the platform vocabulary, the prefs' required set, their boolean
 type and their unknown-field guard, the window's closed field set and its
 completeness, the zone's shape and its segments (a segment of dots alone is a path
-step), the minute's range, and the two ends that must differ. Four more are section 6's, the token's and the zone's bounds, each in both
+step), the minute's range, and the two ends that must differ. Six more are section 6's, the token's, the zone's and O10's mode bound, each in both
 directions.
 
 Section 6 is the group about the bounds. Most of its rows **move a comparison by
 one** — `> MAX` to `>= MAX`, and to `> MAX + 1` — because that, rather than a
 deleted check, is the mutation this module has actually been wrong about:
-seventeen of the twenty-two do it. Four more drop a term of a rule instead — the
+nineteen of the twenty-four do it. Four more drop a term of a rule instead — the
 carriage return from the line-break rule, DEL from each of the two character
 rules, and the second head-SHA length from the SHA rule, which is the same class
-of mistake one step further from the check's edge. The twenty-second does neither: it
+of mistake one step further from the check's edge. One more does neither: it
 replaces the SHA rule's equality test with a range test (`action: the head SHA
 may be any length from SHA_MIN to SHA_MAX`), and a refusal of a head SHA between
 the two lengths is what kills it. `repo.length > TARGET_MAX` narrowed to

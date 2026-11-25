@@ -666,21 +666,20 @@ func (b *Bundle) Lookup(name string) (Entry, bool) {
 	return b.entries[i], true
 }
 
-// LookupRepo answers the entry one repository's own credential is held under,
-// by the DOCUMENT KEY RepoCredentialKey builds from a slug and a credential
-// name — the same key ReadProviderKey resolves against (D3008, KS12).
+// RepoCredential answers one member of C1's family (KindRepoCredential) by its
+// DOCUMENT KEY — the one spelling of a (repository, credential) pair
+// (RepoCredentialKey) and the one the bundle's own index is keyed by.
 //
-// It is a lookup of its own and not more of Lookup because the family has its
-// own index: the credential's bare name is a name two repositories' entries
-// carry the same, so byName holds none of them (KindRepoCredential,
-// repoCredentials). A caller that HAS resolved the family reaches it through
-// C1's accessor (ReadProviderKey, which takes the run's verified slug); this one
-// answers a caller that already holds the document key — the walk, whose chain
-// was built from the very same key.
-func (b *Bundle) LookupRepo(key string) (Entry, bool) {
-	if b == nil {
-		return Entry{}, false
-	}
+// It is a selection by KIND, like AppKey and ProviderKey and for the same
+// reason: the family's entries are not in byName, so a caller that holds a
+// member's document key — a candidate built from it, an entry the copy wrote and
+// this service is to serve — has no other way to reach the value. It answers
+// nothing for a name the document does not hold, and it derives nothing: the
+// caller hands over the key and gets that entry or none, so it can reach no
+// repository's credential but the one it named (R2, HG1). A caller whose name
+// could be a CALL's must derive it from the verified repository first, as the
+// provider route does (providerServedEntry).
+func (b *Bundle) RepoCredential(key string) (Entry, bool) {
 	i, ok := b.repoCredentials[key]
 	if !ok {
 		return Entry{}, false

@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
@@ -27,8 +28,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
 // The convergence of an installation that is one release behind: the whole of
@@ -838,6 +841,80 @@ func TestUpdateKeepsAHandWrittenModelGrades(t *testing.T) {
 	}
 }
 
+// TestUpdateConvergesTheCrashReportSwitch is D738's whole update-side claim at
+// the one door the HARD RULE is about: an installation whose published node is
+// the node a release behind wrote — the mobile block as it states it and no
+// `mobile_crash_reports` key, which is the key this release adds (D731) —
+// reaches it with `fugaro update` alone, and one run is enough.
+//
+// The node is the current version's and not the release behind's, which is the
+// state that makes the key's own fill load-bearing: no migration step runs for
+// it, so `fugaro update`'s policy stage is the only thing that could carry the
+// key, and it does it through the row `policyConfigDrift` has for it
+// (project_policy_test.go's TestMobileCrashReportsDriftNamesTheKey is the same
+// claim at the comparison itself). Without the fill the row would be silent —
+// the node carries no value, so nothing would write one — and the app of every
+// installation at the release behind would send nothing for ever, because the
+// reader answers a key that is not there off
+// (projectpolicy.MobileCrashReportsOn).
+//
+// The published default is `true` and not the reader's fail-safe, which is the
+// other half: the value in the node is what an operator reads and what a hand
+// edit turns off, so it has to be written rather than left to a default a later
+// reader happens to know. The members the project wrote are asserted beside it,
+// because a fill that overwrote one would be the same bug in the other
+// direction.
+func TestUpdateConvergesTheCrashReportSwitch(t *testing.T) {
+	node := currentNode()
+	node["mobile"] = map[string]any{
+		"enabled":             true,
+		"sync":                false,
+		"accepted_providers":  []string{projectpolicy.ProviderGoogle},
+		"max_auth_age":        "6h",
+		"strict_new_device":   true,
+		"costly_modes":        []string{"critical"},
+		"biometric_on_costly": true,
+	}
+	r := newConvergeRig(t, node)
+	// The fixture is the release behind, or the assertions below prove nothing:
+	// the node it carries predates the key, in the node's own bytes.
+	raw, err := json.Marshal(r.db.Value(projectpolicy.PathShared()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte(`"`+projectpolicy.MobileCrashReportsKey+`"`)) {
+		t.Fatalf("the fixture's node already carries %s (%s): it is not an installation whose node predates the key", projectpolicy.MobileCrashReportsKey, raw)
+	}
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	p := convergeNode(t, r)
+	if p.Mobile == nil {
+		t.Fatal("after one fugaro update, the node carries no mobile block: the run dropped the project's own switches")
+	}
+	if p.MobileCrashReports == nil || !*p.MobileCrashReports {
+		t.Errorf("after one fugaro update, the node's %s = %v, want a written true: the key did not reach the node, so the app would send nothing and the operator would have no diff to read", projectpolicy.MobileCrashReportsKey, p.MobileCrashReports)
+	}
+	if !p.MobileCrashReportsOn() {
+		t.Error("after one fugaro update, MobileCrashReportsOn() = false, want true: the reader every phone's session is assembled from is what decides whether a report is sent")
+	}
+	if p.MobileSync() {
+		t.Error("after one fugaro update, sync = true, want the written false: the fill overwrote a member the project chose")
+	}
+	if got := p.MobileAcceptedProviders(); !slices.Equal(got, []string{projectpolicy.ProviderGoogle}) {
+		t.Errorf("after one fugaro update, accepted_providers = %v, want the one the node names: the fill widened a list the project narrowed", got)
+	}
+	if !p.MobileStrictNewDevice() || !p.MobileBiometricOnCostly() {
+		t.Errorf("after one fugaro update, strict_new_device = %v and biometric_on_costly = %v, want both true", p.MobileStrictNewDevice(), p.MobileBiometricOnCostly())
+	}
+	if got := p.MobileMaxAuthAge(); got != 6*time.Hour {
+		t.Errorf("after one fugaro update, max_auth_age = %s, want 6h", got)
+	}
+	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Rigor{rigor.Critical}) {
+		t.Errorf("after one fugaro update, costly_modes = %v, want [critical]", got)
+	}
+}
+
 // TestUpdateConvergesPreviousPolicy: an installation whose local project config
 // names a repo-to-image map and the bake switch — the two keys this release
 // adds to the policy node (D1901, D1906) — reaches them with `fugaro update`
@@ -1607,15 +1684,19 @@ func stoppedStage(out string) string {
 		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), markFailed+" failed"); ok {
 			return strings.TrimSpace(rest)
 		}
-		// The resume line is the run's own: "stopped at policy; fix: rerun
-		// fugaro update: it resumes at policy". The stage is what stands between
-		// the two sentences, and it is the name the loop's own stages carry.
-		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "stopped at ")
+		// The closing line is the run's own: "Failed in 2.2s. Rerun fugaro
+		// update to resume at policy." The stage is what follows "to resume
+		// at", and it is the name the loop's own stages carry.
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "Failed in ")
 		if !ok {
 			continue
 		}
-		if stage, _, ok := strings.Cut(rest, "; fix: "); ok {
-			return stage
+		_, resume, ok := strings.Cut(rest, ". Rerun ")
+		if !ok {
+			continue
+		}
+		if _, stage, ok := strings.Cut(resume, " to resume at "); ok {
+			return strings.TrimSuffix(stage, ".")
 		}
 	}
 	return "(the summary names no failed stage)"
@@ -1792,7 +1873,7 @@ func TestUpdateConvergesACachePriceWrittenTheOldWay(t *testing.T) {
 	}
 	// And the warning names both prices: the rename is not silent, and the
 	// price the owner wrote is reported rather than refused.
-	if want := "warning: model_prices.deepseek/deepseek-v4.1-flash.cache_read_per_m is $0.000588 per million tokens"; !strings.Contains(out, want) {
+	if want := "Warning: model_prices.deepseek/deepseek-v4.1-flash.cache_read_per_m is $0.000588 per million tokens"; !strings.Contains(out, want) {
 		t.Errorf("the run did not warn about the price below the catalog's floor (%q), which is the other half of what this release owes the one command the owner runs:\n%s", want, out)
 	}
 	// And the price the node carries is the owner's, unchanged by the rename.
@@ -2157,5 +2238,196 @@ func TestUpdateConvergesAWorkspaceWhoseServiceHasNoAudienceAndPlansNothing(t *te
 	// with changes creates (audienceTodo).
 	if !strings.Contains(out, "unassigned audience") {
 		t.Errorf("the run's own transcript does not say the revision the workspace's service is serving carries the module's unassigned audience, so the owner confirms a write it does not name:\n%s", out)
+	}
+}
+
+// TestUpdateRendersTheRostersPeopleIntoTheWorkspaceProjectsIntake is WC3's own
+// half of the workspace owner's one command (R5, D3143): the workspace's roster
+// is rendered into the workspace's own project's intake — its invoker set and
+// the class the process reads, which the module composes into one list — and
+// nowhere else of that installation. The other half of the rule, the empty list
+// on an installation of no workspace, is
+// TestUpdateRendersNoPeoplesListOnAnInstallationOfNoWorkspace
+// (init_credentials_test.go), which needs no workspace at all.
+//
+// The roster is read from the workspace's own database at
+// workspaceRosters/<name> (C1's node, workspace.PathRoster) and is written as
+// the person's ADDRESS, never an account id: the intake is admitted by the
+// verified token's address against the class (F11) and names the container by
+// the token's own `sub`, so nothing has to map one to the other. Only the
+// HUMANS are written — a machine's entry is a service account's address, the one
+// shape the launcher class refuses outright (internal/infra.IntakePeople), and
+// an entry in the class no token can match is one nobody could ever be admitted
+// by — and neither is a human whose address carries a colon, which the class
+// list cannot hold either: the module spells every entry into the invoker grant
+// as "user:<entry>", so an address that IS that spelling would name a principal
+// IAM has none of (internal/access refuses an entry of that shape for the same
+// reason). The roster holds both, and the renderer leaving the person off is
+// what keeps the roster's own content from being an update that fails.
+//
+// The owner is in the list like anybody else, and that is the point of the
+// fence F10 draws: the list is the INTAKE's alone (var.intake.people —
+// local.intake_people in the module), so the same person is admitted to the
+// installation's intake and granted nothing at its credentials service and
+// grant route (the Terraform test the_intake_admits_the_rosters_people holds
+// that half, root tests/installation.tftest.hcl).
+func TestUpdateRendersTheRostersPeopleIntoTheWorkspaceProjectsIntake(t *testing.T) {
+	r := wsOwnerConvergeRig(t, wsOwnerTable+wsOwnerCap)
+	r.script["plan@workspace"] = wsPlanSeq()
+	r.setPlanAt(t, "workspace", wsRootPlan(initProjectName, r.credentialsRefAt(convergeRelease), wsMemberBAccount)...)
+	r.script["output@workspace"] = map[string]any{
+		"stdout": `{"workspace_service_url":{"value":"` + wsServiceURL + `"}}`}
+	roster, err := workspace.EncodeRoster(&workspace.Roster{
+		Version:   workspace.RosterVersion,
+		Mechanism: workspace.MechanismSA,
+		People: []workspace.Person{
+			// A roster can hold an address whose local part carries a colon —
+			// `workspace user add` stores one and CanonicalAddress keeps it —
+			// and it is NOT the class list's: each entry there is spelled into
+			// the invoker grant as the member form, and this is the member form
+			// already (internal/access's own rule, and var.launcher_accounts'
+			// shape since F31). The renderer leaves the person off rather than
+			// write a value no plan takes, which is the same split
+			// internal/access's admin list makes.
+			{Address: "a:b@example.com", Kind: workspace.KindHuman, External: true},
+			{Address: "ada@example.com", Kind: workspace.KindHuman, External: true},
+			{Address: "bot@member-b-gcp.iam.gserviceaccount.com", Kind: workspace.KindSA},
+			{Address: "owner@example.com", Kind: workspace.KindHuman, External: true},
+			{Address: "user:ada@example.com", Kind: workspace.KindHuman, External: true},
+			{Address: "zoe@example.com", Kind: workspace.KindHuman, External: true},
+		},
+		Admins: []string{"owner@example.com"},
+	})
+	if err != nil {
+		t.Fatalf("encoding the roster: %v", err)
+	}
+	path, err := workspace.PathRoster(initProjectName)
+	if err != nil {
+		t.Fatalf("workspace.PathRoster: %v", err)
+	}
+	r.db.Set(path, json.RawMessage(roster))
+	r.save(t)
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	block, _ := r.tfvars(t)["intake"].(map[string]any)
+	if block == nil {
+		t.Fatalf("the installation's tfvars carry no intake: %v", r.tfvars(t))
+	}
+	raw, ok := block["people"].([]any)
+	if !ok {
+		t.Fatalf("the intake's block carries no people after the workspace owner's own update (R5): %v", block)
+	}
+	got := make([]string, 0, len(raw))
+	for _, p := range raw {
+		s, _ := p.(string)
+		got = append(got, s)
+	}
+	want := []string{"ada@example.com", "owner@example.com", "zoe@example.com"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("the intake's people are %v, want %v: the roster's humans, sorted and each once, minus the shapes the class list cannot carry — no machine, whose address is a service account's, and no address whose local part carries a colon, which is the member spelling the grant is made of rather than the bare address a token's email claim holds (internal/access's rule for the same kind of value, and what makes the person's absence fail closed rather than a plan no entry can pass)", got, want)
+	}
+}
+
+// seedConvergedInstallation writes the installation's tfvars in the state one
+// run of this release leaves behind: the credentials service's block with the
+// audience its own output reports (seedCredentialsService's seed) and the
+// secrets intake's block beside it, on the release's own image and with ITS
+// audience written — the two writes a later run of the same release has nothing
+// to fill.
+func seedConvergedInstallation(t *testing.T, r *convergeRig, image string) {
+	t.Helper()
+	seedCredentialsService(t, r.imagesRig, image)
+	path := filepath.Join(r.imagesRig.root(), infra.VarsFile)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vars, err := infra.SetIntake(b, infra.Intake(image))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vars, err = infra.SetIntakeURL(vars, intakeServiceURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, vars, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestUpdateLeavesTheIntakeAloneWhenTheRosterNamesOnlyALauncher is the roster
+// change the intake's fill must NOT write for: the workspace's roster names one
+// person, and that person is already on the installation's launcher list, so the
+// class the intake's revision is handed — the launchers and the roster's people
+// as one list (intake.tf's local.intake_accounts) — is byte for byte what it was
+// (infra.IntakeClass).
+//
+// The installation is converged: both audiences in the tfvars and an empty plan
+// at the installation root. Writing the block for that person anyway would leave
+// the apply with nothing to do, and the fill reads an empty plan as the module
+// not carrying the class onto the revision at all and refuses the run with the
+// audience's own sentence — a misleading failure over a roster update that
+// changed no class, which is the state this test pins.
+func TestUpdateLeavesTheIntakeAloneWhenTheRosterNamesOnlyALauncher(t *testing.T) {
+	r := wsOwnerConvergeRig(t, wsOwnerTable+wsOwnerCap)
+	seedConvergedInstallation(t, r, r.credentialsRefAt(convergeRelease))
+	// The installation root has nothing left to change, so the only plan the
+	// fill could read is one it made itself.
+	r.script["plan@installation"] = map[string]any{"exit": 0}
+	// The installation's own launcher list, as its IAM reports it back: the
+	// owner, who is the one person the roster names.
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service": credentialsServiceOutput(),
+		"intake":              intakeServiceOutput(),
+		"launchers":           []string{"user:test@example.com"},
+	})}
+	// The workspace's own root is converged too: its block carries the address
+	// Cloud Run assigned, which is the fact that stage fills (WS7).
+	wsSeedRecorded(t, initProjectName, r.credentialsRefAt(convergeRelease), wsServiceURL)
+	r.script["plan@workspace"] = map[string]any{"exit": 0}
+	r.script["output@workspace"] = map[string]any{
+		"stdout": `{"workspace_service_url":{"value":"` + wsServiceURL + `"}}`}
+	roster, err := workspace.EncodeRoster(&workspace.Roster{
+		Version:   workspace.RosterVersion,
+		Mechanism: workspace.MechanismSA,
+		People: []workspace.Person{
+			{Address: "test@example.com", Kind: workspace.KindHuman, External: true},
+		},
+		Admins: []string{"test@example.com"},
+	})
+	if err != nil {
+		t.Fatalf("encoding the roster: %v", err)
+	}
+	path, err := workspace.PathRoster(initProjectName)
+	if err != nil {
+		t.Fatalf("workspace.PathRoster: %v", err)
+	}
+	r.db.Set(path, json.RawMessage(roster))
+	r.save(t)
+
+	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	if strings.Contains(out, "plans nothing with credentials_service.url") {
+		t.Errorf("the update refused itself over the roster's own person, who is on the installation's launcher list already: the class the intake's revision is handed is the launchers and the people as ONE list, and this roster moved neither\n%s", out)
+	}
+	vars := r.tfvars(t)
+	raw, err := json.Marshal(vars)
+	if err != nil {
+		t.Fatal(err)
+	}
+	launchers, err := infra.LauncherAccountsOf(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"test@example.com"}; !slices.Equal(launchers, want) {
+		t.Fatalf("the installation's launcher_accounts are %v, want %v: the roster's person is the launcher this fixture is about, so a list without them would test something else", launchers, want)
+	}
+	spec, have, err := infra.IntakeOf(raw)
+	if err != nil || !have {
+		t.Fatalf("IntakeOf(vars) = %+v, %v, %v, want the intake's block", spec, have, err)
+	}
+	if got, want := infra.IntakeClass(launchers, spec.People), []string{"test@example.com"}; !slices.Equal(got, want) {
+		t.Errorf("the intake's class after the update is %v, want %v: the roster's only person is the installation's own launcher, so the class the revision is handed is one address — the launchers' — whatever the block's own list says", got, want)
 	}
 }

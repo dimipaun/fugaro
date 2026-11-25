@@ -1,0 +1,411 @@
+{
+  "schema_version": 3,
+  "plan": "docs/secrets-brokering/image-secrets/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "C1",
+      "title": "the version-2 request and the file field",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/wire.go",
+          "internal/config/config.go",
+          "internal/config/validate.go",
+          "schemas/fugaro.schema.json",
+          "docs/secrets-brokering/image-secrets/contract.md",
+          "internal/credsvc/workflowsecrets_stub.go"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/credsvc/workflowsecrets_stub.go"
+      ]
+    },
+    {
+      "id": "IS1",
+      "title": "the service serves by name from the project record",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/workflowsecrets.go",
+          "internal/credsvc/workflowsecrets_test.go",
+          "internal/credsvc/build.go",
+          "internal/credsvc/build_test.go",
+          "internal/credsvc/dynamicsecrets.go"
+        ]
+      }
+    },
+    {
+      "id": "IS2",
+      "title": "the runner fetches by name and exposes files",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/workflowsecrets.go",
+          "internal/runner/workflowsecrets_test.go",
+          "internal/runner/secretfile.go",
+          "internal/runner/secretfile_test.go",
+          "internal/agent/env.go"
+        ]
+      }
+    },
+    {
+      "id": "IS3",
+      "title": "the project secret record, and the owner's allow-list writes it",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/creds/projectsecrets.go",
+          "internal/creds/projectsecrets_test.go",
+          "internal/cli/secrets_allow.go",
+          "internal/cli/secrets_allow_test.go",
+          "internal/cli/secrets_policy_workflow_test.go"
+        ]
+      }
+    },
+    {
+      "id": "IS4",
+      "title": "storing a workflow secret goes through the intake",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/secrets.go",
+          "internal/cli/secrets_test.go",
+          "internal/intake/server.go",
+          "internal/intake/handlers.go",
+          "internal/intake/gcp.go",
+          "internal/intake/server_test.go"
+        ]
+      }
+    },
+    {
+      "id": "IS5",
+      "title": "fugaro update copies workflow secrets into the grammar",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_workflowsecrets.go",
+          "internal/cli/update_workflowsecrets_test.go",
+          "internal/backend/gcp/secrets.go",
+          "internal/cli/update_in_flight_test.go"
+        ]
+      }
+    },
+    {
+      "id": "I1",
+      "title": "wire the version-2 path end to end",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/workflowsecrets_stub.go",
+          "internal/e2e/projectsecrets_test.go",
+          "internal/runner/workflowsecrets_test.go"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "IS9",
+      "title": "vertex repositories get the address",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/spec.go",
+          "internal/infra/spec_test.go",
+          "internal/cli/run.go",
+          "internal/cli/launch_vertex_address_test.go",
+          "deploy/terraform/gcp/modules/workflow/sa.tf",
+          "deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl",
+          "internal/runner/workflowsecrets_vertex_test.go",
+          "internal/infra/tf/testdata/golden/repo-*"
+        ]
+      }
+    },
+    {
+      "id": "IS13",
+      "title": "retiring a project copy (update)",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/retire.go",
+          "internal/infra/retire_test.go",
+          "internal/infra/state.go",
+          "internal/infra/state_test.go",
+          "internal/cli/update_retire_copies.go"
+        ]
+      }
+    },
+    {
+      "id": "IS6",
+      "title": "the flip: no workflow-secret mount, grant or project copy",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/modules/installation/secrets.tf",
+          "deploy/terraform/gcp/modules/workflow/sa.tf",
+          "internal/infra/spec.go",
+          "internal/cli/recipes_skew.go",
+          "internal/cli/recipes_skew_test.go",
+          "deploy/terraform/terraform_test.go",
+          "internal/infra/tf/testdata/golden/installation-*",
+          "internal/infra/tf/testdata/golden/repo-*"
+        ]
+      }
+    },
+    {
+      "id": "IS7",
+      "title": "the guard's mount rule for the workflow-secret class",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/secret_readers_test.go",
+          "docs/secrets-brokering/secret-readers.md"
+        ]
+      }
+    },
+    {
+      "id": "IS8",
+      "title": "the catalog build fetches its git credential",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backend/gcp/catalog.go",
+          "internal/backend/gcp/catalog_test.go",
+          "deploy/terraform/gcp/modules/installation/build_identity.tf",
+          "deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl",
+          "internal/cli/gitcred.go",
+          "internal/cli/gitcred_test.go",
+          "internal/infra/tf/testdata/golden/installation-*"
+        ]
+      }
+    },
+    {
+      "id": "IS10",
+      "title": "doctor lists a deployed job's workflow-secret mounts",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/doctor_job_mounts.go",
+          "internal/cli/doctor_job_mounts_test.go",
+          "internal/cli/doctor.go",
+          "internal/gcpfake/run.go"
+        ]
+      }
+    },
+    {
+      "id": "IS11",
+      "title": "the docs and the release note",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "SECURITY.md",
+          "website/content/security.md",
+          "website/content/cli-reference.md",
+          "docs/releases/*.md",
+          "plugin/skills/working/SKILL.md"
+        ]
+      }
+    },
+    {
+      "id": "IS12",
+      "title": "Checks 920 and 921, the owner's script",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check920.sh",
+          "scripts/live-checks/check920_test.sh",
+          "docs/secrets-brokering/image-secrets/check920-steps.md",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "R-request",
+      "title": "the version-2 request, amended",
+      "kind": "contract_change",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/wire.go",
+          "docs/secrets-brokering/image-secrets/contract.md"
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "task": "IS2",
+      "needs": "C1",
+      "reason": "the request's shape and the stub it tests against"
+    },
+    {
+      "task": "I1",
+      "needs": "IS1",
+      "reason": "the integration runs the real route"
+    },
+    {
+      "task": "I1",
+      "needs": "IS2",
+      "reason": "the integration runs the runner's fetch"
+    },
+    {
+      "task": "I1",
+      "needs": "IS5",
+      "reason": "data: the end-to-end test reads the record the migration writes"
+    },
+    {
+      "task": "IS6",
+      "needs": "I1",
+      "reason": "behaviour: nothing is taken away until the version-2 path works end to end"
+    },
+    {
+      "task": "IS6",
+      "needs": "IS9",
+      "reason": "behaviour and files: vertex repositories fetch before their mounts go; both edit spec.go and sa.tf"
+    },
+    {
+      "task": "IS7",
+      "needs": "IS6",
+      "reason": "behaviour: the mount rule is true only on the tree IS6 leaves"
+    },
+    {
+      "task": "IS7",
+      "needs": "IS8",
+      "reason": "behaviour: the mount rule is true only on the tree IS8 leaves"
+    },
+    {
+      "task": "IS11",
+      "needs": "IS6",
+      "reason": "behaviour: it documents the flip"
+    },
+    {
+      "task": "IS11",
+      "needs": "IS4",
+      "reason": "behaviour: it documents the store path, and the plugin tests check the commands exist"
+    },
+    {
+      "task": "IS1",
+      "needs": "IS3",
+      "reason": "it reads the record through IS3's codec; a contract would be nearly the codec itself"
+    },
+    {
+      "task": "IS5",
+      "needs": "IS3",
+      "reason": "it writes the record through IS3's codec; a contract would be nearly the codec itself"
+    },
+    {
+      "task": "IS13",
+      "needs": "IS5",
+      "reason": "data: nothing is retired before its value is copied"
+    },
+    {
+      "task": "IS6",
+      "needs": "IS13",
+      "reason": "behaviour: the apply that drops the keys needs the instances out of state first (prevent_destroy)"
+    },
+    {
+      "task": "IS1",
+      "needs": "IS4",
+      "reason": "the marker's label key, one constant: a contract would be the constant itself"
+    },
+    {
+      "task": "IS5",
+      "needs": "IS4",
+      "reason": "it writes the marker the intake defines; a contract would be the constant itself"
+    },
+    {
+      "task": "R-request",
+      "needs": "IS1",
+      "reason": "it exists only once IS1 raises it, after C1 has merged; it writes C1's files"
+    }
+  ],
+  "decoupling": [
+    {
+      "contract": "C1",
+      "was": {
+        "task": "IS2",
+        "needs": "IS1"
+      },
+      "integration": "I1",
+      "reason": "the runner needs the version-2 request and answer, not the route's code"
+    }
+  ],
+  "contract_changes": [
+    {
+      "change": "R-request",
+      "contract": "C1",
+      "raised_by": "IS1",
+      "reason": "if version 2's refusal codes cannot tell the runner unlisted from unmarked well enough to print the right fix (IS2 would raise the same change)",
+      "affects": [
+        "IS1",
+        "IS2",
+        "I1"
+      ]
+    }
+  ]
+}

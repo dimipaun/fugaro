@@ -27,6 +27,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -82,6 +83,8 @@ type cloudRig struct {
 	cancelPoll time.Duration
 	run        *gcpfake.Run
 	logging    *gcpfake.Logging
+	iam        *gcpfake.IAMCredentials
+	itk        *gcpfake.IdentityToolkit
 	dir        string // the rig's own directory
 	// workdir, when set, is the --workdir of every execution (see
 	// fixedWorkdir); otherwise each gets its own.
@@ -106,6 +109,7 @@ type cloudRig struct {
 	mu      sync.Mutex
 	calls   []gcpfake.RunCall
 	outputs map[string]string // every CLI and exec output by source, for the secret scan
+	seals   map[string]string // run -> the seal key the launcher put in its execution's environment
 	execs   sync.WaitGroup    // the executions OnRun started
 }
 
@@ -144,6 +148,17 @@ func newCloudRig(t *testing.T, claudeScript string, cancelPoll time.Duration, op
 	for _, o := range opts {
 		o(r)
 	}
+	// The launcher mints the run's token only into a database that names this
+	// project (AB4), as the installation's own update writes it.
+	if r.budget != nil {
+		r.budget.DB.Set(budget.PathProject, cloudProjectName)
+		r.budget.DB.Set(budget.PathCapsGlobal, map[string]any{"dailyMicros": 100_000_000, "perRunMicros": 10_000_000})
+		r.budget.DB.Set(budget.PathCapsDefaults, map[string]any{"repoDailyMicros": 50_000_000, "repoPerRunMicros": 5_000_000})
+		r.budget.DB.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 5_000_000})
+	}
+	r.iam = gcpfake.NewIAMCredentials(t)
+	r.iam.AddSigner(testutil.BudgetSigner)
+	r.itk = gcpfake.NewIdentityToolkit(t, r.iam, testutil.BudgetAPIKey, "aurora-fp")
 	bucket := filepath.Join(dir, "runs")
 	if err := os.MkdirAll(bucket, 0o755); err != nil {
 		t.Fatal(err)
@@ -193,13 +208,22 @@ func newCloudRig(t *testing.T, claudeScript string, cancelPoll time.Duration, op
 	}
 	cfg := "version: 1\nname: " + cloudProjectName + "\ngcp_project: " + cloudProject + "\nregion: " + cloudRegion + "\nruns_bucket: unused-bucket\n" +
 		"bucket_url: '" + r.bucket + "'\nuser: someone@example.com\n" + r.budget.ConfigBlock() +
-		"endpoints:\n  run: '" + r.run.URL + "/'\n  logging: '" + r.logging.URL + "/'\n  no_auth: true\n" +
+		"endpoints:\n  run: '" + r.run.URL + "/'\n  logging: '" + r.logging.URL + "/'\n  iam_credentials: '" + r.iam.URL + "/'\n  no_auth: true\n" +
 		"repos:\n  acme/app: { provider: " + cloudProvider + ", base_branch: main, workflows: [" + cloudWorkflow + "] }\n"
 	if err := os.WriteFile(r.cfg, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	r.job = gcp.JobName(cloudSlug, cloudWorkflow)
 	r.run.AddJob(r.job, "4", "8Gi")
+	// A job deployed by an update that had a database carries its address (AB4).
+	if env := r.budget.Env(); len(env) > 0 {
+		jobEnv := map[string]string{}
+		for _, kv := range env {
+			k, v, _ := strings.Cut(kv, "=")
+			jobEnv[k] = v
+		}
+		r.run.SetJobEnv(r.job, jobEnv)
+	}
 	// SetOnRun, not an assignment: the requests come from the CLI's
 	// process, so the race detector can't see an assignment happen first.
 	// Everything above happens before it.
@@ -210,6 +234,12 @@ func newCloudRig(t *testing.T, claudeScript string, cancelPoll time.Duration, op
 		// Under r.mu, so that wait sees the Add happen first.
 		r.mu.Lock()
 		r.calls = append(r.calls, c)
+		if m := c.Env["FUGARO_BUDGET_TOKEN"]; m != "" {
+			if r.seals == nil {
+				r.seals = map[string]string{}
+			}
+			r.seals[c.Env["FUGARO_RUN"]] = m
+		}
 		r.execs.Add(1)
 		r.mu.Unlock()
 		go func() {
@@ -250,7 +280,7 @@ func (r *cloudRig) execute(full, run, tmp string) int {
 	}
 	args := []string{"exec", "--bucket", r.bucket, "--run", run,
 		"--workdir", workdir, "--remote", r.remote, "--state-dir", filepath.Join(tmp, "state"),
-		"--provider", "fake", "--provider-state", r.provider, "--claude", r.claude, "--cancel-poll", r.cancelPoll.String()}
+		"--provider", "fake", "--provider-state", r.provider, "--claude", r.claude, "--cancel-poll", r.cancelPoll.String(), "--budget-identity-url", r.itk.URL}
 	var budgetEnv []string
 	// The managed settings go in a directory of the execution's own, not the
 	// real /etc/claude-code, which a developer's machine does not have; the rig
@@ -284,7 +314,12 @@ func (r *cloudRig) execute(full, run, tmp string) int {
 		"CLOUD_RUN_EXECUTION="+id.Name, "CLOUD_RUN_JOB="+id.Job,
 		"FUGARO_BACKEND=cloud-run", "FUGARO_GCP_PROJECT="+cloudProject, "FUGARO_PROJECT="+cloudProjectName, "FUGARO_REGION="+cloudRegion,
 		"ANTHROPIC_API_KEY="+cloudSecret, "FIXTURE_FAILS_FILE="+failsFile, "HOME="+tmp)
-	cmd.Env = hermeticEnv(append(cmd.Env, budgetEnv...))
+	r.mu.Lock()
+	if m := r.seals[run]; m != "" {
+		budgetEnv = append(budgetEnv, "FUGARO_BUDGET_TOKEN="+m)
+	}
+	r.mu.Unlock()
+	cmd.Env = hermeticEnv(append(append(cmd.Env, r.budget.Env()...), budgetEnv...))
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGQUIT) } // a hang leaves a goroutine dump
 	cmd.WaitDelay = 5 * time.Second
 	var stdout bytes.Buffer

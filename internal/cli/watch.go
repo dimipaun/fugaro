@@ -88,6 +88,14 @@ type WatchDeps struct {
 	// either from. A run it does not name keeps the empty fields the JSON
 	// omits.
 	Facts func() watch.Facts
+	// Paused is what each paused run's own pause says about it — the instant
+	// its resume is due at and the run that resumed it — read fresh on every
+	// frame like Queued and Facts, and nil in degraded mode, which reads no
+	// budget backend and so has no paused subtree to take them from (its own
+	// ls-based listing already shows a paused run, with the word its record
+	// carries and without the two). A paused run it does not name keeps the
+	// word alone.
+	Paused func() watch.Pauses
 	// Filter bounds which finished rows the interactive and plain views
 	// show (design generic-tool §10.3); --json stays unfiltered.
 	Filter watch.Filter
@@ -120,7 +128,7 @@ var runTUI = func(ctx context.Context, d *WatchDeps) error {
 func watchTUIOptions(ctx context.Context, d *WatchDeps, by string) watch.TUIOptions {
 	return watch.TUIOptions{
 		In: d.In, Out: d.Out, Project: d.LC.Name, Updates: d.Sup.Updates(), Config: d.Config,
-		RepoKey: d.RepoKey, Repo: d.Repo, Queued: d.Queued, Facts: d.Facts, PRState: d.PRState,
+		RepoKey: d.RepoKey, Repo: d.Repo, Queued: d.Queued, Facts: d.Facts, Paused: d.Paused, PRState: d.PRState,
 		All: d.Filter.All, Keep: d.Filter.Keep, KeepCount: d.Filter.KeepCount, AckPath: watch.AckPath(os.Getenv),
 		ASCII:   watch.UseASCII(d.ASCII, os.Getenv),
 		NoColor: watch.UseNoColor(d.NoColor, os.Getenv),
@@ -290,6 +298,14 @@ func runWatch(cmd *cobra.Command, o *watchOptions) error {
 		rows, finished, facts, note := fetchQueuedOnce(ctx, lc, o.repo, index)
 		d.Queued = func() ([]watch.QueuedRun, []watch.FinishedRun, string) { return rows, finished, note }
 		d.Facts = func() watch.Facts { return facts }
+		// One snapshot: the paused subtree is read here and joined to the
+		// scan's facts, rather than by a reader with a goroutine and a clock
+		// that would never be asked twice.
+		pauses := watch.Pauses(nil)
+		if nodes, err := readPauseNodes(ctx, db); err == nil {
+			pauses = watch.PausesOf(nodes, facts)
+		}
+		d.Paused = func() watch.Pauses { return pauses }
 		return watchOnce(ctx, d, o)
 	}
 	ctx, cancel := context.WithCancel(ctx)
@@ -297,6 +313,12 @@ func runWatch(cmd *cobra.Command, o *watchOptions) error {
 	defer qsrc.Wait() // never return while its goroutine might still be running
 	defer cancel()    // runs before Wait (LIFO): cancellation always precedes the wait
 	d.Queued, d.Facts = qsrc.Get, qsrc.Facts
+	// The paused subtree is read beside the bucket scan and joined to its
+	// facts: a pause's resumer is a run the scan read, so the reader that has
+	// the scan's own map is the one that can name it (watch.PausesOf).
+	psrc := startPauseSource(ctx, db, qsrc.Facts)
+	defer psrc.Wait()
+	d.Paused = psrc.Get
 	sup := watch.Start(ctx, db, watch.Options{Poll: o.poll, Interval: o.interval})
 	d.Sup = sup
 	if !o.json && !o.plain && stdinIsTerminal(d.In) && watchStdoutTTY(d.Out) {
@@ -443,6 +465,9 @@ func watchOnce(ctx context.Context, d *WatchDeps, o *watchOptions) error {
 	if d.Facts != nil {
 		v = watch.MergeFacts(v, d.Facts())
 	}
+	if d.Paused != nil {
+		v = watch.MergePaused(v, d.Paused())
+	}
 	return d.emit(o, v, false)
 }
 
@@ -469,6 +494,7 @@ func watchStream(ctx context.Context, d *WatchDeps, o *watchOptions) error {
 	var lastFinished []watch.FinishedRun
 	var lastQueuedNote string
 	var lastFacts watch.Facts
+	var lastPauses watch.Pauses
 	var lastPR uint64
 	dirty := false
 	for {
@@ -515,6 +541,17 @@ func watchStream(ctx context.Context, d *WatchDeps, o *watchOptions) error {
 				dirty, lastFacts = true, facts
 			}
 			v = watch.MergeFacts(v, facts)
+		}
+		if d.Paused != nil {
+			// A pause read lands off this loop like the scan's facts, and for
+			// the same reason: a run that paused between two reads gains its
+			// resume instant and its resumer with no change to any row, so the
+			// map is part of what a frame says and so part of what makes one.
+			pauses := d.Paused()
+			if !maps.Equal(pauses, lastPauses) {
+				dirty, lastPauses = true, pauses
+			}
+			v = watch.MergePaused(v, pauses)
 		}
 		if !last.IsZero() && v.Conn.Kind != lastConn {
 			dirty = true

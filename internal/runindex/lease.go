@@ -130,6 +130,101 @@ func (l *Lease) Acquire(ctx context.Context) (LeaseDoc, bool, error) {
 	return LeaseDoc{}, false, fmt.Errorf("runindex: %d claims, each refused by a moved ETag: %w", leaseAttempts, last)
 }
 
+// Stop gives the lease up with the walk's position in it: the node keeps
+// cursor and carries an expiry in the past, so the index is free (no execution
+// holds it) while the unfinished walk is still there for the next sweep to
+// continue (F39, RI5).
+//
+// It is not Release: a released node is deleted, and the position would go
+// with it -- the next writer would begin at the top of history and re-upsert
+// everything this pass already did, and a walk cut off by its own timeout
+// would never finish. It is not Acquire either: a claim left fresh would stop
+// every sweep behind a writer that has already ended, which is the one state
+// the lease's expiry exists to end.
+//
+// at is the stamp Acquire returned. A node that has moved on -- the claim
+// lapsed and another writer took it, or it was freed -- is left alone: another
+// writer is walking, and its position is not this one's to overwrite.
+func (l *Lease) Stop(ctx context.Context, at time.Time, cursor string) error {
+	var last error
+	for attempt := 0; attempt < leaseAttempts; attempt++ {
+		var cur LeaseDoc
+		etag, found, err := l.db.GetETag(ctx, PathLease, &cur)
+		if err != nil {
+			return err
+		}
+		if !found || cur.Holder != l.holder || !cur.At.Equal(at) {
+			return nil
+		}
+		srv, ok := l.now()
+		if !ok {
+			return errors.New("runindex: the database's clock was not seen (no Date header), so the walk's position cannot be left with a lapsed lease; the pass stops with the lease as it stands")
+		}
+		// The write's own stamp is the claim's, so a release that a later pass
+		// reads as this one's compares equal and only this holder may stop it.
+		//
+		// The expiry is a minute behind the server's clock and not on it: the
+		// Date header has one-second resolution and ServerNow lags the true
+		// time by it, so an expiry written at `srv` would be judged fresh by a
+		// reader whose own `srv` is a few microseconds behind it -- the walk
+		// would stop behind a writer that has already ended, which is the one
+		// state the expiry exists to end.
+		err = l.db.PutIfMatch(ctx, PathLease, etag, LeaseDoc{Holder: l.holder, At: cur.At, ExpiresAt: srv.UTC().Add(-time.Minute), Cursor: cursor})
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, rtdb.ErrPrecondition) {
+			return err
+		}
+		last = err
+	}
+	return fmt.Errorf("runindex: %d stops, each refused by a moved ETag: %w", leaseAttempts, last)
+}
+
+// Reset leaves the node naming the reset's own requester, holding nothing and
+// carrying no cursor (RI5, U3): the walk every later sweep continues begins at
+// the top of history, and a cursor an earlier walk left is gone rather than
+// resumed -- resuming it would skip everything before it, which is exactly
+// what the operator asked to have redone.
+//
+// The node holds nothing because the pass it asks for has not started yet: the
+// expiry is a minute behind the server's clock (the writer lease's own rule,
+// Stop), so the execution the reset is followed by takes the node over rather
+// than waiting out a TTL on a claim nobody is using.
+//
+// A fresh claim is left exactly as it stands and returned with held=true:
+// stamping over a claim a running writer is using would tell it its own lease
+// had moved. held says the node was not rewritten, and nothing more: the
+// sweep's own fold holds this lease too, so which writer the claim belongs to
+// is the caller's to read from the summary (ResetReindex).
+func (l *Lease) Reset(ctx context.Context) (claim LeaseDoc, held bool, err error) {
+	var last error
+	for attempt := 0; attempt < leaseAttempts; attempt++ {
+		var cur LeaseDoc
+		etag, found, err := l.db.GetETag(ctx, PathLease, &cur)
+		if err != nil {
+			return LeaseDoc{}, false, err
+		}
+		srv, ok := l.now()
+		if !ok {
+			return LeaseDoc{}, false, errors.New("runindex: the database's clock was not seen (no Date header), so a claim cannot be judged fresh or lapsed; nothing was reset")
+		}
+		if found && cur.ExpiresAt.After(srv) {
+			return cur, true, nil
+		}
+		claim = LeaseDoc{Holder: l.holder, At: srv.UTC(), ExpiresAt: srv.UTC().Add(-time.Minute)}
+		err = l.db.PutIfMatch(ctx, PathLease, etag, claim)
+		if err == nil {
+			return claim, false, nil
+		}
+		if !errors.Is(err, rtdb.ErrPrecondition) {
+			return LeaseDoc{}, false, err
+		}
+		last = err
+	}
+	return LeaseDoc{}, false, fmt.Errorf("runindex: %d resets, each refused by a moved ETag: %w", leaseAttempts, last)
+}
+
 // Release frees the lease this writer took, and only if the node still names
 // that claim.
 //
