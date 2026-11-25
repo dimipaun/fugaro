@@ -29,9 +29,11 @@ start. This file is the three commands and what each row means.
   from the checkout of the entry's **source** repository — `fugaro image build <entry>` (or `fugaro
   apply`, which submits the same build); `fugaro image refresh` is refused under D1900 and builds
   nothing — which is what task B4.8 does, and what puts a build in the project's own records
-  for the check to read. Each repository has to be named by the project's **effective** `image_map`
-  (**D1906**: this machine's project config when it states a map, the published policy node's
-  otherwise) for the entry that build carries, or — a repository the map does not name — to have a
+  for the check to read. Each repository has to be named by the project's **effective** map for the
+  entry that build carries — chosen member by member (**R2**/**F35**): the `repo_images` member, keyed
+  `provider/owner/name` and looked up under the repository's **own** provider, wherever any layer
+  states one (this machine's project config first, the published policy node second), and the legacy
+  bare-name `image_map` only where neither does — or, a repository the map does not name, to have a
   catalog build of its own clone URL. A repository with no such build in the installation region's last
   `CHECK196_BUILDS` (default 50) builds is a row the check **could not measure** (exit 2), not a pass.
 - **Nothing else**: no token, no secret, no file to prepare. The check **submits no build of its own**
@@ -89,9 +91,10 @@ start. This file is the three commands and what each row means.
   `status.url`, which is the address every caller mints its ID token for. Not deployed, or no URL, is a
   **FAIL**; a read that failed is a row that could not be measured.
 - **`build-github`**, **`build-bitbucket`** — each repository's newest **catalog entry's** build (the
-  entry the project's **effective** `image_map` names for it, picked out by the catalog image in its
-  `_IMAGE` substitution, out of the installation **region's** recent builds; a repository the map does
-  not name is matched by its own `_REPO_URL` clone URL instead) ended
+  entry the project's **effective** map names for it under the repository's own `provider/owner/name`
+  key, picked out by the catalog image in its `_IMAGE` substitution, out of the installation
+  **region's** recent builds; a repository the map does not name is matched by its own `_REPO_URL`
+  clone URL instead) ended
   `SUCCESS` and ran as the installation's **build identity**
   (`fugaro-build-identity@fugaro-dev.iam.gserviceaccount.com`, read off the build's own record, never
   taken on trust), which is the account `gcp.CatalogBuildSpec.check` admits. A repository-level derived

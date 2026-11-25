@@ -80,7 +80,6 @@ import type { LaunchRecordFacts } from './launchrules'
 import type { InstallationsListReply } from './onboarding'
 import {
   NO_ACTIVE_INSTALLATION,
-  openPullRequestHandler,
   reducedModeHandlers,
   registerConsoleHandlers,
   startupCompatibility,
@@ -610,22 +609,10 @@ const boundSource = createBoundSource({
  * argument is narrowed here and validated there; a value that is not a string
  * cannot be a URL this console opens, so it is refused by the same function
  * rather than by a second check written here.
- *
- * `openPullRequestFromShell` is the other half, and the reason the two are not
- * one operation: that one is handed a URL, and this one is handed the three
- * fields a URL is built from. It passes the shell in as the opener, so the
- * build and the refusal are `openPullRequestHandler`'s (`src/main/ipc.ts`) --
- * a rule that security-sensitive is written where a test can reach it rather
- * than in this file, which loads Electron's runtime and so cannot be imported
- * under a test at all.
  */
 async function openExternalFromShell(raw: unknown): Promise<void> {
   await openExternalValidated(shell, typeof raw === 'string' ? raw : '')
 }
-
-/** openPullRequestFromShell is `link.openPullRequest`'s wiring: the built URL,
- * and nothing else, reaches `openExternalValidated`. */
-const openPullRequestFromShell = openPullRequestHandler((url) => openExternalValidated(shell, url))
 
 /**
  * launchRequest narrows the operation's five validated fields to the launcher's
@@ -1031,13 +1018,6 @@ const gated: ConsoleHandlers = {
   // declining launcher above answers every launch with `DECLINED_UNBUILT`, and
   // this operation has no way to a child at all.
   'run.launch': (args) => launchRunner.launch(launchRequest(args)),
-  // **The pull request link, and the one URL this console builds** (K2a, D814
-  // and D815). Joined here for the same reason the two above are: it reads no
-  // CLI, so `handlersFor` leaves it out. What it is handed is three fields of a
-  // document and no URL at all, and what reaches `shell.openExternal` is the
-  // URL `pullRequestUrl` built from them -- the first gate is the build, and
-  // `openExternalValidated` inside the opener is the second.
-  'link.openPullRequest': openPullRequestFromShell,
   // **The settings edit, and the console's other write** (the settings-edit
   // plan's C3, design section 5.1 rule 12, D1115). It is joined here for the
   // same reason the launch is: it is not a read of the active installation's

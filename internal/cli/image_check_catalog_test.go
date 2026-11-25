@@ -395,6 +395,53 @@ func TestCatalogCheckJobRebuildsTheChangedEntryAsTheBuildIdentity(t *testing.T) 
 	}
 }
 
+// TestCatalogCheckRebuildClonesWhatTheCopyBakes: the nightly job submits the
+// request the manual build does, and the bake it composes (Baked) is read from
+// the copied definition's own bytes (image_check_catalog.go) — the second of the
+// two submit sites, and the one check 390's failure reached: a rebuild submitted
+// with no baked checkout left the entry's build failing on the COPY the copy's
+// own stages carry. The rebuild of a definition that bakes has the clone step
+// produce the baked image; one that bakes nothing has none. Neither hands the
+// entry's build step the git credential, which reaches the clone step's build
+// alone (B8, F19).
+func TestCatalogCheckRebuildClonesWhatTheCopyBakes(t *testing.T) {
+	def, err := imagebake.Append([]byte(catalogCheckAppDef), imagebake.Plan{Baked: []imagebake.Repo{{
+		Repo: "acme/app", Slug: mustSlug("bitbucket", "acme/app"),
+		URL: "https://bitbucket.org/acme/app.git", Branch: "main",
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The record's base is not the base the registry serves (checkBaseDigest), so
+	// the job decides a rebuild either way: the marker is the only difference
+	// between the two rows.
+	moved := "sha256:" + strings.Repeat("9", 64)
+	for name, tc := range map[string]struct {
+		definition string
+		bakes      bool
+	}{
+		"a definition that bakes":    {string(def), true},
+		"a definition that does not": {catalogCheckAppDef, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("tools")))
+			f.seed(t, "tools", "acme/app", tc.definition, moved)
+			if _, err := runCatalogCheck(t); err != nil {
+				t.Fatal(err)
+			}
+			if got := buildPosts(f.fb); got != 1 {
+				t.Fatalf("builds submitted = %d, want the one rebuild", got)
+			}
+			if catalogBuildStepCredential(t, f.fb) {
+				t.Error("the rebuild's build step is handed the git credential: every entry's build is secret-free, and the credential reaches the clone step's build alone (B8, F19)")
+			}
+			if got := strings.Contains(buildStepArgs(t, f.fb, "catalog-clone"), "--target baked"); got != tc.bakes {
+				t.Errorf("the rebuild's clone step builds a baked image = %v, want %v", got, tc.bakes)
+			}
+		})
+	}
+}
+
 // TestCatalogCheckJobBuildsNothingFromAnUnreadableRecord: a record that cannot
 // be read is not a record that is not there. It holds the definition the image
 // was built from and the commit a rebuild is pinned to, so nothing is
