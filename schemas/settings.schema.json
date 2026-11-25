@@ -1622,6 +1622,9 @@
         "repos.*.credentials_service_ready": {
           "default": "unset = false: no update has applied this repository's root with the service on \u2014 its bundle holds no model credential, or its agent.auth is not the cascade"
         },
+        "repos.*.git_credentials_served": {
+          "default": "unset = false: no update has read this repository's bundle as holding the git credential its provider needs — a GitHub repository whose bundle holds no App key, or a Bitbucket repository whose bundle holds no token"
+        },
         "repos.*.github_app_id": {
           "default": "unset = none"
         },

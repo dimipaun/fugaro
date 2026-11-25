@@ -299,6 +299,7 @@ reports_commit.dir	open:no-writer
 reports_commit.repo	open:no-writer
 repos.acme/web.claude_accounts	open:writer-unproven
 repos.acme/web.credentials_service_ready	open:no-writer
+repos.acme/web.git_credentials_served	open:no-writer
 repos.acme/web.provider_keys_served	open:no-writer
 repos.acme/web.stage_account_served	open:no-writer
 repos.acme/web.vertex	open:no-writer
