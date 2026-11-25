@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -174,7 +175,9 @@ func TestNoGrantIsAskedOnAProjectRoute(t *testing.T) {
 // launches the way they always did, and a line would be news about nothing.
 //
 // Mutation (run, restored): read Held false as a refusal — print the failure
-// line — and this fails on what the launch said.
+// line — and this fails on what the launch said. Pass a second, wrong account
+// at run.go's call site (the slug) and it fails on the account the call named,
+// which is what a non-empty account would have read as an answer.
 func TestNoTokenHeldStartsTheRunAsBefore(t *testing.T) {
 	r := newPersonalLaunchRig(t, personalRouteRecord(fakeWorkspaceAddress), true)
 	plain := r.launch(t, func(creds.PersonGrantRequest) (creds.PersonGrant, error) {
@@ -192,8 +195,15 @@ func TestNoTokenHeldStartsTheRunAsBefore(t *testing.T) {
 	if r.req.Name != creds.PersonTokenName {
 		t.Errorf("the grant call asked about %q, want the one personal name this plan serves (%q)", r.req.Name, creds.PersonTokenName)
 	}
-	if r.req.Account == "" {
-		t.Error("the grant call named no account, and the workspace holds a grant to the job account the run will call as (R3)")
+	// The account is this launch's own, SPELLED OUT rather than read back from
+	// the launch that would be checked: the workspace holds the grant to the
+	// account the execution runs as, so an account that is merely non-empty is
+	// an account the service may bind the slip to and the run never claim
+	// (R3, D1937). It is the same string the run's slip names, which is why one
+	// derivation serves both.
+	wantAccount := gcp.ServiceAccountID(appSlug, "web") + "@" + r.env.lc.GCPProject + ".iam.gserviceaccount.com"
+	if r.req.Account != wantAccount {
+		t.Errorf("the grant call named the account %q, want this launch's own (%q): the workspace holds the grant to the account the execution will call as, and a slip bound to any other is one this run can never claim (R3)", r.req.Account, wantAccount)
 	}
 	if len(plain) != 0 {
 		t.Errorf("the launch handed the job %v, want no entry: no token is held, so there is no slip", plain)
