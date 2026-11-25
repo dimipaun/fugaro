@@ -295,6 +295,20 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	command := accountsAddCommand(name, repos, profile, o.claude, o.typ)
 	changed := yamledit.Changed(old, next)
 
+	// D2217's fence, and it is asked here rather than left to the two gates
+	// around this line. The access gate above answers before it opens anything
+	// on an installation whose config names no budget database — it has no
+	// roster to read there (accessJudge's own return) — and the managed gate
+	// below reads its marks through a budget client whose failure it swallows,
+	// being the managed gate and not the fence: a project that is not managed
+	// is not the question it asks. Neither leaves a refusal here, so an
+	// installation with no budget.rtdb_url would write this declaration and
+	// meet the fence only at the cloud client the converge opens, with the file
+	// already on disk.
+	if err := requireManaged(cmd.Context(), cmd, lc); err != nil {
+		return err
+	}
+
 	// The managed gate, before anything is screened or written
 	// (accounts_managed.go; the managed plan's §2 accounts row): in a managed
 	// project's coding agent's session it decides whether this declaration is a

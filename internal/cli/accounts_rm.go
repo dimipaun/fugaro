@@ -232,6 +232,18 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 	marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
 	read := accountsRmRepos(cmd.Context(), &cloudEnv{lc: lc}, plan.name, marker != "")
 
+	// D2217's fence, asked here for the reason the add half asks it
+	// (accounts_add.go): the access gate above answers before it opens anything
+	// on an installation whose config names no budget database, and the gate
+	// below swallows the failure of the budget client it reads its marks
+	// through. Left to them, such an installation writes this removal and meets
+	// the fence at the delete below, which puts the file back and reports the
+	// fence's own refusal as a failed delete (accountsRmDelete) — the wrong
+	// sentence and the wrong exit code.
+	if err := requireManaged(cmd.Context(), cmd, lc); err != nil {
+		return err
+	}
+
 	// The managed gate, before anything is screened and written
 	// (accounts_managed.go, add's own file, and the helper below): in a managed
 	// project's coding agent's session it refuses this removal outright, because
