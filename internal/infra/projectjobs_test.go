@@ -601,8 +601,9 @@ func TestTheProjectJobsSwitchFollowsTheRecordsOfTheRun(t *testing.T) {
 }
 
 // The job's env is what the installation knows and nothing per-repository
-// (plan task 3.2 step 1): the four identity variables, plus the budget
-// backend's address and web key when the installation has them. The provider
+// (plan task 3.2 step 1): the four identity variables, the mode the
+// installation's own config names (AB5, F20), plus the budget backend's
+// address and web key when the installation has them. The provider
 // is never one of them — a launcher overrides any variable — and neither is
 // anything a repository's own config decides.
 func TestProjectJobEnvIsTheInstallationsAlone(t *testing.T) {
@@ -615,7 +616,7 @@ func TestProjectJobEnvIsTheInstallationsAlone(t *testing.T) {
 	// which a repository's own config does not decide (a profile is what a
 	// repository selects), computed per job from that job's own SecretEnv and
 	// pinned by TestProjectJobRegistersItsMountedSecretsForRedaction.
-	allowed := []string{ProjectEnv, GCPProjectEnv, RegionEnv, BucketEnv, RTDBURLEnv, FirebaseAPIKeyEnv, providers.EnvGitHubAppID, runner.SecretEnvsVar}
+	allowed := []string{ProjectEnv, GCPProjectEnv, RegionEnv, BucketEnv, RTDBURLEnv, FirebaseAPIKeyEnv, BudgetModeEnv, providers.EnvGitHubAppID, runner.SecretEnvsVar}
 	for name, j := range jobs {
 		keys := slices.Sorted(maps.Keys(j.Env))
 		for _, k := range keys {
@@ -662,8 +663,8 @@ budget: { rtdb_url: https://aurora-default-rtdb.firebaseio.com, firebase_api_key
 		if j.Env[RTDBURLEnv] != "https://aurora-default-rtdb.firebaseio.com" || j.Env[FirebaseAPIKeyEnv] != "AIzaSyA1234567890abcdefghijklmnopqrstu" {
 			t.Errorf("job %s backend env = %v", name, j.Env)
 		}
-		if len(j.Env) != 8 {
-			t.Errorf("job %s sets %d variables, want the four identity ones, the two backend ones, the App's ID and the redaction list: %v", name, len(j.Env), j.Env)
+		if len(j.Env) != 9 {
+			t.Errorf("job %s sets %d variables, want the four identity ones, the mode, the two backend ones, the App's ID and the redaction list: %v", name, len(j.Env), j.Env)
 		}
 		if j.Env[providers.EnvGitHubAppID] != "123456789" {
 			t.Errorf("job %s carries %s=%q, want the App ID the local config records", name, providers.EnvGitHubAppID, j.Env[providers.EnvGitHubAppID])
@@ -773,9 +774,10 @@ func TestProjectJobsOnVertexCarryTheVertexEnvironment(t *testing.T) {
 	if len(jobs) != 2 {
 		t.Fatalf("%d jobs, want 2", len(jobs))
 	}
-	// The four identity variables plus Vertex's two and the redaction list — no
-	// budget backend in this fixture, so nothing else may appear.
-	allowed := []string{ProjectEnv, GCPProjectEnv, RegionEnv, BucketEnv, VertexRegionEnv, VertexProjectEnv, providers.EnvGitHubAppID, runner.SecretEnvsVar}
+	// The four identity variables, the mode the installation's config names,
+	// Vertex's two and the redaction list — no budget backend in this fixture,
+	// so nothing else may appear.
+	allowed := []string{ProjectEnv, GCPProjectEnv, RegionEnv, BucketEnv, BudgetModeEnv, VertexRegionEnv, VertexProjectEnv, providers.EnvGitHubAppID, runner.SecretEnvsVar}
 	for name, j := range jobs {
 		if !j.Vertex {
 			t.Errorf("job %s is on Vertex: grant and environment disagree", name)

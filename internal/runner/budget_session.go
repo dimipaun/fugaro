@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
@@ -104,6 +105,11 @@ type slipHold struct {
 	// asks the same service the claim did without reading the environment
 	// again: where the run claimed is a fact about the claim.
 	service string
+	// wire is the pair of header names this slip travels in: the project's own
+	// for a slip this run claimed at its own service, the workspace's (C1's)
+	// for the one the workspace granted it (WC8, R4). Kept with the hold
+	// because it is a fact about the slip and not about the caller.
+	wire slipWire
 	// cancel ends the beat and done is closed when its goroutine has
 	// returned, so a caller that waits on it knows nothing of the run is
 	// still in flight. Both are written once, by startSlipBeat, and cleared
@@ -508,7 +514,10 @@ func strayTokenNoBackend() error {
 // environment names no live mode — a launch the launcher minted nothing for,
 // which opens no session and runs on the environment ceiling exactly as it did
 // before AB1a (budgetClient's markless arm; AB4 is what makes every launch
-// mint). Everything else it can meet is a refusal.
+// mint). That arm is a Cloud Run launch's alone: a Batch task that reached here
+// with nothing a launcher left would already have been refused at the policy
+// read, because on Batch a launcher that minted nothing launched nothing
+// (budgetClient, BR1, R18). Everything else it can meet is a refusal.
 // It is reached only after admissionCheck has admitted this run — bootstrap
 // calls the check before the lock and before this, and nothing else calls
 // either — so the slug the session is keyed by (r.d.Store.Slug, through the
@@ -911,7 +920,7 @@ func (r *run) claimSlip(ctx context.Context) {
 	}
 	cctx, cancel := context.WithTimeout(ctx, slipClaimBudget)
 	defer cancel()
-	ans, err := r.slipRetryCall(cctx, serviceURL, slipID, "", body)
+	ans, err := r.slipRetryCall(cctx, projectSlipWire, serviceURL, slipID, "", body)
 	if slipRouteAbsent(ans.status) {
 		// The service does not serve the claim route at all — one release
 		// behind this runner — which is not a refusal of this run: it is the
@@ -945,6 +954,101 @@ func (r *run) claimSlip(ctx context.Context) {
 	r.addSecret(claim.ClaimSecret)
 	r.startSlipBeat(ctx)
 	r.d.Log.Info("this run claimed its slip: the credentials service serves it the credentials the slip names, and this run keeps the service warm for as long as it lives by asking it to read the slip back every interval (D1933, D1934)")
+}
+
+// claimWorkspaceSlip is the run's second claim (WC8, R3, R4): the workspace's
+// slip, claimed at the workspace's own credentials service at bootstrap, whose
+// secret is then presented to that service and to no other.
+//
+// It is claimSlip one service over, and it differs from it in three things and
+// no more: the id is read from C1's own environment entry for it
+// (creds.PersonSlipEnv, which a launcher writes on a workspace route whose
+// switch is on), the address is the one the run's own route record carries and
+// never one from the job's environment (R3, F32), and the id and the secret
+// travel in C1's two headers. There is no keep-warm beat of its own: the
+// workspace's service is already beaten by WS13's own, for as long as a run
+// routed a kind there lives.
+//
+// Nothing here fails the run, exactly as nothing in the first claim does. A run
+// the workspace granted no slip — a member whose launcher holds no personal
+// token, an installation with no workspace service, a grant that failed — is
+// the run of an installation with no personal half at all, and R3's fence is
+// the workspace's service's own: it serves a slip-bound credential under a live
+// claim and fails closed without one. A slip the run took and cannot use is the
+// service's answer at the call, and never this function's.
+//
+// The claim route is the same path the project's service serves (credsvc's
+// SlipClaimPath) and its answer is the same shape: one route of workspace mode
+// is the claim, and the two services answer one contract about it (R3, C1).
+func (r *run) claimWorkspaceSlip(ctx context.Context, serviceURL string) {
+	if r.workspaceSlipHold() != nil {
+		// Already taken, as claimSlip's own guard says: a second claim of one
+		// slip is a call the service refuses, and the run would hold nothing
+		// more for it.
+		return
+	}
+	slipID := envLookup(r.d.Env, creds.PersonSlipEnv)
+	if slipID == "" {
+		// The workspace granted this launch no slip: a member whose launcher
+		// holds no personal token, a launch that asked for none, a grant that
+		// did not land (D3147). All of them are the run as it was.
+		return
+	}
+	if serviceURL == "" {
+		r.d.Log.Warn("this run holds no workspace slip: its job carries " + creds.PersonSlipEnv + " and the run's own route record serves a kind from the workspace without an address, which is a record this release could not have read")
+		return
+	}
+	if err := checkSlipServiceURL(serviceURL); err != nil {
+		// The rule the run's own claim holds its URL to, and for the same
+		// reason: the claim carries the job's own Google ID token, and over
+		// plain http to a host that is not this machine it would travel in
+		// cleartext. The run proceeds without the workspace's slip.
+		r.d.Log.Warn("this run holds no workspace slip: " + err.Error())
+		return
+	}
+	body, err := json.Marshal(credsvc.SlipClaimRequest{Execution: slipExecution(r.d.Execution)})
+	if err != nil {
+		r.d.Log.Warn("this run holds no workspace slip: the claim call could not be built, so a credential the workspace serves under one is refused at the call")
+		return
+	}
+	cctx, cancel := context.WithTimeout(ctx, slipClaimBudget)
+	defer cancel()
+	ans, err := r.slipRetryCall(cctx, workspaceSlipWire, serviceURL, slipID, "", body)
+	if slipRouteAbsent(ans.status) {
+		// The workspace's service does not serve the claim route at all — one
+		// release behind this runner, which is the version skew DS1.4 keeps
+		// for the project's own service and keeps here too: it is quiet, and
+		// the run proceeds on the path it took before the slip existed.
+		return
+	}
+	if err != nil {
+		r.d.Log.Warn("this run holds no workspace slip: the workspace's credentials service could not be asked for the claim, so a credential it serves under a slip is refused at the call", "err", r.redact(err.Error()))
+		return
+	}
+	if ans.status != http.StatusOK {
+		// A refusal: the workspace's service decided, and asking it again
+		// answers the same thing. It is not a halt — the run has not been
+		// refused a credential yet, and a refusal at the claim is the same
+		// class as a claim that never landed (WC7's reading of a failed
+		// grant, internal/cli's runSlipEnv).
+		r.d.Log.Warn("this run holds no workspace slip: the workspace's credentials service refused the claim, so a credential it serves under a slip is refused at the call", "status", ans.status)
+		return
+	}
+	var claim credsvc.SlipClaimResponse
+	if err := json.Unmarshal(ans.body, &claim); err != nil {
+		r.d.Log.Warn("this run holds no workspace slip: the workspace's answer to the claim is not a claim's")
+		return
+	}
+	if !slipSecretUsable(claim.ClaimSecret) {
+		r.d.Log.Warn("this run holds no workspace slip: the workspace's credentials service answered the claim with no usable claim secret")
+		return
+	}
+	r.setWorkspaceSlipHold(slipID, claim.ClaimSecret, serviceURL)
+	// Registered before anything can print it: the answer that carried it is
+	// already out of this function, and every call, log line and failure after
+	// it is redacted of it from here on.
+	r.addSecret(claim.ClaimSecret)
+	r.d.Log.Info("this run claimed the workspace's slip: the workspace's credentials service serves it the credentials the slip names, and every call this run makes to that service travels under it (R4)")
 }
 
 // checkSlipServiceURL refuses a URL this run will not send its own identity
@@ -1000,6 +1104,25 @@ func slipExecution(execution string) string {
 	return id.Name
 }
 
+// slipWire is the pair of header names one slip travels in: the project's own
+// (credsvc's) or the workspace's (C1's, which the gateway declares a second time
+// inside its own package because it cannot import this one). The two are never
+// mixed on one call: which pair a claim or a beat is sent under is which service
+// it is sent to, and that is R4 said as a spelling.
+type slipWire struct {
+	id    string
+	claim string
+}
+
+// projectSlipWire is FUGARO_SLIP and credsvc's two names: the slip a member's
+// own credentials service granted, which is DS1's whole wire.
+var projectSlipWire = slipWire{id: credsvc.HeaderSlip, claim: credsvc.HeaderSlipClaim}
+
+// workspaceSlipWire is C1's names for the workspace's own slip (WC8): the same
+// call shape against the other service, presented under the two headers that
+// service reads and never under a member's.
+var workspaceSlipWire = slipWire{id: creds.PersonSlipHeader, claim: creds.PersonSlipClaimHeader}
+
 // slipRetryCall makes one of this run's own calls to the claim route — the
 // claim, or a beat after it — retrying the answers that are worth asking again
 // about (spec §Resilience: a job retries its credential and proxy requests
@@ -1019,9 +1142,9 @@ func slipExecution(execution string) string {
 // The ctx is the call's own budget: a cancelled wait, and an in-flight request
 // whose ctx is cancelled, both end it at once, which is what lets the beat be
 // stopped mid-retry.
-func (r *run) slipRetryCall(ctx context.Context, serviceURL, slipID, secret string, body []byte) (slipAnswer, error) {
+func (r *run) slipRetryCall(ctx context.Context, wire slipWire, serviceURL, slipID, secret string, body []byte) (slipAnswer, error) {
 	for attempt := 0; ; attempt++ {
-		ans, err := r.slipPost(ctx, serviceURL, slipID, secret, body)
+		ans, err := r.slipPost(ctx, wire, serviceURL, slipID, secret, body)
 		if !slipRetryable(ans.status, err) || attempt >= len(slipRetryDelays) {
 			return ans, err
 		}
@@ -1054,7 +1177,7 @@ func slipRetryable(status int, err error) bool {
 // value is read into an error: the secret's own call is the one place it is on
 // any wire but the service's, and a failure here is this run's sentence and
 // not the service's text.
-func (r *run) slipPost(ctx context.Context, serviceURL, slipID, secret string, body []byte) (slipAnswer, error) {
+func (r *run) slipPost(ctx context.Context, wire slipWire, serviceURL, slipID, secret string, body []byte) (slipAnswer, error) {
 	job, err := r.jobName()
 	if err != nil {
 		return slipAnswer{}, err
@@ -1078,9 +1201,9 @@ func (r *run) slipPost(ctx context.Context, serviceURL, slipID, secret string, b
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set(gateway.HeaderRunIdentity, sess.IDToken()())
 	req.Header.Set(gateway.HeaderRunJob, job)
-	req.Header.Set(credsvc.HeaderSlip, slipID)
+	req.Header.Set(wire.id, slipID)
 	if secret != "" {
-		req.Header.Set(credsvc.HeaderSlipClaim, secret)
+		req.Header.Set(wire.claim, secret)
 	}
 	resp, err := slipClient.Do(req)
 	if err != nil {
@@ -1191,7 +1314,7 @@ func (r *run) beatSlip(ctx context.Context, hold *slipHold) {
 	if err != nil {
 		return
 	}
-	ans, err := r.slipRetryCall(ctx, hold.service, hold.id, hold.secret, body)
+	ans, err := r.slipRetryCall(ctx, hold.wire, hold.service, hold.id, hold.secret, body)
 	switch {
 	case slipRouteAbsent(ans.status):
 		// The service stopped serving the claim route under a run that holds
@@ -1233,7 +1356,25 @@ func (r *run) slipHold() *slipHold {
 func (r *run) setSlipHold(id, secret, service string) {
 	r.slipMu.Lock()
 	defer r.slipMu.Unlock()
-	r.slip = &slipHold{id: id, secret: secret, service: service}
+	r.slip = &slipHold{id: id, secret: secret, service: service, wire: projectSlipWire}
+}
+
+// workspaceSlipHold is the workspace's slip this run took, or nil for a run the
+// workspace granted none.
+func (r *run) workspaceSlipHold() *slipHold {
+	r.slipMu.Lock()
+	defer r.slipMu.Unlock()
+	return r.wsSlip
+}
+
+// setWorkspaceSlipHold takes the workspace's claim. It is written once, by the
+// claim, and it never carries a beat: the workspace's service is kept warm by
+// WS13's own beat, whose call presents the job's identity and the run's token
+// and no slip at all (R18, F33).
+func (r *run) setWorkspaceSlipHold(id, secret, service string) {
+	r.slipMu.Lock()
+	defer r.slipMu.Unlock()
+	r.wsSlip = &slipHold{id: id, secret: secret, service: service, wire: workspaceSlipWire}
 }
 
 // workspaceBeat is the run's second beat (WS13, R10, R14, F33, D2985): the

@@ -3,6 +3,8 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/policy"
 )
 
 // cascadeYAML is a valid `agent.auth: cascade` file: the credential cascade
@@ -56,35 +58,41 @@ func TestValidateAcceptsCascade(t *testing.T) {
 }
 
 // TestCascadeRefusedWithBudgetOff is the gateway rule a cascade workflow is
-// held to: its calls are made by the gateway, so a mode that is off — written
-// as off, or unset — is refused, naming the mode it found. observe and
-// enforce both pass: the cascade needs the gateway to be on, not enforcing,
-// because what the gateway does for a cascade run is carry the run's
-// credential and its accounting (D143), not cap a provider's dollars.
+// held to: its calls are made by the gateway, so the mode the run has to be one
+// this release accounts under, and a word that is not is refused, naming what
+// it read. observe and enforce both pass: the cascade needs the gateway to be
+// on, not enforcing, because what the gateway does for a cascade run is carry
+// the run's credential and its accounting (D143), not cap a provider's dollars.
+//
+// An unset mode passes as well, and that is the flip AB2 makes here (D3010): a
+// mode left unwritten is observe, and observe carries a cascade run's calls
+// exactly as enforce does (runner.GatewayOn answers true in every mode, AB1b).
+// The empty mode used to be refused as the off it was read as, which refused
+// every cascade workflow of an installation that writes no mode — the state
+// `fugaro setup` leaves behind. The word that was a mode until this release is
+// refused with the one text every door refuses it with (D3022); no document a
+// run reads can carry it any more (AB8a: the node's migration is the only
+// reader that tolerates it), so that row is the rule's own answer rather than a
+// state a repository reaches.
 //
 // mode is the run's *effective* mode (policy.Merge over the ceiling and the
 // file), which is why this is a function of a mode rather than a rule inside
 // Validate: a file that writes no budget under an installation whose ceiling
 // enforces is a cascade workflow whose gateway is on.
 //
-// Mutation (run, restored): return nil from CheckCascadeGateway — the "" and
-// "off" rows fail, naming the modes it no longer refuses.
+// Mutation (run, restored): rank the removed word in policy.ValidMode again —
+// the "off" row is accepted and fails, for a run the gateway rule used to
+// refuse.
 func TestCascadeRefusedWithBudgetOff(t *testing.T) {
 	a := Agent{Auth: AuthCascade}
-	for _, mode := range []string{"", "off"} {
-		got := problemsText(CheckCascadeGateway(a, mode))
-		if !strings.Contains(got, "agent.auth") || !strings.Contains(got, "budget.mode") {
-			t.Errorf("mode %q: not refused: %s", mode, got)
-		}
-		want := "off"
-		if mode == "" {
-			want = "not set"
-		}
-		if !strings.Contains(got, want) {
-			t.Errorf("mode %q: the refusal does not name the mode it found (%q): %s", mode, want, got)
-		}
+	got := problemsText(CheckCascadeGateway(a, BudgetOff))
+	if !strings.Contains(got, "agent.auth") || !strings.Contains(got, BudgetOff) {
+		t.Errorf("the removed word was not refused at the key that carries it: %s", got)
 	}
-	for _, mode := range []string{"observe", "enforce"} {
+	if !strings.Contains(got, policy.ModeOffRefusal) {
+		t.Errorf("the refusal does not carry the one text every door refuses the word with (%q): %s", policy.ModeOffRefusal, got)
+	}
+	for _, mode := range []string{"", "observe", "enforce"} {
 		if got := problemsText(CheckCascadeGateway(a, mode)); got != "" {
 			t.Errorf("mode %q: refused, want accepted: %s", mode, got)
 		}

@@ -42,7 +42,7 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
+	crand "crypto/rand"
 	"fmt"
 	"io"
 	"os"
@@ -53,6 +53,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
@@ -221,7 +222,11 @@ func runWorkspaceLink(cmd *cobra.Command, deps workspaceLinkDeps, o cloudOptions
 	} else if err := deps.Authority.Unlink(ctx, ref.target); err != nil {
 		return err
 	}
-	id, event, err := workspaceLinkEvent("project."+verb, ref, deps.now())
+	actor, err := workspaceLinkCaller(ctx, lc)
+	if err != nil {
+		return err
+	}
+	id, event, err := workspaceLinkEvent("project."+verb, ref, actor, deps.now())
 	if err != nil {
 		return err
 	}
@@ -354,33 +359,53 @@ func workspaceLinkOwners(owners []string) string {
 	return "owners " + strings.Join(quoted, ", ")
 }
 
+// workspaceLinkCaller is the actor the entry names: the address this machine's
+// credentials belong to, read from the member's own selected config, which is
+// who runs the command (F21 -- never the config's `user:` key and never git's
+// user.email, which are text anybody can set). It is a package variable for the
+// reason the family's other credential reads are: no test reaches the network
+// it asks, and `workspace project add` records its caller the same way
+// (workspaceProjectAdd.openCaller).
+func workspaceLinkCaller(ctx context.Context, lc *localcfg.Config) (string, error) {
+	caller, err := authenticatedUser(ctx, lc)
+	if err != nil {
+		return "", userErr("this command records who made the change from the credential it is using, and it could not read who that credential belongs to: %v. The caller is the credential and never the local config's own key or git config user.email: sign in with gcloud auth application-default login and run this again", err)
+	}
+	address, err := workspace.CanonicalAddress(caller)
+	if err != nil {
+		return "", userErr("the credential's own address %q: %v", safetext.Field(caller), err)
+	}
+	return address, nil
+}
+
 // workspaceLinkEvent is the entry the command files in the MEMBER's own trail
-// (D2811): C1's AuditEvent as JSON, under an id that names the act and the
-// moment it happened at. The id is the caller's to make unique — the create is
-// the trail's own precondition, so a repeat is a refusal and never a
-// replacement — and the moment is UTC nanoseconds, which is as unique as one
-// machine's own writes need to be.
-func workspaceLinkEvent(act string, ref workspaceLinkMemberRef, now time.Time) (string, []byte, error) {
+// (D2811): C1's own event, which is the shape the trail holds and the shape its
+// readers read it back with (`status`, the drift check: workspaceMemberTrail).
+// The contract puts the member's entry and the workspace's own in one shape
+// (contract.md, "The audit event"), so an entry written as anything else is one
+// no reader of this program can answer a question from.
+//
+// The id is minted (NewAuditEventID) rather than spelled from the act: the
+// create is the trail's own precondition, so a repeat is a refusal and never a
+// replacement, and two links in one second must be two entries.
+func workspaceLinkEvent(act string, ref workspaceLinkMemberRef, actor string, now time.Time) (string, []byte, error) {
 	moment := now.UTC()
-	event, err := json.Marshal(struct {
-		Event     string `json:"event"`
-		Workspace string `json:"workspace"`
-		Project   string `json:"project"`
-		GCP       string `json:"gcp_project"`
-		Firebase  string `json:"firebase_project,omitempty"`
-		At        string `json:"at"`
-	}{
-		Event:     act,
-		Workspace: ref.workspace,
-		Project:   ref.name,
-		GCP:       ref.target.Project,
-		Firebase:  ref.target.Firebase,
-		At:        moment.Format(time.RFC3339Nano),
+	id, err := workspace.NewAuditEventID(moment, crand.Reader)
+	if err != nil {
+		return "", nil, userErr("minting the id of this %s's audit entry: %v", act, err)
+	}
+	event, err := workspace.EncodeAuditEvent(workspace.AuditEvent{
+		Version: workspace.AuditEventVersion,
+		ID:      id,
+		Time:    moment,
+		Actor:   actor,
+		Action:  workspace.Action(act),
+		Project: ref.target.Project,
 	})
 	if err != nil {
 		return "", nil, userErr("the audit entry for %s could not be built: %v", ref.target.Project, err)
 	}
-	return act + "-" + moment.Format("20060102T150405.000000000Z"), event, nil
+	return id, event, nil
 }
 
 // workspaceLinkDone is the closing line: what stands now, and the one thing the

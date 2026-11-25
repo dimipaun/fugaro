@@ -1911,6 +1911,10 @@ type lsWidthDriver struct {
 	reached   bool
 	width     chan struct{}
 	widthOnce sync.Once
+	// lists counts the listings this driver was walked with. What a listing
+	// costs a window is the objects it walks, so a read that is told which
+	// runs to read (the run index's) walks none, and this is what says so.
+	lists int
 }
 
 // errNoObject is the driver's missing object, reported as gcerrors.NotFound:
@@ -1939,6 +1943,13 @@ func (d *lsWidthDriver) keysRead() []string {
 	return slices.Clone(d.readKeys)
 }
 
+// listingCount is how many listings the driver was walked with.
+func (d *lsWidthDriver) listingCount() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.lists
+}
+
 // Attributes answers the existence probes a listing makes on an object it does
 // not open (runstore's cancel marker, asked for a run that never launched): the
 // driver holds bodies and no metadata, so an object it holds answers with its
@@ -1958,6 +1969,7 @@ func (d *lsWidthDriver) Attributes(_ context.Context, key string) (*driver.Attri
 // prefix, one per run, so ls sees the runs the test seeded.
 func (d *lsWidthDriver) ListPaged(_ context.Context, opts *driver.ListOptions) (*driver.ListPage, error) {
 	d.mu.Lock()
+	d.lists++
 	keys := make([]string, 0, len(d.objects))
 	for k := range d.objects {
 		keys = append(keys, k)
@@ -2030,6 +2042,33 @@ func (d *lsWidthDriver) NewRangeReader(_ context.Context, key string, offset, le
 		body = body[:length]
 	}
 	return &lsWidthReader{Reader: bytes.NewReader(body), size: int64(len(body))}, nil
+}
+
+// NewTypedWriter takes a write into the driver's map: the tests that seed a
+// summary after the fixture was installed write through lsDriverPut, and one
+// that runs a writer of the tree's own (the summary backfill) needs the write
+// path too. A create is answered by Attributes first, so an object the driver
+// already holds makes the write fail the way the bucket's does.
+func (d *lsWidthDriver) NewTypedWriter(_ context.Context, key, contentType string, _ *driver.WriterOptions) (driver.Writer, error) {
+	return &lsDriverWriter{d: d, key: key, contentType: contentType}, nil
+}
+
+// lsDriverWriter collects one object's bytes and puts them where a later read
+// of the driver finds them.
+type lsDriverWriter struct {
+	d           *lsWidthDriver
+	key         string
+	contentType string
+	buf         bytes.Buffer
+}
+
+func (w *lsDriverWriter) Write(p []byte) (int, error) { return w.buf.Write(p) }
+
+func (w *lsDriverWriter) Close() error {
+	w.d.mu.Lock()
+	defer w.d.mu.Unlock()
+	w.d.objects[w.key] = w.buf.Bytes()
+	return nil
 }
 
 // lsWidthReader serves one object's bytes.
@@ -2794,6 +2833,7 @@ var terminalStatusNames = []string{
 	"runstore.StatusSucceeded", "runstore.StatusFailed",
 	"runstore.StatusUnreviewed", "runstore.StatusInfraError",
 	"runstore.StatusCancelled", "runstore.StatusHalted",
+	"runstore.StatusPaused",
 }
 
 // TestRunsListsReadTheStatusWord guards the two list surfaces that read a

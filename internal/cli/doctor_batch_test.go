@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,9 +11,12 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	crm "google.golang.org/api/cloudresourcemanager/v1"
 )
 
 // The Batch half of `fugaro doctor` (plan 2026-10-19-compute-backend.md Task 8
@@ -64,7 +68,10 @@ const (
 // batchBlock is a batch block whose every value is this installation's own:
 // the anchors the shared-config check applies would refuse anything else, and
 // the names are what the fakes below are given. socket_gid is set, so the gid
-// comparison is a comparison and not the recorded-zero case.
+// comparison is a comparison and not the recorded-zero case. opt_in is `in`,
+// which is what an installation that opted in has (BR7, D3110): every fixture
+// built on this block is an installation whose claim can be made, so a check
+// that fails here is a check failing for the reason the case names.
 const batchBlock = `batch:
   image: us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro:1
   machine_type: e2-standard-4
@@ -73,7 +80,13 @@ const batchBlock = `batch:
   subnetwork: projects/proj-1234/regions/us-east5/subnetworks/fugaro
   service_account: fugaro-runs@proj-1234.iam.gserviceaccount.com
   socket_gid: 989
+  opt_in: in
 `
+
+// batchBlockWithoutOptIn is the same block as an installation that never opted
+// in carries it: the field is absent, which is a state of its own and not a
+// zero value (D3110, D3111).
+var batchBlockWithoutOptIn = strings.Replace(batchBlock, "  opt_in: in\n", "", 1)
 
 // batchStep is one thing the installation's apply, its compute root's IAM and
 // its preload build put in place, named so a case can be built without exactly
@@ -95,6 +108,7 @@ const (
 	batchStepRepo     = "the job image's repository"
 	batchStepRunAcct  = "the run account and its display name"
 	batchStepPolicy   = "the launcher grant and the run account's roles"
+	batchStepLink     = "the credentials service account's read on the Batch jobs"
 	batchStepActAs    = "the launchers' actAs on the run account"
 	batchStepReaperAC = "the reaper's account"
 	batchStepReaperRR = "the reaper's role and its five permissions"
@@ -126,6 +140,10 @@ func batchSteps() []batchStep {
 		{batchStepPolicy, func(_ *testing.T, r *doctorRig, _ batchRigFakes) {
 			r.crm.SetPolicy("proj-1234", batchProvisionedPolicy()...)
 		}},
+		{batchStepLink, func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
+			f.iam.AddRole("proj-1234", batchLinkRole, "Fugaro Batch link", false)
+			f.iam.SetRolePermissions("projects/proj-1234/roles/"+batchLinkRole, batchJobsGetPermission, "batch.jobs.list")
+		}},
 		{batchStepActAs, func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
 			f.iam.SetServiceAccountPolicy("proj-1234", batchRunAccount,
 				gcpfake.Binding{Role: batchActAsRole, Members: []string{batchLauncher}})
@@ -148,14 +166,40 @@ func batchSteps() []batchStep {
 }
 
 // batchProvisionedPolicy is the project policy the compute root's apply leaves:
-// the launchers' conditioned grant and the two roles every run account holds.
+// the launchers' conditioned grant, the two roles every run account holds, and
+// the credentials service account's binding to the link's role (BR7's second
+// half, BR5's to plan: the role's own id is the root's and this check reads its
+// permissions and not its name).
 func batchProvisionedPolicy() []gcpfake.Binding {
+	return append(batchProvisionedPolicyWithoutLink(), batchLinkBinding())
+}
+
+// batchProvisionedPolicyWithoutLink is the same policy for an installation the
+// root has not yet been fed the credentials service account's read for: what
+// every Batch check but batch-link-grant passes on.
+func batchProvisionedPolicyWithoutLink() []gcpfake.Binding {
 	return []gcpfake.Binding{
 		batchListerPolicy(batchLauncher),
 		{Role: batchAgentReporterRole, Members: []string{"serviceAccount:" + batchRunAccount}},
 		{Role: batchLogWriterRole, Members: []string{"serviceAccount:" + batchRunAccount}},
 	}
 }
+
+// batchLinkBinding is the credentials service account's grant of the link's
+// role: the one binding the claim's read is made through.
+func batchLinkBinding() gcpfake.Binding {
+	return gcpfake.Binding{Role: "projects/proj-1234/roles/" + batchLinkRole, Members: []string{"serviceAccount:" + batchCredsAccount}}
+}
+
+// batchCredsAccount is the credentials service's own account
+// (infra.CredentialsAccountID in this installation's project): the member the
+// link's read is granted to, and never a run account.
+const batchCredsAccount = infra.CredentialsAccountID + "@proj-1234.iam.gserviceaccount.com"
+
+// batchLinkRole is the custom role the compute root plans for the link's read.
+// The id is BR5's to settle and this fixture's to name: doctor's check reads
+// the role's PERMISSIONS through the API and never its name.
+const batchLinkRole = "fugaroBatchLink"
 
 // batchBothArms is the arm pair the installation module's sink and exclusion
 // both carry: Cloud Run's managed lines and the Batch arm beside it.
@@ -244,10 +288,10 @@ func TestDoctorBatchChecksPassOnAProvisionedInstallation(t *testing.T) {
 
 	o := r.runDoctorJSON(t)
 	for _, id := range []string{
-		"batch-apis", "batch-job-definition", "batch-cost", "batch-image-family",
+		"batch-opt-in", "batch-apis", "batch-job-definition", "batch-cost", "batch-image-family",
 		"batch-network", "batch-subnetwork", "batch-log-sink", "batch-log-exclusion",
 		"batch-job-image", "batch-run-accounts", "batch-run-account-roles",
-		"batch-run-account-actas", "batch-launcher-iam", "batch-reaper-role",
+		"batch-run-account-actas", "batch-link-grant", "batch-launcher-iam", "batch-reaper-role",
 		"batch-reaper-job", "batch-reaper-schedule",
 		// The boundary is the one line that is NOT ok and must not be: it
 		// describes the plan's own decision (Global Constraint 13) and takes
@@ -895,14 +939,171 @@ func TestDoctorBatchSkipsAreNeverPasses(t *testing.T) {
 	}
 }
 
-// TestDoctorBatchRefusesAMintingInstallation is design §1.6's pair, read at
-// the gate: an installation that mints budget tokens cannot launch any run on
-// Batch at all, because every launch carries the budget token's seal key in an
-// environment entry the backend's job definition refuses -- after the token was
-// minted and dropped. Reading the pair here is what the design asks for (an
-// early refusal rather than jobs.create's doorstep), and Task 10 is the enable
-// that made it reachable.
+// TestDoctorPassesAnInstallationThatOptedIn is BR7's first half as its own
+// case: an installation whose block carries the opt-in fact and whose project
+// grants the credentials service account the link's read passes BOTH of the
+// claim's checks -- and, because that is the whole of what a Batch installation
+// needs beyond what Task 10's gate already covered, doctor does not refuse it.
 //
+// Mutation (make batch-opt-in fire on a block that carries the fact, or
+// batch-link-grant compare the role's NAME against a literal): the provisioned
+// installation is refused, and this fails.
+func TestDoctorPassesAnInstallationThatOptedIn(t *testing.T) {
+	r, f := newDoctorRig(t), newBatchFakes(t)
+	batchProvisioned(t, r, f)
+	r.withBatchSelected(t, f, batchBlock, batchLists)
+
+	o := r.runDoctorJSON(t)
+	for _, id := range []string{"batch-opt-in", "batch-link-grant"} {
+		c, ok := doctorCheckByID(o.Checks, id)
+		if !ok {
+			t.Fatalf("doctor reports no %s check for an installation that opted in", id)
+		}
+		if !c.OK {
+			t.Errorf("%s = %+v, want ok: the opt-in fact is present and the link's read is granted", id, c)
+		}
+	}
+}
+
+// TestDoctorNamesTheUpdateWhereTheLinkGrantIsMissing is BR7's first refusal:
+// the installation opted in and everything Task 10 provisions is there, and the
+// one thing missing is the read the claim's link makes -- which only the
+// compute root `fugaro update` applies creates. The check says so, names the
+// update as its fix, and carries the mark `fugaro backends use` reads before it
+// refuses a selection (R14): selecting is not what is wrong here.
+//
+// Mutation (drop the mark from this arm): the last assertion fails, and BR18's
+// selection starts waiting for a grant only the update makes.
+func TestDoctorNamesTheUpdateWhereTheLinkGrantIsMissing(t *testing.T) {
+	r, f := newDoctorRig(t), newBatchFakes(t)
+	batchProvisioned(t, r, f)
+	// The root has not been fed the credentials service account: the role
+	// exists and nothing is bound to it.
+	r.crm.SetPolicy("proj-1234", batchProvisionedPolicyWithoutLink()...)
+	r.withBatchSelected(t, f, batchBlock, batchLists)
+
+	// The mark is read in process: it is what the gate reads and --json does
+	// not carry it.
+	c, ok := doctorCheckByID(batchChecksInProcess(t, r), "batch-link-grant")
+	if !ok {
+		t.Fatal("doctor reports no batch-link-grant check")
+	}
+	if c.OK {
+		t.Fatalf("an installation whose link's read is not granted reads ok: %+v", c)
+	}
+	if c.Severity != "" {
+		t.Errorf("batch-link-grant has severity %q, want doctor's own hard failure for an installation that selects the backend", c.Severity)
+	}
+	for _, want := range []string{batchCredsAccount, "batch.jobs.get", "docs/batch-run-identity/implementation-plan.md"} {
+		if !strings.Contains(c.Problem, want) {
+			t.Errorf("the finding does not name %q: %s", want, c.Problem)
+		}
+	}
+	if !strings.Contains(c.Fix, "fugaro update") {
+		t.Errorf("the fix does not send the operator to the update: %s", c.Fix)
+	}
+	if !c.updateFix {
+		t.Error("the missing-grant failure does not carry the update mark: the selection would wait for the root's own work (R14)")
+	}
+}
+
+// TestDoctorNamesOptingInWhereTheFactIsMissing is BR7's second refusal, and the
+// one no cloud fact can clear: the block carries no opt-in fact, so the
+// installation never answered whether Batch runs are wanted. The fix is opting
+// in -- an operator's write of the published block -- and not the update, which
+// applies the compute root only where the fact is already there (BR6, R2).
+//
+// The check is NOT marked: its fix is the operator's own answer, so a selection
+// cannot be let through for it (R14's list is the root's work alone).
+//
+// Mutation (say `fugaro update` alone is the fix, or mark the check): the
+// assertions below fail, and a reader is sent to a command that cannot do this.
+func TestDoctorNamesOptingInWhereTheFactIsMissing(t *testing.T) {
+	r, f := newDoctorRig(t), newBatchFakes(t)
+	batchProvisioned(t, r, f)
+	r.withBatchSelected(t, f, batchBlockWithoutOptIn, batchLists)
+
+	c, ok := doctorCheckByID(r.runDoctorJSON(t).Checks, "batch-opt-in")
+	if !ok {
+		t.Fatal("doctor reports no batch-opt-in check")
+	}
+	if c.OK {
+		t.Fatalf("a block with no opt-in fact reads ok: %+v", c)
+	}
+	for _, want := range []string{"opt-in fact is absent", "batch.opt_in", "R3"} {
+		if !strings.Contains(c.Problem, want) {
+			t.Errorf("the finding does not name %q: %s", want, c.Problem)
+		}
+	}
+	for _, want := range []string{"opt this installation in", "fugaro backends use cloud-batch"} {
+		if !strings.Contains(c.Fix, want) {
+			t.Errorf("the fix does not name %q: %s", want, c.Fix)
+		}
+	}
+	if c.updateFix {
+		t.Error("the opt-in failure carries the update mark: an operator's own answer is not work the compute root does")
+	}
+}
+
+// TestValidateAgreesWithDoctorOnTheClaim is BR7's offline half: the one Batch
+// fact a config decides is answered with ONE sentence by both readers, so an
+// operator told by doctor and by validate is told the same thing about the same
+// block. Withdrawn is a state of its own and takes the same refusal.
+//
+// Mutation (write a second sentence in either reader, or read a different field
+// in one of them): the two texts stop being equal, and this fails.
+func TestValidateAgreesWithDoctorOnTheClaim(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		block   string
+		refused bool
+	}{
+		{name: "an installation that opted in", block: batchBlock},
+		{name: "a block with no opt-in fact", block: batchBlockWithoutOptIn, refused: true},
+		{name: "a block whose opt-in was withdrawn",
+			block: strings.Replace(batchBlock, "opt_in: in", "opt_in: withdrawn", 1), refused: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, f := newDoctorRig(t), newBatchFakes(t)
+			batchProvisioned(t, r, f)
+			r.withBatchSelected(t, f, tc.block, batchLists)
+
+			c, ok := doctorCheckByID(r.runDoctorJSON(t).Checks, "batch-opt-in")
+			if !ok {
+				t.Fatal("doctor reports no batch-opt-in check")
+			}
+			// validate is asked the same installation's config, offline: the
+			// reader below is the one `fugaro validate` runs.
+			lc, err := localcfg.Parse([]byte(readFileString(t, r.cfgPath)))
+			if err != nil {
+				t.Fatalf("the rig's own config does not parse: %v", err)
+			}
+			ps := batchValidateProblems(lc, &config.Config{Project: lc.Name}, nil)
+			var optIn string
+			for _, p := range ps {
+				if p.Path == "batch.opt_in" {
+					optIn = p.Message
+				}
+			}
+			if !tc.refused {
+				if !c.OK || optIn != "" {
+					t.Fatalf("an installation that opted in is refused: doctor=%+v, validate=%q", c, optIn)
+				}
+				return
+			}
+			if c.OK || optIn == "" {
+				t.Fatalf("a block that carries no opt-in is passed: doctor=%+v, validate=%q", c, optIn)
+			}
+			if optIn != c.Problem {
+				t.Errorf("the two readers of one fact disagree:\n doctor:   %s\n validate: %s", c.Problem, optIn)
+			}
+			if got, want := strings.Contains(optIn, "withdrawn"), tc.name == "a block whose opt-in was withdrawn"; got != want {
+				t.Errorf("the sentence does not name the state the fact is in (withdrawn=%v, want %v): %s", got, want, optIn)
+			}
+		})
+	}
+}
+
 // The check asks budgetMintOn, the function a launch decides with, so these
 // configs are the states of its own answer: a budget database, with the signer
 // account a run's identity is minted through -- which mints whatever the mode
@@ -1004,12 +1205,135 @@ func TestDoctorBatchRefusesAMintingInstallation(t *testing.T) {
 	}
 }
 
-// batchGateCondition is one of the conditions `fugaro doctor` refuses an
-// installation that selects backend: cloud-batch for (plan
-// 2026-10-19-compute-backend.md Task 10 step 2, design §4.4 and §8.1 task 9),
-// with the two halves of the plan's own test shape: how to build a world
-// without it ("a fake that answers absent") and a phrase only ITS OWN finding
-// carries, so a case cannot pass on another condition's finding.
+// TestNoCheckMentionsAKey is the amendment's rule as a test: the release's key
+// is gone, and no Batch check -- doctor's, or validate's offline problems --
+// may name a key fact, a seal key or a KMS key any more. R13 is dropped with
+// the key it was about, so a differing or missing key fact is not a failure
+// either reader can produce.
+//
+// Mutation (keep the seal pair's check, or reword its fix into the removal):
+// the scan finds the spelling below.
+func TestNoCheckMentionsAKey(t *testing.T) {
+	banned := []string{"seal_key", "seal key", "key fact", "cryptoKey", "KMS"}
+
+	r, f := newDoctorRig(t), newBatchFakes(t)
+	batchProvisioned(t, r, f)
+	// The world that reports the most: every cloud fact present and the opt-in
+	// fact absent, so the claim's fact check prints beside Task 10's whole list.
+	r.withBatchSelected(t, f, batchBlockWithoutOptIn, batchLists)
+	for _, c := range r.runDoctorJSON(t).Checks {
+		if !strings.HasPrefix(c.ID, "batch-") {
+			continue
+		}
+		for _, bad := range banned {
+			if strings.Contains(c.ID+c.Problem+c.Fix, bad) {
+				t.Errorf("check %s names %q: %s %s", c.ID, bad, c.Problem, c.Fix)
+			}
+		}
+	}
+
+	lc, err := localcfg.Parse([]byte(readFileString(t, r.cfgPath)))
+	if err != nil {
+		t.Fatalf("the rig's own config does not parse: %v", err)
+	}
+	for _, p := range batchValidateProblems(lc, &config.Config{Project: lc.Name}, nil) {
+		for _, bad := range banned {
+			if strings.Contains(p.Message, bad) {
+				t.Errorf("validate's problem at %s names %q: %s", p.Path, bad, p.Message)
+			}
+		}
+	}
+}
+
+// TestTheChecksOnlyTheUpdateFixesAreMarked is R14's list, held exactly: the
+// Batch checks whose fix is the compute root `fugaro update` applies carry the
+// mark `fugaro backends use` reads before it refuses a selection, and no other
+// check does. The list is by id and it is short on purpose -- a check added to
+// it is a state an operator may select the backend in, and one left out of it
+// is a selection that waits for work only the update does.
+//
+// Two worlds, because one check's failure precludes another's: a project with
+// no run account at all reports batch-run-accounts and cannot report the two
+// checks that read a grant ON an account (doctorBatchRunAccountRoles and
+// doctorBatchActAs return nothing when the list is empty). The worlds' marks
+// are unioned, and every mark has to be on the list -- batch-launcher-iam
+// fails in both and is deliberately not marked: the widening it reports is an
+// operator's grant and not the root's.
+//
+// Mutation (mark batch-launcher-iam, or stop marking batch-run-account-actas):
+// the set stops matching, and either BR18 lets through a widening or waits for
+// a grant that is not the root's.
+func TestTheChecksOnlyTheUpdateFixesAreMarked(t *testing.T) {
+	want := []string{"batch-link-grant", "batch-run-account-actas", "batch-run-account-roles", "batch-run-accounts"}
+	worlds := []struct {
+		name    string
+		without []string
+	}{
+		// No run account at all: the claim's link is unbound too, so the two
+		// account-grant checks have nothing to read.
+		{name: "a project with no run account", without: []string{batchStepRunAcct, batchStepActAs, batchStepLink}},
+		// The accounts exist and nothing is bound to them: the root has not
+		// been applied over the project yet.
+		{name: "run accounts with no grants on them", without: []string{batchStepPolicy, batchStepActAs, batchStepLink}},
+	}
+
+	var union []string
+	for _, w := range worlds {
+		t.Run(w.name, func(t *testing.T) {
+			r, f := newDoctorRig(t), newBatchFakes(t)
+			batchProvisionedWithout(t, r, f, w.without...)
+			r.withBatchSelected(t, f, batchBlock, batchLists)
+
+			checks := batchChecksInProcess(t, r)
+			var marked []string
+			for _, c := range checks {
+				if !strings.HasPrefix(c.ID, "batch-") || c.OK {
+					continue
+				}
+				if !c.updateFix {
+					continue
+				}
+				marked = append(marked, c.ID)
+				if !slices.Contains(want, c.ID) {
+					t.Errorf("%s carries the update mark and is not on R14's list %v: %s", c.ID, want, c.Problem)
+				}
+				if !strings.Contains(c.Fix, "fugaro update") {
+					t.Errorf("%s carries the update mark and its fix does not name the update: %s", c.ID, c.Fix)
+				}
+			}
+			slices.Sort(marked)
+			union = append(union, marked...)
+			if len(marked) == 0 {
+				t.Errorf("no check of this world is marked, and the world is missing exactly the root's work: %+v", checks)
+			}
+		})
+	}
+	slices.Sort(union)
+	union = slices.Compact(union)
+	if !slices.Equal(union, want) {
+		t.Errorf("the checks the update alone fixes are %v, want %v (R14)", union, want)
+	}
+}
+
+// batchChecksInProcess runs doctor's Batch checks the way the gate runs them:
+// in process, against the rig's own config and fakes. doctorCheck.updateFix is
+// not in --json -- it is not a class, it is the one question `fugaro backends
+// use` asks before refusing a selection -- so a test about the mark has to read
+// the checks the gate reads rather than the report.
+func batchChecksInProcess(t *testing.T, r *doctorRig) []doctorCheck {
+	t.Helper()
+	lc, err := localcfg.Load(r.cfgPath)
+	if err != nil {
+		t.Fatalf("the rig's own config does not read back: %v", err)
+	}
+	ctx := context.Background()
+	c, err := crm.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.ResourceManager)...)
+	if err != nil {
+		t.Fatalf("the rig's own resource_manager endpoint does not open: %v", err)
+	}
+	return doctorBatchChecks(ctx, lc, c)
+}
+
 type batchGateCondition struct {
 	name string
 	id   string
@@ -1086,6 +1410,12 @@ var batchGateConditions = []batchGateCondition{
 	{name: "the run accounts' two project roles", id: "batch-run-account-roles", want: "roles/batch.agentReporter",
 		alter: func(_ *testing.T, r *doctorRig, _ batchRigFakes) {
 			r.crm.SetPolicy("proj-1234", batchListerPolicy(batchLauncher))
+		}},
+	{name: "the block's opt-in fact", id: "batch-opt-in", want: "opt-in fact is absent",
+		block: batchBlockWithoutOptIn},
+	{name: "the link's read for the credentials service account", id: "batch-link-grant", want: "carry batch.jobs.get",
+		alter: func(_ *testing.T, r *doctorRig, _ batchRigFakes) {
+			r.crm.SetPolicy("proj-1234", batchProvisionedPolicyWithoutLink()...)
 		}},
 	{name: "the launchers' conditioned jobsEditor grant", id: "batch-launcher-iam", want: "without the compute module's condition",
 		alter: func(_ *testing.T, r *doctorRig, _ batchRigFakes) {
