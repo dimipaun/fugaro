@@ -114,6 +114,49 @@ func TestSecretsStageNamesEveryRepository(t *testing.T) {
 	}
 }
 
+// TestSecretsStageReportsEveryRepositoryLine: a repository with every name its
+// jobs mount stored is done, and it still gets its own line -- the run's
+// record, the --json document and the event hold one line per repository,
+// whatever that line says (R12, C1). It is the stage's own to make: no line
+// for a done repository is a repository missing from the run's report.
+func TestSecretsStageReportsEveryRepositoryLine(t *testing.T) {
+	declared := checkoutYAML("github", "oauth", "aurora", ", secrets: [{ name: app-key, env: APP_KEY }]")
+	r := listRig(t,
+		repoViewOf(t, "acme/app", "github", declared),
+		repoViewOf(t, "acme/lib", "github", declared),
+	)
+	// acme/app has the whole of what its jobs mount; acme/lib has none of it.
+	for _, name := range []string{"github-app-key", "claude-oauth-token", "app-key"} {
+		r.store.seed(mustSlug("github", "acme/app"), name, "stored")
+	}
+	res, err := r.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stateOf(res, initflow.Secrets); got != initflow.NeedsYou {
+		t.Fatalf("state = %q, want needs-you: acme/lib has nothing stored (out %q)", got, r.out.String())
+	}
+	if len(r.stage.list) != 2 {
+		t.Fatalf("the stage holds %d targets, want the list's two", len(r.stage.list))
+	}
+	if got := r.stage.list[0].state; got != initflow.RepoDone {
+		t.Fatalf("acme/app is %q, want done: every name its jobs mount is stored (detail %q)", got, r.stage.list[0].detail)
+	}
+	var lines []initflow.RepoLine
+	for _, l := range r.e.reposState.reported {
+		lines = append(lines, l.lines...)
+	}
+	want := map[string]initflow.RepoState{"acme/app": initflow.RepoDone, "acme/lib": initflow.RepoNeedsYou}
+	if len(lines) != len(want) {
+		t.Fatalf("the run reported %d lines, want one per repository: %+v", len(lines), lines)
+	}
+	for _, line := range lines {
+		if want[line.Repo] != line.State {
+			t.Errorf("the line for %s is %q, want %q", line.Repo, line.State, want[line.Repo])
+		}
+	}
+}
+
 // TestSecretsStageAdmitCountsAsEnrolled: a repository the published policy
 // admits is enrolled, whether or not this machine's local config lists it
 // (D3350) -- the stage takes its secrets and creates what they live in, and no

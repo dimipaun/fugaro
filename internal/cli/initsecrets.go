@@ -1010,10 +1010,10 @@ func (s *secretsStage) checkList(ctx context.Context) (initflow.Status, error) {
 			note := s.targetNote(tg)
 			if len(missing) == 0 {
 				tg.state, tg.detail = initflow.RepoDone, "the secrets the jobs mount are stored"+note
-				continue
+			} else {
+				tg.state, tg.detail = initflow.RepoNeedsYou, describeNeeds(missing)+note
+				needs = append(needs, pluginwire.Printable(tg.repo)+": "+describeNeeds(missing))
 			}
-			tg.state, tg.detail = initflow.RepoNeedsYou, describeNeeds(missing)+note
-			needs = append(needs, pluginwire.Printable(tg.repo)+": "+describeNeeds(missing))
 		}
 		lines = append(lines, newRepoLine(tg.repo, tg.state, tg.detail))
 	}
