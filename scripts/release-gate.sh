@@ -16,10 +16,31 @@
 # repository is public, and listed them with no credential at all when CS7
 # measured it, 2026-11-20), GITHUB_SHA, GITHUB_REPOSITORY.
 # Usage: scripts/release-gate.sh vX.Y.Z|mobile-vX.Y.Z
-# Optional: GATE_WAIT_SECONDS=N (default 0: no waiting, as in the workflows)
-# polls every GATE_POLL_SECONDS (default 30) while a check is missing, still
-# running or cancelled, so scripts/release.sh can run it right after a merge,
-# before CI has finished. A conclusive failure always fails at once.
+# Optional: GATE_WAIT_SECONDS=N (default 0 in a workflow, else
+# RELEASE_GATE_TIMEOUT_MIN, 60, minutes) polls every GATE_POLL_SECONDS (default
+# 30) while a check is missing, still running or cancelled, so scripts/release.sh
+# can run it right after a merge, before CI has finished. A conclusive failure
+# always fails at once, and so does a full `ci` run that completed red: waiting
+# out a run that is over only spends the wait. The wait ends with the checks that
+# are not green and the run's URL.
+# A gate that runs as a step of a workflow waits for nothing: the steps that
+# publish run after it in the same job (release.yml's release job holds 30
+# minutes and then builds, signs and uploads; mobile-release's holds 90 and then
+# submits to two stores), so a wait here is a job GitHub kills partway through
+# publishing. The checks are read once instead, and a check that is not green
+# yet fails the step with one line naming it and the run's URL -- re-run the job
+# once CI is green. The wait belongs to a caller outside a workflow, which is
+# scripts/release.sh at a terminal: GITHUB_ACTIONS tells the two apart, and a
+# step that really wants one names it in GATE_WAIT_SECONDS.
+# A commit with no `ci` run at all -- CI runs on no commit by itself -- gets one
+# dispatched on it by the gate itself (`gh workflow run ci --ref <the ref that
+# points at it> -f full=true`), once per commit, then waits for it; nothing will
+# ever turn green on a commit nobody dispatched CI on, which is what a gate that
+# only polls does for its whole timeout. The dispatch needs a ref this gate
+# knows that points at the commit (main, or the maintenance branch of a patch
+# release); a commit no such ref points at is refused at once with that command.
+# GATE_DRY_RUN=1 (scripts/release.sh --dry-run) reads the checks once, prints
+# what it would do and dispatches nothing.
 # When a check is missing or running on the commit, the checks of the merged
 # pull request's head count if its tree is identical (see identical_tree_checks);
 # this applies to the tag workflows too, with the same rules.
@@ -40,9 +61,12 @@ if ! [[ $version =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; the
   echo "::error::tag '$tag' is not a strict vX.Y.Z or mobile-vX.Y.Z release tag" >&2
   exit 1
 fi
-# The maintenance branch a patch release was resolved to, set below and read
-# where the dispatch hint picks the ref it names; empty for a tag on main.
+# The maintenance branch a patch release was resolved to, and its tip, set below
+# and read where the dispatch hint picks the ref it names; empty for a tag on
+# main. A dispatch runs a workflow at a ref's tip, so only a ref whose tip is
+# the commit being gated puts a run on that commit.
 maintenance_branch=""
+branch_tip=""
 retry_read git fetch --quiet origin main
 if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
   # The one other place a release commit may be: a maintenance branch, for a
@@ -70,6 +94,7 @@ if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
     # is not on the branch could pass for one that is.
     if retry_read git fetch --quiet origin "refs/heads/$branch:refs/remotes/origin/$branch" \
       && git merge-base --is-ancestor "$GITHUB_SHA" "refs/remotes/origin/$branch" \
+      && branch_tip=$(git rev-parse --verify "refs/remotes/origin/$branch^{commit}") \
       && first=$(git rev-parse --quiet --verify "refs/tags/v$line.0^{commit}") \
       && git merge-base --is-ancestor "$first" refs/remotes/origin/main \
       && git merge-base --is-ancestor "$first" "$GITHUB_SHA"; then
@@ -104,8 +129,25 @@ if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
     exit 1
   fi
 fi
-wait_seconds=${GATE_WAIT_SECONDS:-0}
+# The wait: none at all as a workflow step (see the header), and a caller
+# outside one -- scripts/release.sh at a terminal -- waits up to
+# RELEASE_GATE_TIMEOUT_MIN minutes, 60 by default. GATE_WAIT_SECONDS, which
+# release.sh passes, is the explicit wait either way.
+if [ -n "${GITHUB_ACTIONS:-}" ]; then
+  wait_seconds=0
+else
+  wait_seconds=$(( ${RELEASE_GATE_TIMEOUT_MIN:-60} * 60 ))
+fi
+wait_seconds=${GATE_WAIT_SECONDS:-$wait_seconds}
 poll_seconds=${GATE_POLL_SECONDS:-30}
+# The wait as a message reads it: whole minutes when it is whole minutes and not
+# none, seconds otherwise (GATE_WAIT_SECONDS is the tests' own, and a wait of 45
+# seconds must not read as 0m).
+if [ "$((wait_seconds % 60))" = 0 ] && [ "$wait_seconds" != 0 ]; then
+  wait_label="$((wait_seconds / 60))m"
+else
+  wait_label="${wait_seconds}s"
+fi
 deadline=$(($(date +%s) + wait_seconds))
 main_tip=$(git rev-parse refs/remotes/origin/main)
 # names is the required-check set: what must be success on the tag's commit
@@ -136,14 +178,19 @@ if [ "${GATE_REQUIRE_CONSOLE:-}" = 1 ]; then
 fi
 
 # full_run_command is the command that puts a full run on the commit the gate is
-# reading, printed when every `ci` run on it is a selected one. A dispatch is by
-# ref, so the command names one that is at the commit: main for main's tip, the
-# maintenance branch for a patch release the gate resolved above, and otherwise
-# a ref of the person's own -- the gate invents none.
+# reading: printed when every `ci` run on it is a selected one, and run by the
+# gate itself when the commit has no `ci` run at all. A dispatch is by ref, and
+# a ref's tip is the commit the run lands on, so the command names a ref this
+# gate knows whose tip is the commit: main for main's tip, the maintenance
+# branch for the patch release the gate resolved above, and otherwise a ref of
+# the person's own -- the gate invents none, and dispatches nothing.
+can_dispatch=""
 if [ "$GITHUB_SHA" = "$main_tip" ]; then
   dispatch_ref=main
-elif [ -n "$maintenance_branch" ]; then
+  can_dispatch=1
+elif [ -n "$maintenance_branch" ] && [ "$GITHUB_SHA" = "$branch_tip" ]; then
   dispatch_ref=$maintenance_branch
+  can_dispatch=1
 else
   dispatch_ref="<a ref pointing at $GITHUB_SHA>"
 fi
@@ -168,13 +215,27 @@ commit_check_state() {
 }
 
 # ci_run_rows SHA prints one tab-separated line per run of the `ci` workflow
-# file on SHA: the run's number, its check suite id and its display title.
-# `.path` is what makes a run a `ci` run: another workflow that copied the title
-# must not vouch for the commit, and the title is what says whether the run was
-# full (R1). The run number is what orders them -- a re-dispatch is a newer run.
+# file on SHA: the run's number, its check suite id, its display title, then
+# the run's own status, conclusion and URL. `.path` is what makes a run a `ci`
+# run: another workflow that copied the title must not vouch for the commit, and
+# the title is what says whether the run was full (R1). The run number is what
+# orders them -- a re-dispatch is a newer run -- and the status and conclusion
+# are what say a run is over and red, which is a wait that cannot end any other
+# way. A conclusion the API has not answered yet is written "-": a read splits
+# these fields on tabs, and tab is IFS whitespace, so an empty field collapses
+# and hands the fields after it to the wrong variables.
 ci_run_rows() {
   retry_read gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$1&per_page=100" \
-    --jq '.workflow_runs[] | select(.path == ".github/workflows/ci.yml") | [.run_number, .check_suite_id, .display_title] | @tsv'
+    --jq '.workflow_runs[] | select(.path == ".github/workflows/ci.yml") | [.run_number, .check_suite_id, .display_title, .status, (.conclusion // "-"), .html_url] | @tsv'
+}
+
+# run_url RUN_ROW prints the URL of a row ci_run_rows produced, and the
+# workflow's own URL when the row carries none (an API answer without a URL is
+# no reason to print nothing: the reader needs a door to open).
+run_url() {
+  local url
+  url=$(printf '%s' "$1" | cut -f6)
+  printf '%s' "${url:-https://github.com/$GITHUB_REPOSITORY/actions/workflows/ci.yml}"
 }
 
 # full_run_title TITLE succeeds for the two titles that name a full run:
@@ -188,37 +249,64 @@ full_run_title() {
   esac
 }
 
-# full_run_suite SHA prints the check suite id of the newest full `ci` run on
-# SHA, and nothing when the commit has no full run. Newest is the highest run
+# full_run_in ROWS prints the newest full `ci` run among the ROWS ci_run_rows
+# produced, and nothing when they hold no full run. Newest is the highest run
 # number, whatever order the API listed them in: a full run dispatched after a
 # red one is the one that counts, and the commit-level check-runs listing this
-# reading replaces chose the same way (its filter=latest default answers with
-# the newest run of each name), so a re-dispatch does not leave a tag blocked by
-# the run it replaced.
-full_run_suite() {
-  rows=$(ci_run_rows "$1") || return 1
-  [ -n "$rows" ] || return 0
-  while IFS=$'\t' read -r number suite title; do
+# reading replaces chose the same way (its filter=latest default answers with the
+# newest run of each name), so a re-dispatch does not leave a tag blocked by the
+# run it replaced.
+full_run_in() {
+  [ -n "$1" ] || return 0
+  while IFS=$'\t' read -r number suite title status conclusion url; do
     [ -n "$suite" ] || continue
     if full_run_title "$title"; then
-      printf '%s' "$suite"
+      printf '%s\t%s\t%s\t%s\t%s\t%s' "$number" "$suite" "$title" "$status" "$conclusion" "$url"
       return 0
     fi
-  done <<<"$(printf '%s\n' "$rows" | sort -rn -k1,1)"
+  done <<<"$(printf '%s\n' "$1" | sort -rn -k1,1)"
 }
 
-# no_full_ci_run SHA succeeds when SHA has `ci` runs and not one of them is a
-# full run: every run that could vouch for the commit is a selected one (or one
-# whose title names neither variant), and no amount of waiting changes that.
-no_full_ci_run() {
+# full_run_suite SHA prints the check suite id of the newest full `ci` run on
+# SHA, and nothing when the commit has no full run. The polling loop reads a
+# commit's runs once a pass and gets this from full_run_in; this is for the
+# callers that hold a sha and not the rows.
+full_run_suite() {
   rows=$(ci_run_rows "$1") || return 1
-  [ -n "$rows" ] || return 1
-  while IFS=$'\t' read -r number suite title; do
+  full_run_in "$rows" | cut -f2
+}
+
+# run_red ROW succeeds when the run the row describes is over and did not
+# succeed: the run's own conclusion is its verdict, and a cancelled run -- a
+# superseded one -- is not a failure, exactly as it is not for a check. A
+# conclusion the API did not answer is not a verdict either, neither the empty
+# field an older answer gives nor the "-" ci_run_rows writes in its place.
+run_red() {
+  [ "$(printf '%s' "$1" | cut -f4)" = completed ] || return 1
+  case "$(printf '%s' "$1" | cut -f5)" in
+    "" | "-" | success | cancelled) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# no_run_in ROWS succeeds when ROWS holds no `ci` run at all -- neither running
+# nor completed -- which is a commit nobody dispatched CI on, and on which no
+# check can ever turn green.
+no_run_in() {
+  [ -z "$1" ]
+}
+
+# no_full_run_in ROWS succeeds when ROWS holds `ci` runs and not one of them is
+# a full run: every run that could vouch for the commit is a selected one (or one
+# whose title names neither variant), and no amount of waiting changes that.
+no_full_run_in() {
+  [ -n "$1" ] || return 1
+  while IFS=$'\t' read -r number suite title status conclusion url; do
     [ -n "$suite" ] || continue
     if full_run_title "$title"; then
       return 1
     fi
-  done <<<"$rows"
+  done <<<"$1"
   return 0
 }
 
@@ -311,35 +399,73 @@ identical_tree_checks() {
   return 1
 }
 
+# dispatched_for is the sha a dispatch has already been started for: one commit
+# gets one `ci` run from this gate, however many passes the polling makes.
+dispatched_for=""
 while :; do
   # The first missing/running check is remembered as two variables rather than
   # one "$name $state" string: a name may carry a space, so "${pending% *}"
-  # and "${pending#* }" would split it in the wrong place.
+  # and "${pending#* }" would split it in the wrong place. not_green is the whole
+  # list of them, for the line the wait ends on.
   pending_name=""
   pending_state=""
-  # The newest full run on the tagged commit, found once for the three `ci`
-  # names below.
-  target_suite=$(full_run_suite "$GITHUB_SHA")
+  not_green=""
+  failed=""
+  # The commit's `ci` runs, read once a pass: the newest full one for the three
+  # `ci` names below, and the same rows for what they say about run and wait.
+  rows=$(ci_run_rows "$GITHUB_SHA")
+  full_run=$(full_run_in "$rows")
+  target_suite=$(printf '%s' "$full_run" | cut -f2)
   for name in "${names[@]}"; do
     state=$(check_state "$GITHUB_SHA" "$name" "$target_suite")
     case "$state" in
       success) ;;
       missing | pending | cancelled)
         [ -n "$pending_name" ] || { pending_name="$name"; pending_state="$state"; }
+        not_green="$not_green$name ($state), "
         ;;
       *)
         echo "::error::required check '$name' is $state on $GITHUB_SHA" >&2
-        exit 1
+        failed=1
         ;;
     esac
   done
+  if [ -n "$failed" ]; then
+    echo "ci run: $(run_url "$full_run")" >&2
+    exit 1
+  fi
   [ -n "$pending_name" ] || break
-  # A commit with `ci` runs but no full one can never satisfy the gate: the
-  # checks it requires are read from a full run's check suite, and only a
-  # dispatch makes a full run (D3040). Polling to the deadline for one that does
-  # not exist only spends the wait, so the gate refuses now and prints the
-  # command that puts the full run there.
-  if no_full_ci_run "$GITHUB_SHA"; then
+  # A commit with no `ci` run at all can never satisfy the gate: CI runs on no
+  # commit by itself, so nothing will turn green and polling only spends the
+  # wait. When a ref this gate knows points at the commit, the gate puts a full
+  # run there itself, once, and waits for it; a commit no such ref points at --
+  # the commit an `--at` release names, generally -- is refused at once, with
+  # the command that puts one there.
+  if no_run_in "$rows"; then
+    if [ -z "$can_dispatch" ]; then
+      echo "::error::required check '$pending_name' is $pending_state on $GITHUB_SHA: that commit has no ci run at all, and no ref this gate knows points at it to dispatch one on" >&2
+      echo "dispatch a full run on a ref that points at it and re-run this job: $full_run_command" >&2
+      exit 1
+    fi
+    if [ -n "${GATE_DRY_RUN:-}" ]; then
+      echo "no ci run on $GITHUB_SHA: the real run would dispatch one ($full_run_command)"
+      exit 0
+    fi
+    if [ "$dispatched_for" != "$GITHUB_SHA" ]; then
+      if ! dispatch_err=$(gh workflow run ci --ref "$dispatch_ref" -f full=true 2>&1); then
+        printf '%s\n' "$dispatch_err" >&2
+        echo "::error::this gate could not dispatch a ci run on $GITHUB_SHA (\"$full_run_command\"), and no run will appear on its own: dispatch it by hand and re-run this job" >&2
+        exit 1
+      fi
+      dispatched_for=$GITHUB_SHA
+      echo "no ci run on $GITHUB_SHA: dispatched one ($full_run_command), waiting for it"
+    fi
+  elif no_full_run_in "$rows"; then
+    # A commit with `ci` runs but no full one can never satisfy the gate either:
+    # the checks it requires are read from a full run's check suite, and only a
+    # dispatch makes a full run (D3040). Polling to the deadline for one that
+    # does not exist only spends the wait, so the gate refuses now and prints the
+    # command that puts the full run there.
     echo "::error::required check '$pending_name' is $pending_state on $GITHUB_SHA: no ci run on that commit is a full one (its titles are neither 'ci (full)' nor 'ci'), and the gate requires the checks of a full run" >&2
     echo "dispatch a full run and re-run this job: $full_run_command" >&2
     exit 1
@@ -350,8 +476,32 @@ while :; do
     echo "using the checks of $used (identical tree): ${names[*]} succeeded on the head of the pull request merged as $GITHUB_SHA"
     break
   fi
+  if run_red "$full_run"; then
+    # The newest full run is over and red: it will produce no further check run,
+    # so the wait can only end on the deadline. The checks that are not green are
+    # what it reported before it stopped -- missing, for a job that never
+    # started -- and the run's URL is where its log is.
+    echo "::error::the ci run on $GITHUB_SHA concluded '$(printf '%s' "$full_run" | cut -f5)' and these required checks are not green: ${not_green%, }" >&2
+    echo "ci run: $(run_url "$full_run")" >&2
+    exit 1
+  fi
+  # A dry run reads the checks once: what is still missing or running is what
+  # the real run would wait for, and it waits for it there rather than here --
+  # and a workflow step's real run would not wait at all, which is what it says.
+  if [ -n "${GATE_DRY_RUN:-}" ]; then
+    if [ "$wait_seconds" = 0 ]; then
+      echo "check '$pending_name' is $pending_state on $GITHUB_SHA: the real run reads the checks once and fails the step, as this does"
+    else
+      echo "check '$pending_name' is $pending_state on $GITHUB_SHA: the real run would wait up to $wait_label"
+    fi
+    exit 0
+  fi
   if [ "$(date +%s)" -ge "$deadline" ]; then
-    echo "::error::required check '$pending_name' is $pending_state on $GITHUB_SHA (if CI is still running, re-run this job when it is green)" >&2
+    if [ "$wait_seconds" = 0 ]; then
+      echo "::error::required check '$pending_name' is $pending_state on $GITHUB_SHA: not green: ${not_green%, } (if CI is still running, re-run this job when it is green); ci run: $(run_url "$full_run")" >&2
+    else
+      echo "::error::required check '$pending_name' is $pending_state on $GITHUB_SHA: $wait_label is up, not green: ${not_green%, }; ci run: $(run_url "$full_run")" >&2
+    fi
     exit 1
   fi
   echo "still waiting: check '$pending_name' is $pending_state on $GITHUB_SHA"
