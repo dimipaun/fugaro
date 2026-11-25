@@ -16,9 +16,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
-	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // cascadeCLI is the fugaro.yaml a repository asking for the cascade writes:
@@ -149,27 +149,34 @@ func TestValidateReadsTheGatewayModeFromThePolicyNode(t *testing.T) {
 }
 
 // TestValidateRefusesCascadeWhenThePolicyNodeTurnsTheGatewayOff is the same
-// overlay read the other way, and the reason it is the node's mode the ceiling
-// takes rather than a second layer over it. The node *replaces* the ceiling's
-// mode (runner.policyCeiling), so a policy that says off means every run of the
-// project has the gateway off — even where the project config's own ceiling
-// observes. Merging the two as tightening layers (the higher mode wins, which is
-// what policy.Merge does between the ceiling and a file) would read this file as
-// observing and admit it, for runs the gateway rule refuses.
+// overlay read the other way, and it is the node's own door that answers now.
+// The node *replaces* the ceiling's mode (runner.policyCeiling), so a policy
+// that said off meant every run of the project had the gateway off even where
+// the project config's ceiling observed — the state this test set up to read the
+// gateway refusal on. D3009 ends it: the word is not a mode this release
+// accounts under, so the node's reader refuses it (AB2, D3022) and this file is
+// never judged against a mode at all — a stricter answer than the gateway
+// refusal it used to read, since the project has no runs until its owner
+// republishes the node or the update migrates it in place (AB8a, F22).
 //
-// Mutation (run, restored): merge the node's mode through policy.Merge instead
-// of taking it as the ceiling's own — the file is reported valid and this fails.
+// Mutation (run, restored): let the node's decoder rank the word again — the
+// node is read, its mode reaches the ceiling, and a cascade file is judged
+// against a budget the gateway has no accounting path under.
 func TestValidateRefusesCascadeWhenThePolicyNodeTurnsTheGatewayOff(t *testing.T) {
 	f := newLaunchBudget(t, "observe")
-	// The list is published with the mode, so that the refusal this test reads
-	// is the gateway's and not the allow-list's.
 	publishPolicy(t, f, cascadePolicyAllowList("off"))
 	out, errOut, err := execute(t, "validate", writeConfig(t, cascadeCLI))
 	if err == nil {
-		t.Fatalf("a cascade file whose policy turns the budget off was admitted:\nstdout:\n%s\nstderr:\n%s", out, errOut)
+		t.Fatalf("a cascade file of a project whose policy says the word was admitted:\nstdout:\n%s\nstderr:\n%s", out, errOut)
 	}
-	if !strings.Contains(out+errOut, "needs the budget gateway") {
-		t.Errorf("the file was refused, but not for the gateway the policy turns off:\n%s%s", out, errOut)
+	got := out + errOut
+	for _, want := range []string{"could not be read", policy.ModeOffRefusal} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the refusal does not say %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "needs the budget gateway") {
+		t.Errorf("the refusal is the gateway's, which no mode leaves off any more:\n%s", got)
 	}
 }
 
@@ -539,45 +546,47 @@ func TestValidateOfflineHelpNamesThePolicyRead(t *testing.T) {
 	}
 }
 
-// TestValidateRefusesCascadeWithBudgetOff is the gateway rule at the surface
-// that reports it: a cascade run's calls are made by the gateway, so the mode
-// that reaches the run — the effective one, policy.Merge of the installation's
-// ceiling and the file — has to be observe or enforce. Here the ceiling is off
-// and the file says off too, which is the state the refusal names.
+// TestValidateRefusesCascadeWithBudgetOff is where a cascade workflow whose
+// budget is off is answered now: at the key the word was written at, with the
+// one text every door refuses it with (AB2, D3022) — not at agent.auth, which
+// is where the gateway rule answered it while a mode could leave a cascade run
+// with nothing to carry its calls.
 //
-// Mutation (run, restored): judge runner.FileLayer(cfg).Mode alone, without
-// the ceiling — the last part of this test fails, refusing a cascade file
-// whose installation observes, which is the file's own mode read as the
-// run's.
+// What C1.19 asked for is what the vocabulary carries from here: there is always
+// a budget, a mode left unset is observe, and observe accounts for a cascade
+// run's calls exactly as enforce does — so a file that writes no mode is a
+// cascade workflow whose gateway is on, which is the second half of this test
+// and the state `fugaro setup` leaves an installation in. A check that still
+// read the empty mode as off refused exactly that file.
+//
+// Mutation (run, restored): rank the word in policy.ValidMode again — the file
+// is admitted, and the first half reads a valid verdict for a repository whose
+// runs have no accounting path.
 func TestValidateRefusesCascadeWithBudgetOff(t *testing.T) {
-	f := newLaunchBudget(t, "off")
-	// The allow-list is published with the switch: the node's mode is off, so
-	// the refusal this test is about is the gateway's, and a policy that
-	// publishes no allow-list would add this file's own refusal to the report.
-	publishPolicy(t, f, cascadePolicyAllowList("off"))
+	f := newLaunchBudget(t, "observe")
+	publishPolicy(t, f, cascadePolicyAllowList("observe"))
 	path := writeConfig(t, strings.Replace(cascadeCLI, "workflows:", "budget: { mode: off }\nworkflows:", 1))
 	out, _, err := execute(t, "validate", path)
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit = %d, want %d (out %q, err %v)", ExitCode(err), ExitUserError, out, err)
 	}
-	for _, want := range []string{"agent.auth", "budget.mode", "off"} {
+	for _, want := range []string{"budget.mode", policy.ModeOffRefusal} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the refusal does not say %q:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "routing.claude: {via: cascade}") {
-		t.Errorf("the gateway refusal also claimed the policy does not enable the cascade, which it does:\n%s", out)
+	if strings.Contains(out, "needs the budget gateway") {
+		t.Errorf("the file was refused for the gateway, which no mode leaves off any more:\n%s", out)
 	}
 
-	// The mode judged is the run's effective one, not the file's: a file that
-	// writes off under a ceiling that observes still runs with the gateway on
-	// (policy.Merge keeps the stricter of the two), so its cascade workflow is
-	// valid. A check reading the file's own mode would refuse it.
-	observing := newLaunchBudget(t, "observe")
-	publishPolicy(t, observing, cascadePolicyAllowList("observe"))
-	out, errOut, err := execute(t, "validate", path)
+	// The key left out is not the word: the same file without it runs under the
+	// installation's mode, and an installation that writes none observes.
+	out, errOut, err := execute(t, "validate", writeConfig(t, cascadeCLI))
 	if err != nil {
-		t.Fatalf("a cascade file whose installation observes was refused: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+		t.Fatalf("a cascade file that writes no mode was refused: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+	}
+	if !strings.Contains(out, "is valid") {
+		t.Fatalf("the file that writes no mode was not valid:\n%s\n%s", out, errOut)
 	}
 }
 
@@ -1229,139 +1238,26 @@ func TestCascadeLaunchRefusesWithoutPolicySwitch(t *testing.T) {
 	}
 }
 
-// TestCascadeLaunchRefusedWhenTheFileTurnsTheGatewayOff and its sibling below
-// are the launch's gateway rule (config.CheckCascadeGateway, C1.19): a cascade
-// run has no credential of its own, so the gateway must be on — the mode has to
-// be observe or enforce — and a launch that would produce a run with nothing to
-// carry its calls is refused here, before the claim is taken, before a task is
-// stored and before a budget token is minted, rather than left to the job's
-// first call to fail.
-//
-// The two tests are the two layers the run's mode can come from, because the
-// launch's merge is `policy.Merge(ceiling, file)` with the *published policy
-// node's* mode put on the ceiling first (runner.policyCeiling: the node
-// replaces the ceiling's mode rather than tightening it), and each layer is a
-// different code path in cascadeLaunchRefusal: `runner.FileLayer(co)` for the
-// file, the `p.Budget.Mode` override for the node.
-//
-// What each layer can *do* is not the same, and that decides how each test has
-// to be built. A file layer can only tighten, so a file that writes off under a
-// ceiling that observes is ignored, not obeyed (policy.Merge's Ignored — the
-// runner uses the ceiling's mode): the file's own off is the run's only where
-// the ceiling names no mode at all, which is the state the first test sets up.
-// The node's mode is the ceiling's, replaced key by key, so a node that says
-// off under a ceiling that enforces really is off — the second test, and the
-// one that fails if the override is dropped.
-//
-// The refusal names the way out in the mode's own words: CheckCascadeGateway's
-// problem ("cascade needs the budget gateway: budget.mode is off … Set
-// budget.mode to observe or enforce — in the project config, or in fugaro.yaml")
-// and this gate's sentence about the credentials service.
-func TestCascadeLaunchRefusedWhenTheFileTurnsTheGatewayOff(t *testing.T) {
-	f := newProjectJobFixtureMode(t, "observe")
-	publishPolicy(t, f.launchBudgetFixture, cascadePolicy())
-	// The ceiling names no mode, so the file's own is the run's: a repository
-	// that asks for the cascade and writes its budget off.
-	withoutBudgetMode(t, f.cloudFixture)
-	projectJobCheckoutYAML(t, strings.Replace(cascadeLaunchYAML, "workflows:", "budget: { mode: off }\nworkflows:", 1))
-	requireCascadeGatewayRefusal(t, f, "the file's own budget.mode: off")
-}
-
-// withoutBudgetMode takes the mode out of the fixture's project config: the
-// ceiling then names none (localcfg's own off is the absence of a mode, not a
-// ceiling that says nothing may be accounted), and the file's mode is the one
-// the run gets.
-func withoutBudgetMode(t *testing.T, f *cloudFixture) {
-	t.Helper()
-	path := os.Getenv("FUGARO_CONFIG")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	const withMode = "budget: { mode: observe,"
-	if !strings.Contains(string(data), withMode) {
-		t.Fatalf("the fixture's project config no longer carries %q:\n%s", withMode, data)
-	}
-	if err := os.WriteFile(path, []byte(strings.Replace(string(data), withMode, "budget: {", 1)), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// TestCascadeLaunchRefusedWhenThePolicyTurnsTheGatewayOff is the same rule over
-// the other layer, and the reason the node's mode is the *ceiling's* rather than
-// a third layer: `policy.Merge` between two modes takes the tighter, so a node
-// that says off under a ceiling that enforces would be read as enforcing — the
-// run would launch with the gateway the policy had just turned off. The launch
-// reads the node as the ceiling's own mode (runner.policyCeiling), so off is
-// off.
-func TestCascadeLaunchRefusedWhenThePolicyTurnsTheGatewayOff(t *testing.T) {
-	f := newProjectJobFixtureMode(t, "enforce")
-	publishPolicy(t, f.launchBudgetFixture, cascadePolicyWithMode("off"))
-	projectJobCheckoutYAML(t, cascadeLaunchYAML)
-	requireCascadeGatewayRefusal(t, f, "the published policy's budget.mode: off")
-}
-
-// TestCascadeLaunchJudgesTheRefsModeNotTheWorkingTrees (C1.19): the gateway
-// rule judges the run's document, not the launcher's. The run clones spec.Ref
-// and merges *that* file, so a working tree left on another branch — or
-// carrying an uncommitted edit — is a document the run never reads, and a mode
-// read from it is a mode no run has. Here the working tree writes
-// budget.mode: observe while origin/main, the ref this launch names, says off:
-// judged from the working tree the launch is admitted, takes the claim, mints a
-// budget token and starts an execution whose run refuses in agent.BuildEnv on
-// its first call — the outcome this gate exists to prevent; judged from the ref
-// it is refused here, before anything is written.
-//
-// Mutation (run, restored): read the working tree again
-// (runner.FileLayer(checkoutConfig(...))) and this launch goes through.
-func TestCascadeLaunchJudgesTheRefsModeNotTheWorkingTrees(t *testing.T) {
-	f := newProjectJobFixtureMode(t, "observe")
-	publishPolicy(t, f.launchBudgetFixture, cascadePolicy())
-	// The ceiling names no mode, so the merge is decided between the two
-	// documents' budget.mode alone (the policy node carries none either).
-	withoutBudgetMode(t, f.cloudFixture)
-	projectJobCheckoutYAMLAt(t,
-		strings.Replace(cascadeLaunchYAML, "workflows:", "budget: { mode: observe }\nworkflows:", 1),
-		strings.Replace(cascadeLaunchYAML, "workflows:", "budget: { mode: off }\nworkflows:", 1))
-	requireCascadeGatewayRefusal(t, f, "the ref's budget.mode: off under a working tree that says observe")
-}
-
-// TestCascadeLaunchMergesTheDefaultBranchesPolicy (C1.19): the launch judges
-// the same three layers the run merges (runner's resolvePolicy: the ceiling, the
-// default branch's policy and the ref's own file), because a layer can only
-// tighten and a mode raised by the default branch is a mode the run has. Here
-// the launch's ref says nothing, the ceiling names off — the published node's
-// own mode, the loosest value there is — and origin/main, the file the *run*
-// reads as its middle layer, says observe: the run's gateway is on, and the gate
-// must not refuse it.
-//
-// The working tree agrees with the ref (both say nothing) so that the default
-// branch is the only layer that can answer: with it, the mode is observe and the
-// gate passes; without it the merge is off and CheckCascadeGateway refuses what
-// the run would carry.
-//
-// Mutation (run, restored): drop defaultBranchPolicyLayer from the merge and
-// this launch is refused ("budget.mode is off") although its run has a gateway.
-func TestCascadeLaunchMergesTheDefaultBranchesPolicy(t *testing.T) {
-	f := newProjectJobFixtureMode(t, "observe")
-	// The node's mode is off, so the default branch's observe is the layer that
-	// decides — and the allow-list is published with it, because a policy that
-	// carries a budget block must name a mode (projectpolicy.validBudget) and
-	// this gate refuses a cascade whose policy publishes no allow-list.
-	publishPolicy(t, f.launchBudgetFixture, cascadePolicyAllowList("off"))
-	withoutBudgetMode(t, f.cloudFixture)
-	f.db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion)
-	cascadeCheckoutAt(t, "feature",
-		strings.Replace(cascadeLaunchYAML, "workflows:", "budget: { mode: observe }\nworkflows:", 1),
-		cascadeLaunchYAML, cascadeLaunchYAML)
-	env, err := openCloud(context.Background(), cloudOptions{stderr: discard})
-	if err != nil {
-		t.Fatalf("opening the fixture's cloud environment: %v", err)
-	}
-	if err := cascadeLaunchRefusal(context.Background(), env, &task.Spec{Repo: "acme/app", Ref: "feature"}); err != nil {
-		t.Errorf("a cascade launch whose gateway the default branch's policy turns on: %v", err)
-	}
-}
+// The four tests that stood here —
+// TestCascadeLaunchRefusedWhenTheFileTurnsTheGatewayOff,
+// TestCascadeLaunchRefusedWhenThePolicyTurnsTheGatewayOff,
+// TestCascadeLaunchJudgesTheRefsModeNotTheWorkingTrees and
+// TestCascadeLaunchMergesTheDefaultBranchesPolicy — are gone with the mode (AB2,
+// D3009). Each of them built one launch state in which the run's effective mode
+// left the gateway off and required cascadeLaunchRefusal's answer to it
+// (config.CheckCascadeGateway, C1.19). D3009 ends every one of those states: a
+// mode left unset is observe, and observe accounts for a cascade run's calls
+// exactly as enforce does (runner.GatewayOn answers true in every mode, AB1b);
+// the word that was a mode is refused where a document is read, so the ref's own
+// file saying it is refused by the run's read and never reaches the launcher's
+// merge at all (D3022); and a policy node that says it is refused by the node's
+// own reader (TestValidateRefusesCascadeWhenThePolicyNodeTurnsTheGatewayOff). No
+// document a launch can read expresses a mode that leaves a cascade run without
+// a gateway, so there is nothing left for that gate to refuse — the rule's own
+// answer is pinned where the rule lives (internal/config's
+// TestCascadeRefusedWithBudgetOff) — and what a launch still refuses
+// about a cascade workflow is the switch, the allow-list and the credentials
+// rules marker, the tests around this note.
 
 // TestCascadeLaunchRefusedWithoutAllowList (the owner's ruling of 2026-10-22):
 // the credentials service holds every call it carries to the project's
@@ -1474,60 +1370,5 @@ func ceilingAllowList(t *testing.T, f *cloudFixture) {
 	added := strings.Replace(string(data), budget, "budget: { allowed_models: [claude-sonnet-5-5], mode: ", 1)
 	if err := os.WriteFile(path, []byte(added), 0o600); err != nil {
 		t.Fatal(err)
-	}
-}
-
-// cascadeCheckoutAt lays down a checkout whose three documents are spelled
-// apart: the default branch's fugaro.yaml (origin/main), the ref a launch names
-// (origin/<ref>) and the working tree's. projectJobCheckoutYAMLAt is the same
-// fixture with two of them.
-func cascadeCheckoutAt(t *testing.T, ref, mainYAML, refYAML, workingYAML string) {
-	t.Helper()
-	testutil.IsolateGit(t)
-	dir := t.TempDir()
-	testutil.Git(t, dir, "init", "-q")
-	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/app.git")
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": mainYAML})
-	testutil.Git(t, dir, "add", "fugaro.yaml")
-	testutil.Git(t, dir, "commit", "-q", "-m", "the default branch's fugaro.yaml")
-	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": refYAML})
-	testutil.Git(t, dir, "add", "fugaro.yaml")
-	testutil.Git(t, dir, "commit", "-q", "-m", "the ref's fugaro.yaml")
-	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/"+ref, "HEAD")
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": workingYAML})
-	t.Chdir(dir)
-}
-
-// requireCascadeGatewayRefusal runs the launch of the fixture's cascade
-// workflow and requires the gateway rule to be the refusal: the user error, the
-// mode it found and the way out, with nothing of the launch written — no
-// execution, no task, no token.
-func requireCascadeGatewayRefusal(t *testing.T, f *projectJobFixture, what string) {
-	t.Helper()
-	const run = "20261022-090000-ca5c"
-	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature")
-	if ExitCode(err) != ExitUserError {
-		t.Fatalf("a cascade launch whose gateway is off (%s): err = %v, want a refusal", what, err)
-	}
-	for _, want := range []string{
-		"needs the budget gateway", "budget.mode is off",
-		"Set budget.mode to observe or enforce",
-		// This gate's own sentence, which is what tells a cascade's owner why a
-		// mode they may have set for other repositories stops this run.
-		"credentials service", "cascade run holds no model credential",
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal for %s does not say %q: %v", what, want, err)
-		}
-	}
-	if n := len(f.run.Executions()); n != 0 {
-		t.Errorf("%d executions, want none: a refused cascade launch may start nothing", n)
-	}
-	if storedTask(t, f.cloudFixture) {
-		t.Error("a refused cascade launch stored a task")
-	}
-	if tok := readToken(t, f.cloudFixture, run); tok != "" {
-		t.Error("a refused cascade launch minted a budget token")
 	}
 }

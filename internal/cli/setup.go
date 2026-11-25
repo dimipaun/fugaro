@@ -188,11 +188,16 @@ once its image exists). Between the last two it deploys the database's rules,
 mark, project name, mode (--budget-mode; an absent one is seeded observe) and
 largest lease, after a confirmation of their own, then writes the local
 config. The same step creates the Firestore database for the spend history
-(fugaro report) if the project has none: its location, us-east5, is permanent
-(chosen once, never changed or deleted by Fugaro), so the location's
-confirmation is the person at a real terminal (nothing is typed; --json and a pipe never confirm it, and the step is then
-left for you), and it
-refuses a database that holds data or is in another location; it also deploys
+(fugaro report) if the project has none: it goes in the installation's own
+region where Firestore offers it, and otherwise in the place's own default
+region — the mapping's answer, which the step's own plan row prints before
+anything is created — and its location is permanent (chosen once, never changed
+or deleted by Fugaro), so the run prints where and creates it, asking nobody
+(nothing is typed, and a coding agent's session, --json and a pipe are no
+different); a database that already exists is adopted as it is, wherever it is,
+when it is empty or carries the Fugaro mark — the plan row says where, and names
+it as outside the installation's place when it is — and a database that holds
+data and carries no mark, or that is not in native mode, is refused; it also deploys
 deny-everything Firestore rules and the Fugaro mark. --plan-only stops after the installation's plan. Each repository then
 needs fugaro setup --repo to pick up the jobs' environment.
 
@@ -221,14 +226,16 @@ review screen and one confirmation, taken by the person at the terminal and
 shown when the first of them has something to change (nothing is typed, so a
 rerun with nothing to do shows nothing). Each step
 still prints its own exact plan. It never covers creating a project, linking
-billing, the Firestore database's permanent location, a Cloud Build, replacing
+billing, a Cloud Build, replacing
 a registry tag (--replace-image), an unlisted repository or a secret. Those are
 their own steps: the build, the tag and onboarding an unlisted repository are
 covered by the run's own confirmation in a project whose gate stands in for it,
 and taken by the person at the terminal otherwise (D12's answer of 2026-10-20
 keeps them one class in either door), and a project's
-creation, the billing link, the location and a secret value keep a
-confirmation of their own, taken with the person at the terminal. The state bucket and the API enable are fixed, announced, free steps; every
+creation, the billing link and a secret value keep a
+confirmation of their own, taken with the person at the terminal. The Firestore
+database's location is no step at all: where the run creates the database it
+prints where, and that the location is permanent, and creates it. The state bucket and the API enable are fixed, announced, free steps; every
 Terraform plan is shown as it runs and is covered only if it is creates and
 in-place updates of the installation's own resource kinds, granting only the
 modules' roles to the listed launchers, operators and budget admins (the review
@@ -254,8 +261,7 @@ your registry (--replace-image KIND names the intent). D12's answer of
 door, while a repository whose origin git config rewrites, or whose host is not
 a provider's own, takes the confirmation of a person at the terminal whatever
 the run was given. What
-it still never covers: creating a project or linking billing, a secret, and
-the Firestore database's permanent location, this door's first-time question.
+it still never covers: creating a project or linking billing, and a secret.
 With no terminal, or with --json, each of those is left for you, with the
 one line to run: a first run that reaches the billing question is refused at
 once, in the sentence naming --link-billing, before any account of yours is
@@ -1001,6 +1007,35 @@ func (e *initEngine) announceGhHint() {
 // (localcfg.Config.SetupPending), which the rerun resumes as a first run.
 func (e *initEngine) firstRun() bool {
 	return e.old == nil || (e.lc != nil && e.lc.SetupPending != "")
+}
+
+// updatesComputeRoot is whether this run reaches the Batch compute root by the
+// installation's own opt-in fact rather than by --provision-batch (R2, D3110):
+// the two doors whose business is converging what exists -- `fugaro update`, and
+// the `fugaro apply` that runs a step the machine owes -- and a block whose fact
+// says this installation is on Batch.
+//
+// What is read is the run's effective local config, which is this machine's own
+// file wherever it has one and the published copy of the block only where it has
+// none (localcfg's selection, F33). A machine whose own file states no `batch:`
+// block therefore converges nothing, and R15/R16 leave that file alone until a
+// run writes the fact onto it (BR16); a machine's copy follows the published one
+// at every publish in the meantime (refreshLocalOptIn, R15).
+//
+// A machine's own `backend:` is not read either way: a machine that has selected
+// nothing, or one that has selected cloud-run, converges the same root as one
+// that selected cloud-batch (F32). A nil config, an absent fact and a
+// withdrawn one are all "not in", and a withdrawn one is BR20's and BR21's own
+// step rather than this one's.
+func (e *initEngine) updatesComputeRoot() bool {
+	if e.lc == nil || !e.lc.Batch.OptedIn() {
+		return false
+	}
+	switch e.r.o.door {
+	case updateDoor.name, applyName:
+		return true
+	}
+	return false
 }
 
 // programPrefix is the line's own "fugaro setup: ", or "" for a hand-built

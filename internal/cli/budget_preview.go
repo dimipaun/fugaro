@@ -117,20 +117,21 @@ func newBudgetPreviewCmd() *cobra.Command {
 			"result.json that is missing or unreadable, and a record with no\n" +
 			"per-stage cost at all (one from before the runner kept it, or\n" +
 			"stages that all cost nothing).\n\n" +
-			"The recipe resolves as it does for a run: the repository's\n" +
-			".fugaro/recipes, the project's published recipes, then the catalog. The\n" +
-			"knobs come from the checkout's fugaro.yaml; without a checkout of the\n" +
-			"repository here, agent.max_budget_usd is unknown and only\n" +
-			"budget.per_run_usd bounds the figure, so with neither the preview says it\n" +
-			"is unbounded.\n\n" +
+			"The recipe resolves as it does for a run: the project's copy of the\n" +
+			"repository's own recipe, the project's published recipes, then the\n" +
+			"catalog. The checkout's .fugaro/recipes/ is not read. The knobs come\n" +
+			"from the checkout's fugaro.yaml; without a checkout of the repository\n" +
+			"here, agent.max_budget_usd is unknown and only budget.per_run_usd\n" +
+			"bounds the figure, so with neither the preview says it is unbounded.\n\n" +
 			"It reads the database's caps and today's counters (the Viewer role), and\n" +
 			"the repository's runs (the runs bucket, for the typical line). A recipe\n" +
-			"that is not in the checkout also reads the project's recipes from the\n" +
-			"runs bucket, as recipes ls does, which a plain project Viewer cannot\n" +
-			"read (the converge removes that access): not reading it costs the project layer,\n" +
-			"and the ceiling with it. The typical line's own read of the bucket is\n" +
-			"the one that costs the line and nothing else: a bucket it cannot read\n" +
-			"leaves the ceiling standing. It writes nothing.",
+			"name the project store could hold also reads the project's recipes from\n" +
+			"the runs bucket, as recipes ls does, which a plain project Viewer cannot\n" +
+			"read (the converge removes that access): a name that is no recipe name\n" +
+			"is refused before the bucket is opened, and nothing else on this path\n" +
+			"reaches it. The typical line's own read of the bucket is the one that\n" +
+			"costs the line and nothing else: a bucket it cannot read leaves the\n" +
+			"ceiling standing. It writes nothing.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runBudgetPreview(cmd, &o) },
 	}
@@ -542,11 +543,11 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 	// A project recipe lives in the runs bucket, and reading the bucket is
 	// not everyone's to do (init removes the plain Viewer's read). Open it
 	// only when the project layer could hold this recipe at all: not when
-	// its name is not the default one (projectRecipesNote), and not when the
-	// repository's own checkout already holds it, since the repository layer
-	// resolves first.
+	// the runs bucket is not the default one (projectRecipesNote), and not
+	// when the name is one the store cannot hold, which resolveRecipe
+	// refuses without reading anything.
 	env := &cloudEnv{lc: lc}
-	if projectRecipesNote(lc) == "" && !repoHasRecipe(root, o.recipe) {
+	if projectRecipesNote(lc) == "" && repoHasRecipe(o.recipe) {
 		if env, err = openCloudFor(ctx, lc); err != nil {
 			return err
 		}
@@ -972,16 +973,13 @@ func roundCount(knob, maxRounds int) int {
 	return min(max(knob, 0), 1)
 }
 
-// repoHasRecipe reports whether the checkout at root holds name in
-// .fugaro/recipes, which resolveRecipe takes before it reaches the runs
-// bucket. A name that is not a recipe name is not one either.
-func repoHasRecipe(root, name string) bool {
-	if root == "" || !recipe.NameRE.MatchString(name) {
-		return false
-	}
-	_, found, err := recipe.ReadRepoFile(root, name)
-	return err == nil && found
-}
+// repoHasRecipe reports whether the project store could hold name at all, which
+// is the question the bucket read below is opened for: a recipe name, or the
+// name of the project's copy of one (D3302). The checkout's .fugaro/recipes/ is
+// not read — a repository's own recipe is the project's copy of it, published
+// by fugaro update, and that copy is what resolveRecipe takes (D3303) — so a
+// name the store could hold is one the bucket has to be read for.
+func repoHasRecipe(name string) bool { return recipe.IsNameOrCopy(name) }
 
 func ptr(v float64) *float64 { return &v }
 

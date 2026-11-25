@@ -578,6 +578,68 @@ func TestTaskSchemaTierMatchesTheGoRules(t *testing.T) {
 	}
 }
 
+// TestTaskSchemaPromoteMatchesTheGoRules: the promote block a launcher writes
+// (fugaro run --promote, LV7.1) is a closed object of the area's name and the
+// paths, and the two bounds are task.Promote's own — the name's byte bound and
+// the declared-paths pair. The block is what the run reads to find the area's
+// code in the diff, so a schema that admitted a nameless or unbounded area
+// would describe a run the runner refuses.
+func TestTaskSchemaPromoteMatchesTheGoRules(t *testing.T) {
+	data, err := os.ReadFile("task.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var block struct {
+		Type                 string                     `json:"type"`
+		AdditionalProperties bool                       `json:"additionalProperties"`
+		Required             []string                   `json:"required"`
+		Properties           map[string]json.RawMessage `json:"properties"`
+	}
+	if raw, ok := doc.Properties["promote"]; !ok {
+		t.Fatal("task.schema.json has no promote property")
+	} else if err := json.Unmarshal(raw, &block); err != nil {
+		t.Fatal(err)
+	}
+	if block.Type != "object" || block.AdditionalProperties {
+		t.Errorf("promote is %s with additionalProperties %v: task.Promote is a closed object", block.Type, block.AdditionalProperties)
+	}
+	if !slices.Equal(block.Required, []string{"area"}) {
+		t.Errorf("promote requires %v, and the block that names no area is the one task.Promote refuses first", block.Required)
+	}
+	var area struct {
+		MinLength int `json:"minLength"`
+		MaxLength int `json:"maxLength"`
+	}
+	if err := json.Unmarshal(block.Properties["area"], &area); err != nil {
+		t.Fatal(err)
+	}
+	if area.MaxLength != task.MaxPromoteAreaBytes {
+		t.Errorf("schema promote area maxLength %d != task.MaxPromoteAreaBytes %d", area.MaxLength, task.MaxPromoteAreaBytes)
+	}
+	if area.MinLength != 1 {
+		t.Errorf("schema promote area minLength %d: an empty area is what task.Promote.Problem refuses first", area.MinLength)
+	}
+	var paths struct {
+		MaxItems int `json:"maxItems"`
+		Items    struct {
+			Pattern   string `json:"pattern"`
+			MaxLength int    `json:"maxLength"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(block.Properties["paths"], &paths); err != nil {
+		t.Fatal(err)
+	}
+	if paths.MaxItems != task.MaxDeclaredPaths || paths.Items.MaxLength != task.MaxDeclaredPathBytes || paths.Items.Pattern != `\S` {
+		t.Errorf("schema promote paths %+v != task.MaxDeclaredPaths %d / task.MaxDeclaredPathBytes %d and Spec.Validate's blank refusal", paths, task.MaxDeclaredPaths, task.MaxDeclaredPathBytes)
+	}
+}
+
 // TestRecipeNamePatternsMatchTheGoRule is the same tie for R19's name rule,
 // which three schemas carry: the recipe schema's own `name`, and the
 // `recipe.name` a task and a run record hold. The rule is recipe.IsNameOrCopy —

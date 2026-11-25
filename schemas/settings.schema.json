@@ -1652,6 +1652,9 @@
         "repos.*.workflows": {
           "default": "unset = every workflow the repository defines"
         },
+        "personal_workspace_tokens": {
+          "default": "unset = off: the workspace's service serves this project's people no personal token and its runs are offered the shared entries as before, and a written true turns the personal half on"
+        },
         "review_against_task": {
           "default": "unset = on: every review stage is handed the task its pull request was written for, and a written false is the project-wide default a repository's own true turns back on"
         },

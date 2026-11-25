@@ -388,7 +388,17 @@ func TestAccountsAddClaudeRefusesAHostileClaude(t *testing.T) {
 func TestAccountsAddClaudeRefusedInEveryAgentSession(t *testing.T) {
 	for _, marker := range agentenv.AgentMarkers {
 		t.Run(marker, func(t *testing.T) {
-			path := accountsAddFixture(t, accountsAddLocal)
+			// A managed project whose marks cannot be read: D2217's fence warns
+			// and goes on (D2218) and no gate speaks, so the run reaches the
+			// login's own fence — the one this test is about. On an ordinary
+			// installation the fence refuses the command whole
+			// (TestAccountsAddRefusesInAnAgentSession's first arm), and on a
+			// managed project whose marks answer, the gate refuses the token
+			// entry --claude is (accountsAddRefusal), both of them before the
+			// login is screened at all and neither of them naming the login.
+			r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+			r.gcs.RefusePath("managed.json", 500, "InternalServerError", "", "the creation fact did not answer")
+			path := r.cfg
 			unsetClaudeLoginCredentials(t)
 			before := readFileString(t, path)
 			loginFindable(t)
@@ -396,7 +406,7 @@ func TestAccountsAddClaudeRefusedInEveryAgentSession(t *testing.T) {
 			t.Setenv(marker, "1")
 			tty := newTTY(t)
 
-			done := runOnTerminal(t, tty, "accounts", "add", "team-a", "--repos", "acme/app", "--claude")
+			done := runOnTerminal(t, tty, "accounts", "add", "team-a", "--repos", "owner/repo-a", "--claude")
 			err := waitCommand(t, done)
 			if err == nil {
 				t.Fatalf("--claude ran in a coding agent's session:\n%s", tty.displayed())

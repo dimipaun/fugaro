@@ -1,0 +1,12 @@
+{
+  "promptFeedback": {
+    "blockReason": "PROHIBITED_CONTENT",
+    "blockReasonMessage": "the prompt is one this model will not answer"
+  },
+  "usageMetadata": {
+    "promptTokenCount": 88,
+    "totalTokenCount": 88
+  },
+  "modelVersion": "gemini-3-flash-001",
+  "responseId": "aBlockedPrompt"
+}

@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -642,6 +643,14 @@ func TestClaudeAccountForRefusesAMixThatWouldBeASecondAccount(t *testing.T) {
 // only budget.mode: enforce routes a call to a provider at all. A
 // configuration that declares a mix under any other mode declares a key that
 // could never apply, so the launch refuses it and names the mode.
+//
+// The rows are the two words such a configuration can still say: observe, and
+// the word that was a mode until this release (D3009). The second resolves observe
+// — the local config that still says it is the file the update rewrites
+// (localcfg.RemovedBudgetMode, AB8a), and every reader that needs a mode to act
+// on takes the vocabulary's own answer (modeName, D3010) — so the refusal names
+// observe for both, which is what the row pins: a config that still says the
+// removed word is judged as the mode it means, not as a mode of its own.
 func TestClaudeAccountForRefusesAMixTheModeCannotCarry(t *testing.T) {
 	for _, mode := range []string{"off", "observe"} {
 		t.Run(mode, func(t *testing.T) {
@@ -650,7 +659,7 @@ func TestClaudeAccountForRefusesAMixTheModeCannotCarry(t *testing.T) {
 			if ExitCode(err) != ExitUserError {
 				t.Fatalf("err = %v, want a refusal", err)
 			}
-			for _, want := range []string{"budget.mode", mode, "enforce", "default_claude_account"} {
+			for _, want := range []string{"budget.mode", policy.Mode(mode).Effective(), "enforce", "default_claude_account"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("the refusal does not name %q: %v", want, err)
 				}

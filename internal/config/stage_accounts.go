@@ -5,6 +5,8 @@ import (
 	"maps"
 	"slices"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/policy"
 )
 
 // The stage vocabulary of the account-choice keys (docs/accounts-add/spec.md
@@ -344,14 +346,13 @@ func CheckMixBudget(auth, mode, coder, def string, stages map[string]string, rou
 }
 
 // modeName is a resolved budget mode as a person reads it: the merged layers
-// spell "no gateway" as "" (policy's own zero value) and the config's own
-// vocabulary spells it "off" (config.BudgetOff), and a sentence that printed
-// the empty string would name nothing.
+// spell a mode nobody wrote as "" (policy's own zero value), which is the
+// observe every unset mode means now, and a sentence that printed the empty
+// string would name nothing (AB2, R3, D3010). It is the vocabulary's own
+// answer, so a sentence here cannot word a mode differently from the run that
+// reads the same string.
 func modeName(mode string) string {
-	if mode == "" {
-		return BudgetOff
-	}
-	return mode
+	return policy.Mode(mode).Effective()
 }
 
 func stageAccountUnderOtherAuth(auth string, stages map[string]string, path string) []Problem {
@@ -473,7 +474,11 @@ func PoolMembers(p Pool, creds []Credential) []PoolMember {
 // none: the built-in credential needs no secret and its calls are the
 // project's own GCP service, so a pool that lists it cannot be capped by the
 // gateway, and under budget.mode: enforce the pool is refused outright
-// (D1626, F8).
+// (D1626, F8) — unless the run's own Vertex calls are the credentials
+// service's rather than the job's, which is D3174's lift: the service calls
+// Vertex on its own identity and the call is priced and capped as a key's, so
+// there is no uncapped path to refuse (internal/runner's
+// vertexServedByTheService, which reads it off the run's model path).
 func PoolHasVertexMember(p Pool, creds []Credential) string {
 	for _, m := range PoolMembers(p, creds) {
 		if m.Type == CredentialTypeVertex {

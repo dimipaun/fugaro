@@ -433,6 +433,15 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 	// guessed, the way every other field of the row is absent when nothing
 	// recorded it.
 	d.Row.PRState = ""
+	// A paused run's own two facts are not in its records either — the instant
+	// the credentials service recorded and the run that resumed it — and the
+	// console's Run screen draws them on the row this document carries
+	// (contract-pause R15). This read holds no listing to take them from, so it
+	// stamps them the way a listing does, over the repository's own window
+	// (stampPause).
+	d.Row = stampPause(ctx, env, d.Row, func(format string, args ...any) {
+		fmt.Fprint(warn, multiLine(fmt.Sprintf(format, args...)))
+	})
 	d.DraftNote = draftNote(d.Row, time.Now())
 	d.Row.Reason, d.FailureClass = red(d.Row.Reason), d.Row.FailureClass
 	if h := d.Row.Halt; h != nil {

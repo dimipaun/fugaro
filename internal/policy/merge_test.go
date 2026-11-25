@@ -43,16 +43,19 @@ func TestMergePerRunMin(t *testing.T) {
 }
 
 func TestMergeModeOrder(t *testing.T) {
+	// The word that was a mode until this release is written as the literal
+	// here, as everywhere outside policy.mode.go: it is not one of the modes
+	// any more, so a layer that says it carries no value at all (AB2, D3009).
 	cases := []struct {
 		c, d, b, want string
 		ignored       int
 	}{
 		{"", "", "", "", 0},
-		{"off", "", "", "off", 0},
+		{"off", "", "", "", 0}, // a layer that says it sets no mode
 		{"off", "observe", "", "observe", 0},
 		{"off", "enforce", "observe", "enforce", 1},
-		{"observe", "", "off", "observe", 1}, // a branch off under an observe ceiling stays observe
-		{"enforce", "off", "off", "enforce", 2},
+		{"observe", "", "off", "observe", 0}, // and it cannot loosen one either
+		{"enforce", "off", "off", "enforce", 0},
 		{"", "observe", "enforce", "enforce", 0},
 		{"observe", "observe", "observe", "observe", 0},
 		{"bogus", "", "", "", 0},
@@ -108,10 +111,11 @@ func TestMergeIgnoredRecords(t *testing.T) {
 		Layer{PerRunUSD: 2},
 		Layer{Mode: "off", PerRunUSD: 500, MaxRunTokens: 200, AllowedModels: []string{"a", "b", "c"}},
 	)
+	// The branch's mode is the word that is not a mode any more: it carries no
+	// value, so it is not a loser to record (AB2, D3009).
 	want := []Ignored{
 		{KeyPerRunUSD, "500", "2", "default-branch"},
 		{KeyMaxRunTokens, "200", "100", "ceiling"},
-		{KeyMode, "off", "enforce", "ceiling"},
 		{KeyAllowedModels, "a,b,c", "a,b", "ceiling"},
 	}
 	if !reflect.DeepEqual(e.Ignored, want) {
@@ -125,8 +129,9 @@ func TestMergeIgnoredRecords(t *testing.T) {
 	if e.PerRunUSD != 5 || len(e.Ignored) != 2 || e.Ignored[1] != (Ignored{KeyPerRunUSD, "7", "5", "ceiling"}) {
 		t.Fatalf("%+v", e)
 	}
-	// the ceiling is never ignored; with no tighten layers nothing is.
-	if e := Merge(Layer{Mode: "off", PerRunUSD: 1}); len(e.Ignored) != 0 || e.Mode != "off" {
+	// the ceiling is never ignored; with no tighten layers nothing is, and a
+	// ceiling that writes the word that is not a mode sets no mode at all.
+	if e := Merge(Layer{Mode: "off", PerRunUSD: 1}); len(e.Ignored) != 0 || e.Mode != "" {
 		t.Fatalf("%+v", e)
 	}
 }
@@ -450,15 +455,22 @@ func TestInfCapIsUnset(t *testing.T) {
 }
 
 func TestValidMode(t *testing.T) {
-	for m, ok := range map[string]bool{"": false, "off": true, "observe": true, "enforce": true, "ENFORCE": false, "bogus": false} {
+	// The word that was a budget mode until this release is written as the
+	// literal rather than through the constant, so this file needs no edit
+	// when I1 deletes the constant (docs/always-a-budget/contract-mode.md
+	// §3): what this row pins is that the vocabulary refuses it.
+	for m, ok := range map[string]bool{"": false, "off": false, "observe": true, "enforce": true, "ENFORCE": false, "bogus": false} {
 		if ValidMode(m) != ok {
 			t.Errorf("ValidMode(%q) != %v", m, ok)
 		}
 	}
-	// an unknown mode is unset: it neither sets nor is ignored.
-	e := Merge(Layer{Mode: "observe"}, Layer{Mode: "bogus"})
-	if e.Mode != "observe" || len(e.Ignored) != 0 {
-		t.Fatalf("%+v", e)
+	// an unknown mode is unset: it neither sets nor is ignored, and neither is
+	// the removed word.
+	for _, m := range []string{"bogus", "off"} {
+		e := Merge(Layer{Mode: "observe"}, Layer{Mode: m})
+		if e.Mode != "observe" || len(e.Ignored) != 0 {
+			t.Fatalf("mode %q: %+v", m, e)
+		}
 	}
 }
 

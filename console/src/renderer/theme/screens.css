@@ -1470,13 +1470,25 @@ main p {
   border-radius: var(--radius-sm);
 }
 
+/* The Add project door (SW3c, R4), under the list it adds a second project to:
+ * one button and no heading, because it is an action beside the installations
+ * rather than a section about them. It is drawn by the view only when the list
+ * has rows -- a console with no installation is already showing the first-run
+ * screen -- and its click opens the setup wizard in the dashboard window, which
+ * is why nothing here draws a form. */
+#picker-new-project {
+  margin-bottom: var(--space-md);
+}
+
 /* Every control of the picker is a button -- a row's Choose, Chosen, Use …
- * and Remove, and the onboarding screen's one link -- and a button's boundary
- * is `--border-strong`: `--border` is a decorative hairline and may never mark
- * a control's extent (design section 3.2's role table, and the
- * `--border`-is-decorative case in `test/unit/theme-tokens.test.ts`). */
+ * and Remove, the onboarding screen's one link, and the Add project door --
+ * and a button's boundary is `--border-strong`: `--border` is a decorative
+ * hairline and may never mark a control's extent (design section 3.2's role
+ * table, and the `--border`-is-decorative case in
+ * `test/unit/theme-tokens.test.ts`). */
 #picker-list button,
-#picker-onboarding button {
+#picker-onboarding button,
+#picker-new-project button {
   padding: var(--space-2xs) var(--space-xs);
   color: var(--text);
   border: var(--border-width) solid var(--border-strong);
@@ -1485,7 +1497,8 @@ main p {
 }
 
 #picker-list button:hover,
-#picker-onboarding button:hover {
+#picker-onboarding button:hover,
+#picker-new-project button:hover {
   color: var(--accent-ink);
 }
 
@@ -1494,7 +1507,8 @@ main p {
  * view draws is disabled together while a request is in flight, so this is one
  * rule over both sets rather than a rule per button. */
 #picker-list button:disabled,
-#picker-onboarding button:disabled {
+#picker-onboarding button:disabled,
+#picker-new-project button:disabled {
   color: var(--text-muted);
   border-style: dashed;
 }

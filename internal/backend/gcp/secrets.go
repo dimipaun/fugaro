@@ -100,6 +100,158 @@ func (s *Secrets) Access(ctx context.Context, id string) ([]byte, error) {
 	return data, nil
 }
 
+// LatestEnabled answers the number of id's newest ENABLED version, and "" when
+// the container holds none (absent, or every version disabled or destroyed).
+// Reading the value at the number this answers is what makes a copy of it safe:
+// the alias `latest` names the newest version whatever its state, so a
+// container whose newest version an operator disabled would refuse the read
+// the copy makes, and the enabled one under it is the version a run reads.
+func (s *Secrets) LatestEnabled(ctx context.Context, id string) (string, error) {
+	latest := 0
+	err := s.svc.Projects.Secrets.Versions.List(s.name(id)).Pages(ctx, func(p *secretmanager.ListSecretVersionsResponse) error {
+		for _, v := range p.Versions {
+			n, err := strconv.Atoi(lastSegment(v.Name))
+			if err != nil || v.State != "ENABLED" || n <= latest {
+				continue
+			}
+			latest = n
+		}
+		return nil
+	})
+	if err != nil {
+		if isStatus(err, http.StatusNotFound) {
+			return "", nil
+		}
+		return "", fmt.Errorf("listing the versions of secret %s: %w", id, err)
+	}
+	if latest == 0 {
+		return "", nil
+	}
+	return strconv.Itoa(latest), nil
+}
+
+// ReadVersion reads the value of one numbered version of id. It is the read the
+// migration makes and the GitHub App pre-check's (Access), and it exists beside
+// Access rather than in place of it because the version a copy must take is the
+// newest ENABLED one and not the `latest` alias: an operator's disable makes the
+// two disagree. The caller holds the bytes in memory only and never prints,
+// logs or passes them on.
+func (s *Secrets) ReadVersion(ctx context.Context, id, version string) ([]byte, error) {
+	r, err := s.svc.Projects.Secrets.Versions.Access(s.name(id) + "/versions/" + version).Context(ctx).Do()
+	if err != nil {
+		var ge *googleapi.Error
+		switch {
+		case errors.As(err, &ge) && ge.Code == http.StatusNotFound:
+			return nil, ErrNoVersion
+		case errors.As(err, &ge) && ge.Code == http.StatusForbidden:
+			return nil, ErrNoAccess
+		}
+		return nil, fmt.Errorf("reading secret %s: %w", id, err)
+	}
+	if r.Payload == nil {
+		return nil, ErrNoVersion
+	}
+	data, err := base64.StdEncoding.DecodeString(r.Payload.Data)
+	if err != nil {
+		return nil, fmt.Errorf("reading secret %s: the payload is not base64", id)
+	}
+	return data, nil
+}
+
+// ContainerInfo is one container's metadata: its labels, its annotations, and
+// the shape facts that take a container away from whoever wrote it (internal/
+// intake's R12 — a TTL or an expiry deletes it, a topic publishes it, a CMEK
+// puts it under another key, a rotation replaces it on someone else's clock).
+// Never a version and never a payload.
+type ContainerInfo struct {
+	Labels      map[string]string
+	Annotations map[string]string
+	TTL         string
+	ExpireTime  string
+	Topics      []string
+	CMEK        string
+	Rotation    string
+}
+
+// Container answers id's metadata, and whether a container of that ID is there
+// at all. Metadata only: like every read here it never touches a version's
+// value.
+func (s *Secrets) Container(ctx context.Context, id string) (ContainerInfo, bool, error) {
+	sec, err := s.svc.Projects.Secrets.Get(s.name(id)).Context(ctx).Do()
+	if err != nil {
+		if isStatus(err, http.StatusNotFound) {
+			return ContainerInfo{}, false, nil
+		}
+		if isStatus(err, http.StatusForbidden) {
+			return ContainerInfo{}, false, ErrNoAccess
+		}
+		return ContainerInfo{}, false, fmt.Errorf("reading secret %s: %w", id, err)
+	}
+	out := ContainerInfo{Labels: sec.Labels, Annotations: sec.Annotations, TTL: sec.Ttl, ExpireTime: sec.ExpireTime}
+	for _, t := range sec.Topics {
+		if t != nil && t.Name != "" {
+			out.Topics = append(out.Topics, t.Name)
+		}
+	}
+	out.CMEK = cmekOf(sec)
+	if sec.Rotation != nil {
+		out.Rotation = rotationOf(sec.Rotation)
+	}
+	return out, true, nil
+}
+
+// CanReadValues reports whether the caller's own credentials may read id's
+// values, through the testIamPermissions probe the provider-key writers already
+// make before they read one. It exists so that a caller which must not read a
+// value it cannot have asks before it tries: an operator without
+// secretmanager.versions.access gets a refusal naming what to do rather than a
+// 403 from the middle of a copy. A container that is not there answers false
+// with no error — there is no value to read either way.
+func (s *Secrets) CanReadValues(ctx context.Context, id string) (bool, error) {
+	r, err := s.svc.Projects.Secrets.TestIamPermissions(s.name(id),
+		&secretmanager.TestIamPermissionsRequest{Permissions: []string{versionsAccessPermission}}).Context(ctx).Do()
+	if err != nil {
+		if isStatus(err, http.StatusNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("asking what may be read from secret %s: %w", id, err)
+	}
+	return len(r.Permissions) > 0, nil
+}
+
+// versionsAccessPermission is the one permission this package asks about: the
+// read of a secret's value, which roles/owner carries on every container and
+// the roles Fugaro grants an operator do not.
+const versionsAccessPermission = "secretmanager.versions.access"
+
+// Create makes the container id with labels and annotations and no version,
+// replicated in the installation's region, as a caller that writes one value
+// into a fresh container does. A container that appeared between a read and
+// this call is the caller's to notice: a 409 is returned as it is, never as a
+// silent success.
+func (s *Secrets) Create(ctx context.Context, id string, labels, annotations map[string]string) error {
+	_, err := s.svc.Projects.Secrets.Create("projects/"+s.project, &secretmanager.Secret{
+		Labels: labels, Annotations: annotations, Replication: replicationIn(s.region),
+	}).SecretId(id).Context(ctx).Do()
+	if err != nil {
+		return fmt.Errorf("creating secret %s: %w", id, err)
+	}
+	return nil
+}
+
+// AddVersion stores value as a new version of id and answers its number. It is
+// Set's own second half, shared so a caller that creates the container itself
+// adds its version the one way.
+func (s *Secrets) AddVersion(ctx context.Context, id string, value []byte) (string, error) {
+	v, err := s.svc.Projects.Secrets.AddVersion(s.name(id), &secretmanager.AddSecretVersionRequest{
+		Payload: &secretmanager.SecretPayload{Data: base64.StdEncoding.EncodeToString(value)},
+	}).Context(ctx).Do()
+	if err != nil {
+		return "", fmt.Errorf("adding a version to secret %s: %w", id, err)
+	}
+	return lastSegment(v.Name), nil
+}
+
 // Set stores value as a new version of secret id, creating the secret with
 // labels and user-managed replication in the installation's region if it does
 // not exist. A container that already exists keeps the replication it has —
@@ -135,13 +287,51 @@ func (s *Secrets) Set(ctx context.Context, id string, value []byte, labels map[s
 			return "", err
 		}
 	}
-	v, err := s.svc.Projects.Secrets.AddVersion(name, &secretmanager.AddSecretVersionRequest{
-		Payload: &secretmanager.SecretPayload{Data: base64.StdEncoding.EncodeToString(value)},
-	}).Context(ctx).Do()
-	if err != nil {
-		return "", fmt.Errorf("adding a version to secret %s: %w", id, err)
+	return s.AddVersion(ctx, id, value)
+}
+
+// cmekOf is the customer-managed key a container is bound to. The API can name
+// one in three places — on the secret itself, on an automatic replication
+// policy, or on any replica of a user-managed one — and a container carrying one
+// anywhere is one a writer that holds no such key must not write into, so the
+// first non-empty is the answer. Which of several replicas it came from does not
+// matter: the refusal names the fact and not the key. It mirrors internal/
+// intake's helper of the same name rather than importing it, the way this
+// package's other reads of that package's shape facts are mirrored.
+func cmekOf(sec *secretmanager.Secret) string {
+	if c := sec.CustomerManagedEncryption; c != nil && c.KmsKeyName != "" {
+		return c.KmsKeyName
 	}
-	return lastSegment(v.Name), nil
+	rep := sec.Replication
+	if rep == nil {
+		return ""
+	}
+	if a := rep.Automatic; a != nil && a.CustomerManagedEncryption != nil {
+		return a.CustomerManagedEncryption.KmsKeyName
+	}
+	if u := rep.UserManaged; u != nil {
+		for _, r := range u.Replicas {
+			if r != nil && r.CustomerManagedEncryption != nil && r.CustomerManagedEncryption.KmsKeyName != "" {
+				return r.CustomerManagedEncryption.KmsKeyName
+			}
+		}
+	}
+	return ""
+}
+
+// rotationOf is the rotation schedule a container carries, as the text that says
+// there is one: the period where it has one, the next rotation time otherwise,
+// and the fact itself where the API answered a schedule with neither spelled
+// out. Mirrored from internal/intake for cmekOf's reason.
+func rotationOf(r *secretmanager.Rotation) string {
+	switch {
+	case r.RotationPeriod != "":
+		return r.RotationPeriod
+	case r.NextRotationTime != "":
+		return r.NextRotationTime
+	default:
+		return "set"
+	}
 }
 
 func isStatus(err error, code int) bool {
