@@ -6888,6 +6888,10 @@ func servicesLaunchEnv(entry config.Entry) string {
 // it is read for a repository's own job alone: a shared job's grant is the
 // installation root's, made from the same record wherever that root was applied.
 //
+// mode is this launch's reading of the published node's budget mode, and
+// nothing here reads it: the switch stopped taking a mode (AB15, D3009), and
+// the argument stays until I1 drops it with the constants.
+//
 // review says this launch runs on a shared job's review-only variant
 // (spec.Mode's review mode), which the caller resolves before it calls this:
 // such a launch is told nothing, whatever the job and the config say.
@@ -6924,7 +6928,7 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, sharedProfile, repo, auth,
 		return []string{envCredentialsServiceURL + "=" + lc.CredentialsService.URL}
 	}
 	local, _ := lc.RepoFor(repo)
-	serves := infra.CredentialsServiceServes(installed, local.CredentialsServiceOn(), auth, mode)
+	serves := infra.CredentialsServiceServes(installed, local.CredentialsServiceOn(), auth)
 	if auth == "" {
 		// No document this launcher could read, so the switch's third
 		// condition is judged on the two answers that do not need one: the
