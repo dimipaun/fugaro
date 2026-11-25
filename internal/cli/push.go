@@ -1199,12 +1199,13 @@ const fcmRoot = "https://fcm.googleapis.com"
 
 // fcmSender is the shipped provider: FCM's HTTP v1 API, one message per send,
 // under the ambient identity the history job already runs as (§3.6 — no key,
-// no secret). P5.2.7 replaces it with the caller of the publisher's relay,
-// whose identity is a Cloud KMS signing key and its one useToSign grant
-// (deploy/terraform/gcp/modules/installation/push_key.tf); until then this is
-// the tree's state, and no FCM permission is that row's to grant. The payload
-// is the category and nothing else
-// (§3.1): a data-only message with no title and no body, so what the lock
+// no secret). P5.2.7 is the sender's identity toward the publisher's relay — a
+// Cloud KMS signing key and its one useToSign grant
+// (deploy/terraform/gcp/modules/installation/push_key.tf) — and the client
+// that would replace this provider is not that row's and no task holds it;
+// until the relay's kind is answered this is the tree's state, and no FCM
+// permission is that row's to grant. The payload is the category and nothing
+// else (§3.1): a data-only message with no title and no body, so what the lock
 // screen shows is the app's own closed set of phrases and never a string the
 // sender wrote.
 type fcmSender struct {

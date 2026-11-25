@@ -15,8 +15,9 @@ package cli
 // names: §3.6 (B) (the sweep derives its own events), §3.7 (the dedupe key and
 // the cap), §3.8 (the switches and quiet hours) and §6 (the failure modes). The
 // provider is a fake, because what a test can pin is what the sender asks it to
-// send — the FCM call itself is the tree's state until P5.2.7 replaces it with
-// the relay's caller, and Check 88 is the owner's run.
+// send — the FCM call itself is the tree's state until a relay client replaces
+// it, which P5.2.7 does not land and no task holds, and Check 88 is the owner's
+// run.
 
 import (
 	"context"
