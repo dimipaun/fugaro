@@ -47,7 +47,15 @@ Decisions **D2960–D2967** are taken as recommendations (the owner approved the
 
 ## Open items
 
-None.
+- **What RL4's follow-up left (2026-11-24).** Two concrete things #3672's status named, and neither
+  is filed: no backlog item was written (the backlog is a node `fugaro backlog add` writes, which
+  this work did not run).
+  - **Its own body is one clause behind its code.** Since `fb5644fb3` the re-read falls back in
+    **two** cases — a summary that has gone or cannot be vouched for, and one that still says
+    `running` while the execution has ended — where the section "Where it is read, and why" names
+    one. The correction belongs in that pull request's text.
+  - **The cost of the summary write at each stage end is unmeasured.** One small object beside a
+    record write that already happens; no reading of it was taken here.
 
 ## UNVERIFIED
 

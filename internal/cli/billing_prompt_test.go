@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/billing"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
@@ -817,14 +818,21 @@ func TestPickerStoresNothing(t *testing.T) {
 	}
 	// The pick carries exactly one thing with it (T2b of
 	// docs/managed-flag-ergonomics; D2216, settleBudget): the account the
-	// project's budget alert is on is the account the run linked, and a run that
-	// linked none carries no budget at all. Both are this question's doing, and
-	// neither is the account list kept anywhere.
-	if answered.billingAccount != picked || answered.budget == 0 || answered.budgetCurrency == "" {
+	// project's budget alert is on is the account the run linked, and a run
+	// that linked none carries no budget block into the installation, which the
+	// module's own validation refuses without an account — the amount either run
+	// went on with stays on its fields, which is where the creation fact reads
+	// it (T2a). Both are this question's doing, and neither is the account list
+	// kept anywhere.
+	if answered.billingAccount != picked || answered.budget != managed.DefaultBudgetAmount || answered.budgetCurrency != managed.DefaultBudgetCurrency {
 		t.Errorf("the account the pick linked is not the budget's own: %q, budget %d %s", answered.billingAccount, answered.budget, answered.budgetCurrency)
 	}
-	if control.billingAccount != "" || control.budget != 0 || control.budgetCurrency != "" {
-		t.Errorf("a run whose question linked nothing carries a budget: %q, %d %s", control.billingAccount, control.budget, control.budgetCurrency)
+	if control.billingAccount != "" || control.creationBudgetAccount() != "" {
+		t.Errorf("a run whose question linked nothing has the alert's account %q: no budget block is carried without one", control.billingAccount)
+	}
+	if control.budget != managed.DefaultBudgetAmount || control.budgetCurrency != managed.DefaultBudgetCurrency {
+		t.Errorf("a run whose question linked nothing went on with %d %s, want the default %d %s: the creation fact records the budget of every creating run (T2a)",
+			control.budget, control.budgetCurrency, managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency)
 	}
 	got, want := *answered, *control
 	for _, o := range []*initOptions{&got, &want} {

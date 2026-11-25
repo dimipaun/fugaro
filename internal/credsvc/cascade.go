@@ -1175,8 +1175,21 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 	s.withMeter(ctx, cl, id)
 
 	pool := cands
+	// next is the ORDERING this call goes out on, and it is the only thing a
+	// routing table changes about this loop: a project that publishes one walks
+	// the chain its entry names (cl.chain, CS1), and every other call selects
+	// from its own candidates exactly as it always did. Everything below — the
+	// money, the probe, the 401 and the 429, the switch record, U7's stream
+	// limit and the answer — is one code path over one answer, which is what
+	// keeps a chain-served call from being a second cascade.
+	next := func(ctx context.Context) (creds.Credential, time.Duration, error) {
+		if cl.chain != nil {
+			return cl.chain.next(ctx, sent)
+		}
+		return sel.Select(ctx, run, pool)
+	}
 	for {
-		c, _, err := sel.Select(ctx, run, pool)
+		c, _, err := next(ctx)
 		if err != nil {
 			// A probe being owed on the earliest candidate is the one answer
 			// this loop acts on rather than relays (C1.12): the credential is
@@ -1264,6 +1277,14 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			return
 		}
 
+		// What this source's answer carried is recorded in the arms below — the
+		// three this service reads as about the CREDENTIAL — as the names of its
+		// rate-limit headers and never a value (U1, Check 880). This arm writes
+		// nothing for itself, and the record is written where the credential is
+		// judged because an answer about the REQUEST says nothing about it: a
+		// relayed 529 or 500 says nothing about the credential (the published
+		// pool's own rule, "an answer about the request moves nothing"), so it
+		// leaves the mark alone and the observation with it.
 		switch status := ans.resp.StatusCode; {
 		case unauthorizedStatus(status):
 			// D139: a 401 marks the credential broken, and only an operator
@@ -1280,6 +1301,11 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			// that cannot be written is the refusal the run gets — the
 			// credential's mark is not written, because the call is over either
 			// way and an unrecorded cost is the thing an operator has to act on.
+			// A 401 is an answer about the credential, so what it carried is
+			// recorded (U1, Check 880). The observation is a node of its own
+			// and the hold below is the mark's, so the order between them
+			// decides nothing.
+			s.recordRateLimitHeaders(ctx, sel, c.Name, ans.resp.Header)
 			ans.resp.Body.Close()
 			if fail := s.settleCall(ctx, cl, unchargedUsage()); fail != nil {
 				s.refuseMeter(ctx, w, id, PurposeForward, fail)
@@ -1298,6 +1324,10 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 		case usageLimitStatus(status):
 			// A usage limit. Nothing has been streamed, so the call may be
 			// retried — on another credential, never on this one.
+			// The answer Check 880 is really read after: a usage limit's names
+			// are the record's whole point (U1, D3178), and a later answer of
+			// this credential replaces them, so the node holds the LAST one's.
+			s.recordRateLimitHeaders(ctx, sel, c.Name, ans.resp.Header)
 			reset := usageLimitReset(ans.resp.Header, s.now())
 			// The attempt's reservation is settled as the 401 arm's is, and for
 			// the same reason: the retry that may follow is a SECOND call with a
@@ -1327,6 +1357,16 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 		// 400 for a request Anthropic refused, an overloaded_error, a 500. The
 		// service retries none of them — a retry is for a credential that
 		// cannot serve the call, and none of these says that.
+		// A serve is an answer about the credential: what it carried is
+		// recorded here and only here of this arm's statuses (U1, Check 880).
+		// The subscription token's own answer is exactly this one — the figure
+		// U1 asks about is what a provider reports while serving — so a 2xx is
+		// recorded and the relayed 4xx and 5xx beside it are not: this service
+		// retries none of them, because none of them says a credential cannot
+		// serve the call, and a record would be a claim that it did.
+		if code := ans.resp.StatusCode; code >= 200 && code < 300 {
+			s.recordRateLimitHeaders(ctx, sel, c.Name, ans.resp.Header)
+		}
 		var sw *Switch
 		if len(sent) > 0 && c.Name != started {
 			sw = &Switch{From: started, To: c.Name, Reason: reason}
@@ -1551,6 +1591,14 @@ func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id Identity,
 		s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
 			"the answer could not carry the credential that served it")
 		return
+	}
+	// C1's three members, for a call the routing table served (CS1): the source,
+	// whether it was the chain's first, and the model that served. They are
+	// written only to a caller that sent the stage header (chainAnswer,
+	// SentStage), so a gateway built before this contract meets exactly the
+	// answer it meets today.
+	if cl.chain != nil {
+		chainAnswer(hdr, cl, cl.chain.served)
 	}
 	if b, ok := callSlipOf(ctx); ok && credentialOwnedBy(c.Name, b.owner) {
 		// The owner of the credential that answered (F16): the verified `sub`

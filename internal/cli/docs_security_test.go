@@ -35,11 +35,9 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 		"followup.trusted",
 		"docs/design/v1.md",
 		"docs/bucket-iam/spec.md",
-		// The budget's own limit, in the words the always-a-budget work gave
-		// it (AB13, 2026-11-24): there is no `off` to write any more — a mode
-		// left unset means observe, so the gateway is on and the caps record
-		// rather than stop, and the one run it does not reach is the `oauth`
-		// run the credentials service does not serve.
+		// The gap the release now ships, where the document used to say the
+		// budget mode defaults to off (always-a-budget, F17): the real key
+		// stays out of the agent's environment in every mode.
 		"With no `budget:` block the mode is `observe`, so the caps record rather than stop.",
 		"Vertex has no dollar cap, in any mode.",
 		"roles/storage.objectAdmin",

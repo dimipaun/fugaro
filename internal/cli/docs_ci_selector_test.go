@@ -39,6 +39,49 @@ func TestCISelectorLegKeysAreTheMatrixKeys(t *testing.T) {
 	}
 }
 
+// TestCISelectorOutputKeysAreTheSelectJobKeys holds the other half of that
+// contract, the keys the `select` step reads out of the selector's JSON, to
+// `ciselect.Output`'s own field names. A rename here is worse than a leg's:
+// `jq` prints `null` for a key that is not there rather than failing, so
+// `.legs` hands the shard job an empty matrix — which is skipped, and a skipped
+// shard counts as success — while `.terraform` and `.rules` drop the two jobs
+// the release gate requires without a word.
+func TestCISelectorOutputKeysAreTheSelectJobKeys(t *testing.T) {
+	var outputKeys []string
+	typ := reflect.TypeOf(ciselect.Output{})
+	for i := 0; i < typ.NumField(); i++ {
+		name, _, _ := strings.Cut(typ.Field(i).Tag.Get("json"), ",")
+		outputKeys = append(outputKeys, name)
+	}
+
+	// `select.json` is written by the `select` step and named nowhere else, so
+	// the lines that name it are the reads of the selector's output.
+	ci := readDoc(t, ".github/workflows/ci.yml")
+	var read []string
+	for _, line := range strings.Split(ci, "\n") {
+		if !strings.Contains(line, "select.json") {
+			continue
+		}
+		// The filename's own dot is not a key read.
+		line = strings.ReplaceAll(line, "select.json", "")
+		for _, m := range regexp.MustCompile(`\.([A-Za-z_]\w*)`).FindAllStringSubmatch(line, -1) {
+			if !slices.Contains(read, m[1]) {
+				read = append(read, m[1])
+			}
+		}
+	}
+	for _, key := range []string{"legs", "terraform", "rules"} {
+		if !slices.Contains(read, key) {
+			t.Errorf(".github/workflows/ci.yml no longer reads `.%s` out of select.json: the shard matrix and the two job switches come from the selector, and the jobs they decide run only where the workflow asks", key)
+		}
+	}
+	for _, key := range read {
+		if !slices.Contains(outputKeys, key) {
+			t.Errorf(".github/workflows/ci.yml reads `.%s` out of select.json and ciselect.Output's JSON keys are %v: a renamed field reads as null, so the job it decides is skipped with nothing failing", key, outputKeys)
+		}
+	}
+}
+
 // TestCIDocsSayASelectedRunIsTheDefaultAndAFullRunPrecedesATag (CS8): the two
 // documents a change is sized from and a release is cut from, plus the plan
 // folder's own record. A selected run is the default and is not a gate, so a CI

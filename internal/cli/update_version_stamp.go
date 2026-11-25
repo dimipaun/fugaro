@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/updatecheck"
 	"github.com/dimipaun/fugaro/internal/versionstamp"
 )
 
@@ -21,15 +22,24 @@ import (
 // itself would refuse every member of the project, including the ones on the
 // release this binary is ahead of, over a version nobody can install.
 //
-// It is a seam and not a call: T2b wires updatecheck.Published in, with
-// updateCheckHTTPClient as the client (which refuses a redirect) and
-// updatecheck.ReleasesEndpoint as the endpoint. Until then it answers that the
-// lookup is unavailable, which is the same answer a network failure gets: the
-// stamp is left exactly where it is, and the run says so in one line rather than
-// writing a fence it cannot vouch for.
-var publishedRelease = func(context.Context, string) (bool, error) {
-	return false, errors.New("the release lookup is unavailable in this build")
+// It is updatecheck.Published with the production client and endpoint, and both
+// halves are the ones the daily check already uses: updateCheckHTTPClient
+// refuses a redirect (a tag is never followed to another host) and
+// stampReleaseEndpoint is the releases collection. A failure of it — the
+// network, a responder that is not GitHub's — answers exactly what "not
+// published" answers: the stamp is left where it is, and the run says so in one
+// line rather than writing a fence it cannot vouch for.
+var publishedRelease = func(ctx context.Context, version string) (bool, error) {
+	return updatecheck.Published(ctx, updateCheckHTTPClient, stampReleaseEndpoint, version)
 }
+
+// stampReleaseEndpoint is the endpoint the bound asks, and a package variable
+// for the reason updateCheckEndpoint is one: a test whose project has a stamp to
+// raise points it at a server of its own rather than reaching GitHub. It is NOT
+// updateCheckEndpoint, which is the latest-release endpoint and answers a
+// different question — Published appends a tag's own path to what it is given,
+// so the two are not interchangeable.
+var stampReleaseEndpoint = updatecheck.ReleasesEndpoint
 
 // The lines this stage prints. stampCurrent is the whole line for a project
 // whose stamp already names a release at or below this binary's — the run did
@@ -40,6 +50,13 @@ const stampCurrentLine = "required CLI: current"
 // refuses every fugaro below the release it names, so a raise is a fact about
 // every member of the project and never a local edit.
 const versionStampWhat = "this raises the project's required CLI to this release: every fugaro below it is refused until it upgrades, and the node is never lowered"
+
+// versionStampUnreadable is what the run says about a node it could not read:
+// the step is left where it is, and the door's own warning has already named
+// the node (spec, "Read failures fail open"). A node that IS read and cannot be
+// decoded is the one read failure that refuses instead
+// (versionstamp.MalformedError, D3264).
+const versionStampUnreadable = "the project's required CLI could not be read, so this run leaves it exactly as it is"
 
 // devBuildReason is why a development or pre-release binary leaves the node
 // alone (spec, "Dev builds"): it has no release to name, and a version that is
@@ -129,10 +146,10 @@ func (p *versionStampPlan) line() string {
 // the workspace, the route, the layer and the credentials copy: it takes its
 // own confirmation (confirmStageWrite) and refuses a coding agent's session.
 //
-// It is NOT a stage of the managed gate yet: T2b adds it to gatedStages and
-// gives it a gateStep, at which point an agent's session on a managed project
-// is judged rather than refused. Until then a session stops here exactly as it
-// stops at the stages that write what a deployed reader reads.
+// A managed project's gate is asked before that refusal (gatedStages,
+// versionStampStage.gateStep): the document it judges is the exact bytes this
+// stage's one conditional PUT writes, and an admitted step proceeds without the
+// confirmation the verdict replaces.
 type versionStampStage struct {
 	e *initEngine
 	// p is what Apply read and wrote, kept for Verify. Nothing is carried
@@ -182,17 +199,15 @@ func (s *versionStampStage) read(ctx context.Context) (*versionStampPlan, error)
 	var raw json.RawMessage
 	etag, found, err := db.GetETag(ctx, versionstamp.Path, &raw)
 	if err != nil {
-		// A node this run cannot read is left exactly where it is and the run
-		// goes on (D3264, spec "Read failures fail open"): the stamp is a fence
-		// and not a boundary, and `fugaro update` — the one command that brings
-		// an installation forward — is not stopped by a blip. Nothing is
-		// written either way: the ETag the write is conditional on is the one
-		// this read would have taken, so there is no stamp to raise here. The
-		// door above says the same thing in its own line, and the step stays
-		// owed, because the raise this run could not make is one the next
-		// update still has to. A malformed stamp is the one read that refuses
-		// and it is returned below, as it is.
-		return nil, &versionStampSkip{reason: fmt.Sprintf("the project's required CLI could not be read (%v), so this run leaves it exactly as it is; the next %s raises it", oneLine(err.Error()), selfCommand()+" update"), undone: true}
+		// A node this run cannot reach at all is a fence this run cannot read,
+		// and that fails open with one line (spec, "Read failures fail open",
+		// D3264): the stamp is a fence and not a boundary, so a database blip
+		// must not stop the one command that brings the installation forward.
+		// The door's own guard has already warned in the same words before the
+		// loop's first stage (refuseUpdateBelowTheStamp), and the reason whole
+		// goes to this run's log rather than onto that line.
+		fmt.Fprintf(s.e.r.stageDetail(), "the required CLI was not read: %s\n", oneLineCLI(err.Error()))
+		return nil, &versionStampSkip{reason: versionStampUnreadable, undone: true}
 	}
 	p := &versionStampPlan{lc: lc, db: db, ver: ver, etag: etag, found: found}
 	if found {
@@ -277,10 +292,22 @@ func (s *versionStampStage) promised(ctx context.Context, p *versionStampPlan) (
 	}
 	published, err := publishedRelease(ctx, p.ver)
 	if err != nil {
-		return false, fmt.Sprintf("the required CLI is left as it is: %v", err)
+		// One line for the person and the reason whole for the run's own log
+		// (D1352): what a lookup failure carries is a URL, a proxy and a
+		// dial error, and none of that belongs on the screen of an update
+		// that did the rest of its work. The line is not a withheld write
+		// (initRun.withheld): nothing is left for the operator to finish
+		// here — the next `fugaro update` raises the stamp — so this is a
+		// state of the run's own read and not a warning about the project.
+		fmt.Fprintf(s.e.r.stageDetail(), "the required CLI was not raised: the release lookup failed: %s\n", oneLineCLI(err.Error()))
+		return false, fmt.Sprintf("the required CLI is left as it is: whether fugaro %s is a published release could not be read (the reason is in this run's log)", p.ver)
 	}
 	if !published {
-		return false, fmt.Sprintf("the required CLI is left as it is: fugaro %s is not a published release, and only a published release may be required (D3269)", p.ver)
+		// A version nobody can install may not be required of the project, and
+		// the build that would require it is the one that is not a release:
+		// the operator reads the fact, and the way out is the release they
+		// install (D3269).
+		return false, fmt.Sprintf("the required CLI is left as it is: fugaro %s is not a published release, and only a published release may be required", p.ver)
 	}
 	return true, p.line()
 }
@@ -331,23 +358,36 @@ func (s *versionStampStage) Plan(ctx context.Context, env initflow.Env) (initflo
 	return initflow.Plan{Detail: line}, nil
 }
 
-// Apply is the write. The session that may not write to the cloud refuses
-// first, as the policy and copy stages' do.
+// Apply is the write. A managed project's gate is asked first (D1016) and the
+// session that may not write to the cloud refuses where the gate did not admit
+// the step, as the policy and workspace stages' applies do: an admitted step
+// proceeds, and the marker check below is kept whole for every other case —
+// the plan is read-only, so a session that is going to refuse refuses after the
+// same reads it has always made.
 //
-// The release bound is asked before the confirmation and before the write, and
-// each of its two answers leaves the node exactly where it is: a lookup that
-// cannot be made (the network, and until T2b the seam itself) and a version
-// that is not a published release are both "nothing is written" states, and a
-// refusal here must never be a stamp the operator has to repair by hand.
+// The release bound is asked before the gate, the confirmation and the write,
+// and each of its two answers leaves the node exactly where it is: a lookup
+// that cannot be made and a version that is not a published release are both
+// "nothing is written" states, and a refusal here must never be a stamp the
+// operator has to repair by hand.
+//
+// The document is built once (payload) and handed to the gate as well as to the
+// write, so the bytes the gate judged and the bytes that land are the same
+// (D1022), under the ETag the stage's own read took.
 //
 // The write is one conditional PUT and never a retry: a lost race — another
 // update, or a hand edit through the console — is a refusal the operator reads,
 // and the next `fugaro update` raises the stamp. Re-reading and writing again
 // would suppress a change nobody read, which is exactly what D3262's no-lowering
-// rule and the policy stage's own conditional write exist to prevent.
+// rule and the policy stage's own conditional write exist to prevent. The
+// record follows the write and never the admission (D1014), so a lost race
+// records nothing and retries nothing: there is no apply to account for.
 func (s *versionStampStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
-	if marker := agentMarker(os.Getenv, s.e.r.stdinTerminal()); marker != "" {
-		return initflow.Outcome{}, &initflow.AgentError{Marker: marker}
+	gate := s.e.r.gateUnderway()
+	if !gate {
+		if marker := agentMarker(os.Getenv, s.e.r.stdinTerminal()); marker != "" {
+			return initflow.Outcome{}, &initflow.AgentError{Marker: marker}
+		}
 	}
 	p, err := s.read(ctx)
 	if skip, ok := versionStampSkipOf(err); ok {
@@ -359,13 +399,26 @@ func (s *versionStampStage) Apply(ctx context.Context, env initflow.Env) (initfl
 	if raise, line := s.promised(ctx, p); !raise {
 		return initflow.Outcome{Detail: line}, nil
 	}
-	cmd := s.e.r.cmd
-	if err := s.e.r.asking(func() error {
-		return confirmStageWrite(cmd, p.lc, restoreAsk(s.e.r.conditions(), s.e.r.asksBack()), env.Yes, versionStampWhat)
-	}); err != nil {
+	body, err := p.payload()
+	if err != nil {
 		return initflow.Outcome{}, err
 	}
-	lost, err := p.write(ctx)
+	admitted, err := s.gateStep(ctx, p, body)
+	if err != nil {
+		return initflow.Outcome{}, err
+	}
+	if !admitted {
+		if marker := agentMarker(os.Getenv, s.e.r.stdinTerminal()); marker != "" {
+			return initflow.Outcome{}, &initflow.AgentError{Marker: marker}
+		}
+		cmd := s.e.r.cmd
+		if err := s.e.r.asking(func() error {
+			return confirmStageWrite(cmd, p.lc, restoreAsk(s.e.r.conditions(), s.e.r.asksBack()), env.Yes, versionStampWhat)
+		}); err != nil {
+			return initflow.Outcome{}, err
+		}
+	}
+	lost, err := p.write(ctx, body)
 	if err != nil {
 		return initflow.Outcome{}, err
 	}
@@ -373,22 +426,31 @@ func (s *versionStampStage) Apply(ctx context.Context, env initflow.Env) (initfl
 	if lost != nil {
 		return initflow.Outcome{Detail: lost.Error()}, nil
 	}
+	if admitted {
+		if err := s.e.r.gateApplied(ctx); err != nil {
+			return initflow.Outcome{}, err
+		}
+	}
 	return initflow.Outcome{Changed: true, Detail: p.line()}, nil
 }
 
-// write puts the stamp on the node with the ETag it was read at, once. The
-// second answer is the lost race, which is a state and not a failure: another
-// writer holds the node, nothing was written, and the run says so rather than
-// trying again.
-func (p *versionStampPlan) write(ctx context.Context) (*versionStampLostRace, error) {
-	body, err := versionstamp.Encode(versionstamp.Stamp{
+// payload is the document this stage writes: the stamp the node is raised to,
+// encoded once, so the bytes the gate judged and the bytes the one conditional
+// PUT puts at the node are the same (D1022). The set_at is this run's now,
+// which is why the document is built here and not read back from the plan.
+func (p *versionStampPlan) payload() ([]byte, error) {
+	return versionstamp.Encode(versionstamp.Stamp{
 		Schema: versionstamp.SchemaVersion,
 		Min:    p.ver,
 		SetAt:  time.Now(),
 	})
-	if err != nil {
-		return nil, err
-	}
+}
+
+// write puts body on the node with the ETag it was read at, once. The second
+// answer is the lost race, which is a state and not a failure: another writer
+// holds the node, nothing was written, and the run says so rather than trying
+// again.
+func (p *versionStampPlan) write(ctx context.Context, body []byte) (*versionStampLostRace, error) {
 	if err := p.db.PutIfMatch(ctx, versionstamp.Path, p.etag, json.RawMessage(body)); err != nil {
 		if errors.Is(err, rtdb.ErrPrecondition) {
 			return &versionStampLostRace{}, nil
