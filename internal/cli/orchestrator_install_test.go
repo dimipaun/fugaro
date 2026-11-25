@@ -199,6 +199,28 @@ func TestInstallNamesTheCommandThatLoadsAUnitTheManagerRefused(t *testing.T) {
 	}
 }
 
+// TestInstallUnitNamesANamedUnitInItsRecoveryCommand: the installer is shared by
+// `orchestrator install` and the two converge steps, and the recovery it prints
+// when the manager refuses the reload has to name the unit it is about. One file
+// is one orchestrator, so the bare command loads the project's own unit's file
+// and not a named one's; the installer is called here the way `orchestrator
+// install --name night` calls it, which this release cannot reach through the
+// command because a named id is not addressable yet (CG1a flips that).
+func TestInstallUnitNamesANamedUnitInItsRecoveryCommand(t *testing.T) {
+	unitHome(t)
+	f := fakeUnitService(t)
+	f.reloadErr = errors.New("the manager refused")
+	u, err := orchestratorUnitNamed("night")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := installUnit(context.Background(), f, u, "night"); err == nil {
+		t.Fatal("installUnit succeeded although the manager refused to load the unit")
+	} else if !strings.Contains(err.Error(), "orchestrator install --name night") {
+		t.Errorf("the failure does not name the command that loads the named unit's file again: %v", err)
+	}
+}
+
 func TestInstallRefusedUnderAnAgentMarker(t *testing.T) {
 	unitHome(t)
 	f := fakeUnitService(t)

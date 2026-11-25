@@ -944,7 +944,10 @@ the owner-run Check 740 in the register, whose four readings are the plain
 message delivered at a coder stage, the `--now` stop's quiet point with the same
 session going on after it, the Policy Troubleshooter asked about the real job
 accounts, and the bucket's `.msg.json` lifecycle rule — moved the table's row
-from 153 to 154.) They
+from 153 to 154.) (Amended 2026-11-21: `internal/cli/docs_model_crafts_checks_test.go`,
+the model-crafts plan's MC26 — the pin over the five owner-run live checks 628 to
+632, their register rows, their sections, their block keys and their knobs — moved
+the table's row one higher.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -1032,6 +1035,17 @@ moved with the release that starts writing one, as the entries above do. Nothing
 changed; the row is named here for the reason the ones above are: a reader who finds the figure stale
 should find who moved it.)
 
+(Amended 2026-11-24: the repo-override-rulings plan's S5 — the release-A launch, its notes for a
+repository's lifted keys and its gate on a job image built before L8 — added `l8Since` to
+`internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 64 to 65. The
+constant names the release whose runner drops the keys the project owns, resolves a repository's
+recipe from the project store and knows the layer's `ab.repos`, so the row moved with the release
+that starts reading it, as the entries above do. Its two companion constants, `abReposSince` and
+`recipeCopySince`, carry release A's number and spell it `= l8Since` rather than as a literal of
+their own, so this row — which counts the literals — moved by one and not by three. Nothing in this
+folder changed; the row is named here for the reason the ones above are: a reader who finds the
+figure stale should find who moved it.)
+
 | Construct | Count | Command |
 | --- | --- | --- |
 | Catalog recipes | 14 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
@@ -1044,9 +1058,9 @@ should find who moved it.)
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 1 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 5 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 64 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 65 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 155 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 160 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 10 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Repo\|Repos\|Repository)'` |

@@ -457,6 +457,18 @@ func TestExecOldJobEnvSaysInitRepo(t *testing.T) {
 	if _, serr := os.Stat(work); !errors.Is(serr, os.ErrNotExist) {
 		t.Errorf("the runner started (a workdir exists): %v", serr)
 	}
+	// The recovery wrote a record this execution created, so the summary goes
+	// beside it (runstore.SummaryName): `runs ls` reads the summary where it
+	// read result.json, and a summary left behind by a record the bucket has
+	// since dropped would otherwise stand in for this run.
+	sum, serr := store.ReadSummary(ctx)
+	if serr != nil {
+		t.Fatalf("the recorded failure has no summary to be listed from: %v", serr)
+	}
+	if sum.Record == nil || sum.Record.Status != rec.Status || sum.Record.Reason != rec.Reason ||
+		sum.Spec() == nil || sum.Spec().RunID != runID || sum.Spec().Repo != rec.Repo {
+		t.Errorf("summary = %+v / %+v, want the record it stands in for and the run's own task", sum.Record, sum.Spec())
+	}
 }
 
 func TestExecOldJobEnvKeepsExistingRecord(t *testing.T) {
@@ -482,6 +494,12 @@ func TestExecOldJobEnvKeepsExistingRecord(t *testing.T) {
 	}
 	if stored, err := store.ReadRecord(ctx); err != nil || stored.Stage != "implement" || stored.Status != runstore.StatusRunning || stored.Execution != first.Execution {
 		t.Fatalf("the old-env exec replaced result.json: %+v, %v", stored, err)
+	}
+	// And no summary either: this execution created no record, so it has
+	// nothing to project, and one written from the other execution's record
+	// would be an object standing in for a run this process does not own.
+	if sum, err := store.ReadSummary(ctx); !errors.Is(err, runstore.ErrNotFound) {
+		t.Errorf("the old-env exec wrote a summary of another execution's record: %+v, %v", sum, err)
 	}
 }
 
@@ -664,41 +682,32 @@ func TestExecGatewayUpstreamLoopbackOnly(t *testing.T) {
 			t.Errorf("%s: err = %v (exit %d)", bad, err, ExitCode(err))
 		}
 	}
-	if err := checkTestHooks(execOptions{gatewayUpstream: "http://127.0.0.1:8080"}, runner.Spend{}, nil, ""); err != nil {
+	if err := checkTestHooks(execOptions{gatewayUpstream: "http://127.0.0.1:8080"}); err != nil {
 		t.Errorf("a loopback upstream was refused: %v", err)
 	}
 }
 
 // The managed settings path moves only with a loopback upstream: a job with
-// the real upstream writes the real path. The mode used to be the second way
-// in — an off ceiling, or an off mode in the file, let the path move — and
-// from AB1a every run's budget is on whatever its job or its file says
-// (D3009, R3), so the modes that used to buy the real path are refused with
-// the rest.
+// the real upstream writes the real path. The budget mode is no argument of
+// this check any more (AB3, D3009, R3): it used to be the second way in — an
+// off ceiling, or an off mode in the checkout's own file, let the path move —
+// and there is always a budget now, so the real upstream is refused whatever
+// any layer says. That the mode cannot buy the real path is the same fact the
+// command-level case below covers, from the variable instead of the flag.
 func TestExecManagedSettingsFlag(t *testing.T) {
-	on := runner.Spend{Mode: "observe"}
-	off := runner.Spend{Mode: "off"}
 	lo := "http://127.0.0.1:8080"
 	cases := []struct {
-		name     string
-		o        execOptions
-		spend    runner.Spend
-		spendErr error
-		fileMode string
-		refused  bool
+		name    string
+		o       execOptions
+		refused bool
 	}{
-		{"committed enforce under an off ceiling", execOptions{managedSettings: "/tmp/m.json"}, off, nil, "enforce", true},
-		{"committed observe, no ceiling", execOptions{managedSettings: "/tmp/m.json"}, runner.Spend{}, nil, "observe", true},
-		{"committed off", execOptions{managedSettings: "/tmp/m.json"}, off, nil, "off", true},
-		{"budget on, real upstream", execOptions{managedSettings: "/tmp/m.json"}, on, nil, "", true},
-		{"budget on, real upstream, even a real URL", execOptions{managedSettings: "/tmp/m.json", gatewayUpstream: "https://api.anthropic.com"}, on, nil, "", true},
-		{"malformed budget counts as on", execOptions{managedSettings: "/tmp/m.json"}, runner.Spend{}, errors.New("bad"), "", true},
-		{"budget on, loopback upstream", execOptions{managedSettings: "/tmp/m.json", gatewayUpstream: lo}, on, nil, "", false},
-		{"budget off", execOptions{managedSettings: "/tmp/m.json"}, off, nil, "", true},
-		{"unset", execOptions{}, on, nil, "", false},
+		{"real upstream", execOptions{managedSettings: "/tmp/m.json"}, true},
+		{"real upstream, even a real URL", execOptions{managedSettings: "/tmp/m.json", gatewayUpstream: "https://api.anthropic.com"}, true},
+		{"loopback upstream", execOptions{managedSettings: "/tmp/m.json", gatewayUpstream: lo}, false},
+		{"unset", execOptions{}, false},
 	}
 	for _, c := range cases {
-		err := checkTestHooks(c.o, c.spend, c.spendErr, c.fileMode)
+		err := checkTestHooks(c.o)
 		if c.refused != (err != nil) || (err != nil && ExitCode(err) != ExitUserError) {
 			t.Errorf("%s: err = %v", c.name, err)
 		}
@@ -710,16 +719,139 @@ func TestExecManagedSettingsFlag(t *testing.T) {
 	}
 }
 
+// A local invocation is not refused over Claude Code's managed settings: their
+// directory is the image's, and a developer's machine may hold none at all
+// (AB1b, D149; the #3481 finding). --managed-settings cannot be pointed out of
+// the way there while the budget is on (checkTestHooks, above), so the
+// precondition and the file the gateway writes are the cloud's: this run goes
+// past bootstrap and stops at the agent binary it has not got, where a local
+// invocation really stops.
+func TestExecLocalRunNeedsNoManagedSettingsDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "absent")
+	// Every model a Claude one: a coder another provider serves is refused
+	// earlier, by a check that has nothing to do with this one.
+	pins := func(cfg string) string {
+		return strings.Replace(pinnedConfig(t, cfg), "coder: deepseek/deepseek-v4-flash", "coder: claude-sonnet-5-5", 1)
+	}
+	_, _, store := localExecCfg(t, pins, map[string]string{"FIXTURE_FAILS_FILE": filepath.Join(t.TempDir(), "fails")},
+		"--managed-settings", filepath.Join(dir, "managed-settings.json"),
+		"--gateway-upstream", "http://127.0.0.1:1",
+		"--claude", filepath.Join(t.TempDir(), "no-such-claude"))
+	rec, rerr := store.ReadRecord(context.Background())
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	// The run reached its first stage and stopped there, at the agent binary
+	// this machine has not got. With the precondition on a local run it stops
+	// at bootstrap instead: "the image can't hold Claude Code's managed
+	// settings (...); rebuild it on an M9a base image", a remedy no host has.
+	if rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "no-such-claude") {
+		t.Fatalf("record = %+v: the run did not reach its stages", rec)
+	}
+	if _, serr := os.Stat(dir); !os.IsNotExist(serr) {
+		t.Errorf("the managed settings directory was created: %v", serr)
+	}
+}
+
+// The other half of the local invocation's managed settings (AB1b, D149; the
+// #3481 finding): the tolerated write is one that found nothing to replace. A
+// managed settings file already at the path is not this run's — an
+// organisation's own policy, say — and the managed level outranks the stage's
+// environment, so a stage left reading it would call wherever it says while the
+// run's ledger read nothing. This run stops at that file instead, and does not
+// touch it.
+func TestExecLocalRunStopsAtAManagedSettingsFileItCannotReplace(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a root test user writes into a read-only directory")
+	}
+	dir := t.TempDir()
+	corp := "{\"env\":{\"ANTHROPIC_BASE_URL\":\"https://corp-proxy.invalid\"}}\n"
+	path := filepath.Join(dir, "managed-settings.json")
+	if err := os.WriteFile(path, []byte(corp), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The organisation's file, in a directory the developer may not write.
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	pins := func(cfg string) string {
+		return strings.Replace(pinnedConfig(t, cfg), "coder: deepseek/deepseek-v4-flash", "coder: claude-sonnet-5-5", 1)
+	}
+	_, _, store := localExecCfg(t, pins, map[string]string{"FIXTURE_FAILS_FILE": filepath.Join(t.TempDir(), "fails")},
+		"--managed-settings", path,
+		"--gateway-upstream", "http://127.0.0.1:1",
+		"--claude", filepath.Join(t.TempDir(), "no-such-claude"))
+	rec, rerr := store.ReadRecord(context.Background())
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "writing Claude Code's managed settings") {
+		t.Fatalf("record = %+v: the run went on over a file that routes its stages away from the gateway", rec)
+	}
+	if b, rerr := os.ReadFile(path); rerr != nil || string(b) != corp {
+		t.Errorf("the managed settings file that was already there was touched: %q, %v", b, rerr)
+	}
+}
+
+// The writable half of the same rule (AB1b, D149; the #3481 finding): a
+// directory the run may write is where it *can* take a file it did not write —
+// replacing the organisation's own managed settings and deleting them at the
+// end of the run. The refusal is made before the write, so this run stops with
+// the file as it was, and nothing logs that the stages reached the gateway over
+// it.
+func TestExecLocalRunStopsAtAWritableManagedSettingsFileItDidNotWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "managed-settings.json")
+	corp := "{\"env\":{\"ANTHROPIC_BASE_URL\":\"https://corp-proxy.invalid\"}}\n"
+	if err := os.WriteFile(path, []byte(corp), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pins := func(cfg string) string {
+		return strings.Replace(pinnedConfig(t, cfg), "coder: deepseek/deepseek-v4-flash", "coder: claude-sonnet-5-5", 1)
+	}
+	_, _, store := localExecCfg(t, pins, map[string]string{"FIXTURE_FAILS_FILE": filepath.Join(t.TempDir(), "fails")},
+		"--managed-settings", path,
+		"--gateway-upstream", "http://127.0.0.1:1",
+		"--claude", filepath.Join(t.TempDir(), "no-such-claude"))
+	rec, rerr := store.ReadRecord(context.Background())
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "already there and this run did not write it") {
+		t.Fatalf("record = %+v: the run went on over a managed settings file it did not write", rec)
+	}
+	if b, rerr := os.ReadFile(path); rerr != nil || string(b) != corp {
+		t.Errorf("the managed settings file that was already there was replaced: %q, %v", b, rerr)
+	}
+}
+
 // The budget backend's Firebase Auth URL moves only to a loopback address.
 func TestExecIdentityURLFlag(t *testing.T) {
 	for _, bad := range []string{"https://identitytoolkit.googleapis.com", "http://example.invalid:80", "http://127.0.0.1:8080/x", "http://localhost:80"} {
-		if err := checkTestHooks(execOptions{identityURL: bad}, runner.Spend{}, nil, ""); err == nil || ExitCode(err) != ExitUserError {
+		if err := checkTestHooks(execOptions{identityURL: bad}); err == nil || ExitCode(err) != ExitUserError {
 			t.Errorf("%s: err = %v", bad, err)
 		}
 	}
-	if err := checkTestHooks(execOptions{identityURL: "http://127.0.0.1:9099"}, runner.Spend{}, nil, ""); err != nil {
+	if err := checkTestHooks(execOptions{identityURL: "http://127.0.0.1:9099"}); err != nil {
 		t.Errorf("a loopback URL was refused: %v", err)
 	}
+}
+
+// pinnedConfig is the fixture's fugaro.yaml with every model and output limit
+// a run under a budget needs: the fixture pins none, because the sandboxes
+// that run it by hand were accounted for by nothing until AB1a, and now every
+// run is (a run that pins nothing is refused with "is required with a budget").
+func pinnedConfig(t *testing.T, cfg string) string {
+	t.Helper()
+	out := strings.Replace(cfg, "  review_rounds: 2\n", `  review_rounds: 2
+  model: claude-sonnet-5-5
+  models: { coder: deepseek/deepseek-v4-flash, reviewer: claude-sonnet-5-5, background: claude-sonnet-5-5 }
+  max_output_tokens: { coder: 4096, reviewer: 4096 }
+`, 1)
+	if out == cfg {
+		t.Fatal("fixture has no review_rounds line")
+	}
+	return out
 }
 
 // The owner's model providers in the job's environment reach the runner: a
@@ -728,17 +860,7 @@ func TestExecIdentityURLFlag(t *testing.T) {
 // is refused as a model no provider serves. A malformed value is the run's
 // infra_error, never a silent none.
 func TestExecPassesModelProviders(t *testing.T) {
-	pinned := func(cfg string) string {
-		out := strings.Replace(cfg, "  review_rounds: 2\n", `  review_rounds: 2
-  model: claude-sonnet-5-5
-  models: { coder: deepseek/deepseek-v4-flash, reviewer: claude-sonnet-5-5, background: claude-sonnet-5-5 }
-  max_output_tokens: { coder: 4096, reviewer: 4096 }
-`, 1)
-		if out == cfg {
-			t.Fatal("fixture has no review_rounds line")
-		}
-		return out
-	}
+	pinned := func(cfg string) string { return pinnedConfig(t, cfg) }
 	budget := map[string]string{"FUGARO_BUDGET_MODE": "enforce", "FUGARO_MAX_RUN_USD": "5"}
 	with := func(k, v string) map[string]string {
 		m := map[string]string{k: v}

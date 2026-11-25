@@ -4,7 +4,7 @@ package cli
 // project's owner declaring one project a member from the machine that holds the
 // member table (D2802, D2821).
 //
-// It is `workspace member add`'s declaration plus the two things the owner's
+// It carries `workspace project add`'s declaration plus the two things the owner's
 // half owes once the member's own owner has consented: the member's grantees
 // become people of the workspace (D2805: adopt, never strip), and each workspace
 // admin who also holds the live binding gets their stored grant written into the
@@ -34,9 +34,7 @@ package cli
 // (D2805).
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -69,11 +67,15 @@ type workspaceProjectAddSeams struct {
 	store     func(ctx context.Context, ws string) (workspace.Store, error)
 	audit     func(ctx context.Context, ws string) (workspace.AuditSink, error)
 	authority func(ctx context.Context, ws string) (workspace.Authority, error)
-	// member opens the member's own database. region is where its Realtime
-	// Database lives, as the owner's own table declares it (--database-region):
-	// C2's MemberTarget names the member by its two projects and cannot carry a
-	// third fact, so the region travels beside it.
-	member func(ctx context.Context, m workspace.MemberTarget, region string) (workspace.MemberOps, error)
+	// member opens the member's own database. lc is the WORKSPACE's own config
+	// -- the one whose project the member table is in -- because the writer it
+	// returns reaches the member's project with the workspace owner's
+	// credentials, which is what D2821 makes this command exactly the act of
+	// that machine. region is where the member's Realtime Database lives, as
+	// the owner's own table declares it (--database-region): C2's MemberTarget
+	// names the member by its two projects and cannot carry a third fact, so
+	// the region travels beside it.
+	member func(ctx context.Context, lc *localcfg.Config, m workspace.MemberTarget, region string) (workspace.MemberOps, error)
 	caller func(ctx context.Context) (string, error)
 	now    func() time.Time
 	rand   io.Reader
@@ -98,7 +100,7 @@ type workspaceProjectAddOptions struct {
 	// workspace's allowed domains are adopted, marked external, only when it is
 	// given. Nothing asks for it (D1540); its absence is a refusal that names it.
 	external bool
-	// member is `workspace member add`'s own set of values, which this command
+	// member is the set of values this command
 	// carries unchanged (D2802): one entry, built from the same flags by the same
 	// validation, written in the same table.
 	member workspaceMemberAddOptions
@@ -112,7 +114,7 @@ func newWorkspaceProjectAddCmd(seams workspaceProjectAddSeams) *cobra.Command {
 		Long: `Write one member entry into the workspace's own project config, and, once the
 member's own owner has linked their project, write the workspace's side into it.
 
-The entry is the one fugaro workspace member add writes, built from the same
+The entry is the one fugaro workspace project add writes, built from the same
 flags: the member's job service accounts with the repositories they are a job of,
 its Firebase project and fp, its exchange URL, its database region and the
 repositories it contributes. --workspace names the workspace whose config holds
@@ -245,6 +247,21 @@ func runWorkspaceProjectAdd(cmd *cobra.Command, project string, o *workspaceProj
 	// reaches the workspace's own project from the machine that holds it.
 	lc, path, err := workspaceOwnerConfig(o.workspace)
 	if err != nil {
+		return err
+	}
+	// --database-region is the flag's when it is given, the member's own
+	// database's when this machine holds its config, and the entry's own
+	// otherwise: what everything downstream states -- the write, the sentence
+	// and the command line -- is the value the entry ends up carrying. It is
+	// derived here, where the table's own document has just been read, and not
+	// in a helper of its own: the derivation is one call against the entry this
+	// command is about to write.
+	declared := lc.WorkspaceMembers != nil && !(*lc.WorkspaceMembers)[project].IsZero()
+	current := ""
+	if declared {
+		current = (*lc.WorkspaceMembers)[project].DatabaseRegion
+	}
+	if o.member.databaseRegion, err = workspaceMemberRegion(project, o.member.firebaseProject, o.member.databaseRegion, current); err != nil {
 		return err
 	}
 	member := workspace.MemberTarget{Project: project, Firebase: o.member.firebaseProject}
@@ -433,7 +450,7 @@ func (a *workspaceProjectAdd) judgeGrants(grants []accesslib.Grant) error {
 	return nil
 }
 
-// declare is `workspace member add`'s own write: one entry, built from the same
+// declare is its own write: one entry, built from the same
 // flags by the same validation, replacing whole any entry the table already
 // declares for the project.
 //
@@ -700,17 +717,13 @@ func (a *workspaceProjectAdd) writeMirror(ctx context.Context, roster *workspace
 // reader -- spells the document here, and this is where a reader of one finds
 // its version.
 func workspaceMirrorDocument(people []workspace.Person) ([]byte, error) {
-	doc := workspaceMirrorDoc{Version: workspaceMirrorVersion, Members: make([]workspace.MirrorEntry, 0, len(people))}
+	entries := make([]workspace.MirrorEntry, 0, len(people))
 	for _, p := range people {
-		entry := workspace.MirrorEntry{Address: p.Address, Kind: p.Kind, External: p.External}
-		if err := entry.Validate(); err != nil {
-			return nil, userErr("the member list this add would mirror: %v", err)
-		}
-		doc.Members = append(doc.Members, entry)
+		entries = append(entries, workspace.MirrorEntry{Address: p.Address, Kind: p.Kind, External: p.External})
 	}
-	raw, err := json.Marshal(doc)
+	raw, err := EncodeMemberMirror(entries)
 	if err != nil {
-		return nil, userErr("rendering the member list this add would mirror: %v", err)
+		return nil, userErr("the member list this add would mirror: %v", err)
 	}
 	return raw, nil
 }
@@ -759,24 +772,7 @@ func workspaceProjectMirrorEntries(doc workspace.MemberDoc) ([]workspace.MirrorE
 	if !doc.Found {
 		return nil, nil
 	}
-	dec := json.NewDecoder(bytes.NewReader(doc.Raw))
-	dec.DisallowUnknownFields()
-	var m workspaceMirrorDoc
-	if err := dec.Decode(&m); err != nil {
-		return nil, err
-	}
-	if _, err := dec.Token(); err != io.EOF {
-		return nil, errors.New("the document carries more than one JSON value")
-	}
-	if m.Version != workspaceMirrorVersion {
-		return nil, fmt.Errorf("version: %d is not the version this command writes (%d)", m.Version, workspaceMirrorVersion)
-	}
-	for i, entry := range m.Members {
-		if err := entry.Validate(); err != nil {
-			return nil, fmt.Errorf("members[%d]: %w", i, err)
-		}
-	}
-	return m.Members, nil
+	return DecodeMemberMirror(doc.Raw)
 }
 
 // workspaceProjectAddForeignPeople is R2's "another workspace" as it can be read
@@ -969,7 +965,7 @@ func (a *workspaceProjectAdd) openMember(ctx context.Context) (workspace.MemberO
 	if a.seams.member == nil {
 		return nil, userErr("%s", workspaceProjectAddUnwired("the member's own database"))
 	}
-	return a.seams.member(ctx, a.member, a.options.member.databaseRegion)
+	return a.seams.member(ctx, a.lc, a.member, a.options.member.databaseRegion)
 }
 
 func (a *workspaceProjectAdd) openCaller(ctx context.Context) (string, error) {

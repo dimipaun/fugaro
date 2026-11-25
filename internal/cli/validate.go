@@ -66,15 +66,22 @@ func needsAnthropicKey(lc *localcfg.Config, cfg *config.Config, repo string) boo
 }
 
 // ceilingLayer is the owner's ceiling as the runner builds it from the job
-// environment update --repo sets from the project config: an "off" mode is no
-// mode at all.
+// environment update --repo sets from the project config (runner.envCeiling):
+// a mode left unset and the word that is not a mode any more are both no mode
+// at all, so the layer writes nothing and every reader of the merge asks C1
+// what the effective mode is (D3009, R3).
+//
+// The mode is read off the block the config *writes* and not through
+// localcfg.BudgetMode, which answers observe for a mode nobody wrote (AB2,
+// D3010): a project that sets no budget at all has no ceiling to announce, and
+// a layer that carried observe for every installation would give it one.
 func ceilingLayer(lc *localcfg.Config) policy.Layer {
 	var l policy.Layer
 	if b := lc.Budget; b != nil {
 		l.PerRunUSD, l.MaxRunTokens, l.AllowedModels = b.PerRunUSD, b.MaxRunTokens, b.AllowedModels
-	}
-	if m := lc.BudgetMode(); m != localcfg.BudgetOff {
-		l.Mode = m
+		if b.Mode != "" && !policy.Mode(b.Mode).Removed() {
+			l.Mode = b.Mode
+		}
 	}
 	return l
 }
@@ -265,7 +272,7 @@ func budgetProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config
 	}
 	routes := runner.ProvidersFor(claimed, repo)
 	sw := claudeSwitchOf(lc.Routing)
-	reach, _ := routingReachOf(sw, cfg.Agent.Auth, e.Mode)
+	reach, _ := routingReachOf(sw, cfg.Agent.Auth)
 	// runPins is what checkProviderModels leaves the pins of the run that
 	// carries a: the agent as applyRouting left it (routedAgent), with its
 	// background derived from those pins over the routes that run carries
@@ -302,9 +309,10 @@ func budgetProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config
 	if cfg.Agent.Auth == "vertex" && e.Mode == policy.ModeEnforce {
 		problems = append(problems, config.Problem{Path: "agent.auth", Message: vertexBudgetRefusal})
 	}
-	if e.Mode == "" || e.Mode == policy.ModeOff {
-		return problems, warnings, notes
-	}
+	// The price rules are every mode's: a model the gateway cannot price is
+	// refused under observe as it is under enforce (D3020), and the fix is the
+	// same `model_prices` entry. A mode left unset is observe (C1, R3), so
+	// there is no state left in which nothing prices the pins.
 	o, err := lc.Overrides()
 	if err != nil {
 		// The prices are unreadable, so a model "without a price" would be
@@ -386,12 +394,9 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	}
 	prices, err := priceTableFor(lc.Providers, o, budgetNow())
 	if err != nil {
-		// A refused table (a malformed catalog, or a route the switches
-		// cannot price) is reported by budgetProblems when the budget is
-		// on; with the mode off it never builds one, so report it here.
-		if m := policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode; m == "" || m == policy.ModeOff {
-			problems = append(problems, config.Problem{Path: "providers", Message: err.Error() + " (in the project config)"})
-		}
+		// The refusal is budgetProblems' own, in every mode now that no mode
+		// skips the price rules (D3020).
+		//
 		// Without a table the price rule is skipped rather than judged on
 		// another table: a model with "no price" would be this refusal's
 		// fault, not the file's.
@@ -1228,9 +1233,11 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 		// way.
 		return nil, nil
 	}
-	// The mode is the run's own (policy.Merge), as budgetProblems computes it:
-	// only an enforcing budget puts a gateway in front of the call, and routing
-	// is the gateway's.
+	// The mode is the run's own (policy.Merge), as budgetProblems computes it.
+	// It is read for the rules that still turn on it — the keyless note and the
+	// provider-gateway rule — and never for the switch's reach: whether a run
+	// has a gateway is its auth's fact alone (AB1b, D3009), which is why
+	// routingReachOf takes no mode below.
 	mode := ""
 	if readable {
 		mode = policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode
@@ -1273,7 +1280,7 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 	// runner's own decision (routingReachOf) and used by every line below: the
 	// switch's reach is the same for each pin, and the pins differ only in
 	// whether a route carries them.
-	reach, why := routingReachOf(sw, cfg.Agent.Auth, mode)
+	reach, why := routingReachOf(sw, cfg.Agent.Auth)
 	// The switch's own list, judged over the routes this run carries and
 	// before the pins, because that is the run's own order: applyRouting calls
 	// config.CheckRouting(block, r.modelProviders(), "routing") over every ID
@@ -1341,7 +1348,7 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 					// key is read from below too), and the run's (routes).
 					msg += switchListFilteredClause(sw, m, repo, ownProviders, routes)
 				}
-				verdict, halt := switchVerdict(reach, why, cfg.Agent.Auth, mode)
+				verdict, halt := switchVerdict(reach, why, cfg.Agent.Auth)
 				msg += verdict
 				if halt {
 					problems = append(problems, config.Problem{Path: q.Path, Message: msg})
@@ -1421,7 +1428,7 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 			// of one function may not disagree about whether routing reaches
 			// here — and the note, unlike this problem, never turns on the key.
 			msg := fmt.Sprintf("%s is named by routing.claude.models and does not resolve over the routes a run of %s carries: no single provider entry claims it with allow_data_to written, or the entry that claims it does not admit this repository, and a call the switch names has no direct fall-back (D1b, design §6.2)", p.model, repo)
-			verdict, halt := switchVerdict(reach, why, cfg.Agent.Auth, mode)
+			verdict, halt := switchVerdict(reach, why, cfg.Agent.Auth)
 			msg += verdict + "; fix the list, the claim, or the allow_data_to of the entry that claims it"
 			if halt {
 				problems = append(problems, config.Problem{Path: "routing.claude", Message: msg})
@@ -1447,10 +1454,10 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 				// the run does and names the licence beside it, rather than
 				// printing as the run's a route no Vertex run takes (the false
 				// resolution doctor's own check stopped giving).
-				notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf("%s -> direct (%s; the switch licenses %s, sent as %s, for a run that does take it)", p.model, routingInertWhy(why, cfg.Agent.Auth, mode), route, sent)})
+				notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf("%s -> direct (%s; the switch licenses %s, sent as %s, for a run that does take it)", p.model, routingInertWhy(why, cfg.Agent.Auth), route, sent)})
 				continue
 			case reach == routingInert:
-				notes = append(notes, config.Problem{Path: "routing.claude", Message: line + " (nothing takes it here: " + routingInertWhy(why, cfg.Agent.Auth, mode) + ", so the pins keep Claude's own IDs)"})
+				notes = append(notes, config.Problem{Path: "routing.claude", Message: line + " (nothing takes it here: " + routingInertWhy(why, cfg.Agent.Auth) + ", so the pins keep Claude's own IDs)"})
 				continue
 			default:
 				notes = append(notes, config.Problem{Path: "routing.claude", Message: line})
@@ -1598,8 +1605,15 @@ const (
 // own answer rather than one of the two guessed at. A credential that is
 // neither api-key nor vertex (oauth, or nothing at all) is no gateway whichever
 // key the job holds, so it is inert either way.
-func routingReachOf(sw *config.RoutingClaude, auth, mode string) (routingReach, runner.RoutingInert) {
-	gateway := runner.GatewayOn(auth, mode)
+//
+// The budget mode is not an argument (AB1b, D3009): whether a run has a gateway
+// is a fact about its auth alone now, and the mode GatewayOn is asked with is
+// the one every run is accounted for under (C1, R3) rather than a value any
+// caller reads out of a file. A caller that passed its own mode passed a
+// string that decided nothing — and, for a mode left unset, the word that is
+// not a mode any more.
+func routingReachOf(sw *config.RoutingClaude, auth string) (routingReach, runner.RoutingInert) {
+	gateway := runner.GatewayOn(auth, policy.ModeObserve)
 	why := runner.RoutingInertReason(sw, auth, gateway, false)
 	switch {
 	case runner.RoutingInertReason(sw, auth, gateway, true) == runner.RoutingActs:
@@ -1615,30 +1629,28 @@ func routingReachOf(sw *config.RoutingClaude, auth, mode string) (routingReach, 
 
 // routingInertWhy words the runner's own reason for a switch that reaches no
 // run of this configuration (runner.RoutingInert), for a caller that holds the
-// credential and the effective mode: the facts two of the reasons are about.
-// why must be a reason RoutingInertReason gave for a run that does not act —
-// the states routingKeyless covers have no single sentence and are worded where
-// they are used.
-func routingInertWhy(why runner.RoutingInert, auth, mode string) string {
-	m := mode
-	if m == "" {
-		m = policy.ModeOff
-	}
+// credential. why must be a reason RoutingInertReason gave for a run that does
+// not act — the states routingKeyless covers have no single sentence and are
+// worded where they are used.
+//
+// The budget mode is not one of the facts it words (AB1b, D3009): every run has
+// a gateway but the ones whose auth carries no model credential for one to
+// hold, so the one reason that used to name the mode names the auth alone. A
+// mode read here was a mode read wrong, too — an unset one spelled the word
+// that is not a mode any more (C1).
+func routingInertWhy(why runner.RoutingInert, auth string) string {
 	switch why {
 	case runner.RoutingInertNoGateway:
 		// The cascade is the one auth whose gateway is not a model API's
 		// credential: a cascade run's calls are carried by the credentials
 		// service (D133, D143). runner.GatewayOn answers true for it (C1.19),
-		// so the only way a cascade run reaches this arm is a budget that is
-		// off — and there the generic sentence below would be false of it: the
-		// cascade's gateway is precisely the one that does not need a
-		// credential of the job's own, and the sentence would read as "the
-		// cascade has no credential for a gateway to carry", the opposite of
-		// what the value asks for. The arm below says what is true instead.
+		// so this arm is a line no configuration reaches for it; the sentence
+		// below says what is true of it rather than reading as "the cascade has
+		// no credential for a gateway to carry", the opposite of the value.
 		if auth == config.AuthCascade {
-			return "no run of this configuration has a gateway (agent.auth is " + config.AuthCascade + " and budget.mode is " + m + ": a cascade run's gateway forwards to the credentials service, which is an observing or enforcing budget's to start)"
+			return "no run of this configuration has a gateway (agent.auth is " + config.AuthCascade + ": a cascade run's gateway forwards to the credentials service, which no installation of this project serves it from)"
 		}
-		return "no run of this configuration has a gateway (agent.auth is " + auth + " and budget.mode is " + m + ": the gateway needs a model API's credential and an observing or enforcing budget)"
+		return "no run of this configuration has a gateway (agent.auth is " + auth + ": the gateway needs a model API's credential, and this auth carries none)"
 	case runner.RoutingInertCascadeOtherAuth:
 		// via: cascade names no model and routes no call: it is the switch that
 		// puts the credentials service in front of a run, so it acts on the
@@ -1669,7 +1681,7 @@ func routingInertWhy(why runner.RoutingInert, auth, mode string) string {
 // something else in the next; the review finding on the switch's own list was
 // exactly a halt no line spoke of, and the four-state table in
 // TestValidateDoesNotClaimAHaltWithoutAGateway is the other half of the rule.
-func switchVerdict(reach routingReach, why runner.RoutingInert, auth, mode string) (verdict string, halt bool) {
+func switchVerdict(reach routingReach, why runner.RoutingInert, auth string) (verdict string, halt bool) {
 	switch reach {
 	case routingAlways:
 		return ". A run of this repository halts with \"the project's routing switch is not usable\"", true
@@ -1678,7 +1690,7 @@ func switchVerdict(reach routingReach, why runner.RoutingInert, auth, mode strin
 		// sentence names both runs rather than picking one.
 		return ". via: auto is key-presence driven, so which run this halts is a fact this command does not read: a run of this repository with no Anthropic API key stored halts with \"the project's routing switch is not usable\", and one with a key stored keeps the pins direct", false
 	default:
-		return ". The switch reaches no run of this configuration (" + routingInertWhy(why, auth, mode) + "), so nothing halts here and the pins keep their Claude IDs", false
+		return ". The switch reaches no run of this configuration (" + routingInertWhy(why, auth) + "), so nothing halts here and the pins keep their Claude IDs", false
 	}
 }
 
@@ -2244,6 +2256,7 @@ func newValidateCmd() *cobra.Command {
 				}
 				rp, rw := recipeDirProblems(filepath.Dir(path), cfg)
 				problems = append(problems, rp...)
+				notes = append(notes, recipesCleanupNotes(cmd.Context(), filepath.Dir(path), cfg, lc, offline)...)
 				problems = append(problems, gateCheckProblems(filepath.Dir(path), cfg)...)
 				// The model checks judge the roles as the effective recipe
 				// leaves them.

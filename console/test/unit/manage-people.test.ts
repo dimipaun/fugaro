@@ -172,13 +172,18 @@ describe('the three kinds of People & access', () => {
   })
 
   it('names its columns and the class each one draws under', () => {
+    // A member is a `person`: the column says who a row is, and the class that
+    // draws an identity draws the whole `user:<address>` the roster spells
+    // (D3213, 2026-11-21 -- it no longer refuses a value that is not a bare login
+    // and no longer marks an address). The two lists that carry a member draw it
+    // the same way, because they are the same fact about the same person.
     expect(members.columns).toEqual([
-      { key: 'member', title: 'Member', class: 'label' },
+      { key: 'member', title: 'Member', class: 'person' },
       { key: 'roles', title: 'Roles', class: 'label' },
       { key: 'status', title: 'Status', class: 'label' },
     ])
     expect(roles.columns).toEqual([
-      { key: 'member', title: 'Member', class: 'label' },
+      { key: 'member', title: 'Member', class: 'person' },
       { key: 'role', title: 'Role', class: 'label' },
       { key: 'scope', title: 'Scope', class: 'scope' },
       { key: 'status', title: 'Status', class: 'label' },
@@ -333,6 +338,10 @@ describe('no write control', () => {
   })
 
   it('exports the three kinds, their list and the phrases they quote, and no control of its own', async () => {
+    // `stateWordText` and `instantText` are the two the pools kind draws a
+    // member's state and its next reset with (the model-credentials-routing
+    // plan's VS2): one table of `internal/creds`' words, spelled once, rather
+    // than a second copy in `pools.ts` that would drift from this one.
     const module = await import('../../src/renderer/manage/kinds/people')
     expect(Object.keys(module).sort()).toEqual([
       'ACCOUNTS_RM_DELETE',
@@ -340,8 +349,10 @@ describe('no write control', () => {
       'PEOPLE_KINDS',
       'REVOKE_RECORD',
       'accounts',
+      'instantText',
       'members',
       'roles',
+      'stateWordText',
     ])
   })
 })
@@ -480,6 +491,29 @@ describe('the cells of every row', () => {
           expect(drawn.ok, `${kind.id}.${column.key} refused ${each.cells[column.key]}`).toBe(true)
         }
       }
+    }
+  })
+
+  it('draws a member as the address the node spells, and never as a shorter one', () => {
+    // The member column carries every spelling an installation's roster holds --
+    // a person's, a group's, a domain's, a service account's -- and each is drawn
+    // whole through the class the column declares (D3213, 2026-11-21). The
+    // address is what the cell is for: a console that cut it at the `@`, as the
+    // Started-by column did until ID2, would hide the answer behind a name.
+    const column = members.columns.find((each) => each.key === 'member')
+    if (column === undefined) throw new Error('the members kind declares no Member column')
+    const cells = rowsOf(members).map((each) => each.cells.member)
+    expect(cells).toContain('user:admin@example.com')
+    expect(cells).toContain('group:fugaro-operators@example.com')
+    expect(cells).toContain('serviceAccount:fugaro-admin@example-project.iam.gserviceaccount.com')
+    for (const cell of cells) {
+      if (cell === undefined) throw new Error('a members row drew no Member cell')
+      const drawn = sanitizeText(cell, column.class, 'members.member')
+      if (!drawn.ok) throw new Error(`members.member refused ${cell}: ${drawn.reason}`)
+      // The whole spelling, domain and all: the four examples above are drawn
+      // with the address they hold, and the one that is a bare domain is drawn
+      // as that domain.
+      expect(drawn.text, cell).toBe(cell)
     }
   })
 

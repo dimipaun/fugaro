@@ -668,10 +668,13 @@ var ModelSecretsServedValues = []string{ModelSecretServedAll, ModelSecretServedA
 // The three arms are the flip's own vocabulary (D2072, G17), because the two
 // halves of the family are served at different times:
 //
-//   - all — the cascade: every model credential the job mounts. That is
+//   - all — every model credential the job mounts. That is
 //     IsModelSecretEnv's whole predicate, and what this rule was before B2.7
 //     gave the other two arms a value: a cascade job mounts none of them
-//     (SecretMounts' cascade case), so the arm is inert for it.
+//     (SecretMounts' cascade case), so the arm is inert for it. Its second
+//     producer is the routing table (infra.ModelSecretsServed): the job of a
+//     repository a chain serves mounts none of them either, which is the arm
+//     doing the work there.
 //   - anthropic — an `api-key` or `oauth` repository the switch admits: the
 //     two names in ModelSecretEnvs (the Claude OAuth token and the Anthropic
 //     key) and never a provider key, whose value the run's own route forwards
@@ -1326,21 +1329,25 @@ func CheckProviderAuth(a Agent, providers map[string]ModelProvider) []Problem {
 }
 
 // CheckProviderGateway refuses a provider model unless the budget gateway is
-// on and enforcing. The gateway holds the key and routes the call, so without
-// it the call would go to Anthropic; and observe never refuses a call, while
-// a provider's calls are real dollars (and an injected agent could send what
-// the pins would stop), so the owner's default is enforce. mode is the run's
-// effective budget mode ("" and "off" are the gateway off); bg is the run's
+// enforcing. The gateway holds the key and routes the call, so without it the
+// call would go to Anthropic; and observe never refuses a call, while a
+// provider's calls are real dollars (and an injected agent could send what the
+// pins would stop), so the owner's default is enforce. bg is the run's
 // effective background model. One problem per pin that names a provider model,
 // the vision slot's included when it is set.
+//
+// mode is the run's effective budget mode, and the answer is the vocabulary's
+// (AB2, R3): an unset mode is observe, not the off it was read as, so a run
+// that writes no mode is refused with the sentence that names the mode it
+// resolves and what raising it takes. There is no second sentence for an off
+// any more — the word is not a mode, and a door that accepts text a person
+// wrote refuses it before a run is judged (internal/config's validateBudget,
+// D3022).
 func CheckProviderGateway(a Agent, bg string, providers map[string]ModelProvider, mode string) []Problem {
-	if mode == "enforce" {
+	if policy.Mode(mode).Effective() == policy.ModeEnforce {
 		return nil
 	}
-	why := "which needs the budget gateway: set budget.mode to enforce (with agent.auth api-key) and a per-run cap; without it the call would go to Anthropic"
-	if mode == "observe" {
-		why = "which needs budget.mode enforce: observe never refuses a call and a provider's calls are real dollars. Set budget.mode: enforce with budget.per_run_usd in the project config and run `fugaro update` (or budget.mode: enforce in fugaro.yaml); `fugaro budget set --global --mode enforce` makes the shared database enforce too (it needs the global --daily and --per-run caps)"
-	}
+	why := "which needs budget.mode enforce: observe never refuses a call and a provider's calls are real dollars. Set budget.mode: enforce with budget.per_run_usd in the project config and run `fugaro update` (or budget.mode: enforce in fugaro.yaml); `fugaro budget set --global --mode enforce` makes the shared database enforce too (it needs the global --daily and --per-run caps)"
 	var ps []Problem
 	for _, r := range []struct{ path, model string }{
 		{"agent.models.coder", a.ModelFor(RoleCoder)},

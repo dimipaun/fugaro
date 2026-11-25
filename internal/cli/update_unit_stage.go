@@ -115,7 +115,9 @@ func (s *updateUnitStage) Apply(ctx context.Context, _ initflow.Env) (initflow.O
 		return initflow.Outcome{}, userErr("%v", err)
 	}
 	fmt.Fprintf(s.e.r.w, "%s\n", st.Detail)
-	if err := installUnit(ctx, m, u); err != nil {
+	// No name: `fugaro update` writes the project's own orchestrator's unit and
+	// never touches a named one's (D3206).
+	if err := installUnit(ctx, m, u, ""); err != nil {
 		return initflow.Outcome{}, err
 	}
 	fmt.Fprintf(s.e.r.w, "  no confirmation of its own: the unit is one line of the plan this update showed you, and it stays a file of your own under your home\n")

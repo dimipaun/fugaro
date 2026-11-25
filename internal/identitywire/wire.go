@@ -255,6 +255,18 @@ type TicketRequest struct {
 	// (D3136). Every other class leaves it empty, and an orchestrator's ask
 	// that names none is refused.
 	Attempt AttemptID `json:"attempt,omitempty"`
+	// Resumes is the orchestrator's reference to the paused run it continues
+	// (D3189): the run that suspended itself, whose pause the credentials
+	// service recorded and which the run this ticket is for picks up. It is
+	// spelled as the task member a resumed run is launched with
+	// (runstore.PauseMemberResumes), because it is the same reference in the
+	// two places a resume is named.
+	//
+	// It is the orchestrator's own and no other class may name one, exactly as
+	// Attempt is — and an ask names one or the other and never both, because a
+	// run either re-issues an attempt of the orchestrator's own record or
+	// continues a pause the service wrote (D3136, D3189).
+	Resumes string `json:"resumes,omitempty"`
 	// Job is the full resource name of the Cloud Batch job this launch is about
 	// to create (R1, R19), and it is empty for a Cloud Run launch, which is the
 	// launch this plan leaves exactly as it was (R18).
@@ -495,9 +507,14 @@ type Record struct {
 	// (D3114), and a record that names none is claimed as every run of the
 	// release behind claims.
 	//
-	// It is written once, with the ticket, and never changes while the record
-	// lives: a second job under the same name is a different launch with a
-	// different run id.
+	// It is written with the ticket and written AGAIN by every ask before the
+	// claim, because the ask replaces the whole record — a re-ask re-issues the
+	// ticket and the old one dies with the node's digest (R6) — so the LAST
+	// ask's name is the one the claim is held to. What it never does is change
+	// under a claimed record: the store refuses a replacement once the ticket is
+	// claimed (R5), so the name the run's identity was signed from is the name
+	// it keeps, and a second job under the same name is a different launch with
+	// a different run id.
 	Job JobName `json:"job,omitempty"`
 	// JobID is the platform's id for that job, as the registration wrote it
 	// (R19). It is empty on a record that names no job and on one whose job is

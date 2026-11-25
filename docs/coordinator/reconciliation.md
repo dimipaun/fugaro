@@ -156,7 +156,7 @@ credential at all** (`console/src/main/spawn.ts:1-8`).
 decision, not a reuse. → **Q2**.
 
 **#5 — Offboarding a person is manual and incomplete, so a "no extra permission model" v1 would have no way to remove a departed developer. — Gap.**
-`README.md:201` still carries the unchecked roadmap item *"One-command offboarding of a
+`README.md:208` still carries the unchecked roadmap item *"One-command offboarding of a
 repository"*, and no page states an offboarding remedy any more: the runbook that carried one,
 `docs/gcp-setup.md`, is the short setup page now. Removing a **person** means editing the
 launcher/operator lists and re-running `init` with `--allow-delete`, or a hand-run
@@ -222,7 +222,7 @@ coordinator stores, the console sees it only if a `fugaro` command can read it. 
 
 **#8 — There is no MCP server, no MCP dependency, and one loopback HTTP server in the whole repository. — Gap.**
 `internal/gateway/gateway.go:1-7` is the only HTTP server: *"a loopback proxy between
-Claude Code and the model API"*, started at `:620 Start`, bound at `:640` to
+Claude Code and the model API"*, started at `:681 Start`, bound at `:701` to
 `127.0.0.1:0`. Its routes are `HEAD /api/hello`, `POST /v1/messages`,
 `POST /v1/messages/count_tokens`. Nothing else in the tree serves a request.
 The spec's own claims about the protocol also need care: **MCP authorization is

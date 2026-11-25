@@ -128,8 +128,20 @@ var planTaskReaders = map[string]string{
 	// the same display-only join the rows already carry, from the same field,
 	// and no path is built from it.
 	"internal/runindex/contract.go": "the index entry's own plan_task field: the id plan status and graph join a run to a node by, display-only",
-	"internal/plan/state.go":        "joins the id the row published to a plan's task, for the states a screen draws",
-	"internal/cli/plan_status.go":   "turns the read's own sanitised rows into the facts the join reads; it never opens launch.json",
+	// The fold that writes such an entry (RI4): it copies the id out of the
+	// run's own task record into the document and decides nothing by it -- no
+	// path is built from it, nothing is matched on it, and it admits no run,
+	// budgets nothing and grants nothing.
+	"internal/runindex/fold.go": "writes the entry's plan_task from the run's own task record, for the join a screen draws",
+	// The reader of that entry (RI3): it names the field as the equality one
+	// page of the index is queried by, and the value is compared and nothing
+	// else -- no path is built from it, no record is opened by it, and what the
+	// query returns carries it as the display text contract.go's entry above
+	// already allows. The id a page was filtered by is the caller's own
+	// argument, never a value read out of a run.
+	"internal/runindex/firestore.go": "names the field as the equality a page of the index is queried by, and decides nothing by it",
+	"internal/plan/state.go":         "joins the id the row published to a plan's task, for the states a screen draws",
+	"internal/cli/plan_status.go":    "turns the read's own sanitised rows into the facts the join reads; it never opens launch.json",
 	// The orchestrator's own graph: an item carries the plan task it stands
 	// for, so the import of a plan (D2704) and the plan's adopted runs in
 	// flight (D2702) meet in one node instead of duplicating it (D2746). The
@@ -139,6 +151,19 @@ var planTaskReaders = map[string]string{
 	"internal/orchestrator/state.go":    "defines WorkItem.PlanTask, the node of a plan the item stands for",
 	"internal/orchestrator/validate.go": "applies task.PlanTaskProblem to the id a patch writes, the shape rule the launcher applies on write",
 	"internal/orchestrator/patch.go":    "the upsert op that carries a plan's node id into the state",
+	// The claim one item's work is keyed by (CG4, D3209): ClaimRef reads the
+	// item's plan task so that two orchestrators of one project that imported
+	// one plan claim the SAME node for it, and only one of them works it. The
+	// id decides which claim node one item's work stands under and nothing
+	// else. The node is `orchestrator/~claims/<plan task>` with the id escaped
+	// by budget.Key, so no id leaves that node, it is under the daemon's own
+	// IAM fence like the state beside it (the rules refuse every token there),
+	// and the claim admits no run, budgets nothing and grants nothing. Both
+	// sides of the choice are items already in the node, and the worst a forged
+	// id can reach is a collision -- an item whose claim stands where another's
+	// was taken -- which makes an orchestrator SKIP work rather than start a
+	// second run of it, the refusing direction this rule cares about.
+	"internal/orchestrator/claim.go": "keys an item's claim node by the plan task it stands for, so the project's orchestrators claim one node per task (CG4, D3209)",
 	// Adoption (R4, D2702): a run in flight whose launch recorded a plan task
 	// is filed in that plan's own node rather than beside it, which is the one
 	// thing here the id decides -- and it decides it about a record of a run

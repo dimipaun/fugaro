@@ -128,7 +128,16 @@ var gatedStages = map[string]bool{
 	// refusal the stage makes either way — the owner's own step with it, a run
 	// failure without it (TestUpdateManagedGatesTheCredentialsServiceStage).
 	initflow.CredentialsService: true,
-	initflow.Workspace:          true,
+	// The required-CLI stamp is here with the rules stage, and for the rules
+	// stage's own reason: its document is not read from anywhere — it is the one
+	// this binary composes, the bytes its conditional write puts at
+	// config/policy/required_cli (versionStampPlan.payload, D1022's own answer
+	// for "a document the binary carries, so the plan IS the generation"). The
+	// entry alone admits nothing: the stage's own gateStep is what judges the
+	// document with the binary's own Version in hand, and a step the gate does
+	// not open keeps the session's refusal exactly.
+	initflow.VersionStamp: true,
+	initflow.Workspace:    true,
 }
 
 // initGate is this run's use of the gate: M6's helper, and the one read of the
@@ -468,7 +477,7 @@ func gateSentence(marker string) string {
 // no variable and no mark, because a rule that fired is something to read and
 // not something to reach past. It says nothing about the step's confirmation:
 // whether the verdict replaces it is decided after this line and elsewhere.
-const gateContentWarning = "the gate recorded the rules below: they fired and did not refuse this plan, because D1545 makes the cover tables and the guard a tripwire that records and warns, and a blocked cost attribute applies the same way — they are in this step's audit record"
+const gateContentWarning = "the gate recorded the rules below and did not refuse this plan on them: they are this step's audit record"
 
 // gateNamesAnIAMCall is the one sentence such a step leaves behind: what is
 // still there, why nothing removed it here, and the door the owner's own run
@@ -477,7 +486,7 @@ const gateContentWarning = "the gate recorded the rules below: they fired and di
 // stopped here would leave the installation half-converged over an IAM call
 // the owner's next run makes anyway.
 func (r *initRun) gateNamesAnIAMCall(bucket string) string {
-	return fmt.Sprintf("project Viewers can still read %s: removing their read access is an IAM call of its own and not a plan, so the gate a managed project admits a coding agent's session to has nothing to judge here and it was not made; run %s in your own terminal window to remove it", bucket, r.o.doorProgram())
+	return fmt.Sprintf("project Viewers can still read %s: removing it is an IAM call no plan covers; run %s in your own terminal", bucket, r.o.doorProgram())
 }
 
 // gateStep judges one Terraform step's saved plan, and answers whether the
@@ -525,7 +534,21 @@ func (r *initRun) gateNamesAnIAMCall(bucket string) string {
 // forbids. It is the installation root's own and no other step's: the
 // runs_launcher grants live in that module, and every other call site passes
 // nil.
-func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey, cover managedmode.Cover, upgrade []string) (bool, error) {
+//
+// identity is the other half of the same fact (LM20, F25): the removals this
+// binary's own update makes out of the plan it is judging — the minter rows
+// infra.IdentityAllowDelete names when the launcher-does-not-mint switch is off,
+// and the catalog build identity's per-repository secret accessors
+// infra.BuildIdentityAccessorAllowDelete names once IS8 (D3330) takes the
+// resource away — which the gate admits as this binary's own removals beside the
+// upgrade's replaces and the record below names apart from them. Either list may
+// be empty and the other not; the two are one argument because the gate's
+// question is the same about both. It is the CALLER's to match out of the plan
+// and never this function's: both plans are the installation root's, so the
+// Firebase root — whose own plan drops a member's row for a reason that is not
+// the switch — passes nil here, and LM14 gives that root's guard the list at its
+// level (F32).
+func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey, cover managedmode.Cover, upgrade, identity []string) (bool, error) {
 	g := r.gate
 	if g == nil || !g.managed {
 		return false, nil
@@ -549,7 +572,7 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	}
 	verdict, err := managedmode.Gate(ctx, infra.PlanFile, managedmode.Spec{
 		Project: r.projectName, GCPProject: r.gcpProject,
-		Cover: cover, Imports: imports, TF: t, Upgrade: upgrade,
+		Cover: cover, Imports: imports, TF: t, Upgrade: append(slices.Clone(upgrade), identity...),
 	})
 	if err != nil {
 		// A plan terraform cannot read is never admitted (managed.Gate's own
@@ -598,9 +621,9 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	case !verdict.OK:
 		conv = managedmode.ConvergeRefusedWithWarnings(doc, managedmode.RuleLines(verdict.Refusals), warnings)
 	case len(warnings) == 0:
-		conv = managedmode.ConvergeAdmitted(doc, admittedRules(upgrade, false))
+		conv = managedmode.ConvergeAdmitted(doc, admittedRules(upgrade, identity, false))
 	default:
-		conv = managedmode.ConvergeWarned(doc, admittedRules(upgrade, true), warnings)
+		conv = managedmode.ConvergeWarned(doc, admittedRules(upgrade, identity, true), warnings)
 	}
 	m, err := g.g.admit(ctx, conv)
 	if err != nil {
@@ -922,6 +945,65 @@ var workspaceCredentialsAdmittedRules = []string{
 	fmt.Sprintf("the published credentials node is one this binary's own may write over: there is none, or it is at version %d (or at a version the migration carries to it in place)", projectpolicy.WorkspaceCredentialsVersion),
 }
 
+// gateStep judges the document the required-CLI stage is about to write, and
+// answers whether the gate admitted it: the stamp stage's version of the policy
+// and workspace stages' gateStep, for the third stage of this command whose
+// document is the database node it writes rather than a plan.
+//
+// The document is p.payload() — the exact bytes the stage's one conditional PUT
+// puts at config/policy/required_cli, built once and handed to the write as
+// well, under the ETag the stage's own read took, so the document the gate
+// judged and the document that lands are the same bytes (D1022). The two
+// questions the record names are the two the stage answered before this call:
+// budgetDBUnadopted first (the database is this installation's, and a database
+// the predicate refuses is a stage that has already skipped), and the node
+// itself after (there is none, or it names a release below this binary's — a
+// stamp never falls, D3262, so a node at or above this release is a stage that
+// never reaches here at all).
+//
+// The class is the ordinary one and there is no unjudged half: a raise only ever
+// adds to the fence, so the document is ConvergeAdmitted and the helper's own
+// rules are the whole verdict. What a session may not decide is who is admitted
+// to the project, and this node admits nobody — it is the release every member
+// is required to run, which is the same fact for every member.
+func (s *versionStampStage) gateStep(ctx context.Context, p *versionStampPlan, doc []byte) (bool, error) {
+	r := s.e.r
+	if !r.gateUnderway() {
+		return false, nil
+	}
+	if len(doc) == 0 {
+		// A step with no bytes to write is the stage's own contract broken, and
+		// it is refused rather than written: an empty document is the one thing
+		// this gate must never hand to a write.
+		return true, &initflow.GatedError{Reason: gateUnreadable, Err: errors.New("the required-CLI document this step would write is empty"), Refusal: initflow.GateRefusedUnread}
+	}
+	m, err := r.gate.g.admit(ctx, managedmode.ConvergeAdmitted(doc, versionStampAdmittedRules(p.ver)))
+	if err != nil {
+		return true, &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: gateRefusalOf(err)}
+	}
+	if !initflow.GateStandsIn(r.conditions(), m) {
+		return false, nil
+	}
+	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
+	return true, nil
+}
+
+// versionStampAdmittedRules is what the record says admitted the stamp step: the
+// two questions the stage answered before its write, in the order it asked them
+// — the database is this installation's (D1017's ownership, F22's first
+// predicate), and the node in play is one this binary's own may raise. The
+// release is named, and it is the whole point of the rule: what the step does is
+// require THIS binary's own version of every member of the project, so an owner
+// reading the record afterwards is told which release a session made the
+// project require. The document's digest is what the node is checked against;
+// the values in it are not repeated here.
+func versionStampAdmittedRules(ver string) []string {
+	return []string{
+		"the database is this installation's: budgetDBUnadopted admitted it (D1017)",
+		fmt.Sprintf("the node in play is one this binary's own may raise: there is none, or it names a release below fugaro %s", ver),
+	}
+}
+
 // gateApplied records the step the gate admitted, AFTER the step's own write
 // (D1014): an apply that cannot leave a trail fails the command, which is what
 // a record that is a control rather than a courtesy means. A run with no gate,
@@ -1213,6 +1295,15 @@ func (r *initRun) gateDeleteLeft(reason string, doc []byte, verdict managedmode.
 // unless the rule says what the gate did. The empty case is the three sentences
 // every record this program wrote before the issues grant holds, unchanged.
 //
+// identity is the other half of the same fact (LM20): the minter rows this
+// update's switch turns off, as infra.IdentityAllowDelete named them out of the
+// plan, which the step passes to the gate as Spec.Upgrade's addresses beside
+// the launcher upgrade's replaces. A plan that carries one DID have a delete
+// the guard admitted, so the guard's own sentence above is false of it as well
+// — the two lists are read together for that sentence and named apart in the
+// rules, because a minter row's delete is not a replace of a grant and the
+// sentence that says it was would be one the owner cannot check.
+//
 // warned is true when the verdict recorded CONTENT rules and did not refuse on
 // them (D1545: managed.Converge.Warned). Two of the three sentences above are
 // false of such a plan and are written as what the gate did instead: the guard
@@ -1222,12 +1313,15 @@ func (r *initRun) gateDeleteLeft(reason string, doc []byte, verdict managedmode.
 // cannot check against the plan is worse than no rule — so this parameter is
 // the verdict's own answer and never a caller's preference, and the rules that
 // fired are the record's warnings beside it.
-func admittedRules(upgrade []string, warned bool) []string {
+func admittedRules(upgrade, identity []string, warned bool) []string {
+	own := len(upgrade) > 0 || len(identity) > 0
 	guard := "the guard refused no delete and no replace, so the plan removes nothing of fugaro's own (the owner's delete list admits no removal in the embedded roots)"
 	cover := "the cover of the embedded roots admitted every change in the plan"
 	costs := "the cost list blocked no attribute of the plan"
-	if len(upgrade) > 0 {
+	if own {
 		guard = "the guard refused no delete and no replace this binary's own upgrade does not make, so the plan removes nothing of fugaro's own (the owner's delete list admits no removal in the embedded roots)"
+	}
+	if len(upgrade) > 0 {
 		cover = "the cover of the embedded roots admitted every change in the plan, each of the upgrade's replaces asked as the create it makes (its removal half is this binary's own, and no rule of the cover read it)"
 	}
 	if warned {
@@ -1238,14 +1332,19 @@ func admittedRules(upgrade []string, warned bool) []string {
 		guard = "the guard refused no delete and no replace, so the plan removes nothing of fugaro's own that D1551's classification protects (the owner's delete list admits no removal in the embedded roots)"
 		cover = "the cover of the embedded roots refused no change of this plan that its integrity rules judge — the changes it did not announce did not refuse it, and they are this record's warnings (D1545)"
 		costs = "the cost list refused no attribute of the plan — a blocked attribute did not refuse it, and it is one of this record's warnings (D1545)"
-		if len(upgrade) > 0 {
+		if own {
 			guard = "the guard refused no delete and no replace this binary's own upgrade does not make, so the plan removes nothing of fugaro's own that D1551's classification protects (the owner's delete list admits no removal in the embedded roots)"
+		}
+		if len(upgrade) > 0 {
 			cover = "the cover of the embedded roots refused no change of this plan that its integrity rules judge, each of the upgrade's replaces asked as the create it makes (its removal half is this binary's own, and no rule of the cover read it) — the changes it did not announce did not refuse it, and they are this record's warnings (D1545)"
 		}
 	}
 	rules := []string{guard, cover, costs}
 	if len(upgrade) > 0 {
 		rules = append(rules, "the replaces this binary's own upgrade makes were matched out of this plan, both halves of each change compared before it was named (infra.LauncherGrantUpgrade): "+safetext.FieldListLine(upgrade))
+	}
+	if len(identity) > 0 {
+		rules = append(rules, "the rows this binary's own update removes were named out of this plan (infra.IdentityAllowDelete's minter rows, infra.BuildIdentityAccessorAllowDelete's catalog build identity accessors): "+safetext.FieldListLine(identity))
 	}
 	return rules
 }

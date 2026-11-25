@@ -22,7 +22,7 @@ import (
 // It is an input and never a consent. The file fills the same flags the
 // wizard's answers fill (setupQuestions, setup.go), and nothing else: the
 // steps that are a person's — creating the GCP project, linking its billing
-// account, the permanent Firestore location, every secret value — have no
+// account, every secret value — have no
 // field here, and the run that reads the file goes on to meet them exactly as
 // a run answered at a terminal does. A document that claimed one of them would
 // be a document confirming a step, which --json refuses by design
@@ -194,6 +194,16 @@ func readSetupAnswers(path string, stdin io.Reader) (*setupAnswers, error) {
 			return nil, userErr("%s answers a budget the alert cannot be created with: %v — budget is a whole number from %d to %d and budget_currency is three ASCII uppercase letters such as %s, or the pair is left out and the run takes %d %s (D2211, D2212); %s",
 				where, err, managed.MinBudgetAmount, managed.MaxBudgetAmount, managed.DefaultBudgetCurrency, managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency, fix)
 		}
+		// The pair the check just read is the pair the document answers: the
+		// member it left out is written back with the default it was checked
+		// against, so a half-answered pair reaches the flags whole. The schema
+		// promises exactly that (a document that leaves `budget` out answers
+		// 100, one that leaves `budget_currency` out answers USD), and a pair
+		// only substituted inside the check would leave the run with half of
+		// one — which the run's own trio rule then refuses as a caller's
+		// mistake rather than reading the default the document was told it
+		// answers.
+		a.Budget, a.BudgetCurrency = &amount, currency
 	}
 	return a, nil
 }

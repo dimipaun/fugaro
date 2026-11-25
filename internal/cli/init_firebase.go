@@ -17,10 +17,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/place"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/runindex"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
@@ -53,8 +53,8 @@ func databaseRegionNote(region string) string {
 // a printed document that dropped the key would disagree with the installation
 // it stands for — the reading of it an owner cannot trust. The pin is in the
 // local config, so it needs no cloud call (what --print-vars by design makes
-// none of), unlike the history and coordinator accounts, which come from an
-// apply's outputs and are therefore absent here.
+// none of), unlike the accounts that come from an apply's outputs — the
+// history, coordinator and issuer accounts — which are therefore absent here.
 func (r *initRun) firebaseVars(inst []byte, spec infra.InstallationSpec, lc *localcfg.Config) ([]byte, error) {
 	fs, err := infra.Firebase(spec, infra.FirebaseInputs{
 		FP:                      r.o.firebaseProject(),
@@ -202,7 +202,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 		counts := infra.CountPlan(plan)
 		// The managed gate first, and the guard and the confirmation only when it
 		// does not admit this plan (D1016, update_managed.go).
-		gated, err := r.gateStep(ctx, t, imports, r.coverOfFirebase(), nil)
+		gated, err := r.gateStep(ctx, t, imports, r.coverOfFirebase(), nil, nil)
 		if err != nil {
 			return plan, err
 		}
@@ -271,9 +271,27 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	// BEFORE this stage's first apply, so a run that may not create a database
 	// leaves the installation exactly as it found it.
 	if r.o.firebase == "" {
-		done, err := r.noFlagBudgetDatabase(ctx, c, t, wd, bin, lc, spec, path, old, fp)
-		if err != nil {
-			return err
+		// RI2: a converged installation is still this stage's while the Firebase
+		// root's state does not carry the run index's composite indexes, which
+		// nothing but this stage's apply creates (F10) — and while it does not
+		// carry the workspace's read the pin names (WS1, D2988). Those are the
+		// cases the stage's check lets through with the database recorded
+		// (init_stages.go's firebaseSkip, and this call is the same question
+		// asked again at the arm it decides). There is nothing to adopt or
+		// create then, because the database is this machine's, so the arm below
+		// is left out and the flag's own flow runs: the same discovery, the same
+		// apply of the root, the same database steps.
+		rootOwed := false
+		if lc.Budget != nil && lc.Budget.RTDBURL != "" {
+			rootOwed, _ = r.firebaseRootWait(ctx, c, bin, spec.StateBucket, fp, lc)
+		}
+		done := false
+		if !rootOwed {
+			var err error
+			done, err = r.noFlagBudgetDatabase(ctx, c, t, wd, bin, lc, spec, path, old, fp)
+			if err != nil {
+				return err
+			}
 		}
 		// r.declined is the whole of what a run that changed nothing has to say
 		// (R2), and its spec stays the engine's own: it has no database here, so
@@ -331,10 +349,15 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	}
 	// Refused here, before the first apply, whatever the installation module
 	// accepts.
-	// Every input the apply below passes is passed here too, the workspace pin's
-	// account included: this call is the gate that runs before the installation
-	// root is applied, so a value the Firebase root would refuse has to be
-	// refused here rather than after an apply has already touched the state.
+	// Every input the apply below passes and this point can know is passed here
+	// too, the workspace pin's account included: this call is the gate that runs
+	// before the installation root is applied, so a value the Firebase root
+	// would refuse has to be refused here rather than after an apply has already
+	// touched the state. The accounts that apply's own outputs carry — the
+	// history, coordinator and issuer accounts — are the ones it cannot pass:
+	// none of them exists until that root has been applied, which is the apply
+	// below, and the issuer's member is read back from it rather than composed
+	// here for the same reason (U9).
 	if _, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount}); err != nil {
 		return initErr(err)
 	}
@@ -371,11 +394,26 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 			fmt.Fprintf(r.w, "Firestore step of the Firebase project %s: not planned, it cannot be read yet (%v)\n", fp, err)
 		}
 	} else if r.o.planOnly {
-		fmt.Fprintf(r.w, "Firestore step of the Firebase project %s (only after you confirm, never in --plan-only):\n", fp)
+		fmt.Fprintf(r.w, "Firestore step of the Firebase project %s (applied by the run that applies, never in --plan-only):\n", fp)
 		for _, l := range lines {
 			fmt.Fprintf(r.w, "  %s\n", l)
 		}
 	}
+	// Whether the FP has its Firestore database, for the Firebase root's tfvars
+	// (RI2, FirestoreStep.DatabaseExists). It is read from the plan made BEFORE
+	// the apply below, which is the only one that says anything about the
+	// database the apply will meet: the root's composite indexes are refused
+	// under a database that is not there, and this stage creates the database
+	// LAST, long after that apply (D3027). The step is planned again after the
+	// apply and that second plan is the one deployFirestore acts on.
+	//
+	// This is the answer of a read that answered. One that did not — the API not
+	// enabled yet, or a permission or Rules-API failure on the reads after the
+	// database's own — answers false here, and false is the last thing the tfvars
+	// may say for an installation that already has the indexes: an empty for_each
+	// is a plan to destroy them. That case is decided from the Firebase state,
+	// further down (runIndexIndexesManaged).
+	dbExists := fsStep.DatabaseExists()
 
 	// 1. The installation root.
 	outs, stop, err := r.installRoot(ctx, c, t, wd, lc, spec)
@@ -394,6 +432,21 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if spec.Coordinator != nil && outs.CoordinatorServiceAccount == "" {
 		return remote(errors.New("the installation has no coordinator account in its outputs; the first apply did not create it"))
 	}
+	// The credentials service's own account, handed to the Firebase root so
+	// that it plans the issuer's row on the runs' signer (LM13, D3121). It
+	// comes from that same apply's outputs and never from a name composed
+	// here, which is the whole of U9: the row's member has to be an account
+	// that EXISTS, and the installation root creates it only where its tfvars
+	// carry the service's block — a fresh setup's first apply carries none
+	// (the credentials stage writes it later in the run), so the root
+	// publishes no account and this root is handed none, and the plan names
+	// nobody. An installation that does carry the service has the account by
+	// this point: the installation root is applied above, and the block's
+	// services and accounts are that apply's own resources.
+	issuer := ""
+	if cs := outs.CredentialsService; cs != nil {
+		issuer = cs.Account
+	}
 
 	// 2. The Firebase root.
 	fdir, err := infra.FirebaseWorkdir(os.Getenv, lc.GCPProject)
@@ -404,16 +457,9 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if err != nil {
 		return err
 	}
-	fspec, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), HistoryAccount: outs.HistoryServiceAccount, CoordinatorAccount: outs.CoordinatorServiceAccount, WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount})
+	fspec, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), HistoryAccount: outs.HistoryServiceAccount, CoordinatorAccount: outs.CoordinatorServiceAccount, WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount, IssuerAccount: issuer, FirestoreDatabaseExists: dbExists})
 	if err != nil {
 		return initErr(err)
-	}
-	vars, err := infra.FirebaseVars(fspec)
-	if err != nil {
-		return err
-	}
-	if err := fwd.WriteVars(vars); err != nil {
-		return userErr("writing the Firebase tfvars: %v", err)
 	}
 	backend, err := fwd.WriteBackend(spec.StateBucket, infra.StatePrefixFirebase)
 	if err != nil {
@@ -441,6 +487,26 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	managed := map[string]bool{}
 	for _, a := range st.Addresses() {
 		managed[a] = true
+	}
+	// The run index's gate (RI2), decided here because this is where the state is
+	// known — and the tfvars are written here, and not before the state was read,
+	// for that reason: nothing in between reads the file (terraform init and show
+	// take no variables) and the plan below does. The plan above answers only when
+	// its read of the database answered at all; when it did not, the tfvars must
+	// not say there is no database, because the module's for_each would then plan
+	// away the composite indexes an installation already has. A state that manages
+	// one is an installation that has them, and it keeps them. A state that
+	// manages none keeps the plan's false, which is the direction that costs a
+	// read and never a failed apply.
+	if !fsStep.DatabaseKnown() {
+		fspec.FirestoreDatabaseExists = runIndexIndexesManaged(managed)
+	}
+	vars, err := infra.FirebaseVars(fspec)
+	if err != nil {
+		return err
+	}
+	if err := fwd.WriteVars(vars); err != nil {
+		return userErr("writing the Firebase tfvars: %v", err)
 	}
 	// Read-only discovery of the Firebase project's own singletons that the
 	// state does not manage: a look-alike is refused before any plan or
@@ -539,11 +605,170 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 		r.warn("budget.mode is off in the project config, so jobs don't use the backend yet: fugaro update --firebase-project " + fp + " --budget-mode observe turns it on (then fugaro update --repo for each repository)")
 	}
 	// D3027: the budget database and the local config that records it are
-	// written, and only now is the run history reached. A location left for a
-	// person therefore holds back the Firestore database and nothing else: the
-	// installation has its budget database, this machine records it, and what
-	// waits is the database the history job writes into.
+	// written, and only now is the run history reached. Nothing here waits on
+	// a person: deployFirestore prints the line saying where the database goes
+	// and creates it there with nothing asked, in every session this stage may
+	// run in (D3090).
 	return r.deployFirestore(ctx, fsStep)
+}
+
+// runIndexIndexesManaged reports whether the Firebase root's state manages any
+// of the run index's composite indexes (RI2). It is the fallback for the gate
+// the root's tfvars carry (FirestoreStep.DatabaseKnown), and it asks about any
+// of them and not all: a run whose Firestore read did not answer must not plan
+// away the indexes an installation already has — the module's for_each would be
+// empty and the apply would destroy them — so one address in the state is
+// enough to say they are there. Which of them are there is
+// runIndexIndexesMissing's question, and it is the one the plain update's skip
+// is decided by.
+//
+// firebaseIndexesInState reads the addresses the Firebase root's state manages,
+// and whether that could be read at all (RI2). It is the read the plain
+// update's Firebase stage is decided by — in front of the stage
+// (init_stages.go's firebaseSkip) and again in its no-flag arm, so that a
+// converged installation whose state does not carry them gets the apply that
+// creates them.
+//
+// Every way it can fail answers "could not read", and the caller then leaves
+// the installation exactly as it is. That direction is the whole of the safety:
+// the update of a converged installation must not fail over a read the stage
+// did not have to make, and it must not hand the root a state nobody could read
+// either, because what a root plans under a state it never saw is the resources
+// that are already there. The indexes such an update does not create are
+// created by the update that can read.
+func (r *initRun) firebaseIndexesInState(ctx context.Context, c *infra.Clients, bin, stateBucket, gcpProject string) (addresses map[string]bool, ok bool) {
+	has, err := infra.StateExists(ctx, c, stateBucket, infra.StatePrefixFirebase)
+	if err != nil || !has {
+		return nil, false
+	}
+	fdir, err := infra.FirebaseWorkdir(os.Getenv, gcpProject)
+	if err != nil {
+		return nil, false
+	}
+	fwd, ft, err := r.terraform(bin, fdir, "firebase")
+	if err != nil {
+		return nil, false
+	}
+	backend, err := fwd.WriteBackend(stateBucket, infra.StatePrefixFirebase)
+	if err != nil {
+		return nil, false
+	}
+	if err := ft.Init(ctx, backend); err != nil {
+		return nil, false
+	}
+	st, err := ft.ShowState(ctx)
+	if err != nil {
+		return nil, false
+	}
+	addresses = make(map[string]bool)
+	for _, a := range st.Addresses() {
+		addresses[a] = true
+	}
+	return addresses, true
+}
+
+// runIndexIndexesMissing lists the run index's composite indexes the Firebase
+// root's state does not manage (RI2): the module's declared set
+// (runindex.Indexes) minus the addresses the state holds. It is the whole of
+// the answer to "does this installation carry the indexes yet" — all of them,
+// not any of them — because a contract row added by a later release reaches a
+// converged installation only through an apply of that root, and a state that
+// carries the rows of the release before is exactly what such an installation
+// has. The update that finds a row missing runs the stage; the one that finds
+// none does not.
+func runIndexIndexesMissing(managed map[string]bool) []string {
+	var missing []string
+	for _, key := range runindex.Indexes {
+		if !managed[runindex.IndexAddress(key)] {
+			missing = append(missing, key)
+		}
+	}
+	return missing
+}
+
+// workspaceReadMissing reports whether the Firebase root's state leaves out the
+// workspace's read of this project's database (WS1, D2988): the binding, and
+// the one-permission custom role it carries, that the root declares for the
+// workspace service account a member's own pin names
+// (modules/firebase/workspace_access.tf). It is asked only of a config that
+// pins one: an installation in no workspace passes "", the root's count is 0
+// and the question is never asked of it, so nothing else's update moves.
+//
+// The pin is what makes the state's answer stale, and it is stale the moment a
+// member joins: `fugaro workspace add` writes the pin, and no root has been
+// applied with it since. The state is then the whole of the read — a state that
+// carries the binding is one an update has already given it, whatever accidental
+// state the project's IAM is in — which is what keeps a converged member's
+// update converging.
+func workspaceReadMissing(managed map[string]bool, lc *localcfg.Config) bool {
+	if lc == nil || lc.WorkspacePin.ServiceAccount == "" {
+		return false
+	}
+	for a := range managed {
+		if strings.HasPrefix(a, "module.firebase.google_project_iam_member.workspace_read") {
+			return false
+		}
+	}
+	return true
+}
+
+// firebaseRootWait is RI2's and WS1's question at the plain update's own door,
+// and the reason it is answered no. Two things are the Firebase root's and only
+// an apply of that root makes them: the eleven composite indexes the run
+// index's reads are served by (F10, RI2), and the workspace's read of a member's
+// database (WS1, D2988). So a converged installation — F34's skip, and its
+// caller has already read that this machine's config records the database —
+// owes that apply while its root's state is readable, leaves out either of them
+// (runIndexIndexesMissing: a row a later release added is a row such an
+// installation has not been given yet; workspaceReadMissing: the pin a member
+// wrote when it joined), and this credential may make the project's IAM changes.
+//
+// The last of those is F34's own reason for the skip, and it is the run
+// that skip was written for: an operator's update, whose credential may not
+// make the project's IAM changes an apply of that root makes, would fail there
+// instead of converging. So such a run keeps the skip — with the reason, which
+// firebaseSkip prints as its line — and a project owner's update creates what is
+// missing. A member's own update is a project owner's for this purpose: the
+// binding is handed to its database by the member's owner at their terminal,
+// which is the same credential the pin was written with.
+//
+// Every way it can fail answers no, and every such run is left exactly as it
+// was: an update that cannot read the state, or cannot ask about the
+// credential, does not fail over it — what it does not create is created by the
+// update that can. A pin whose state could not be read is one such run, and the
+// direction is not a preference: the read that failed is also the only thing
+// that could tell the root what it must not plan away, and a root handed a state
+// nobody saw plans the resources that are already there away.
+func (r *initRun) firebaseRootWait(ctx context.Context, c *infra.Clients, bin, stateBucket, fp string, lc *localcfg.Config) (wait bool, why string) {
+	managed, ok := r.firebaseIndexesInState(ctx, c, bin, stateBucket, fp)
+	if !ok {
+		return false, " (the Firebase root's state could not be read, so the run index's composite indexes and the workspace's read wait for the update that can)"
+	}
+	indexes := len(runIndexIndexesMissing(managed)) > 0
+	read := workspaceReadMissing(managed, lc)
+	if !indexes && !read {
+		return false, " (and the state already carries the run index's composite indexes and the workspace's read)"
+	}
+	if may, err := infra.CanMakeIAMChanges(ctx, c, fp); err != nil || !may {
+		what := "the run index's composite indexes"
+		switch {
+		case read && !indexes:
+			what = "the workspace's read of this project's database"
+		case read && indexes:
+			what = "the run index's composite indexes and the workspace's read of this project's database"
+		}
+		return false, " (and " + what + " wait for an update that may make project " + fp + "'s IAM changes, which an apply of the Firebase root does)"
+	}
+	return true, ""
+}
+
+func runIndexIndexesManaged(managed map[string]bool) bool {
+	for a := range managed {
+		if strings.HasPrefix(a, "module.firebase.google_firestore_index.") {
+			return true
+		}
+	}
+	return false
 }
 
 // discoveryClients are the clients that read the Firebase project's
@@ -794,13 +1019,13 @@ func (r *initRun) adoptBudgetDatabase(ctx context.Context, c *infra.Clients, t *
 // confirmation. confirmed reports that a confirmation was given, which also
 // covers the local config's diff.
 //
-// The budget database is written BEFORE the Firestore location's note is
-// reached (D3027): the two are different databases, the note is about the
-// run history's (its location is permanent and only a person answers for it),
-// and a location left for someone used to hold back the budget database the
-// installation needs to launch anything at all. This function therefore stops
-// at the budget database: the caller writes the local config that records it
-// and only then reaches the run history (deployFirestore).
+// The budget database is written BEFORE the Firestore database is reached
+// (D3027): the two are different databases, and the run history's location is
+// permanent and is printed rather than asked for (locationLine, D3090), so
+// nothing holds the budget database the installation needs to launch anything
+// at all. This function therefore stops at the budget database: the caller
+// writes the local config that records it and only then reaches the run
+// history (deployFirestore).
 func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, idp *idpStep, fs *infra.FirestoreStep, fsLines []string) (confirmed bool, err error) {
 	acts, warnings, err := db.Plan(ctx)
 	if err != nil {
@@ -830,7 +1055,7 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 		what = "writes the database as listed and " + infra.IdentityPlatformStep + ", as you (project owner, editor or budget admin), and then the local config"
 	}
 	if fs.CreatesDatabase() {
-		what += fmt.Sprintf("; this does NOT create the Firestore database: its creation in %s, whose location is permanent and can never be changed, is asked next, separately (its own confirmation, with nothing typed)", fs.Location)
+		what += fmt.Sprintf("; this does NOT create the Firestore database: the run creates it after the local config, in %s, printing where and creating it with nothing asked (its location is permanent)", fs.Location)
 	}
 	if err := r.confirmDatabase(what); err != nil {
 		return false, err
@@ -859,9 +1084,9 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 // The gate is what answers here and not the run's review: the review is not
 // asked on a managed project at all (runCovers' gateStandsIn arm), so a step
 // that waited for it would wait for a confirmation nobody is shown. What is
-// left to a person is the Firestore location, whose own confirmation is not
-// this function's and stays where it is: it is permanent, and D1026 admits no
-// plan gate's answer for a step like that.
+// left to a person beyond this step is nothing of the Firestore database's: its
+// location is permanent, and D3090 prints the line and creates it rather than
+// asking anyone for it (locationLine).
 func (r *initRun) confirmDatabase(what string) error {
 	if r.gateStandsIn() {
 		fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
@@ -870,65 +1095,39 @@ func (r *initRun) confirmDatabase(what string) error {
 	return r.confirmOrdinary(what, "the database was not written", r.firebaseReason())
 }
 
-// confirmLocation is the Firestore database's own confirmation: its location
-// is permanent, so the note below is the whole of what a person reads before
-// it is created. The location is typed nowhere (T7, docs/no-prompt-policy):
-// what answers for the step is confirmNow — --ask's own question, or the person
-// at their own terminal, who reads the note and is asked nothing.
-// --non-interactive, --json, a pipe and a coding agent still confirm it never,
-// and the door is still D12's answer of 2026-10-20 (stepConfirmation): `setup`
-// asks the location as a first-time question and an answer a run carries never
-// reaches it, while `update` meets it as a step of a stage it owns, so a run
-// opened on an answer the person already gave is covered there. Where nothing
-// can confirm it the step is the user's, with the one-line route.
+// locationLine is the whole of what a person reads about the Firestore
+// database's location: where it is created, and that a database's location can
+// never be changed. No step confirms it (D3090): the line is printed and the
+// database is created, in every session this stage may run in — a person's
+// terminal, --json, a pipe and a coding agent's session alike.
 //
-// It is reached by deployFirestore and not by deployDatabase, and that is
-// D3027: what the run leaves for a person is the run history's database alone,
-// with the budget database already written and already recorded in the local
-// config. loc is where the database goes, which is the step's own location —
+// What keeps an agent out of a write is unchanged and is not this stage's: the
+// refusal of cloud writes in an agent's session (D3028) and the managed gate.
+// loc is where the database goes, which is the step's own location —
 // place.For's answer for the installation's region (D3085) — and never the
 // region itself: the two are different settings, and the location is the one
 // that is permanent.
-func (r *initRun) confirmLocation(loc string) error {
-	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): the Firestore database is created in %s, and a database's location can NEVER be changed.\n", r.projectName, loc)
-	switch r.stepConfirmation(r.o.door == updateDoor.name) {
-	case stepLeave:
-		lf := promptLeft(initflow.Firebase, "run the command below: it prints the note about the Firestore database's permanent location and then creates the database, asking you nothing", r.o.doorName(), "--firebase-project", quoteWord(cmp.Or(r.o.firebaseProject(), r.gcpProject)))
-		return &initflow.NeedsYouError{Left: lf}
-	case stepByYes:
-		fmt.Fprintln(r.w, "  confirmed by this run's own answer")
-		return nil
-	}
-	ok, err := r.confirmNow("create the Firestore database in " + loc + ", a location that can never be changed?")
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return userErr("not confirmed (the Firestore database's location was not confirmed); the Firestore database was not created (nothing was written)")
-	}
-	r.noteIDETerminal()
-	return nil
+func (r *initRun) locationLine(loc string) {
+	fmt.Fprintf(r.w, "the Firestore database is created in %s, and a database's location can NEVER be changed.\n", loc)
 }
 
 // deployFirestore is the run history's own database, and it is the LAST step of
 // the stage — after the budget database has been written and the local config
 // that records it has been written too (D3027). The two are different
-// databases, and a location left for a person used to hold back the budget
-// database the installation needs to launch anything at all; now what a
-// pending location leaves is the run history and nothing else.
+// databases, and the run history is what waits on the local config that
+// records the budget database the installation needs to launch anything at
+// all.
 //
-// The location's own confirmation comes first where there is no database at
-// all (its location is permanent), and only then is anything written: the
-// deny-all rules, the mark and — where the database was just created — the
-// read-back that proves it is there.
+// The line saying where the database goes comes first where there is no
+// database at all (its location is permanent), and only then is anything
+// written: the deny-all rules, the mark and — where the database was just
+// created — the read-back that proves it is there.
 func (r *initRun) deployFirestore(ctx context.Context, fs *infra.FirestoreStep) error {
 	if !fs.Pending() {
 		return nil
 	}
 	if fs.CreatesDatabase() {
-		if err := r.confirmLocation(fs.Location); err != nil {
-			return err
-		}
+		r.locationLine(fs.Location)
 	}
 	if err := fs.Apply(ctx); err != nil {
 		return initErr(err)

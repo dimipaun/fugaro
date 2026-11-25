@@ -127,7 +127,15 @@ func TestHistoryPrintsPairingNodesDeleted(t *testing.T) {
 
 func TestHistoryNeedsExactlyOneMode(t *testing.T) {
 	newHistoryFixture(t)
-	for _, args := range [][]string{{"budget", "history"}, {"budget", "history", "--sweep", "--rollover"}} {
+	// Every pair and the trio, --reindex included: a mode left out of the count
+	// would run beside the one that was asked for, silently.
+	for _, args := range [][]string{
+		{"budget", "history"},
+		{"budget", "history", "--sweep", "--rollover"},
+		{"budget", "history", "--sweep", "--reindex"},
+		{"budget", "history", "--rollover", "--reindex"},
+		{"budget", "history", "--sweep", "--rollover", "--reindex"},
+	} {
 		if _, _, err := execute(t, args...); err == nil || ExitCode(err) != ExitUserError {
 			t.Errorf("%v: err = %v, want exit 1", args, err)
 		}

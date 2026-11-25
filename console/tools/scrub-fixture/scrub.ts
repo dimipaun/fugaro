@@ -163,7 +163,7 @@ export const VOCAB = {
   auth: ['vertex', 'api-key', 'oauth', 'cascade', '-'],
   health: ['ok', 'silent', 'lost'],
   deadline: ['ok', 'near', 'over'],
-  status: ['succeeded', 'failed', 'unreviewed', 'halted', 'cancelled', 'infra_error'],
+  status: ['succeeded', 'failed', 'unreviewed', 'halted', 'cancelled', 'infra_error', 'paused'],
   outcome: ['ready', 'draft', 'none', 'reviewed', 'artifacts'],
 } as const
 
@@ -641,7 +641,7 @@ export function scrubDocument(raw: unknown, shiftMs: number = randomTimeShiftMs(
       case 'finished': case 'ready': {
         if (!Array.isArray(value)) refuse(path, `${key} is not an array`)
         out[key] = value.map((run, i) =>
-          scrubFinished(run, `${path}[${i}]`, i, now, repoIndex, inventedRepo, inventedSlug))
+          scrubFinished(run, `${path}[${i}]`, i, now, repoIndex, inventedRepo, inventedSlug, shiftMs))
         break
       }
     }
@@ -753,6 +753,15 @@ function scrubRun(
     // own budget switch.
     mode: oneOf(VOCAB.rigorMode),
     from: oneOf(VOCAB.rigorFrom),
+    // model-credentials-routing CS9: what the run's running stage goes out on,
+    // as the project's routing table answered it (`budget.AgentEntry.Source`,
+    // internal/watch/build.go's `dash(e.Source)`). The kind is a word of the
+    // routing table's own vocabulary, but the name after the colon is the
+    // installation's own pool or provider, so the value is replaced rather than
+    // kept -- and `-`, the row's "nothing recorded" (a run the table does not
+    // serve, and a run under rules that predate the member), is kept, as
+    // `models` above keeps its own dash.
+    source: (v, p) => (v === '-' ? '-' : typeof v === 'string' ? 'pool:example-pool' : refuse(p, 'not a string')),
     notional: bool,
     spent_usd: (v, p) => (v === null ? null : typeof v === 'number' ? INVENTED_SPEND[i % INVENTED_SPEND.length] : refuse(p, 'not a number')),
     // AgeSecs is *float64 in JSONRun: a queued row the registry has not
@@ -779,7 +788,7 @@ function scrubRun(
 
 function scrubFinished(
   run: unknown, path: string, i: number, now: string, repoIndex: (r: unknown, p: string) => number,
-  inventedRepo: (n: number) => string, inventedSlug: (n: number) => string,
+  inventedRepo: (n: number) => string, inventedSlug: (n: number) => string, shiftMs: number,
 ): Obj {
   if (!isObj(run)) return refuse(path, 'a finished run that is not an object')
   const n = repoIndex(run['repo'], `${path}.repo`)
@@ -795,6 +804,20 @@ function scrubFinished(
     pr_url: invent(`https://example.invalid/example-owner/example-repo/pull/${100 + i}`),
     pr_number: () => 100 + i,
     age_seconds: num,
+    // PR7 of model-credentials-routing: a paused run is a row of this shape --
+    // its execution is terminal and its chain is in flight -- and the two facts
+    // of its pause are the listing's own computation, not the run's records:
+    // the instant the orchestrator resumes the chain at (the credentials
+    // service's node under `paused/`) and the run that did resume it (another
+    // run's task naming this one under `resumes`). Both are a recording's own
+    // facts about the installation -- when a chain comes back, and which run
+    // picked it up -- so both are replaced: the instant is shifted with the
+    // rest of the clock, as `waiting_until` on the live shape is, and the
+    // resumer is invented as this shape's own `run` is. A rule the tables have
+    // not got is a key the scrub refuses, so a recording of a paused run would
+    // otherwise be unusable.
+    resume_at: instant(shiftMs),
+    resumed_by: invent(`${runStamp(now, typeof age === 'number' ? age : 0)}-ee${String(i + 1).padStart(2, '0')}`),
     ...JOB_RULES,
   })
 }

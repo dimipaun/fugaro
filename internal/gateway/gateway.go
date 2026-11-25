@@ -168,23 +168,45 @@ type Workspace struct {
 	// the claim the service holds to the job-name rule and decides nothing
 	// from. validate refuses one that could not be a job name.
 	Job string
+	// SlipID and SlipClaim are the workspace's own slip (C1's PersonSlipEnv
+	// id and the claim secret the workspace's claim answered, WC8): they are
+	// presented on every call this run makes to the workspace's service and
+	// on none it makes to its own, under C1's two names
+	// (WorkspaceSlipHeader, WorkspaceSlipClaimHeader). Both are all or
+	// nothing, and a run the workspace granted no slip carries neither: it
+	// sends the same call it sent before this field existed (R4).
+	//
+	// The secret is a credential and nothing here logs it: like Service's own
+	// it is a value rather than a function, because the run claims the
+	// workspace's slip once at bootstrap and the claim does not change under
+	// a running gateway. It is held in the runner's memory and never in the
+	// job's environment.
+	SlipID    string
+	SlipClaim string
 }
 
 // upstream is Workspace as this package serves it: the service kind (C1.15's
 // paths, headers and refusals), at the address the record carries, with the
-// job's identity and the run's own token. The Service it builds holds no slip
-// and the Upstream declares no auth mode or account, which is R18 held
+// job's identity, the run's own token and the workspace's own slip when the run
+// holds one. The Upstream declares no auth mode or account, which is R18 held
 // structurally rather than by a rule a later edit could forget: there is no
 // field here to set one from.
+//
+// The slip this Service carries is the workspace's and never the member's: the
+// pair below is Service.WorkspaceSlipID, which travels under C1's own header
+// names, so no edit here can make a workspace call present the slip a member's
+// own service granted (R4, F13).
 func (w *Workspace) upstream() Upstream {
 	address := w.Address
 	return Upstream{
 		Kind:    KindService,
 		BaseURL: address,
 		Service: &Service{
-			Job:        w.Job,
-			RunIDToken: w.RunIDToken,
-			IDToken:    func(ctx context.Context) (string, error) { return w.IDToken(ctx, address) },
+			Job:                w.Job,
+			RunIDToken:         w.RunIDToken,
+			IDToken:            func(ctx context.Context) (string, error) { return w.IDToken(ctx, address) },
+			WorkspaceSlipID:    w.SlipID,
+			WorkspaceSlipClaim: w.SlipClaim,
 		},
 	}
 }
@@ -256,6 +278,26 @@ type Options struct {
 	// answer's own fault (an answer this gateway could not read halts the
 	// run instead) — never the hook's.
 	OnServiceAnswer func(ServiceAnswer)
+	// ChainServed says the credentials service serves this run's model calls
+	// (R2, chain_names.go): the gateway holds no key and no table, sends the
+	// run's current stage on every call it makes to the service (HeaderStage,
+	// dropped from the caller's own headers first) and no header naming a
+	// model, and reads the answer's source, fallback and served-model members
+	// into OnChainAnswer below. It is false in the core and for a run whose
+	// repository has not migrated, and a gateway with it false behaves exactly
+	// as it did before this contract — which is what lets the migration land
+	// one repository at a time (R25).
+	//
+	// It is set once, before Start, and never replaced: the run's route to the
+	// service is decided at its start (D2982).
+	ChainServed ChainServed
+	// OnChainAnswer, when set, is called once for every served call of a
+	// chain-serving gateway whose answer named the source that served it
+	// (ChainAnswerFunc, chain_names.go). It is the step's record: it folds the
+	// fallback flag over the stage's calls and takes the last call's source
+	// (CS8). It is called from concurrent calls, with no lock of this package
+	// held, and a nil hook is not an error.
+	OnChainAnswer ChainAnswerFunc
 }
 
 // DefaultGeos are the usage.inference_geo values a default request is
@@ -453,6 +495,15 @@ type Halt struct {
 // Notional is zero and Used is exactly what it always was.
 type Ledger struct {
 	Granted, Used, Notional, Reserved pricing.Micros
+	// FallbackUSD is the real money the run's fallback calls spent (C1, CS8,
+	// D140): the calls the credentials service served from a source that is
+	// not the chain's first and a metered source paid for. It is a part of
+	// Used and not a figure beside it -- those calls are charged, held to the
+	// caps and settled exactly like the calls they fell back from -- and a
+	// fallback a subscription served is in Notional and in no part of this,
+	// because no dollar of it was paid (P12). Zero for every run the service
+	// does not serve, and for one whose chain never fell back.
+	FallbackUSD pricing.Micros
 	// CacheReadTokens and CacheWriteTokens are the run's prompt-cache read
 	// and write token totals: plain sums of the calls' reported usage, not a
 	// dollar split, which the price table's one blended figure per call
@@ -530,6 +581,14 @@ type Server struct {
 	// own usage, kept apart from used because it is not money and no cap
 	// counts it (C1.16, D140).
 	notional pricing.Micros
+	// fallbackUSD is the part of used that bought a fallback: the calls the
+	// credentials service served from a source that is not the chain's first
+	// and a metered source paid for (C1, CS8, D140). It reaches the run's
+	// record through the Ledger, and it is kept here rather than summed from
+	// the stages' reports for the reason used and notional are: a call that
+	// settles after its stage's report was taken is in the run's figure and
+	// in no stage's.
+	fallbackUSD pricing.Micros
 	// lastCacheRead, lastCacheKnown and lastModel are the last settled
 	// call's cache-read tokens, whether its usage was read at all, and its
 	// serving model: what the next answer's switch is estimated from
@@ -576,11 +635,13 @@ type Server struct {
 	flight        *topUp         // lease: the top-up in flight, if any
 	stage         *stageState
 	// unreachableSince is when the outage the run is in began, for the service
-	// its calls go to (D2983): the first call that could not reach it, and zero
-	// once any answer arrives from it (noteServiceReached, service.go). The
-	// wait an unreachable call is answered with is measured from here, so a
-	// stage that meets the same outage again waits for that outage to be over
-	// rather than for a bound of its own (noteUnreachable).
+	// its calls go to (D2983): the first call that could not reach it. An
+	// answer of the service's own clears it (noteServiceReached, service.go) —
+	// unless it is the workspace's roster refusal, which puts the clock back
+	// where the answer found it (keepUnreachable, R3). The wait an unreachable
+	// call is answered with is measured from here, so a stage that meets the
+	// same outage again waits for that outage to be over rather than for a
+	// bound of its own (noteUnreachable).
 	unreachableSince time.Time
 	// ended are the reports of the stages this gateway has ended, by the name
 	// each ran under: what a stage limit reads to compare one stage with
@@ -781,6 +842,16 @@ func (o Options) validate() error {
 		if (u.Service.SlipID == "") != (u.Service.SlipClaim == "") {
 			return errors.New("gateway: the service upstream carries half a slip: the slip's id and the claim secret are presented together or not at all")
 		}
+		// The workspace's own slip is held to the same rule, and the two
+		// pairs are never carried together: which pair a call travels under
+		// is which service it is made to, and a call under one slip of each
+		// would be a call the two services could not be told apart by (R4).
+		if (u.Service.WorkspaceSlipID == "") != (u.Service.WorkspaceSlipClaim == "") {
+			return errors.New("gateway: the service upstream carries half the workspace's slip: the slip's id and the claim secret are presented together or not at all")
+		}
+		if u.Service.SlipID != "" && u.Service.WorkspaceSlipID != "" {
+			return errors.New("gateway: the service upstream carries a member's slip and the workspace's: a call to one credentials service is made under one slip, and the pair it travels in is what says which service granted it (R4)")
+		}
 	case "vertex":
 		if u.Token == nil {
 			return errors.New("gateway: the vertex upstream has no token source")
@@ -803,9 +874,12 @@ func (o Options) validate() error {
 }
 
 // validate holds the workspace's second upstream to what Options.validate's
-// service arm requires of an upstream, minus the two things this one cannot
-// carry: there is no credential of the job's to refuse beside it, and no slip to
-// come in halves — the Service Workspace.upstream builds holds none.
+// service arm requires of an upstream, minus the one thing this one cannot
+// carry: there is no credential of the job's to refuse beside it. The slip it
+// carries is the workspace's own, and it is held to the all-or-nothing rule
+// here as the project's slip is there (R4): upstream() is the one place the pair
+// is set, so a Workspace carrying half of one is a mistake in code rather than a
+// state a run can reach.
 //
 // The address is required and is held to checkBaseURL, the same rule the run's
 // own upstream is: a routed call carries the run's own token to whatever is
@@ -826,6 +900,9 @@ func (w *Workspace) validate() error {
 	}
 	if !validJobName(w.Job) {
 		return errors.New("gateway: the workspace upstream reports no Cloud Run job name")
+	}
+	if (w.SlipID == "") != (w.SlipClaim == "") {
+		return errors.New("gateway: the workspace upstream carries half its slip: the slip's id and the claim secret are presented together or not at all")
 	}
 	return nil
 }
@@ -888,6 +965,7 @@ func (s *Server) Ledger() Ledger {
 
 func (s *Server) ledgerLocked() Ledger {
 	l := Ledger{Granted: pricing.Micros(math.MaxInt64), Used: s.used, Notional: s.notional, Reserved: s.reserved,
+		FallbackUSD:     s.fallbackUSD,
 		CacheReadTokens: s.cacheRead, CacheWriteTokens: s.cacheWrite, ModelTokens: copyUsage(s.modelTokens),
 		ReportedBy: copyMicros(s.reportedBy), TableLoBy: copyMicros(s.tableLoBy), TableHiBy: copyMicros(s.tableHiBy),
 		UnreportedCalls: s.unreportedCalls}

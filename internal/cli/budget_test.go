@@ -444,7 +444,10 @@ func TestBudgetRaiseRefusesInAnAgentSession(t *testing.T) {
 		// own defaults answer, an empty --repo or a path would each land on
 		// another project's or checkout's caps than the one this run was about,
 		// and the typed project name that used to catch that is gone.
-		{[]string{"budget", "set", "--repo", "--daily", "150"}, "fugaro budget set --daily=150 --repo=acme/app --project=aurora"},
+		// A figure the ceiling admits ($50 under the global $100): one above it is
+		// refused earlier, naming the ceiling, because the command this fence
+		// hands back would meet that same ceiling (RC3, budget_ceiling_test.go).
+		{[]string{"budget", "set", "--repo", "--daily", "50"}, "fugaro budget set --daily=50 --repo=acme/app --project=aurora"},
 		// The mode is the fence's other form, and the one a session could
 		// otherwise make unopposed: with the mode node absent (an absent mode is
 		// observe, D1548) the mode edit is a no-op and the choice beside it is
@@ -863,6 +866,35 @@ func TestPricesShowsLocalOverrides(t *testing.T) {
 	}
 	if !strings.Contains(line, "$3") || !strings.Contains(line, "local") {
 		t.Fatalf("the override is not shown:\n%s", out)
+	}
+}
+
+// TestBudgetPricesNamesASecondPublishersRows: a row the embedded table prices
+// from a publisher that is not the Claude API — Vertex's Gemini rows (GV3 of
+// docs/model-credentials-routing) — names its own source and the day it was
+// read, on the row. The header line above the table is the embedded table's own
+// source and date, which are the Claude page's, and a row that left them to
+// speak for it would show Vertex's number under Anthropic's page.
+func TestBudgetPricesNamesASecondPublishersRows(t *testing.T) {
+	newBudgetFixture(t, "budget: { mode: observe, per_run_usd: 5, rtdb_url: http://127.0.0.1:9 }\n")
+	out, _, err := execute(t, "budget", "prices")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gemini, claude := "", ""
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "google/gemini-3-pro") {
+			gemini = l
+		}
+		if strings.HasPrefix(l, "claude-opus-5-5") {
+			claude = l
+		}
+	}
+	if !strings.Contains(gemini, "cloud.google.com") || !strings.Contains(gemini, "2026-11-22") {
+		t.Errorf("the Gemini row does not name where its price came from and when:\n%s", out)
+	}
+	if strings.Contains(claude, "cloud.google.com") {
+		t.Errorf("a Claude row names a source of its own: the table's own is the header line's, and the row is one publisher's price under it:\n%s", claude)
 	}
 }
 

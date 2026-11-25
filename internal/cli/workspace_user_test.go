@@ -286,7 +286,11 @@ func (a *wu7Authority) AddAdmin(_ context.Context, admin string) error {
 		return a.addErr
 	}
 	a.added = append(a.added, admin)
-	a.bound = append(a.bound, "user:"+admin)
+	// The command hands the authority the member form the live binding is
+	// written in (`user:<address>`, accesslib.Member), which is what a real
+	// mechanism binds and what AdminBindings answers: the fake records it as
+	// given rather than prefixing it a second time.
+	a.bound = append(a.bound, admin)
 	return nil
 }
 
@@ -294,7 +298,7 @@ func (a *wu7Authority) RemoveAdmin(_ context.Context, admin string) error {
 	a.removed = append(a.removed, admin)
 	kept := make([]string, 0, len(a.bound))
 	for _, b := range a.bound {
-		if b != "user:"+admin {
+		if b != admin {
 			kept = append(kept, b)
 		}
 	}
@@ -304,6 +308,25 @@ func (a *wu7Authority) RemoveAdmin(_ context.Context, admin string) error {
 
 func (a *wu7Authority) AdminBindings(context.Context) ([]string, error) {
 	return append([]string(nil), a.bound...), nil
+}
+
+// wu7Sweep is the WORKSPACE's own intake as `rm` reaches it (F21): the calls it
+// made, the containers the delete answered it removed, and the failure a test
+// seeded. It is a fake of its own and not a member's: the workspace's own
+// project is the installation a person's token is stored at once (D2960), and a
+// command that swept the wrong one would be invisible if both were one type.
+type wu7Sweep struct {
+	deleted []string
+	err     error
+	calls   []string
+}
+
+func (s *wu7Sweep) Sweep(_ context.Context, address string) ([]string, error) {
+	s.calls = append(s.calls, address)
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.deleted, nil
 }
 
 // wu7World is one test's workspace: the roster the store holds, the fakes beside
@@ -321,7 +344,14 @@ type wu7World struct {
 	audit     *wu7Audit
 	members   *wu7Members
 	authority *wu7Authority
-	linked    []workspace.MemberTarget
+	// sweep is the workspace's OWN intake (F21), which `rm` reaches beside the
+	// members'.
+	sweep  *wu7Sweep
+	linked []workspace.MemberTarget
+	// linkedCalls counts the resolutions of the member list. The list is a
+	// loader and not a value (A7: resolving it reads the cloud), so what a
+	// command asked for is as much a part of the fixture as what it wrote.
+	linkedCalls int
 
 	// caller is the verified address userCallerLookup answers, in the
 	// "user:<address>" form access.Caller builds. empty is a session with no
@@ -356,6 +386,7 @@ func wu7New(t *testing.T, r workspace.Roster) *wu7World {
 		members: &wu7Members{t: t,
 			grants: map[string][]accesslib.Grant{}, etag: map[string]string{}},
 		authority: &wu7Authority{kind: workspace.AuthorityFolder, holds: map[string]bool{}},
+		sweep:     &wu7Sweep{deleted: []string{"fugaro_u_4242_github-token"}},
 	}
 }
 
@@ -393,7 +424,11 @@ func (w *wu7World) run(args ...string) (string, error) {
 			Audit:     w.audit,
 			Members:   w.members,
 			Authority: w.authority,
-			Linked:    w.linked,
+			Sweep:     w.sweep,
+			Linked: func(context.Context) ([]workspace.MemberTarget, error) {
+				w.linkedCalls++
+				return w.linked, nil
+			},
 			getenv: func(name string) string {
 				if w.marker != "" && name == agentMarkers[0] {
 					return w.marker
@@ -733,6 +768,138 @@ func TestUserRmOffboardsEveryMember(t *testing.T) {
 	}
 }
 
+// TestUserRmSweepsTheWorkspacesIntake: removing a person from the workspace
+// sweeps TWO installations (F21, D2960) — every member the workspace holds, and
+// then the workspace's OWN project, whose intake holds the token they stored
+// once — and the report says the thing the sweep does not do: the REMOVAL halts
+// a run in flight on the person's token within a minute, because the workspace's
+// service re-reads the roster and refuses every call under a slip whose owner has
+// left it (R3, D3146).
+func TestUserRmSweepsTheWorkspacesIntake(t *testing.T) {
+	w := wu7Admin(t, workspace.Roster{
+		People: []workspace.Person{
+			{Address: "ada@example.com", Kind: workspace.KindHuman},
+			{Address: "build@ci.example.com", Kind: workspace.KindSA, Roles: []workspace.ProjectRole{{Project: "aurora", Role: workspace.RoleViewer}}},
+			{Address: "founder@example.com", Kind: workspace.KindHuman},
+		},
+		Admins:  []string{"founder@example.com"},
+		Domains: []string{"example.com"},
+	})
+	w.linked = []workspace.MemberTarget{{Project: "aurora"}, {Project: "borealis"}}
+	w.sweep.deleted = []string{"fugaro_u_4242_github-token"}
+
+	out := w.must("workspace", "user", "rm", "ada@example.com", "--workspace", "workspace-alpha")
+
+	// The workspace's own intake is asked once, for the person's own address — not
+	// a member's, and not a name the caller guessed.
+	if len(w.sweep.calls) != 1 || w.sweep.calls[0] != "ada@example.com" {
+		t.Errorf("the workspace's own intake was swept %v, want one call for ada@example.com", w.sweep.calls)
+	}
+	// The members are swept as they always were, and the workspace's own intake is
+	// the sweep beside them.
+	want := []string{"aurora ada@example.com", "borealis ada@example.com"}
+	if strings.Join(w.members.offboarded, "|") != strings.Join(want, "|") {
+		t.Errorf("the members offboarded are %v, want %v", w.members.offboarded, want)
+	}
+	// The report says the run halts within a minute (R3), and names what the
+	// workspace's own intake removed.
+	for _, want := range []string{"removed ada@example.com from workspace workspace-alpha", "halts within a minute", "R3", "fugaro_u_4242_github-token"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the report does not say %q:\n%s", want, out)
+		}
+	}
+
+	// A MACHINE holds nothing at the workspace (D2806): removing one reaches no
+	// member and sweeps no intake, and the report carries no halting line.
+	before := len(w.sweep.calls)
+	machine := w.must("workspace", "user", "rm", "build@ci.example.com", "--workspace", "workspace-alpha")
+	if len(w.sweep.calls) != before {
+		t.Errorf("removing a machine swept the workspace's intake: %v", w.sweep.calls[before:])
+	}
+	if strings.Contains(machine, "halts within a minute") {
+		t.Errorf("the report of a machine's removal says a run halts within a minute:\n%s", machine)
+	}
+}
+
+// TestTheWorkspaceSweepsAnswerSurvivesARefusal: the sweep of the workspace's own
+// intake runs BEFORE the steps that can end the command (F21, D2960), so no later
+// answer may take it down with it. A member's refusal is the one path that reports
+// the sweep and stops, and both of its facts survive there: what the sweep removed
+// is said, because the person's token at the workspace is gone whether or not the
+// roster was written, and a sweep that failed is returned beside the refusal
+// rather than behind it -- a person who reads only the refusal would re-run the
+// command on containers that are still there, or believe a removal that did not
+// happen had swept them.
+func TestTheWorkspaceSweepsAnswerSurvivesARefusal(t *testing.T) {
+	const refusal = "aurora has not applied ada@example.com's stored grant yet: its own `fugaro update` is what is pending"
+	roster := func() workspace.Roster {
+		return workspace.Roster{
+			People: []workspace.Person{
+				{Address: "ada@example.com", Kind: workspace.KindHuman},
+				{Address: "founder@example.com", Kind: workspace.KindHuman},
+			},
+			Admins:  []string{"founder@example.com"},
+			Domains: []string{"example.com"},
+		}
+	}
+
+	// A sweep that failed: the refusal is returned with the sweep's own failure
+	// beside it, and nothing is claimed about a removal that did not land -- not
+	// the sweep's answer, and not the halting line, because the roster was not
+	// written and the person's run is still going (R3).
+	t.Run("a failed sweep is not swallowed", func(t *testing.T) {
+		w := wu7Admin(t, roster())
+		w.linked = []workspace.MemberTarget{{Project: "aurora"}}
+		w.members.offErr = remote(fmt.Errorf("%s", refusal))
+		w.sweep.err = remote(fmt.Errorf("the workspace's intake answered 500"))
+
+		out, err := w.run("workspace", "user", "rm", "ada@example.com", "--workspace", "workspace-alpha")
+		if err == nil {
+			t.Fatalf("a member's refusal and a failed sweep were reported as a removal:\n%s", out)
+		}
+		for _, want := range []string{refusal, "did not sweep ada@example.com's containers", "500"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the report does not name %q, so the failed sweep is silent:\n%v", want, err)
+			}
+		}
+		if got := ExitCode(err); got != ExitRemoteError {
+			t.Errorf("the failure exits %d, want %d: both halves arrived in the class they carry", got, ExitRemoteError)
+		}
+		if strings.Contains(out, "halts within a minute") || strings.Contains(out, "at the workspace: ") {
+			t.Errorf("a removal that did not land claimed the sweep's answer:\n%s", out)
+		}
+	})
+
+	// A sweep that landed beside a refused member: what it removed is SAID, and the
+	// halting line is not, because the removal is what halts a run and the removal
+	// did not happen.
+	t.Run("what a landed sweep removed is said", func(t *testing.T) {
+		w := wu7Admin(t, roster())
+		w.linked = []workspace.MemberTarget{{Project: "aurora"}}
+		w.members.offErr = remote(fmt.Errorf("%s", refusal))
+		w.sweep.deleted = []string{"fugaro_u_4242_github-token"}
+
+		out, err := w.run("workspace", "user", "rm", "ada@example.com", "--workspace", "workspace-alpha")
+		if err == nil {
+			t.Fatalf("a member's refusal was reported as a removal:\n%s", out)
+		}
+		if !strings.Contains(err.Error(), refusal) || strings.Contains(err.Error(), "did not sweep") {
+			t.Errorf("the refusal is not the whole of the failure, or a sweep that answered is reported as failed:\n%v", err)
+		}
+		for _, want := range []string{"ada@example.com", "fugaro_u_4242_github-token"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("the report does not name %q, so what the sweep removed at the workspace is lost:\n%s", want, out)
+			}
+		}
+		if strings.Contains(out, "halts within a minute") {
+			t.Errorf("the report of a removal that did not land says a run halts within a minute:\n%s", out)
+		}
+		if !w.hasPerson("ada@example.com") {
+			t.Error("the refused removal took the person off the roster anyway")
+		}
+	})
+}
+
 // TestRmAdminRemovesBindingsAndQueuesGrants is the task's red step (plan §3,
 // WU7). Removing a workspace admin takes their live binding away AT ONCE — the
 // folder owner or the token-creator binding, and with it their authority over
@@ -766,8 +933,8 @@ func TestRmAdminRemovesBindingsAndQueuesGrants(t *testing.T) {
 	w.must("workspace", "user", "rm", "ada@example.com", "--admin", "--workspace", "workspace-alpha")
 
 	// The binding goes at once, and once.
-	if len(w.authority.removed) != 1 || w.authority.removed[0] != "ada@example.com" {
-		t.Fatalf("the bindings removed are %v, want ada@example.com once", w.authority.removed)
+	if len(w.authority.removed) != 1 || w.authority.removed[0] != "user:ada@example.com" {
+		t.Fatalf("the bindings removed are %v, want ada@example.com's own member once", w.authority.removed)
 	}
 	if len(w.authority.added) != 0 {
 		t.Errorf("the removal bound somebody: %v", w.authority.added)
@@ -915,8 +1082,8 @@ func TestUserRmSelfAdminLeavesNoUnbackedEntry(t *testing.T) {
 			t.Errorf("the roster names %s as a workspace admin, and no live binding backs that entry", admin)
 		}
 	}
-	if len(w.authority.removed) != 1 || w.authority.removed[0] != "founder@example.com" {
-		t.Errorf("the bindings removed are %v, want the caller's own once", w.authority.removed)
+	if len(w.authority.removed) != 1 || w.authority.removed[0] != "user:founder@example.com" {
+		t.Errorf("the bindings removed are %v, want the caller's own member once", w.authority.removed)
 	}
 	if strings.Join(w.members.offboarded, "|") != "aurora founder@example.com" {
 		t.Errorf("the members offboarded are %v, want every one the workspace holds", w.members.offboarded)

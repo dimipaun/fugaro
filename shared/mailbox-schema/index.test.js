@@ -52,6 +52,7 @@ import {
   KINDS,
   MAC_MAX,
   MINUTE_MAX,
+  MODE_MAX,
   OPTIONS_MAX,
   OPTION_MAX,
   PLATFORMS,
@@ -113,6 +114,17 @@ function anAction(over = {}) {
   if (verb === 'merge') {
     record.target = over.target ?? { repo: 'dimipaun/fugaro', pr: 532 };
     if (!Object.hasOwn(record, 'head_sha')) record.head_sha = 'a'.repeat(40);
+  }
+  if (verb === 'launch') {
+    // O10's typed start, whose shape is the one action record that differs: the
+    // mode is a field of the record beside the target rather than inside it, the
+    // target is the repository ALONE (a start has no run id yet and no pull
+    // request to name), and the default carries no confirmation — a plain start
+    // is D162's pass-through, and a costly one's read-back is the caller's to
+    // add.
+    delete record.confirmation;
+    record.mode = over.mode ?? 'pro';
+    record.target = over.target ?? { repo: 'dimipaun/fugaro' };
   }
   return record;
 }
@@ -387,7 +399,7 @@ test('every refusal family has its own code', () => {
     refusal(good({ kind: 'prompt', options: Array(OPTIONS_MAX + 1).fill('x') }), REFUSALS.TOO_MANY).code,
     refusal(good({ kind: 'prompt', options: [] }), REFUSALS.TOO_FEW).code,
     refusal(good({ kind: 'gossip' }), REFUSALS.UNKNOWN_KIND).code,
-    refusal(withAction({ verb: 'launch' }), REFUSALS.UNKNOWN_VERB).code,
+    refusal(withAction({ verb: 'delete' }), REFUSALS.UNKNOWN_VERB).code,
     refusal(good({ kind: 'message', options: ['one'] }), REFUSALS.FIELD_NOT_ALLOWED).code,
     refusal(withAction({ target: { run: '-x' } }), REFUSALS.BAD_TARGET).code,
     refusal(good({ mac: 'F'.repeat(MAC_MAX) }), REFUSALS.BAD_MAC).code,
@@ -447,7 +459,7 @@ test('the schema is not the redactor: redaction happens before it (P1.3)', () =>
 // ---------------------------------------------------------------------------
 
 test('the kind vocabulary is closed, and an absent kind is the ordinary message', () => {
-  assert.deepEqual([...KINDS], ['message', 'prompt', 'answer', 'action', 'registration']);
+  assert.deepEqual([...KINDS], ['message', 'prompt', 'answer', 'action', 'registration', 'stop']);
   const { message } = validateMessage(good());
   assert.equal(Object.hasOwn(message, 'kind'), false, 'an absent kind adds no field');
   for (const kind of KINDS) {
@@ -479,6 +491,14 @@ test('a kind carries its own fields and no others', () => {
   // goes through without a read-back, so it travels as an ordinary message.
   refusal(good({ kind: 'action' }), REFUSALS.MISSING_FIELD, 'action');
   assert.equal(validateMessage(good({ text: 'kick off the fix' })).ok, true, 'a launch is a plain message');
+  // P5.1g's stop request is the opposite case: it is a kind of its own so that
+  // nothing can read it as something to execute, and it carries no action
+  // record — a record with a verb and a confirmation IS the shape that gets
+  // executed, which is exactly what the owner refused the phone.
+  assert.equal(validateMessage(good({ kind: 'stop' })).ok, true, 'a stop request carries nothing but its sentence');
+  refusal(good({ kind: 'stop', action: anAction() }), REFUSALS.FIELD_NOT_ALLOWED, 'action');
+  refusal(good({ kind: 'stop', reply_to: 'm-0000' }), REFUSALS.FIELD_NOT_ALLOWED, 'reply_to');
+  refusal(good({ kind: 'stop', options: ['stop it'] }), REFUSALS.FIELD_NOT_ALLOWED, 'options');
 });
 
 test('an agent is optional, id-shaped, and the same value the heartbeat advertises', () => {
@@ -590,18 +610,75 @@ test('an action record is complete or it is refused', () => {
   refusal(good({ kind: 'action', action: [anAction()] }), REFUSALS.NOT_AN_OBJECT, 'action');
 });
 
-test('the verbs are the three the ruling names, and nothing else', () => {
-  assert.deepEqual([...ACTIONS], ['cancel', 'merge', 'confirm']);
+test('the verbs are the four the ruling names, and nothing else', () => {
+  assert.deepEqual([...ACTIONS], ['cancel', 'merge', 'confirm', 'launch']);
   for (const verb of ACTIONS) {
     assert.equal(validateMessage(withAction({ verb })).ok, true, `${verb} is accepted`);
   }
-  // D162: a launch needs no confirmation and is not one of these. Every other
-  // destructive verb — the kill switch, budget writes, deletes — stays refused
-  // by voice, so it has no verb here either (§3.1).
-  for (const verb of ['launch', 'Cancel', 'merge!', 'kill', 'budget', 'delete', 'approve']) {
+  // D162 as amended by O10: a launch IS a verb now — the typed start — and it
+  // is the one verb that may carry no confirmation, because which starts need
+  // one is the session's policy and not the schema's to know (D2786). Every
+  // other destructive verb — the kill switch, budget writes, deletes — stays
+  // refused by voice, so it has no verb here either (§3.1).
+  const plainLaunch = withAction({ verb: 'launch' });
+  assert.equal(validateMessage(plainLaunch).ok, true, 'a launch needs no confirmation');
+  assert.equal(Object.hasOwn(plainLaunch.action, 'confirmation'), false);
+  const noConfirmation = withAction();
+  delete noConfirmation.action.confirmation;
+  refusal(noConfirmation, REFUSALS.MISSING_FIELD, 'action.confirmation');
+  for (const verb of ['Cancel', 'merge!', 'kill', 'budget', 'delete', 'approve']) {
     refusal(withAction({ verb }), REFUSALS.UNKNOWN_VERB, 'action.verb');
   }
   refusal(withAction({ verb: 1 }), REFUSALS.WRONG_TYPE, 'action.verb');
+});
+
+test('a launch names the mode it starts in, and only a launch names a mode', () => {
+  // O10: the mode is the field the typed start exists for. It is a sibling of
+  // the target, not a target field, because a start has no run id yet to be the
+  // thing that is read back — and it is refused on every other verb, whose mode
+  // would be a field the consumer had to guess the meaning of.
+  const start = withAction({ verb: 'launch' });
+  assert.deepEqual(validateMessage(start).message.action, {
+    id: 'a-0001',
+    verb: 'launch',
+    mode: 'pro',
+    target: { repo: 'dimipaun/fugaro' },
+  });
+  assert.equal(validateMessage(withAction({ verb: 'launch', mode: 'critical' })).ok, true);
+  assert.equal(validateMessage(withAction({ verb: 'launch', mode: 'r.1_2:3-x' })).ok, true, 'an identity string');
+  // The read-back's own confirmation is allowed on a launch (a costly start
+  // carries one) but never required: that decision is the session's.
+  assert.equal(
+    validateMessage(withAction({ verb: 'launch', confirmation: { id: 'c-0009', at: 1_700_000_000_000 } })).ok,
+    true,
+    'a costly start carries the confirmation its read-back produced',
+  );
+  const noMode = withAction({ verb: 'launch' });
+  delete noMode.action.mode;
+  refusal(noMode, REFUSALS.MISSING_FIELD, 'action.mode');
+  for (const verb of ['cancel', 'merge', 'confirm']) {
+    refusal(withAction({ verb, mode: 'pro' }), REFUSALS.FIELD_NOT_ALLOWED, 'action.mode');
+  }
+  refusal(withAction({ verb: 'launch', mode: '' }), REFUSALS.EMPTY_STRING, 'action.mode');
+  refusal(withAction({ verb: 'launch', mode: 1 }), REFUSALS.WRONG_TYPE, 'action.mode');
+  refusal(withAction({ verb: 'launch', mode: 'pro mode' }), REFUSALS.BAD_CHARACTER, 'action.mode');
+  refusal(withAction({ verb: 'launch', mode: 'x'.repeat(MODE_MAX + 1) }), REFUSALS.TOO_LONG, 'action.mode');
+  assert.equal(
+    validateMessage(withAction({ verb: 'launch', mode: 'x'.repeat(MODE_MAX) })).ok,
+    true,
+    'exactly at the bound',
+  );
+  // The target of a launch is the repository ALONE: a run is what a cancel
+  // cancels and a pull request is what a merge merges, so neither is a target a
+  // start can use, and a record naming one is a record the consumer would have
+  // to guess the meaning of.
+  refusal(withAction({ verb: 'launch', target: { run: '20261018-125859-d3c8' } }), REFUSALS.BAD_TARGET, 'action.target');
+  refusal(withAction({ verb: 'launch', target: { repo: 'dimipaun/fugaro', pr: 532 } }), REFUSALS.BAD_TARGET, 'action.target');
+  refusal(withAction({ verb: 'launch', target: {} }), REFUSALS.BAD_TARGET, 'action.target');
+  refusal(withAction({ verb: 'launch', target: { pr: 532 } }), REFUSALS.MISSING_FIELD, 'action.target.repo');
+  // The head SHA is a merge's alone: a start has no branch state that was read
+  // back, so the field is not one a launch may carry.
+  refusal(withAction({ verb: 'launch', head_sha: 'a'.repeat(40) }), REFUSALS.FIELD_NOT_ALLOWED, 'action.head_sha');
 });
 
 test('a verb and its target have to agree, and the target is one shape or the other', () => {
@@ -1284,6 +1361,7 @@ test('the tag is required on every kind, and a wrong-length one is refused on ev
     answer: good({ kind: 'answer', reply_to: 'm-0000' }),
     action: withAction({ verb: 'merge' }),
     registration: aRegistration(),
+    stop: good({ kind: 'stop' }),
     absent: good(),
   };
   for (const [name, m] of Object.entries(kinds)) {

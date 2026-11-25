@@ -190,9 +190,8 @@ export interface RunRow {
   readonly outcome: string | null
   readonly requestedBy: string | null
   /** the run's whole recorded launcher (`launched_by`), `null` when the record
-   * carries none. The **whole** value and not the short form a column has room
-   * for: this screen is the run view, which is where the owner's spec puts the
-   * full identity (`shared/launcher.ts`) */
+   * carries none -- the identity the record holds, drawn as it wrote it
+   * (`shared/launcher.ts`) */
   readonly launchedBy: string | null
   readonly created: string | null
   readonly startedAt: string | null
@@ -223,12 +222,25 @@ export interface RunRow {
  * from C1.16, so an absent one is `unavailable` and no line is drawn -- and a
  * record whose whole figure is the plan's (a subscription run written before the
  * key existed) draws that figure once, on the model line, under the notional
- * mark. */
+ * mark.
+ *
+ * `fallback` is `fallback_usd`, the real money the run's **fallback** calls
+ * spent (C1, CS8): the calls a source that was not its chain's first served and
+ * that a metered source paid for. It is a part of the model figure and not a
+ * figure beside it -- those dollars are already in `model` and in `total` -- so
+ * it is drawn as its own line under the legend and is never a segment of the bar
+ * or a term of the hero, and the two are never added. A subscription's fallback
+ * is not in it at all (its list price is notional), which is why the run's own
+ * fallback badge is a fact about the stages and not about this figure. A record
+ * that carries no `fallback_usd` reads `unavailable` and the line is not drawn
+ * (`fallbackMoneyOf`).
+ */
 export interface RunLedger {
   readonly model: Reading
   readonly compute: Reading
   readonly total: Reading
   readonly notional: Reading
+  readonly fallback: Reading
 }
 
 /** RunStage is one stage of the timeline. */
@@ -300,6 +312,24 @@ export interface RunSpendSplit {
 }
 
 /**
+ * RunSource is the credential source that served a stage (C1, CS8,
+ * `routing.SourceName`): the **kind** of source and the **name** of the one
+ * that kind names. The name is always written and is empty for the two kinds
+ * that are one credential of the project (`anthropic`, `vertex`), so an empty
+ * name is not an absent one and the cell draws the kind alone.
+ *
+ * Both are names and never values: no key, no token and no account is in either
+ * (`runstore.StageTiming.Source`), and a reader must not read them as one. They
+ * are drawn as the record wrote them -- the kind is a closed set the CLI writes
+ * from its own table, and the name is a pool's or a provider's, which is a word
+ * a person typed into a config.
+ */
+export interface RunSource {
+  readonly kind: string
+  readonly name: string
+}
+
+/**
  * RunSpendStage is one stage of the run's own spend record: the document's
  * top-level `stages`, one `runstore.StageTiming` each. It is the run's spend by
  * stage, which the verify timeline beside it is not -- a verify record carries
@@ -325,6 +355,40 @@ export interface RunSpendStage {
    * whole figure is known to be the plan's. */
   readonly usd: Reading
   readonly notional: Reading
+  /** `source` is the credential source that served this stage (C1, CS8), or
+   * `null` for a stage no call the credentials service answered was made from
+   * -- which is what an absent member means, and **not** "a source nobody
+   * named". A record written before the member existed carries none on every
+   * stage, and the panel then draws no source cell at all. */
+  readonly source: RunSource | null
+  /** `fallback` is true when any call of this stage was served by a source that
+   * is not the chain's first (C1, CS8), whatever source served last. The member
+   * is `omitempty` on the wire, so **absent means false**: a stage that never
+   * fell back, a stage the service answered no call of, and every record
+   * written before the member existed all read as false and draw no badge. */
+  readonly fallback: boolean
+}
+
+/**
+ * RunSwitch is one entry of the run's switch log (C1.16, D140,
+ * `runstore.Switch`): the run's cascade moved its calls from one credential to
+ * another, and the credentials service said why.
+ *
+ * `from` is empty when the call started on the credential that answered it,
+ * which is the service's own meaning for an empty one, and the cell then says
+ * so rather than drawing a blank. `to` and `reason` are required on the wire and
+ * are the service's own name and closed reason word. `cacheMiss` is the estimate
+ * of re-reading what the previous call had cached -- an estimate for a reader,
+ * charged to nothing (`runstore.Switch.CacheMissUSD`) -- and it is unknown
+ * rather than zero when `cacheMissUnmeasured` says the answering tier's cache
+ * behaviour is not measured.
+ */
+export interface RunSwitch {
+  readonly from: string
+  readonly to: string
+  readonly reason: string
+  readonly cacheMiss: Reading
+  readonly cacheMissUnmeasured: boolean
 }
 
 /** RunToleratedFinding is one finding the run's resolved mode let through
@@ -377,6 +441,37 @@ export interface RunDiagnosis {
   readonly followUpSession: string | null
 }
 
+/**
+ * RunLevel is one review level as the Run screen draws it (V1.3): the level,
+ * the rounds its own loop spent, the cap the run's plan resolved for it, and
+ * the share of the cap those rounds take.
+ *
+ * **`rounds` and `cap` are the document's own figures and the screen derives
+ * neither.** The CLI computes the rounds from the record's reviews and the cap
+ * from the plan block the runner wrote (`internal/cli/diagnose.go`), and this
+ * screen draws what it read: a share computed from anything else -- a count of
+ * this document's review entries, a cap from a knob the console read somewhere
+ * -- would be a figure about a run nobody measured.
+ *
+ * **`cap` is `unavailable` far more often than it is a number**, and that is the
+ * case V1.3 is explicit about: a record written before the plan block existed, a
+ * run that never built a plan (a `mode: review` run) and a CLI older than the
+ * block all carry `null`, which the decoder reads as unavailable and never as a
+ * cap of zero. A cap of **zero** is not folded in with those: it is a cap a layer
+ * really set, and rounds against it are drawn as a bar the console says it cannot
+ * scale (`levelsFillOf`) rather than as no bar at all.
+ */
+export interface RunLevel {
+  /** the level's own word (`l1`, `l2`, `l3`), as the document spells it */
+  readonly level: string
+  readonly rounds: Reading
+  readonly cap: Reading
+  /** the rounds as a share of the cap (`levelsFillOf`), drawn as the bar's
+   * fill: `unavailable` whenever the cap is, because there is no share of a
+   * cap nobody resolved. */
+  readonly fill: Reading
+}
+
 /** RunHalt is why the run halted (`runstore.Halt`): the reason, the scope it
  * applied at and when. */
 export interface RunHalt {
@@ -417,6 +512,23 @@ export interface RunModel {
    * carries no `tolerated` block -- which is what a run that tolerated nothing
    * looks like. */
   readonly tolerated: RunTolerated | null
+  /** each review level's own loop: the rounds it spent against the cap the run's
+   * plan resolved for it (V1.3). Empty when the document carries no
+   * `review_levels`, which is what a record written before the plan block
+   * existed looks like. */
+  readonly levels: readonly RunLevel[]
+  /** the run's switch log (C1.16, D140): every call the credentials service
+   * moved off the credential it was on, in the order the gateway settled them.
+   * Empty for a run that never switched, which is every run the service did not
+   * serve -- and the panel is drawn exactly when this is not empty, so a record
+   * written before the member existed draws as it did. */
+  readonly switches: readonly RunSwitch[]
+  /** `fallback` is whether **any** stage of the run was served by a source that
+   * is not its chain's first (C1, CS8). It is the stage flags folded over the
+   * run -- the record has no run-level flag, and `cost.fallback_usd` is not one:
+   * it is 0 for a fallback a subscription served, whose list price is notional
+   * and not money. False for a document that carries no stages at all. */
+  readonly fallback: boolean
   readonly stages: readonly RunStage[]
   readonly halt: RunHalt | null
   readonly pullRequest: RunPullRequest
@@ -566,8 +678,32 @@ function ledgerOf(row: Record<string, unknown>): RunLedger {
           : compute,
     total: readNumber(cost['total_usd'], 'row.cost.total_usd'),
     notional: planReading(model, notional),
+    fallback: fallbackMoneyOf(cost),
   }
 }
+
+/** fallbackMoneyOf is the ledger's fallback line: `cost.fallback_usd`, the real
+ * money the run's fallback calls spent (C1, CS8, D3188).
+ *
+ * **Unlike the model figure beside it, an absent key is not read as a measured
+ * zero.** `fallback_usd` is `omitempty`, so a run that spent nothing on fallback
+ * writes no key -- but so does every record written before the member existed,
+ * and the console cannot tell the two apart. A `$0.00` line would then be a
+ * figure the document never wrote, drawn on every historical run; the absence
+ * instead reads as `unavailable` with the reason, and the panel draws no line,
+ * which is the ledger those records drew before VS1. A key that is present and
+ * unreadable is the `gap` `readNumber` returns. */
+function fallbackMoneyOf(cost: Record<string, unknown>): Reading {
+  if (cost['fallback_usd'] === null || cost['fallback_usd'] === undefined) {
+    return unavailable(NO_FALLBACK_MONEY)
+  }
+  return readNumber(cost['fallback_usd'], 'row.cost.fallback_usd')
+}
+
+/** NO_FALLBACK_MONEY is why the ledger draws no fallback line: the reason is
+ * never shown -- the line is absent -- and it is written out anyway, because a
+ * `Reading` with no reason is a value the console could not read. */
+const NO_FALLBACK_MONEY = 'the record carries no row.cost.fallback_usd'
 
 /** NOTIONAL_NONE_BECAUSE is what the ledger's notional line says when the record
  * carries no plan-paid part: `model_notional_usd` is `omitempty`, so a run that
@@ -611,16 +747,45 @@ const DEADLINE_BECAUSE = 'the document has no row.deadline'
 const TOLERATED_ABSENT =
   'the document carries no tolerated block: a run that tolerated nothing, a record written before this field existed and a run whose record could not be read all look the same here'
 
+/** LEVELS_ABSENT is the one line a document with no `review_levels` block draws
+ * (V1.3). As with `TOLERATED_ABSENT`, the absence is not the claim "this run ran
+ * no review level": the CLI writes no block for a record that carries neither a
+ * plan block nor a review at any level, for every record written before the plan
+ * block existed, and for a run whose record could not be read. So the line names
+ * the key that is missing -- and the panel is still drawn, because a screen that
+ * dropped the region would say nothing at all about the rounds a run spent. */
+const LEVELS_ABSENT =
+  'the document carries no review_levels block: a run whose record carries no plan and no review, a record written before the plan block existed and a run whose record could not be read all look the same here'
+
 /**
- * RUN_SPEND_STAGES_MAX and RUN_TOLERATED_MAX are how many entries of each new
- * panel this screen draws, and they are the CLI's own bounds: `diagnoseStages`
- * (`internal/cli/diagnose.go`) and `runstore.MaxTolerated`. The document is an
- * object a hand can edit, so the length it carries is not a length this screen
- * trusts -- it draws this many entries and counts the rest, rather than
- * building a list nobody bounded.
+ * RUN_SPEND_STAGES_MAX, RUN_TOLERATED_MAX and RUN_SWITCHES_MAX are how many
+ * entries of each new panel this screen draws, and they are the CLI's own
+ * bounds: `diagnoseStages` and `diagnoseSwitches` (`internal/cli/diagnose.go`)
+ * and `runstore.MaxTolerated`. The document is an object a hand can edit, so the
+ * length it carries is not a length this screen trusts -- it draws this many
+ * entries and counts the rest, rather than building a list nobody bounded.
  */
 export const RUN_SPEND_STAGES_MAX = 128
 export const RUN_TOLERATED_MAX = 100
+export const RUN_SWITCHES_MAX = 128
+
+/** FALLBACK_BADGE_WORD is the word both fallback badges carry -- the stage's and
+ * the run's -- and it is the console's own vocabulary rather than a document's
+ * string: what it marks is `stages[].fallback`, a bool, and the word is what a
+ * reader sees in its place. */
+const FALLBACK_BADGE_WORD = 'fallback'
+
+/** SWITCH_STARTED_HERE is the cell an empty `switches[].from` draws: the service
+ * writes no credential there for a call that started on the credential that
+ * answered it, so the cell says that rather than drawing a blank. */
+const SWITCH_STARTED_HERE = 'started here'
+
+/** SWITCH_CACHE_UNMEASURED is why a switch's cache cost is `n/a`: the answering
+ * tier's cache behaviour is not measured, so the miss is unknown rather than
+ * free (`runstore.Switch.CacheMissUnmeasured`), and the zero beside it is not a
+ * figure. */
+const SWITCH_CACHE_UNMEASURED =
+  'the answering tier\'s cache behaviour is not measured: the re-read is unknown rather than free'
 
 /** NOT_COUNTED_BECAUSE is what a stage's `calls` or `agents` says when the key
  * is absent: `calls` and `agents` are pointers on the wire, so absent means
@@ -704,6 +869,64 @@ function stageNotional(part: Reading): Reading {
   return notional(part.value)
 }
 
+/** sourceOf reads a stage's `source` (`routing.SourceName`, C1, CS8): the kind
+ * of source and the name of the one that kind names. `null` for a member the
+ * document does not carry, and for one that is not an object -- a stage no
+ * service-answered call was made from, which draws no source cell rather than an
+ * `n/a`: the panel is about the stage's spend, and a stage with no source has
+ * nothing to say about one.
+ *
+ * A `kind` that is absent or not text is the same null. The five kinds are a
+ * closed set on the write path (`routing.Kinds`) and are drawn as the record
+ * worded them, so a sixth is drawn rather than refused: the screen's own table
+ * of kinds would be a second place the set is written down. */
+function sourceOf(raw: unknown): RunSource | null {
+  const record = objectAt(raw)
+  if (record === null) return null
+  const kind = textAt(record['kind'])
+  if (kind === null || kind === '') return null
+  return { kind, name: textAt(record['name']) ?? '' }
+}
+
+/** switchesOf reads the document's `switches` (`runstore.Switch`, C1.16): the
+ * run's own switch log, in the order the gateway settled the calls in. An entry
+ * that is not an object is skipped rather than thrown on, as `spendStagesOf`
+ * does and for the same reason: the record is a hand-editable object and a
+ * screen that threw would draw nothing at all.
+ *
+ * `cache_miss_usd` is `omitempty` on the wire like the stage money, so an absent
+ * key is a measured zero -- no cache miss was priced for the switch -- and it is
+ * read with `moneyAt` for that reason. `cache_miss_unmeasured` then says the
+ * zero is not a figure at all, which `cacheOf` turns back into an `unavailable`.
+ */
+function switchesOf(raw: unknown): readonly RunSwitch[] {
+  const records = arrayAt(raw) ?? []
+  const switches: RunSwitch[] = []
+  for (const item of records) {
+    const record = objectAt(item)
+    if (record === null) continue
+    const unmeasured = boolAt(record['cache_miss_unmeasured'])
+    switches.push({
+      from: textAt(record['from']) ?? '',
+      to: textAt(record['to']) ?? '',
+      reason: textAt(record['reason']) ?? '',
+      cacheMiss: cacheOf(moneyAt(record, 'cache_miss_usd', 'switches[].cache_miss_usd'), unmeasured),
+      cacheMissUnmeasured: unmeasured,
+    })
+  }
+  return switches
+}
+
+/** cacheOf is a switch's cache cost: the measured estimate, or an `unavailable`
+ * with its own reason when the answering tier's cache behaviour is not measured.
+ * The record writes `0` for the second case (`runstore.Switch.CacheMissUSD` is
+ * 0 "because there is no figure -- not because it is one"), so a reader that
+ * took the zero at face value would draw a free re-read for a tier nobody
+ * measured. */
+function cacheOf(reading: Reading, unmeasured: boolean): Reading {
+  return unmeasured ? unavailable(SWITCH_CACHE_UNMEASURED) : reading
+}
+
 /** spendStagesOf reads the document's top-level `stages` (`runstore.StageTiming`)
  * into the panel's rows, bounded at `RUN_SPEND_STAGES_MAX`. An entry that is not
  * an object is skipped rather than thrown on: the record is a hand-editable
@@ -728,6 +951,8 @@ function spendStagesOf(raw: unknown, basis: string | null): readonly RunSpendSta
       // stage's one figure, split, and never the same figure twice.
       usd: stageBilled(whole, part, basis),
       notional: stageNotional(part),
+      source: sourceOf(record['source']),
+      fallback: boolAt(record['fallback']),
     })
   }
   return stages
@@ -764,6 +989,79 @@ function toleratedOf(raw: unknown): RunTolerated | null {
     findings,
     dropped: measured(Math.max(0, entries.length - findings.length)),
   }
+}
+
+/**
+ * levelsOf reads the document's `review_levels` (`internal/cli/diagnose.go`,
+ * V1.3): one entry per review level, in the CLI's own order, each with the rounds
+ * the level's loop spent and the cap the run's plan resolved for it.
+ *
+ * **Nothing here is derived from another field of the document.** The rounds are
+ * the CLI's reading of the record's review rounds and the cap is the plan block
+ * the runner wrote; a screen that counted `reviews` entries or looked for a
+ * rounds knob in some other block would be a second opinion about the same run,
+ * and the two would disagree the first time a round was recorded twice.
+ *
+ * An entry that is not an object, and a `levels` list that is absent or not a
+ * list at all, are skipped rather than thrown on: the document is a
+ * hand-editable object, and a screen that threw would draw nothing at all.
+ */
+function levelsOf(raw: unknown): readonly RunLevel[] {
+  const records = arrayAt(raw) ?? []
+  const levels: RunLevel[] = []
+  for (const item of records) {
+    const record = objectAt(item)
+    if (record === null) continue
+    const cap = levelCapOf(record)
+    const rounds = readNumber(record['rounds'], 'review_levels[].rounds')
+    levels.push({ level: textAt(record['level']) ?? '', rounds, cap, fill: levelsFillOf(rounds, cap) })
+  }
+  return levels
+}
+
+/**
+ * levelCapOf reads one level's cap, and it is the whole of V1.3's `null` rule:
+ * the document carries `null` -- or no key at all -- for a level whose cap the
+ * record does not resolve, and the console draws `n/a` with the reason rather
+ * than a number no layer set. An absent cap is never read as zero: a cap of zero
+ * would be a plan that spends no round on the level, which the runner's own
+ * `checkPlan` refuses.
+ */
+function levelCapOf(record: Record<string, unknown>): Reading {
+  const cap = readNumber(record['cap'], 'review_levels[].cap')
+  if (cap.value === null) {
+    return unavailable(
+      'the document carries no cap for this level: the run recorded no plan step for it, or its record was written before the plan block existed',
+    )
+  }
+  return cap
+}
+
+/**
+ * levelsFillOf is the rounds a level spent as a share of its cap -- the bar's
+ * fill, and the screen's only arithmetic.
+ *
+ * **It is the same shape `live.ts`'s `concurrentOf` has, for the same reason.**
+ * A cap the document does not carry leaves the share unavailable with the cap's
+ * own reason, so the bar is drawn `n/a` -- never as a full bar, which would say
+ * "this level used its whole budget" about a level whose budget nobody knows.
+ * A cap of zero is a real cap, so it is not folded in with the missing ones: no
+ * rounds against it is honestly 0%, and rounds against it are a document
+ * contradicting itself (there is no finite share of zero), which the console
+ * says rather than drawing `Infinity` as a full bar.
+ */
+export function levelsFillOf(rounds: Reading, cap: Reading): Reading {
+  const limit = cap.value
+  const spent = rounds.value
+  if (limit === null) return unavailable(cap.because)
+  if (spent === null) return unavailable(rounds.because)
+  if (limit === 0) {
+    if (spent === 0) return measured(0)
+    return unavailable(
+      `the document says this level's cap is 0 and that it spent ${String(spent)} rounds, so its share of the cap is not a number the console can draw`,
+    )
+  }
+  return measured((spent / limit) * 100)
 }
 
 /** stagesOf builds the timeline. Each verify record is a stage; when the
@@ -985,6 +1283,14 @@ export function buildRunModel(inputs: RunInputs): RunModel {
     spendStages,
     spendStagesDropped: measured(Math.max(0, (rawStages?.length ?? 0) - spendStages.length)),
     tolerated: toleratedOf(document['tolerated']),
+    levels: levelsOf(document['review_levels']),
+    switches: switchesOf(document['switches']),
+    // The run's own fallback is the stage flags folded over it: the record has
+    // no run-level flag, and `cost.fallback_usd` is not one -- it is 0 for a
+    // fallback a subscription served, whose list price is notional and not
+    // money. A document with no stages carries no flag at all, so it is false
+    // and no badge is drawn.
+    fallback: spendStages.some((stage) => stage.fallback),
     stages: stagesOf(
       row,
       document['verify'],
@@ -1277,22 +1583,20 @@ function metaLine(factory: RunFactory, model: RunModel): ScreenElement {
   const account = cell(element, factory, 'span', 'run-meta-field')
   literal(cell(account, factory, 'span', 'run-meta-label'), 'account')
   maybeCell(account, factory, 'span', model.row.oauthAccount, 'person', 'row.oauth_account', 'run-account')
-  // The two actors keep the `person` class the wire key carries: an address is
-  // drawn as the console's marker and a login as itself, on this line as in
-  // every other cell of the console that draws one. Unlike the five columns
-  // above, an absent actor draws **no field at all** rather than the mark: a
-  // record written before `launch.json` existed has no launcher, and its
-  // `n/a` would read as a launcher the console could not name instead of one
-  // the record never carried.
+  // The two actors keep the `person` class the wire key carries, so an address
+  // is drawn as the identity the record holds, on this line as in every other
+  // cell of the console that draws one. Unlike the five columns above, an absent
+  // actor draws **no field at all** rather than the mark: a record written before
+  // `launch.json` existed has no launcher, and its `n/a` would read as a launcher
+  // the console could not name instead of one the record never carried.
   if (model.row.requestedBy !== null) {
     const requested = cell(element, factory, 'span', 'run-meta-field')
     literal(cell(requested, factory, 'span', 'run-meta-label'), 'requested by')
     const asked = cell(requested, factory, 'span', 'run-requested-by', 'run-meta-value')
     putText(asked, model.row.requestedBy, 'person', 'row.requested_by')
   }
-  // Who started the run: the **whole** recorded identity, which is what the run
-  // view is for -- the Live and Projects columns draw the short form
-  // (`shared/launcher.ts`).
+  // Who started the run: the same whole identity the Live column draws, in the
+  // class the wire key carries (`shared/launcher.ts`).
   const startedBy = launcherFull(model.row.launchedBy)
   if (startedBy !== null) {
     const started = cell(element, factory, 'span', 'run-meta-field')
@@ -1368,6 +1672,12 @@ function statusStrip(factory: RunFactory, model: RunModel): ScreenElement {
   literal(cell(flags, factory, 'span', 'run-flags-state'), model.row.terminal ? '· terminal' : '· still running')
   if (model.row.staleDraft) literal(cell(flags, factory, 'span', 'run-stale'), 'stale draft')
   if (model.row.followUp) literal(cell(flags, factory, 'span', 'run-follow-up'), 'follow-up')
+  // The run's fallback badge (C1, CS8, D3188): the stage flags folded over the
+  // run, drawn only when one of them is true -- a record with no `stages` at all
+  // carries no flag and draws no badge, which is the strip it drew before VS1.
+  if (model.fallback) {
+    literal(cell(flags, factory, 'span', 'run-fallback'), FALLBACK_BADGE_WORD)
+  }
   return element
 }
 
@@ -1470,6 +1780,12 @@ const LEDGER_MODEL_WORD = 'Model, as charged'
 const LEDGER_COMPUTE_WORD = 'Compute, estimated'
 
 const LEDGER_NOTIONAL_WORD = 'Paid by the plan, not in the total'
+
+/** LEDGER_FALLBACK_WORD names the fallback line: the part of the model figure
+ * the run's fallback calls spent, which is **inside** the total above it and not
+ * a fourth term of it. The word says so, because the ledger's other lines are all
+ * terms of the total and a reader would add it to them. */
+const LEDGER_FALLBACK_WORD = 'Of that, spent on fallback'
 
 const RECON_WORD = 'RECONCILIATION'
 
@@ -1630,6 +1946,16 @@ function ledgerPanel(factory: RunFactory, model: RunModel): ScreenElement {
     literal(cell(plan, factory, 'span', 'run-ledger-word'), LEDGER_NOTIONAL_WORD)
     numberCell(plan, factory, 'span', ledger.notional, 'usd', 'run-ledger-notional-value')
   }
+  // `unavailable` is exactly the absent key (`fallbackMoneyOf`), and a record
+  // that carries no `fallback_usd` is drawn without this line at all -- the
+  // ledger it drew before the member existed. A key the document carries but the
+  // console cannot read is a `gap` and is drawn, as every other unreadable
+  // figure on this screen is.
+  if (ledger.fallback.state !== 'unavailable') {
+    const fallback = cell(element, factory, 'p', 'run-ledger-fallback')
+    literal(cell(fallback, factory, 'span', 'run-ledger-word'), LEDGER_FALLBACK_WORD)
+    numberCell(fallback, factory, 'span', ledger.fallback, 'usd', 'run-ledger-fallback-value')
+  }
   const reconciliation = cell(element, factory, 'div', 'run-recon')
   literal(cell(reconciliation, factory, 'h3', 'run-recon-word'), RECON_WORD)
   const reported = cell(reconciliation, factory, 'p', 'run-recon-line')
@@ -1688,6 +2014,15 @@ function ledgerPanel(factory: RunFactory, model: RunModel): ScreenElement {
  * that stage's model spend came to. Nothing here is derived -- no sum, no share,
  * and no total divided by the number of stages.
  *
+ * **The row names the source that served the stage and marks a fallback**
+ * (C1, CS8, D3188). Both are drawn only when the document carries them: a
+ * record written before the members existed carries neither, and a row saying
+ * "no source" on every stage of such a record would be the panel reporting the
+ * console's own reader rather than the run -- the document cannot tell "this
+ * stage made no service-answered call" from "this document predates the member".
+ * So an absent `source` draws no cell and an absent `fallback` draws no badge,
+ * which is the row this panel drew before VS1.
+ *
  * The panel is drawn exactly when the document carries at least one stage; a
  * document with none has no panel, and the timeline's spend cells say that the
  * document carries no stages instead. */
@@ -1699,6 +2034,18 @@ function spendStagesPanel(factory: ScreenFactory, model: RunModel): ScreenElemen
   for (const stage of model.spendStages) {
     const row = cell(list, factory, 'li', 'run-spend-stage')
     textCell(row, factory, 'span', stage.name, 'label', 'stages[].name', 'run-spend-stage-name')
+    if (stage.source !== null) {
+      const source = cell(row, factory, 'span', 'run-spend-stage-source')
+      // The kind is one of the five `routing.Kinds` and the name is the pool's or
+      // the provider's own word, so both are text on the document's own terms.
+      textCell(source, factory, 'span', stage.source.kind, 'label', 'stages[].source.kind', 'run-source-kind')
+      if (stage.source.name !== '') {
+        textCell(source, factory, 'span', stage.source.name, 'label', 'stages[].source.name', 'run-source-name')
+      }
+    }
+    if (stage.fallback) {
+      literal(cell(row, factory, 'span', 'run-spend-stage-fallback'), FALLBACK_BADGE_WORD)
+    }
     numberCell(row, factory, 'span', stage.duration, 'seconds', 'run-spend-stage-duration')
     numberCell(row, factory, 'span', stage.calls, 'count', 'run-spend-stage-calls')
     numberCell(row, factory, 'span', stage.agents, 'count', 'run-spend-stage-agents')
@@ -1711,6 +2058,88 @@ function spendStagesPanel(factory: ScreenFactory, model: RunModel): ScreenElemen
     const note = cell(element, factory, 'p', 'run-spend-stages-more')
     literal(note, 'stages not drawn:')
     numberCell(note, factory, 'span', model.spendStagesDropped, 'count', 'run-spend-stage-more')
+  }
+  return element
+}
+
+/**
+ * levelsPanel is the run's review levels: one row per level, the rounds it spent
+ * drawn against the cap the run's plan resolved for it (V1.3).
+ *
+ * **The row carries the cap twice, and the two are not the same statement.** The
+ * bar's fill is the share the rounds take of the cap, and the two cells beside it
+ * are the figures themselves -- the rounds the level spent and the cap they are
+ * measured against. A bar alone would answer "how much of the budget" with no
+ * "of what"; the cells alone would draw two numbers a person has to divide. The
+ * CLI prints both in the same words (`fugaro diagnose`'s Review levels block),
+ * and neither figure here is the screen's own.
+ *
+ * **A level whose cap the document does not carry gets no full mark.** The mark
+ * (`run-level-cap-mark`) is the cap's own edge on the track, and it is drawn only
+ * where there is a cap to mark: a bar carrying one for a cap nobody resolved
+ * would say the level has a bound it does not, and the review-levels figure the
+ * styling doc §2.10 names is the one a person reads to tell the two apart. Its
+ * fill is `n/a` for the same reason (`levelsFillOf`), so the bar is drawn as the
+ * console's mark rather than as an empty track.
+ */
+function levelsPanel(factory: ScreenFactory, levels: readonly RunLevel[]): ScreenElement {
+  const element = make(factory, 'section', 'run-levels')
+  element.setAttribute('aria-label', LEVELS_PANEL_NAME)
+  literal(cell(element, factory, 'h2', 'run-panel-title'), 'review levels')
+  const list = cell(element, factory, 'ol', 'run-level-list')
+  for (const level of levels) {
+    const row = cell(list, factory, 'li', 'run-level')
+    textCell(row, factory, 'span', level.level, 'label', 'review_levels[].level', 'run-level-name')
+    const bar = cell(row, factory, 'div', 'run-level-bar', ...(level.fill.state === 'unavailable' ? ['run-level-bar-absent'] : []))
+    putReading(bar, level.fill, 'percent')
+    if (level.cap.value !== null) {
+      cell(bar, factory, 'span', 'run-level-cap-mark')
+    }
+    const figures = cell(row, factory, 'p', 'run-level-figures')
+    numberCell(figures, factory, 'span', level.rounds, 'count', 'run-level-rounds')
+    literal(cell(figures, factory, 'span', 'run-level-of'), 'of')
+    numberCell(figures, factory, 'span', level.cap, 'count', 'run-level-cap')
+    literal(cell(figures, factory, 'span', 'run-level-rounds-word'), 'rounds')
+  }
+  return element
+}
+
+/** switchesPanel is the credential switches the run's record carries: the
+ * document's `switches`, one row per move the credentials service made off a
+ * source that could not serve the next call (C1, CS8, D3188).
+ *
+ * **The panel is drawn exactly when the document carries at least one switch**,
+ * and it is not the fallback badge said twice: a badge marks a stage that a
+ * non-first source served, and this is the service's own log of the moves -- the
+ * source left, the source taken, why, and what the answering tier's cache cost
+ * the move. A record written before the member existed carries no log, and no
+ * panel, which is what it drew before VS1.
+ *
+ * Nothing here is summed and nothing is derived: the rows are the document's own
+ * order, which is the order the gateway settled them in, and each figure is the
+ * one the record wrote beside that move. */
+function switchesPanel(factory: ScreenFactory, switches: readonly RunSwitch[]): ScreenElement {
+  const element = make(factory, 'section', 'run-switches')
+  element.setAttribute('aria-label', SWITCHES_PANEL_NAME)
+  literal(cell(element, factory, 'h2', 'run-panel-title'), 'credential switches')
+  const list = cell(element, factory, 'ol', 'run-switch-list')
+  for (const moved of switches) {
+    const row = cell(list, factory, 'li', 'run-switch')
+    // An empty `from` is the service's own way of writing a call that started on
+    // the credential that answered it, so the cell says that rather than drawing
+    // a blank (`SWITCH_STARTED_HERE`).
+    if (moved.from === '') {
+      literal(cell(row, factory, 'span', 'run-switch-from', 'run-switch-started'), SWITCH_STARTED_HERE)
+    } else {
+      textCell(row, factory, 'span', moved.from, 'label', 'switches[].from', 'run-switch-from')
+    }
+    literal(cell(row, factory, 'span', 'run-switch-arrow'), '→')
+    textCell(row, factory, 'span', moved.to, 'label', 'switches[].to', 'run-switch-to')
+    // The reason is one of the service's closed set of words (`credsvc.ValidReason`)
+    // and it is drawn in the class the wire map gives the key -- `sentence`, the
+    // key's class on the two other shapes that carry one.
+    textCell(row, factory, 'span', moved.reason, 'sentence', 'switches[].reason', 'run-switch-reason')
+    numberCell(row, factory, 'span', moved.cacheMiss, 'usd', 'run-switch-cache')
   }
   return element
 }
@@ -2080,7 +2509,11 @@ const STAGES_PANEL_NAME = 'Stages'
 
 const SPEND_STAGES_PANEL_NAME = 'Spend by stage'
 
+const SWITCHES_PANEL_NAME = 'Credential switches'
+
 const TOLERATED_PANEL_NAME = 'Tolerated by the mode'
+
+const LEVELS_PANEL_NAME = 'Review levels'
 
 const DIAGNOSIS_PANEL_NAME = 'Diagnosis'
 
@@ -2367,20 +2800,22 @@ export function renderRunFrame(factory: RunFactory, theme: RunTheme, run: string
  * that stand above the diagnosis, and the warnings under the layout. */
 export interface DrawnRunRecord {
   /** the panels the record draws above the diagnosis: the verify timeline, the
-   * spend by stage and the tolerated block (or the one line naming the block it
-   * does not carry). */
+   * spend by stage, the credential switch log and the tolerated block (or the one
+   * line naming the block it does not carry). */
   readonly before: readonly ScreenElement[]
 }
 
 /**
  * fillRunRecord draws everything the run's own record carries: the header's
- * figures, the timeline and the spend by stage, the tolerated block, the
- * diagnosis, the ledger and the pull request, and the record's own warnings.
+ * figures, the timeline and the spend by stage, the credential switch log, the
+ * tolerated block, the diagnosis, the ledger and the pull request, and the
+ * record's own warnings.
  *
- * The by-stage panel is drawn only when the document has stages, and an absent
- * `tolerated` block draws the one line naming the missing key in the panel's own
- * place, because a run that tolerated nothing, a record written before the field
- * existed and a run whose record could not be read all write no block.
+ * The by-stage panel is drawn only when the document has stages, and the switch
+ * log only when it carries at least one switch; an absent `tolerated` block draws
+ * the one line naming the missing key in the panel's own place, because a run
+ * that tolerated nothing, a record written before the field existed and a run
+ * whose record could not be read all write no block.
  *
  * It answers the panels the caller has to place **above** the diagnosis: they
  * are built here and not appended, because the log window's read may have been
@@ -2391,10 +2826,19 @@ export function fillRunRecord(factory: RunFactory, model: RunModel, frame: Drawn
   fillHeader(factory, model, frame.header)
   const before: ScreenElement[] = [stagePanel(factory, model)]
   if (model.spendStages.length > 0) before.push(spendStagesPanel(factory, model))
+  // The switch log sits under the stage rows: it is what the source cells and the
+  // fallback badges above it are the outcome of, and a run with no switch carries
+  // no panel (D3188).
+  if (model.switches.length > 0) before.push(switchesPanel(factory, model.switches))
   before.push(
     model.tolerated === null
       ? literal(make(factory, 'p', 'run-tolerated-absent'), TOLERATED_ABSENT)
       : toleratedPanel(factory, model.tolerated),
+  )
+  before.push(
+    model.levels.length === 0
+      ? literal(make(factory, 'p', 'run-levels-absent'), LEVELS_ABSENT)
+      : levelsPanel(factory, model.levels),
   )
   fillDiagnosePanel(factory, model, frame.diagnosis)
   frame.aside.append(ledgerPanel(factory, model))

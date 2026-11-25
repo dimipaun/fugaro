@@ -14,6 +14,7 @@ import (
 	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/mobileauth"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/shellword"
@@ -58,6 +59,11 @@ import (
 //     the project Owner who can settle it (adminDenied).
 //   - A coding agent's session is refused (D1590), and the refusal prints the
 //     exact command for the person to run.
+//   - Taking a person's LAST pair away ends their mobile access in the same act
+//     (O14): the member record, every device node of the address and every
+//     refresh family go through pair_revoke.go's removal, while a person who
+//     keeps another pair keeps their devices and their role follows the roster
+//     at the next refresh.
 //
 // Who counts as an implicit admin is the one place this command cannot read what
 // the design names: the GCP project's owners and editors live in its IAM policy,
@@ -125,7 +131,7 @@ The command reads the grants node with its ETag, judges, and writes
 conditionally on that ETag, so a change another admin made in the meantime is
 re-read and re-judged rather than overwritten. It refuses:
 
-` + pairRefuses(grant) + `
+` + pairRefuses(grant) + pairMobile(grant) + `
 Writing the node needs roles/firebasedatabase.admin, held by the GCP project's
 owners and editors and by terraform.budget_admins — an admin stored in the node
 holds no database write of its own (D1592), so the command refuses for them
@@ -190,6 +196,22 @@ func pairRefuses(grant bool) string {
 		"    removal included.\n"
 }
 
+// pairMobile is the paragraph only a revoke has: the roster is the one source
+// of membership and role (O14), so taking a person's LAST pair away ends their
+// mobile access in the same act.
+func pairMobile(grant bool) string {
+	if grant {
+		return ""
+	}
+	return `
+Taking a person's LAST pair away also ends their mobile access: the member
+record, every paired device of the address and every refresh family are deleted
+with it (O14), through the same removal ` + "`fugaro pair revoke`" + ` makes per
+device. A person who keeps another pair keeps their devices, and a device's role
+follows the roster at its next refresh.
+`
+}
+
 func pairDone(grant bool) string {
 	if grant {
 		return "granting"
@@ -250,6 +272,17 @@ func userPair(cmd *cobra.Command, o *userGrantOptions, arg string, grant bool) e
 	// user add and rm meet (userLocalConfig), asked before the database is
 	// opened at all.
 	if err := userLocalConfig(sel, lc); err != nil {
+		return err
+	}
+	// The door the workspace owns on a linked member (WU10, D2813, R11): its
+	// roster is the workspace's record there, written through
+	// `fugaro workspace user grant|revoke`. It is asked before the database is
+	// opened, so a linked member's refusal costs no read of it.
+	verb := "revoke"
+	if grant {
+		verb = "grant"
+	}
+	if err := installationMemberRefusal(ctx, lc, "written", installationMemberDoor(verb)); err != nil {
 		return err
 	}
 	_, db, err := budgetDBFor(ctx, lc)
@@ -385,7 +418,16 @@ func userPairWrite(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config,
 		err = accesslib.WriteIfMatch(ctx, db, next, node.ETag)
 		switch {
 		case err == nil:
-			return userPairDone(out, lc, member, role, scope, grant)
+			// The change's own line first, then the mobile act: the write has
+			// landed, and a removal that could not complete is a second fact
+			// about a revoke that happened rather than a reason to print nothing.
+			if err := userPairDone(out, lc, member, role, scope, grant); err != nil {
+				return err
+			}
+			if grant {
+				return nil
+			}
+			return userMobileRemoval(ctx, out, lc, db, member, next)
 		case errors.Is(err, rtdb.ErrPrecondition):
 			// Another writer landed between the read and this write: the node
 			// has moved, so the picture this change was judged against is not
@@ -478,7 +520,7 @@ func userPairJudge(lc *localcfg.Config, grants []accesslib.Grant, caller, member
 	if unplaced {
 		implicit = append(slices.Clone(implicit), caller)
 	}
-	if err := userLastProjectAdmin(grants, next, implicit, member); err != nil {
+	if err := userLastProjectAdmin(lc, grants, next, implicit, member); err != nil {
 		return nil, err
 	}
 	return next, nil
@@ -500,11 +542,21 @@ func userPairJudge(lc *localcfg.Config, grants []accesslib.Grant, caller, member
 // project-scope role and could not add the admin the sentence asks for. What
 // the rule protects is the admin the change is about to remove, and an
 // installation that has none loses none.
-func userLastProjectAdmin(grants, next []accesslib.Grant, implicit []string, member string) error {
+//
+// The remedy is the roster's own: the installation's node is settled by a
+// project Owner outside it, and a MEMBER's roster (lc is nil, the caller being
+// `fugaro workspace user`'s door onto that member) by the workspace command that
+// writes it — naming `fugaro update --budget-admin` there would name a door
+// that a linked member refuses (WU10, D2813, R12).
+func userLastProjectAdmin(lc *localcfg.Config, grants, next []accesslib.Grant, implicit []string, member string) error {
 	if len(implicit) > 0 || userProjectAdmins(grants) == 0 || userProjectAdmins(next) > 0 {
 		return nil
 	}
-	return userErr("nothing was written: the grants node would hold no admin at project scope after this change — %s is the only member that carries it — and no owner, editor or terraform.budget_admin is named either, so the installation would have no project admin at all: nobody could grant a role, run its update or settle it. Add the admin who is to take over first, then make this change; a project Owner can also do it from outside the grants node, or add themselves to terraform.budget_admins (fugaro update --budget-admin)", safetext.Field(member))
+	remedy := "a project Owner can also do it from outside the grants node, or add themselves to terraform.budget_admins (fugaro update --budget-admin)"
+	if lc == nil {
+		remedy = "a workspace admin puts the admin who is to take over on it with " + installationMemberDoor("grant") + " (D2813, R11), and the member's own update is what derives its IAM lists from the record it then holds"
+	}
+	return userErr("nothing was written: the grants node would hold no admin at project scope after this change — %s is the only member that carries it — and no owner, editor or terraform.budget_admin is named either, so the installation would have no project admin at all: nobody could grant a role, run its update or settle it. Add the admin who is to take over first, then make this change; %s", safetext.Field(member), remedy)
 }
 
 // userProjectAdmins counts the pairs of a document that are a project-scope
@@ -690,11 +742,94 @@ func userPairDone(out io.Writer, lc *localcfg.Config, member string, role access
 	return nil
 }
 
+// userMobileRemoval is P9's own act (O14): when the pair just taken away was
+// the member's last one, the roster holds nobody of that address, so their
+// mobile access goes with it. It is P7's pairRemoveMember — the member record,
+// every device node of the address and, with each device, its refresh family,
+// its push node, the installation's cloud copy of its pairing key and this
+// laptop's keychain item — and it runs after the grants write has landed,
+// because what refuses the address is the roster at its next refresh (P4)
+// whether or not the footprint deletion completed.
+//
+// A person who keeps another pair keeps their devices: the removal is the LAST
+// grant's act and not the pair's, and a device's role follows the roster at the
+// next refresh either way (P3, P4). The command asks nothing either way — there
+// is nothing here a person could be asked that the roster does not already
+// answer.
+//
+// A removal that could not complete is a refusal and not a rollback: the pair is
+// gone and the address is off the roster, so what the operator is owed is what
+// was left behind and that it is theirs to delete, which is the sentence P7's
+// error carries.
+func userMobileRemoval(ctx context.Context, out io.Writer, lc *localcfg.Config, db *rtdb.Client, member string, next []accesslib.Grant) error {
+	canonical, ok := userMobileAddress(member)
+	if !ok {
+		// The mobile side refuses the address, so it can hold no device node and no
+		// member record: the roster's revoke has landed and there is nothing left
+		// behind for the operator to delete.
+		return nil
+	}
+	// The last-grant question is asked on the same folded form as the removal, not
+	// on the roster's spelling: the roster keeps the local part's case, so
+	// user:Alice@example.com and user:alice@example.com are two members and either
+	// of them may hold a phone — which the mobile side, folding the whole address,
+	// reads as the one address's. A grant that folds to this address is a person
+	// the roster still holds, and their devices are not this revoke's to delete.
+	for _, g := range next {
+		if other, ok := userMobileAddress(g.User); ok && other == canonical {
+			return nil
+		}
+	}
+	removal, err := pairRemoveMember(ctx, lc, db, canonical)
+	if err != nil {
+		address, _ := strings.CutPrefix(member, "user:")
+		return userErr("the pair is revoked and %s is off the roster, but their mobile access could not be removed: %v; delete what is left by hand", safetext.Field(address), err)
+	}
+	if len(removal.Devices) == 0 {
+		fmt.Fprintf(out, "that was the address's last pair, so its mobile access went with it: deleted the member record %s; the address held no paired device\n", safetext.Field(removal.Member))
+		return nil
+	}
+	fmt.Fprintf(out, "that was the address's last pair, so its mobile access went with it: deleted the member record %s and %d paired device(s) (%s) with their refresh families\n",
+		safetext.Field(removal.Member), len(removal.Devices), safetext.FieldListLine(removal.Devices))
+	return nil
+}
+
+// userMobileAddress is a roster member's address in the form the mobile side
+// writes and reads one. The roster's own member form folds the domain alone
+// (access.Member), while the invitation keys the member record — and a pairing's
+// device nodes — on the whole address folded (pairAdministeredEmail): the removal
+// takes the address as the invitation named it, and a Patch of a key that is not
+// there succeeds, so the roster's spelling would leave the record in place and
+// still read as deleted. The second answer is false for a member that is not an
+// address at all and for one the mobile side refuses, neither of which has
+// anything there.
+func userMobileAddress(member string) (string, bool) {
+	address, ok := strings.CutPrefix(member, "user:")
+	if !ok {
+		return "", false
+	}
+	folded, err := mobileauth.NormalizeEmail(strings.ToLower(strings.TrimSpace(address)))
+	if err != nil {
+		return "", false
+	}
+	return folded, true
+}
+
 // userPairDenied is the refusal the database's own IAM gives an explicit
 // admin@project (F22, D1592): the node is under config/admin, whose write is
 // false for every client token, so only a holder of
 // roles/firebasedatabase.admin reaches it — the project's owners, editors and
 // terraform.budget_admins. It names them and the one command that settles it.
+//
+// On a MEMBER's roster (lc is nil, the caller being `fugaro workspace user`'s
+// door onto that member) the sentence names the workspace's door instead. It
+// names no installation-level door at all -- not even to deny it -- because
+// naming one there would put the refused command in front of a person looking
+// for the one to run (WU10, D2813, R12).
 func userPairDenied(lc *localcfg.Config, grant bool) error {
+	if lc == nil {
+		return userErr("nothing was %s: this member's grants node cannot be written with your credentials, and writing it needs roles/firebasedatabase.admin on the member's own Firebase project, which its GCP owners and editors and its terraform.budget_admins hold. An admin stored in the member's grants node derives no database write of its own (finding F22, D1592), so it cannot grant either: a project Owner on the member runs fugaro update there, or adds you to the member's terraform.budget_admins; and the change itself is made through %s, the workspace's door, which writes this member's record with exactly those credentials (D2813, R11)",
+			pairPast(grant), installationMemberDoor("grant"))
+	}
 	return userErr("nothing was %s: the grants node cannot be written with your credentials, and writing it needs roles/firebasedatabase.admin, which the GCP project's owners and editors and terraform.budget_admins hold. An admin stored in the grants node derives no database write of its own (finding F22, D1592), so it cannot grant either: a project Owner runs fugaro update on this installation, or adds you to terraform.budget_admins (fugaro update --budget-admin)", pairPast(grant))
 }

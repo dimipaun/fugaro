@@ -16,6 +16,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -56,34 +57,49 @@ import (
 //     (the end of the identity), fp (the Fugaro project, which must equal
 //     /fugaro/project) and rb (the launcher's own identity, which the
 //     registry and outcome writes must carry).
-//   - A project whose budget is off, or that has no backend configured,
-//     skips all of it, so such an installation launches exactly as before.
+//   - Every launch of an installation that has a database mints, whatever its
+//     mode and whether or not a policy was published (AB4, F7): the mode is
+//     the run's own business, read from the policy through the identity this
+//     mint gives it. A launch on an installation with no database is refused
+//     here, with the fix, rather than reaching a runner that would refuse it
+//     after the claim, the task and the bucket writes.
 
-// budgetBackendOn reports whether runs of the project use the budget
-// backend: its mode is not off and a database is configured. A backend with
-// no signer cannot launch anything: say so.
+// budgetBackendOn reports whether runs of the project use the budget backend:
+// the installation has a database. That is the whole of it — the mode decides
+// nothing here any more. A launch of a project whose mode is unset or observe
+// mints exactly as one of an enforce project does, because the mode is not what
+// a launch needs: it needs the database the run's identity comes from, and the
+// mode a run is accounted for under is the published policy's, which the run
+// itself reads (AB4, F7, R3). A backend with no signer cannot launch anything:
+// say so.
 //
-// The database is half of that on purpose, and this function is where the
-// decision belongs: a config with a mode (observe or enforce) and no
-// budget.rtdb_url launches, and the launch reads no policy and refuses nothing
-// on the mode alone. A mode-only refusal was written here once and removed
-// deliberately — the same owner decision internal/infra's readiness note
-// records in full, and the reason its drift note exists — because a mode is
-// not a policy: this CLI cannot see a policy without a database address, and
-// refusing on the mode alone would stop every launch of a project that has
-// published nothing, which is the shape a never-configured installation has
-// always had. What keeps that from being a hole is the run side, which is
-// fail-closed rather than optimistic: a run whose job carries a Firebase
-// backend, or a token marker, and cannot read the policy it is entitled to
-// refuses instead of falling back to the environment ceiling (internal/runner's
-// projectPolicy, R2-3). So a launch is held to a policy this side can see and
-// no stricter rule, and the deploy is what refuses the job that can see one and
-// cannot read it.
+// An installation with no database is refused, with the fix, and refused here
+// rather than at some later door: every run has an identity and a gateway
+// (spec §3), so a launch this CLI passed on would reach a runner that refuses
+// it less clearly (internal/runner's strayTokenNoBackend, and AB1a's own
+// bootstrap refusal) — after the claim, the task and the bucket writes. The
+// database is `fugaro update`'s to create (AB7, R2), which is why the refusal
+// names that command and not a hand edit of the config, and why it says who
+// runs it in one wording (F5, and the same words internal/cli's own Firebase
+// door uses).
 func budgetBackendOn(lc *localcfg.Config) (bool, error) {
-	if lc.BudgetMode() == localcfg.BudgetOff || lc.Budget == nil || lc.Budget.RTDBURL == "" {
-		return false, nil
+	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
+		return false, noBudgetDatabaseRefusal(lc)
 	}
 	return true, budgetSignerOn(lc)
+}
+
+// noBudgetDatabaseRefusal is the one refusal of a launch (and of everything
+// else that asks budgetBackendOn) on an installation whose config names no
+// budget database: what is missing, what it costs — no identity, so nothing is
+// launched — and the one command that fixes it, with who runs it.
+//
+// It names the project, so it reads the config rather than taking a nil one:
+// budgetBackendOn, its only caller, has already read the block by the time it
+// gets here.
+func noBudgetDatabaseRefusal(lc *localcfg.Config) error {
+	return userErr("project %s has no budget database (budget.rtdb_url is not set in its config), and every run has a budget identity, so nothing is launched: a project owner runs fugaro update --firebase-project %s --name %s once, which creates the database",
+		lc.Name, firebaseProjectIDWord(lc.GCPProject), lc.Name)
 }
 
 // budgetSignerOn refuses a launch that needs a budget identity but has no
@@ -91,45 +107,25 @@ func budgetBackendOn(lc *localcfg.Config) (bool, error) {
 // nothing else can give a run its identity.
 func budgetSignerOn(lc *localcfg.Config) error {
 	if lc.Budget == nil || lc.Budget.TokenSigner == "" {
-		return userErr("budget.token_signer is not set in project %s's config, so runs cannot be given a budget identity: an operator runs fugaro update --firebase-project %s --name %s", lc.Name, lc.GCPProject, lc.Name)
+		return userErr("budget.token_signer is not set in project %s's config, so runs cannot be given a budget identity: a project owner runs fugaro update --firebase-project %s --name %s once", lc.Name, firebaseProjectIDWord(lc.GCPProject), lc.Name)
 	}
 	return nil
 }
 
 // budgetMintOn reports whether this launch must mint the run a budget
-// identity: Firebase is configured and either the project's budget mode is not
-// off or the project has published a policy. The mode decision follows the
-// policy, not the operator's local mode (plan task 1.3 step 2): a job of a
-// project-centric installation reads the policy — and the mode in it — through
-// its Firebase identity, and a job launched without one would run on the
-// ceiling the environment was deployed with, whatever the policy says. What
-// the local mode still decides is the job's FUGARO_BUDGET_MODE, which is the
-// fallback for the case the policy node is absent (P3).
+// identity: it always does, on an installation that has a database, and an
+// installation that has none is refused instead (budgetBackendOn).
 //
-// A config that names no database has no policy this CLI can see, and says so
-// without a call, whatever the mode is: a mode that is on is not a policy, and
-// nothing is blocked until one exists (internal/infra's readiness gate blocks
-// the deploy — and this launcher's own gate refuses a launch — only for a
-// policy this side can actually see). A job of such an installation carries no
-// backend either, so the run reads no policy and the environment ceiling stands,
-// which is what the mode-off and never-configured shapes have always done.
-func (e *cloudEnv) budgetMintOn(ctx context.Context) (bool, error) {
-	if on, err := budgetBackendOn(e.lc); err != nil || on {
-		return on, err
-	}
-	if e.lc.Budget == nil || e.lc.Budget.RTDBURL == "" {
-		return false, nil // no database: no policy this CLI could see either
-	}
-	p, found, err := e.policy.read(ctx, e.lc)
-	if err != nil {
-		return false, policyReadErr(err)
-	}
-	if !found || p == nil {
-		return false, nil
-	}
-	// A policy exists: this run must be able to read it. That needs a signer,
-	// whatever the mode is.
-	return true, budgetSignerOn(e.lc)
+// Both readings that made this a decision of its own are gone (AB4, F7); the
+// name stays because it is the question a launch asks — sealGate judges a
+// launch that will mint by it, mintBudgetToken is the mint, and `doctor` reads
+// it to say whether this installation's launches carry an identity — and what
+// it answers is budgetBackendOn's own answer, which is now the whole condition:
+// the database decides, and the local mode and the published policy, which used
+// to be able to change it, do not. The context the policy read needed is gone
+// with it; the signature keeps it, and the readers that already pass one.
+func (e *cloudEnv) budgetMintOn(context.Context) (bool, error) {
+	return budgetBackendOn(e.lc)
 }
 
 // projectPolicyRead is the CLI's read of the project's policy with the
@@ -171,11 +167,13 @@ func projectPolicyRead(ctx context.Context, lc *localcfg.Config) (*projectpolicy
 // ShapeFreeFloor up (projectpolicy's doc on that floor is the argument), and
 // nothing is written back here.
 //
-// It is deliberately not the memoized read (policyReadOnce): that one is the
-// read the gates and the launch decide by, where a node no version of this
-// reader understands is a refusal rather than a document to enforce, and it is
-// shared by a dozen callers whose answer must not change. This read is the
-// repository stage's alone, so an update reads the node one more time.
+// A launch's memo does not carry (policyReadOnce.carry): that one is the read
+// the gates and the launch decide by, where a node no version of this reader
+// understands is a refusal rather than a document to enforce. The converging
+// door's memo does, and it is this read, so every stage of one `fugaro update`
+// answers from the node the same run's policy stage is about to write — the
+// stages that store a secret, the Readiness gate and the repository stage
+// included.
 func repoPolicyRead(ctx context.Context, lc *localcfg.Config) (*projectpolicy.Policy, bool, error) {
 	return policyReadWith(ctx, lc, projectpolicy.ReadCarriedForwardShapeFree)
 }
@@ -259,16 +257,18 @@ func policyReadErr(err error) error {
 // on one path — the gate before anything of it exists, and the mint decision —
 // where two reads could disagree about the policy a single launch is admitted
 // against, and the Readiness gate planRepo reads shares that one answer with
-// every other caller of the run. The repository stage's own read is deliberately
-// not this one (repoPolicyRead carries a predecessor forward, which this read
-// must not do), so a run that converges a checkout reads the node one time more
-// than the memo alone would. The answer cannot change under any of them (and
-// where it could, the run reads the node itself and is the one that counts).
+// every other caller of the run. A launch is not marked (carry below) and reads
+// the node strictly, which is what the memo must do for a decision. A run that
+// converges a checkout is marked, and every caller of that run then reads the
+// node the same run's policy stage is about to write, so the read is one node's
+// answer from the first stage to the last. The answer cannot change under any of
+// them (and where it could, the run reads the node itself and is the one that
+// counts).
 //
-// What is memoized is the raw read, projectPolicyRead's result with
-// projectpolicy's typed errors intact, because two callers word the same error
-// differently: the launch gate names the release a policy's version is from
-// (policySkewRefusal), and every other caller wants policyReadErr.
+// What is memoized is the raw read, with projectpolicy's typed errors intact,
+// because two callers word the same error differently: the launch gate names the
+// release a policy's version is from (policySkewRefusal), and every other caller
+// wants policyReadErr.
 type policyReadOnce struct {
 	// mu makes the memo safe for the goroutines a batch of launches shares one
 	// cloudEnv with (a best-of-N launch, or the concurrent same-run-ID test):
@@ -278,16 +278,35 @@ type policyReadOnce struct {
 	p     *projectpolicy.Policy
 	found bool
 	err   error
+	// carry makes the read the converging door's own: the node is read as the
+	// same run's policy stage is about to write it
+	// (projectpolicy.ReadCarriedForwardShapeFree, repoPolicyRead) instead of
+	// refused where it is a predecessor or says the word the budget mode's
+	// vocabulary dropped. It is what the upgrade's HARD RULE needs of every
+	// stage of that run: the node the release behind published is exactly the
+	// one this release's strict reader refuses, and the same run is the one that
+	// rewrites it — a stage that stopped, or answered "no policy", would leave
+	// the operator a second command, or would store a secret in the wrong place
+	// for a repository the node admits (initsecrets' projectScope).
+	//
+	// It is set by initRun.policyMemo, the one way a run that converges reaches
+	// this memo, and never by a launch: a launch decides by the node and must
+	// refuse one no version of this reader understands (docs on repoPolicyRead).
+	carry bool
 }
 
-// read is the memoized projectPolicyRead: the policy, whether one was
-// published, and the read's own error.
+// read is the memoized read: the policy, whether one was published, and the
+// read's own error.
 func (p *policyReadOnce) read(ctx context.Context, lc *localcfg.Config) (*projectpolicy.Policy, bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.done {
 		p.done = true
-		p.p, p.found, p.err = projectPolicyRead(ctx, lc)
+		if p.carry {
+			p.p, p.found, p.err = repoPolicyRead(ctx, lc)
+		} else {
+			p.p, p.found, p.err = projectPolicyRead(ctx, lc)
+		}
 	}
 	return p.p, p.found, p.err
 }
@@ -700,13 +719,16 @@ func (e *cloudEnv) batchBudgetPrecheck(ctx context.Context, slug, repo string, n
 // runs a fugaro older than sealSince: such a runner formats a marker value it
 // cannot parse into its bootstrap error — the launch's seal key, into the
 // run's record — and reads the token from runs/, where the launcher no longer
-// writes it (D19, §7.4). A launch that mints nothing is not judged. The judge
-// is the one every *Since gate uses (checkImageSince, or checkCloneImageSince
-// for a checkout: clone workflow): a release older than sealSince and a
-// missing build record refuse. An image built from a base that is not a
-// release (a development build) passes when its build record says the base's
-// own fugaro reads the sealed token, is refused when the record shows it was
-// built before the seal's runner half existed, and is otherwise only warned
+// writes it (D19, §7.4). Every launch of an installation with a database mints
+// (AB4, F7), so this gate judges every launch of one — a launch that mints
+// nothing is a launch budgetMintOn has already refused, and this gate hands
+// that refusal back rather than judging an image for a launch that will not
+// happen. The judge is the one every *Since gate uses (checkImageSince, or
+// checkCloneImageSince for a checkout: clone workflow): a release older than
+// sealSince and a missing build record refuse. An image built from a base that
+// is not a release (a development build) passes when its build record says the
+// base's own fugaro reads the sealed token, is refused when the record shows it
+// was built before the seal's runner half existed, and is otherwise only warned
 // about, because whether it supports the seal cannot be shown
 // (sealDevRefusal; the owner's answer of 2026-10-17). A checkout: clone job
 // has no build record, so a development base there is only warned about.
@@ -1137,9 +1159,17 @@ func budgetPRs(spec *task.Spec) []int {
 // job is the shared project job the launch resolved, when it resolved one
 // (project_job.go): its timeout is the identity window's floor. It is nil on
 // every other path, which reads the timeout back from the API instead.
+//
+// A launch that would mint onto a job that carries no database is refused
+// before anything of the mint happens (budgetJobBackend): the identity would be
+// one the run cannot use, and the runner's own refusal of that state arrives
+// only after the claim, the task and the object.
 func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.Spec, job *launchProjectJob) (key []byte, err error) {
 	on, err := e.budgetMintOn(ctx)
 	if err != nil || !on {
+		return nil, err
+	}
+	if err := e.budgetJobBackend(ctx, slug, spec, job); err != nil {
 		return nil, err
 	}
 	run := spec.RunID
@@ -1238,6 +1268,63 @@ func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.
 	return k, nil
 }
 
+// jobBackendEnvReader is the backend's read of a deployed job's whole
+// container environment, when the backend has one at all. It is asked as an
+// optional interface, the way internal/cli's upgrade note and lswarn read a
+// deployed job: the seam (internal/backend) holds no such read because only one
+// of its two backends has a job to read — a Cloud Batch task is started per run
+// and keeps none — and a backend that cannot answer is not what refuses a
+// launch (Cloud Batch refuses a launch that mints outright, F9).
+type jobBackendEnvReader interface {
+	JobFullEnv(ctx context.Context, job string) (map[string]string, bool, error)
+}
+
+// budgetJobBackend refuses a launch that would mint onto a job that carries no
+// budget database (R6, F20), before anything of the mint happens.
+//
+// A repository's job is re-applied only by `fugaro update` run for that
+// repository, so a job applied before the installation had a database carries
+// no address in its environment, and it never will until that root is applied
+// again. The identity this launch is about to mint would be one the run cannot
+// use — it reaches the database through its job's environment, not through the
+// token — so the launch would end at the runner's own refusal of exactly this
+// state, after the claim and the sealed object were written and the execution
+// created (internal/runner's strayTokenNoBackend, which words the same fix).
+// Refusing here costs none of that and names the job: the claim goes back and
+// no object, no execution and no signed identity are made.
+//
+// The job read is the one the execution will land on: the shared project job the
+// launch resolved by name, else the repository's own job derived from the
+// workflow variant exactly as the backend derives it (gcp's jobFor, from the
+// same pair). A job that is not deployed at all, and a workflow that is not a
+// job name, are left to the launch's own steps, which refuse both with their
+// own words — and a read that fails is remote, because whether this launch can
+// be accounted for is exactly what cannot be answered then.
+func (e *cloudEnv) budgetJobBackend(ctx context.Context, slug string, spec *task.Spec, job *launchProjectJob) error {
+	be, ok := e.be.(jobBackendEnvReader)
+	if !ok {
+		return nil
+	}
+	name := ""
+	if job != nil {
+		name = job.Name
+	} else if variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken); ok {
+		name = gcp.JobName(slug, variant)
+	}
+	if name == "" {
+		return nil
+	}
+	env, deployed, err := be.JobFullEnv(ctx, name)
+	if err != nil {
+		return remote(fmt.Errorf("whether the job %s this launch would start carries a budget database could not be read, so the launch is refused: %w", name, err))
+	}
+	if !deployed || env[runner.RTDBURLEnv] != "" {
+		return nil
+	}
+	return userErr("the job %s this launch would start carries no budget database (%s is not set in its environment), and it was deployed by a fugaro update run for %s from before this installation had a database: a repository's job is re-applied only by an update run for that repository, so the budget identity this launch would mint would be one the run cannot use. Nothing is launched: run fugaro update --repo in %s's checkout, which re-deploys the job with the database, then launch the run again",
+		name, runner.RTDBURLEnv, spec.Repo, spec.Repo)
+}
+
 // sealMarker is the marker entry of a launch that minted: the variable's name
 // and the launch's seal key in its one spelling (token.EncodeKey), which is
 // the spelling the runner parses and registers with its redactor.
@@ -1321,12 +1408,15 @@ const pairHeadroomCaps = 5
 // the champion's single pre-check is skipped below (skipBudget), so this is
 // the launch's one budget reading.
 func (e *cloudEnv) pairBudgetPrecheck(ctx context.Context, slug string, spec *task.Spec, warn io.Writer) string {
-	on, err := budgetBackendOn(e.lc)
-	if err != nil {
+	// An installation that cannot mint never reaches a pair (AB4, F7): the
+	// launch is refused by the mint, before anything is started. This runs
+	// ahead of that refusal (sampledPair judges the pair before the launch
+	// block does), so the answer here is the refusal's own reason and not a
+	// headroom figure — a figure this read could only take from a database the
+	// installation does not have, or from a block that cannot sign what it
+	// would mint.
+	if _, err := budgetBackendOn(e.lc); err != nil {
 		return oneLine(err.Error())
-	}
-	if !on {
-		return "the project has no budget backend, so a pair has no headroom to be judged against"
 	}
 	if e.noBudgetCheck {
 		return "the launch skips the budget pre-check (--no-budget-check), and a pair is never sampled beside a skipped pre-check"

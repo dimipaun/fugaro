@@ -79,11 +79,13 @@ The repos.* scalars and lists are the generic writer's (D1173):
     fugaro settings set repos.acme/app.base_branch main
     fugaro settings set repos.acme/app.workflows --add docs
 
-The write and the publish are one act, as they are for the same keys through
-fugaro settings set: the keys land in this machine's project config and the
-policy node they are served from is published by this same command, so no second
-command is needed. --no-apply saves the write and leaves the publish to fugaro
-apply.
+The write and the publish are one act, through the same chain fugaro settings
+set runs for a key it writes: the keys land in this machine's project config and
+the policy node they are served from is published by this same command, so no
+second command is needed. A repository's workflows selection is a key the
+generic writer spells too; a profile's seven keys are not, and the generic path
+refuses them and names this command's family instead (D853). --no-apply saves
+the write and leaves the publish to fugaro apply.
 
 This write is a person's own: a coding agent's session is refused it, in a
 managed project by that project's gate.`,

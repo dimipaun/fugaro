@@ -88,7 +88,7 @@ that owns it.
 | The prompt queue, the TTL and the safe answer | `shared/prompts/index.js` — `PROMPT_TTL_MS` (72 h), `EXPIRED_REPLY`, `QUEUE_FULL_REPLY`, `initialQueue`, `enqueue`, `expire`, `answer`, `pending`, `announcement`, `evaluateInterrupt`, `SWITCH` | Ruling M3: the **TTL is the module's number, not this command's**; the pending file's shape is the module's queue |
 | The redactor (D118 requires it before anything is written) | `shared/digest/index.js` — `redact`, `REDACTED`, `redactFunc`, `redactForms`, `digest`, `SEVERITY`, `moreSevere`, `mostSevere` | Every field this command writes to its own state or prints passes it first |
 | The simulator, the fault model and the canonical schedule line | `shared/mailbox-sim/index.js` — `createSimulator`, `scheduleFromSeed`, `faultFor`, `scheduleText`, `parseScheduleText`, `replyId`; its README §"The fault model, which is data", §"What the actors do" | The corpus's scenarios are its schedules; a failing Go case prints `scheduleText()` |
-| The mailbox subtree, and who may write it | `internal/budget/rules/rules.json.tmpl`'s `mailbox` block, `config/admin/devices` and `pairing` — the **merged generation 3** — and the macros `MAILBOX` / `CONSUMER` / `userClaim` / `PAIRING` / `MACOK` / `KINDREQ` / `BOOTOK` in `internal/budget/rules/rules.go` | §2 below, whose quoted block `TestMailboxPlanQuotesTheRulesFile` derives from the file line by line, and whose grant claims `TestMailboxPlanMatchesTheMergedGrants` holds to it |
+| The mailbox subtree, and who may write it | `internal/budget/rules/rules.json.tmpl`'s `mailbox` block, `config/admin/devices` and `pairing` — the **merged generation 3** — and the macros `MAILBOX` / `CONSUMER` / `userClaim` / `PAIRING` / `MACOK` / `SIGOK` / `TAGOK` / `MODEOK` / `KINDREQ` / `BOOTOK` in `internal/budget/rules/rules.go` | §2 below, whose quoted block `TestMailboxPlanQuotesTheRulesFile` derives from the file line by line, and whose grant claims `TestMailboxPlanMatchesTheMergedGrants` holds to it |
 | The rules' emulator proof | `internal/budget/rules/emulator_mailbox_test.go` | The template's fence is already proven; this command does not re-prove it |
 | A long-lived consumer's local state | `internal/watch/acks.go` — `AckPath`, `LoadAcks`, tmp+rename, `0o600` | The ledger and the pending-prompt file are written the same way (Ruling M7) |
 | A lease-shaped claim, and its TTL | `internal/runstore/launch.go` — `Store.Claim`, `ClaimTTL` (10 min) | Not used directly: the launch claim is the runs bucket's. Cited as the shape this command's lease follows |
@@ -126,28 +126,37 @@ the template in a temp directory), and `TestMailboxPlanMatchesTheMergedGrants` p
 holds the grant claims to it. So a later rules change is a failing test rather than a stale
 paragraph.
 
+The quote is the template as it is now, so it carries two shapes the P6.3/P6.4 field set did not:
+the tag is exactly one of `mac` and `sig` (`TAGOK`, an unpadded base64url Ed25519 signature of 86
+characters where `mac` is 64 lowercase-hex — generation 11, mobile identity-pairing task J5r and
+O6, which amends D171), and an inbox action may be the typed `launch` — a `mode` in place of the
+`confirmation` every other verb carries, its target a repository alone (O10). Where the prose below
+says `mac` it is describing P6.3's field, which is one of the two the rules now admit.
+
 ```jsonc
 "$mb": {
   "inbox": {
     "$msg": {
       ".write": "MAILBOX && newData.exists() && !data.exists()",
-      ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at', 'mac']) && $msg.length <= {{.MaxKeyLength}} && KINDREQ",
+      ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at']) && TAGOK && $msg.length <= {{.MaxKeyLength}} && KINDREQ",
       "id": { ".validate": "newData.isString() && newData.val().length <= {{.MaxKeyLength}} && newData.val() == $msg" },
       "sender": { ".validate": "STR && newData.val() == $mb" },
       "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxTextLength}}" },
       "at": { ".validate": "TIMESTAMP" },
       "mac": { ".validate": "MACOK" },
+      "sig": { ".validate": "SIGOK" },
       "agent": { ".validate": "AGENTID" },
-      "kind": { ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action' || newData.val() == 'registration')" },
+      "kind": { ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action' || newData.val() == 'registration' || newData.val() == 'stop')" },
       "options": {
         ".validate": "PARENTKIND == 'prompt' && newData.hasChildren()",
         "$i": { ".validate": "OPTIONIDX && newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxOptionLength}}" }
       },
       "reply_to": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxKeyLength}} && (PARENTKIND == 'answer' || PARENTKIND == 'action')" },
       "action": {
-        ".validate": "PARENTKIND == 'action' && newData.hasChildren(['id', 'verb', 'target', 'confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)",
+        ".validate": "PARENTKIND == 'action' && newData.hasChildren(['id', 'verb', 'target']) && (newData.child('verb').val() == 'launch' ? newData.child('mode').exists() : (newData.hasChildren(['confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)))",
         "id": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxKeyLength}}" },
-        "verb": { ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm')" },
+        "verb": { ".validate": "newData.isString() && (newData.val() == 'cancel' || newData.val() == 'merge' || newData.val() == 'confirm' || newData.val() == 'launch')" },
+        "mode": { ".validate": "newData.parent().child('verb').val() == 'launch' && MODEOK" },
         "target": {
           ".validate": "TARGETOK",
           "run": { ".validate": "RUNTARGET" },
@@ -171,7 +180,7 @@ paragraph.
     ".read": "MAILBOX",
     "$msg": {
       ".write": "CONSUMER && newData.exists() && !data.exists()",
-      ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at', 'mac']) && $msg.length <= {{.MaxKeyLength}} && KINDREQ",
+      ".validate": "newData.hasChildren(['id', 'sender', 'text', 'at']) && TAGOK && $msg.length <= {{.MaxKeyLength}} && KINDREQ",
       "acked": {
         ".write": "MAILBOX && newData.exists() && !data.exists()",
         ".validate": "newData.isBoolean() && newData.val() == true && data.parent().exists()"
@@ -182,10 +191,11 @@ paragraph.
   "heartbeat": {
     ".read": "MAILBOX",
     ".write": "CONSUMER && newData.exists()",
-    ".validate": "newData.hasChildren(['at', 'boot', 'mac'])",
+    ".validate": "newData.hasChildren(['at', 'boot']) && TAGOK",
     "at": { ".validate": "TIMESTAMP" },
     "boot": { ".validate": "BOOTOK" },
     "mac": { ".validate": "MACOK" },
+    "sig": { ".validate": "SIGOK" },
     "agents": {
       ".validate": "newData.hasChildren()",
       "$i": {

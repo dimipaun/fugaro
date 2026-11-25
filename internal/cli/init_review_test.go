@@ -171,20 +171,6 @@ func TestRunConfirmationNeverCoversTheSeparateSteps(t *testing.T) {
 			t.Fatalf("confirmed %v, reachable %v, err %v: the run confirmation covered a typed step", ok, reachable, err)
 		}
 	})
-	t.Run("the Firestore location", func(t *testing.T) {
-		r, _ := taken(t, "")
-		if err := r.confirmLocation(fsLocation("us-east5")); err == nil {
-			t.Fatal("the permanent location was confirmed by the run confirmation")
-		}
-		r, _ = taken(t, "y\n")
-		if err := r.confirmLocation(fsLocation("us-east5")); err != nil {
-			t.Fatalf("answering the location's own question is the confirmation: %v", err)
-		}
-		r, _ = taken(t, "n\n")
-		if err := r.confirmLocation(fsLocation("us-east5")); err == nil {
-			t.Fatal("a no at the location's own question confirmed the location")
-		}
-	})
 	t.Run("a Cloud Build", func(t *testing.T) {
 		fb := gcpfake.NewBuild(t)
 		r, _ := taken(t, "")
@@ -322,8 +308,10 @@ func TestReviewSeamRefusesAnAgentMarkerBeforeItPrintsAnything(t *testing.T) {
 
 // Only ordinary steps may ask the run's one confirmation. These are the
 // places that do, and no other file may (the project's creation and billing,
-// the Firestore location, a Cloud Build, replacing a tag, an unlisted
-// repository, a secret and the plugin wiring each keep their own).
+// a Cloud Build, replacing a tag, an unlisted repository, a secret and the
+// plugin wiring each keep their own; the Firestore database's location is not
+// a confirmation at all any more — the line saying where is printed and the
+// database is created, LP10, D3090).
 //
 // confirmPlanned counts with them because it is this family's own call: it is
 // what the three plan-confirmation sites ask with, and it is confirmOrdinary
@@ -403,9 +391,7 @@ func (r *initRig) markedRuns(t *testing.T, name, gcp string) {
 
 // prompts counts the two ways a step of a run is confirmed now: the review
 // screen the run's one confirmation is shown in, and the banner of a step
-// that asks its own. Only the ordinary steps' banner names both projects (the
-// Firestore location's names the project alone, and the tests that expect it
-// count it themselves).
+// that asks its own. Only the ordinary steps' banner names both projects.
 //
 // A step the run's confirmation covered prints no banner at all now: it is a
 // step nothing is asked about, and "will do" is what the run has for those
@@ -609,11 +595,11 @@ func TestReviewScreenGolden(t *testing.T) {
 // The whole first-run shape of update --firebase-project with the images: in a project
 // marked as Fugaro's, the run's one confirmation covers the installation apply,
 // the Viewer-read removal, the Firebase apply, the Firestore writes, the image
-// copy, the history job's apply and the local config; the Firestore database's
-// permanent location is asked on its own (the review lists it, and only it and
-// the other separate steps print a banner the run's confirmation does not
-// cover). The same run in an unmarked project asks a confirmation per step.
-func TestFirebaseRunTakesOneConfirmationPlusTheLocation(t *testing.T) {
+// copy, the history job's apply and the local config; where the Firestore
+// database goes is printed as a line and created with nothing asked (LP10,
+// D3090), and it is on no list of what asks separately, because it asks
+// nothing. The same run in an unmarked project asks a confirmation per step.
+func TestFirebaseRunTakesOneConfirmationAndPrintsWhereTheDatabaseGoes(t *testing.T) {
 	run := func(t *testing.T, fp string, marked bool, stdin string) (string, error, *imagesRig) {
 		t.Helper()
 		r := newImagesRigFor(t, "1.2.3", fp)
@@ -627,7 +613,7 @@ func TestFirebaseRunTakesOneConfirmationPlusTheLocation(t *testing.T) {
 		return out + errOut, err, r
 	}
 	// One project for everything (the Firebase project is the installation's).
-	out, err, r := run(t, initProject, true, initProjectName+"\n"+fsLocation("us-east5")+"\n")
+	out, err, r := run(t, initProject, true, initProjectName+"\n")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -642,12 +628,13 @@ func TestFirebaseRunTakesOneConfirmationPlusTheLocation(t *testing.T) {
 	if r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] != "" {
 		t.Errorf("a base kind was copied into the base registry: %v", r.dst.tags)
 	}
-	// The location's banner is its own: it names the project alone, so no step
-	// of the run's confirmation is counted among the steps below it.
-	location := "⚠ CONFIRM (project " + initProjectName + "): the Firestore database is created in"
+	// The database's creation is no step at all (LP10, D3090): one line says
+	// where it goes and that its location is permanent, exactly once, and no
+	// banner of its own stands beside it.
+	location := "the Firestore database is created in " + fsLocation("us-east5") + ", and a database's location can NEVER be changed."
 	runC, stepC := prompts(out)
 	if runC != 1 || stepC != 0 || strings.Count(out, location) != 1 {
-		t.Fatalf("%d run confirmation(s), %d step confirmation(s), location banners %d\n%s", runC, stepC, strings.Count(out, location), out)
+		t.Fatalf("%d run confirmation(s), %d step confirmation(s), location lines %d\n%s", runC, stepC, strings.Count(out, location), out)
 	}
 	if n := strings.Count(out, "covered by the run confirmation"); n < 5 {
 		t.Errorf("%d covered steps:\n%s", n, out)
@@ -657,23 +644,26 @@ func TestFirebaseRunTakesOneConfirmationPlusTheLocation(t *testing.T) {
 		strings.Contains(out, "NOT pinned with --expect-digest: history, base") {
 		t.Errorf("the review does not name the images and their pinning before the steps:\n%s", out)
 	}
-	if i, j := strings.Index(out, "NOT pinned"), strings.Index(out, "⚠ CONFIRM"); i < 0 || j < i {
-		t.Errorf("the pinning is not shown before the first step's banner:\n%s", out)
+	// The pinning is part of the review the person answers, and the review is
+	// printed before any step of it runs and prints its own account ("will do
+	// (project ...)"), so the two can never be read the other way round.
+	if i, j := strings.Index(out, "NOT pinned"), strings.Index(out, "will do (project "); i < 0 || j < i {
+		t.Errorf("the pinning is not shown before the first step it is part of runs:\n%s", out)
 	}
 	if !strings.Contains(out, "the installation's own project") {
 		t.Errorf("the screen does not say which project the Firebase root applies to:\n%s", out)
 	}
 	if i, j := strings.Index(out, "this does NOT create the Firestore database"), strings.Index(out, location); i < 0 || j < i {
-		t.Errorf("the covered write does not say the database creation is asked next:\n%s", out)
+		t.Errorf("the covered write does not say the database is created separately after the local config:\n%s", out)
 	}
-	// The location is not covered by the run's confirmation: it is on the
-	// review's own list of what still asks separately.
-	if !strings.Contains(out, "the Firestore database's creation (its location is permanent)") {
-		t.Errorf("the review does not list the location among the steps that ask separately:\n%s", out)
+	// And no list of what asks separately names it any more: a step of no
+	// confirmation has nothing to ask separately.
+	if strings.Contains(out, "the Firestore database's creation") {
+		t.Errorf("the review still lists the database's creation among the steps that ask separately:\n%s", out)
 	}
 	// Another project for Firebase is no layout any more (Fugaro only starts
 	// fresh): it is refused before anything is asked or applied.
-	out, err, r = run(t, "aurora-fp", true, initProjectName+"\n"+names(1)+names(1)+fsLocation("us-east5")+"\n")
+	out, err, r = run(t, "aurora-fp", true, initProjectName+"\n"+names(1)+names(1))
 	if ExitCode(err) != ExitUserError || !strings.Contains(errString(err), "is not the installation's GCP project") {
 		t.Fatalf("separate Firebase project: %v\n%s", err, out)
 	}
@@ -681,7 +671,7 @@ func TestFirebaseRunTakesOneConfirmationPlusTheLocation(t *testing.T) {
 		t.Fatalf("a refused separate Firebase project asked %d run and %d step confirmation(s), copied %v\n%s", runP, stepP, r.dst.tags, out)
 	}
 	// Unmarked: a confirmation per step, and the count is what it was.
-	out, err, _ = run(t, initProject, false, names(4)+fsLocation("us-east5")+"\n"+names(8))
+	out, err, _ = run(t, initProject, false, names(4)+names(8))
 	if err != nil {
 		t.Fatalf("unmarked: %v\n%s", err, out)
 	}
@@ -907,6 +897,31 @@ func TestReviewScreenPrintsOnlySafeText(t *testing.T) {
 	}
 	if strings.Contains(out, "base image base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3 (OUTSIDE") {
 		t.Errorf("the project's own base image is flagged:\n%s", out)
+	}
+}
+
+// TestReviewScreenShowsTheCarriedBillingAccount: the review screen names the
+// account the plan's budget resource will name, and says where it came from.
+// The account a carried block is on came from no flag — it is the one the
+// installation's own state records — so a screen reading only --billing-account
+// would show no billing account at all while the cover admits the plan's budget
+// on that account (billingAccount, R7 of
+// docs/managed-flag-ergonomics/reconciliation.md).
+func TestReviewScreenShowsTheCarriedBillingAccount(t *testing.T) {
+	var b strings.Builder
+	r := &initRun{cmd: &cobra.Command{}, o: &initOptions{}, w: &b, projectName: initProjectName, gcpProject: initProject,
+		budgetAccount: billingAcc}
+	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5", RegistryHost: "us-east5-docker.pkg.dev/" + initProject}
+	e := &initEngine{r: r, lc: lc, adminsRead: true, images: &imagesStage{}, spec: infra.InstallationSpec{RunsBucket: initRunsBucket, StateBucket: initStateBucket}}
+	e.images.e = e
+	e.previewed = []initflow.StageResult{{Name: initflow.Images, State: initflow.Todo}}
+	e.reviewScreen(t.Context(), "test")
+	out := b.String()
+	if !strings.Contains(out, "billing account: "+billingAcc) {
+		t.Errorf("the screen does not name the account the carry took:\n%s", out)
+	}
+	if !strings.Contains(out, "from the installation's state") {
+		t.Errorf("the screen does not say the account came from the installation's state:\n%s", out)
 	}
 }
 

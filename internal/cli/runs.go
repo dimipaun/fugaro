@@ -68,11 +68,18 @@ type lsOptions struct {
 // They are the vocabulary a row's `status` carries, never the decorated cell
 // statusCell prints -- `failed (preempted)` is --state failed, as a reader
 // switching on status has always seen it.
+//
+// `paused` is the run's own status word (R15) and belongs here with the
+// others: a run that suspended itself is a state a reader asks a listing for,
+// and it is a scan rather than a live query, because a pause ends the run's
+// execution and releases its lease (R12, runs_live.go). It is also the state
+// of the pull request such a run is on, and it is deliberately not one of the
+// three in lsPRStates -- that list's own note says why.
 var lsStates = []string{
 	string(runstore.StatusCancelled), runview.StatusError, string(runstore.StatusFailed),
 	string(runstore.StatusHalted), string(runstore.StatusInfraError), runview.StatusLaunching,
-	runview.StatusPending, string(runstore.StatusRunning), string(runstore.StatusSucceeded),
-	runview.StatusUnlaunched, string(runstore.StatusUnreviewed),
+	string(runstore.StatusPaused), runview.StatusPending, string(runstore.StatusRunning),
+	string(runstore.StatusSucceeded), runview.StatusUnlaunched, string(runstore.StatusUnreviewed),
 }
 
 // prLookback is runs ls --pr's default --since: run --pr's window
@@ -271,7 +278,7 @@ func newRunsCmd() *cobra.Command {
 		Use:   "runs",
 		Short: "List and inspect runs",
 	}
-	cmd.AddCommand(newLsCmd(), newRunsStatsCmd(), newRunsSummaryCmd(), newRunsDigestCmd(), newRunsReportsCmd(), newRunsShowCmd(), newRunsWatchCmd())
+	cmd.AddCommand(newLsCmd(), newRunsStatsCmd(), newRunsSummaryCmd(), newRunsDigestCmd(), newRunsReportsCmd(), newRunsShowCmd(), newRunsWatchCmd(), newRunsReindexCmd())
 	return cmd
 }
 
@@ -756,7 +763,7 @@ func selectRefs(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time, w
 func readRefRows(ctx context.Context, env *cloudEnv, f lsFilter, refs []lsRef, live *liveSet, now time.Time, warnf func(string, ...any)) ([]runview.Row, error) {
 	// The bucket's objects, for every run, through the run cache when this
 	// listing asked for it. One flat listing per repository carries every
-	// run's three objects' generations, so the runs the previous listing
+	// run's cached objects' generations, so the runs the previous listing
 	// already read are answered locally and the reads that leave the machine
 	// are the objects that changed.
 	//
@@ -764,11 +771,21 @@ func readRefRows(ctx context.Context, env *cloudEnv, f lsFilter, refs []lsRef, l
 	// every object of the repository, which is the cost the live set was read
 	// to avoid, and a repository with a long history is exactly where a live
 	// run would be answered from a cache it took a full listing to build.
-	readers := lsReaders(ctx, env, live == nil && !f.noCache, refs)
+	//
+	// The same answer decides whether a run may be read from its summary: a
+	// summary belongs to the run cache -- it is the listing's own shortcut
+	// over the run's objects, and a run cache that has been through an update
+	// holds it from the same listing the three generations came from -- and a
+	// listing that asked for the bucket as it is now (--no-cache, every
+	// caller that decides rather than displays: a follow-up gate, a review
+	// scope, a budget read) reads the run's three objects, as it did before
+	// there were summaries.
+	useCache := live == nil && !f.noCache
+	readers := lsReaders(ctx, env, useCache, refs)
 	runs := make([]runObjects, len(refs))
 	errs := make([]error, len(refs))
 	parallel(len(refs), func(i int) {
-		runs[i], errs[i] = readRunVia(ctx, env, readers[refs[i]], refs[i].slug, refs[i].id, f.pr)
+		runs[i], errs[i] = readRunVia(ctx, env, readers[refs[i]], refs[i].slug, refs[i].id, f.pr, useCache)
 	})
 	if err := errors.Join(errs...); err != nil {
 		return nil, remote(err)
@@ -874,11 +891,36 @@ func readRefRows(ctx context.Context, env *cloudEnv, f lsFilter, refs []lsRef, l
 			reviewing[rows[i].RunID] = pr
 		}
 	}
+	// The run that resumed each paused run of the window, by the paused run's
+	// key: the resumer's own task names the paused run under `resumes`
+	// (task.Spec.Resumes, contract-pause R17), and the paused run's chain
+	// cannot — ResolveChain walks backwards, so a paused run's chain holds its
+	// ancestors and never the run the orchestrator launched to pick it up.
+	// Built before the filters below narrow the rows, like the states beside
+	// it: a resumer is often a run those filters drop, and the paused row it
+	// names still reads who resumed it. The first in the listing's own order
+	// wins, which is the newest launch (newerRow) — two runs naming one pause
+	// is a state the resume guards exist to prevent, and the listing must not
+	// flip between two answers on consecutive reads.
+	resumers := map[string]string{}
+	for i := range rows {
+		if t := runs[i].in.Task; t != nil && t.Resumes != "" {
+			key := pauseRowKey(rowRef(rows[i]).Slug, t.Resumes)
+			if _, ok := resumers[key]; !ok {
+				resumers[key] = rows[i].RunID
+			}
+		}
+	}
 	// The state of each pull request the window holds, set before the filters
 	// below pick the page: a state is the pull request's, read from every run
 	// of it the listing read, so it is the same on every row of a page as on
-	// the rows the filters below dropped.
-	markPRStates(rows, reviewing)
+	// the rows the filters below dropped. The pause of a paused row is stamped
+	// here too, and from the same lookup: the state of its pull request and the
+	// instant its own row shows are two questions about one node, and the
+	// lookup reads it once (pauseFactsFor).
+	pauses := pauseFactsFor(ctx, env, warnf)
+	markPRStates(rows, reviewing, pauses)
+	markPauses(rows, resumers, pauses)
 	// A review run --pr kept for the fold alone is not a row it prints: the
 	// state every row of the pull request carries is read from it, and the
 	// review itself is not one of the pull request's own runs. rows is runs
@@ -1430,6 +1472,10 @@ type runObjects struct {
 	// unreadRecord means a corrupt object stopped the reads before the
 	// record could say which pull request the run is on.
 	unreadRecord bool
+	// summarized means the run's task and record came from its own summary
+	// object, so a later re-read of the record goes back to the summary and
+	// never to a result.json the rest of the row was not built from.
+	summarized bool
 	// stateOnly means --pr kept the run for the fold alone: a review run in
 	// flight on the pull request is a run of it, and not a row --pr lists.
 	stateOnly bool
@@ -1437,9 +1483,11 @@ type runObjects struct {
 
 // readRun reads what the bucket knows about one run; it makes no backend
 // call. Every object comes from the bucket: a caller that wants the run
-// cache passes its own reader to readRunVia.
+// cache passes its own reader to readRunVia. It reads the run's three
+// objects and never its summary: a caller of this one wants the run itself
+// (a digest, an estimate, a gate), not the row a listing prints.
 func readRun(ctx context.Context, env *cloudEnv, slug, id string) (runObjects, error) {
-	return readRunVia(ctx, env, runcache.Reader{}, slug, id, 0)
+	return readRunVia(ctx, env, runcache.Reader{}, slug, id, 0, false)
 }
 
 // readRunVia is readRun through rd, which may answer an object from the
@@ -1451,7 +1499,15 @@ func readRun(ctx context.Context, env *cloudEnv, slug, id string) (runObjects, e
 // for none: a run whose task names a different pull request is left there, its
 // launch.json and result.json unread, because neither can place it on the pull
 // request the caller is listing (taskOnOtherPR).
-func readRunVia(ctx context.Context, env *cloudEnv, rd runcache.Reader, slug, id string, pr int) (runObjects, error) {
+//
+// sum lets the run's own summary.json stand in for its task.json and its
+// result.json, which is what `runs ls` wants and what the rest do not: the
+// summary carries what a row shows and nothing else, so a caller that reads
+// the run for anything more -- its stages, its verify records, its reports --
+// passes false. A summary this reader cannot vouch for (absent, unreadable,
+// another version, another run) is no error and no row: the three objects
+// answer instead, which is every run written before summaries existed.
+func readRunVia(ctx context.Context, env *cloudEnv, rd runcache.Reader, slug, id string, pr int, sum bool) (runObjects, error) {
 	s := runstore.Open(env.bucket.Bucket, slug, id)
 	r := runObjects{in: runview.Input{Slug: slug, RunID: id}, store: s}
 	in := &r.in
@@ -1463,28 +1519,55 @@ func readRunVia(ctx context.Context, env *cloudEnv, rd runcache.Reader, slug, id
 		// show at all (--pr, a window the run fell out of).
 		r.warning = fmt.Sprintf("warning: run %s/%s: %s\n", slug, task.ShortRun(id), p)
 	}
-	raw, err := rd.Read(ctx, s, "task.json")
-	switch {
-	case err != nil:
-		return r, err
-	case raw != nil:
-		in.Task, _ = task.Parse(raw) // unparseable: the row says task.json unreadable
+	var err error
+	if sum {
+		ok, err := readSummaryVia(ctx, s, rd, in)
+		if err != nil {
+			return r, err
+		}
+		r.summarized = ok
 	}
 	if taskOnOtherPR(in.Task, pr) {
+		// On the summary path this is the two objects' own answer too: the
+		// summary carries the task's pull request and the record's, which is
+		// all that places a run on a pull request (taskOnOtherPR).
 		return r, nil
 	}
+	if !r.summarized {
+		raw, err := rd.Read(ctx, s, "task.json")
+		switch {
+		case err != nil:
+			return r, err
+		case raw != nil:
+			in.Task, _ = task.Parse(raw) // unparseable: the row says task.json unreadable
+		}
+		if taskOnOtherPR(in.Task, pr) {
+			return r, nil
+		}
+	}
 	// A corrupt object is this run's error row, with a warning; a read that
-	// fails otherwise (the bucket, the network) still fails the listing.
+	// fails otherwise (the bucket, the network) still fails the listing. On
+	// the summary path launch.json is the only one of the two left to read --
+	// a launcher wrote it, and a summary may never stand in for what a
+	// launcher wrote -- and its corruption drops the record with it, so the
+	// row is the one the three objects give for the same object.
 	for _, read := range []struct {
 		name string
 		do   func() error
 	}{
 		{"launch.json", func() (err error) { in.Launch, err = readLaunch(ctx, s, rd); return err }},
-		{"result.json", func() (err error) { in.Record, err = readRecord(ctx, s, rd); return err }},
+		{"result.json", func() (err error) {
+			if r.summarized {
+				return nil
+			}
+			in.Record, err = readRecord(ctx, s, rd)
+			return err
+		}},
 	} {
 		if err := read.do(); corruptObject(err) {
 			problem(read.name + " is unreadable: " + err.Error())
 			r.unreadRecord = true
+			in.Record = nil
 			return r, nil
 		} else if err != nil {
 			return r, err
@@ -1510,6 +1593,41 @@ func readRunVia(ctx context.Context, env *cloudEnv, rd runcache.Reader, slug, id
 		r.execution = in.Launch.Execution
 	}
 	return r, nil
+}
+
+// readSummaryVia reads a run's summary object through rd and fills in.Task and
+// in.Record from it, so the run's task.json and result.json are not read: two
+// objects per run instead of three, which is what the summary is for.
+//
+// ok is false when there is nothing here to read the run from, and the caller
+// reads the three objects instead. Every one of those is a fallback rather
+// than an error, because the object is a shortcut and a shortcut may not break
+// the listing it was meant to speed up: the run has no summary (every run
+// written before this object existed), or the summary is unreadable or names
+// another version, another run, or no record at all (runstore.DecodeSummary's
+// own checks). An error is returned only for what would fail the listing
+// anyway -- the bucket or the network.
+func readSummaryVia(ctx context.Context, s *runstore.Store, rd runcache.Reader, in *runview.Input) (bool, error) {
+	raw, err := rd.Read(ctx, s, runstore.SummaryName)
+	switch {
+	case corruptObject(err):
+		// A corrupt summary is not this run's error row, unlike a corrupt
+		// task.json or result.json: those are the run's own objects and the
+		// listing says so, while this one is only a shortcut over them.
+		return false, nil
+	case err != nil:
+		return false, err
+	case raw == nil:
+		return false, nil
+	}
+	sum, err := runstore.DecodeSummary(raw, s.Slug(), s.RunID())
+	if err != nil {
+		return false, nil
+	}
+	// Task may be nil here -- a run whose task could not be read -- which is
+	// the row task.json would give for the same run.
+	in.Task, in.Record = sum.Spec(), sum.AsRecord()
+	return true, nil
 }
 
 // readLaunch reads a run's launch.json through rd: the bytes, decoded
@@ -1607,7 +1725,41 @@ func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs ma
 	// final record and exited in between would look like one that died
 	// without finalizing. Once the execution has ended (or is gone), read
 	// the record again, so it is as new as the execution.
+	//
+	// The record is re-read from where this run's record came from: a row
+	// built from the summary re-reads the summary, because reading result.json
+	// here would answer a record the rest of the row was never built from --
+	// and the summary is written beside the record, at the same moments, so it
+	// is as new as it. Two summaries fall back to result.json instead: one that
+	// has gone or cannot be vouched for (the shortcut is not there any more),
+	// and one that still says running while the execution has ended (the
+	// shortcut is there and behind the record). Either way the row is the run's
+	// own record rather than a run shown as one nothing wrote -- a nil record
+	// here reads as a run the backend lost.
 	if in.Record != nil && in.Record.Status == runstore.StatusRunning && (in.Exec == nil || in.Exec.State.Terminal()) {
+		if r.summarized {
+			// A summary the reader cannot vouch for is the same fallback the
+			// first read gives it (readSummaryVia): the shortcut is not there,
+			// and the run's own object answers. Only a read that failed is
+			// this listing's error, as it is on the first read.
+			sum, serr := absent(s.ReadSummary(ctx))
+			if serr != nil && !corruptObject(serr) {
+				return serr
+			}
+			// A summary that still says running, while the execution has
+			// ended, is one behind the record it stands in for: the summary
+			// write is best-effort and follows the record write (runner.save),
+			// so a run that ended in between leaves a valid summary of a run
+			// still going. Trusting it here would show a succeeded run as
+			// infra_error, "execution ended without finalizing (succeeded)" --
+			// a row wrong for good -- so the run's own record answers instead,
+			// exactly as when the summary has gone: result.json is the object
+			// this one stands in for and the one that carries the ending.
+			if sum != nil && sum.Record != nil && sum.Record.Status != runstore.StatusRunning {
+				in.Record = sum.AsRecord()
+				return nil
+			}
+		}
 		if in.Record, err = absent(s.ReadRecord(ctx)); err != nil {
 			return err
 		}
@@ -1618,11 +1770,15 @@ func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs ma
 // corruptObject reports whether err is a run object that can't be used:
 // undecodable, or past its read cap (runstore.ErrTooLarge,
 // blobx.ErrTooLarge). That is the run's problem, not the listing's.
+// runstore.ErrCorrupt is the same verdict from a reader that decodes the
+// object itself (runstore.ReadRecord, ReadSummary): the object is there and
+// does not decode, which is not a read that failed.
 func corruptObject(err error) bool {
 	var syn *json.SyntaxError
 	var typ *json.UnmarshalTypeError
 	return errors.As(err, &syn) || errors.As(err, &typ) || errors.Is(err, io.ErrUnexpectedEOF) ||
-		errors.Is(err, runstore.ErrTooLarge) || errors.Is(err, blobx.ErrTooLarge)
+		errors.Is(err, runstore.ErrTooLarge) || errors.Is(err, blobx.ErrTooLarge) ||
+		errors.Is(err, runstore.ErrCorrupt)
 }
 
 // absent turns runstore.ErrNotFound into a nil value and no error.
@@ -1735,6 +1891,11 @@ func printDoc(w io.Writer, project string, rows []runview.Row, tot runview.Total
 	// that died before bootstrap, has none and does not widen every other
 	// run's columns for it.
 	showMode := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.Rigor != nil })
+	// The resume column appears only when some listed run ended paused
+	// (contract-pause R15, D3195): a listing whose window holds no paused run
+	// does not widen every other run's columns for a cell it would leave `-`
+	// on every row of the page.
+	showResume := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.Status == string(runstore.StatusPaused) })
 	// RUN is the ending a person reads, says and types back (spec.md §1), and
 	// the repository has the column beside it: together the two are what
 	// Row.Run carries as `<slug>/<run-id>` and what --json keeps whole (D1705).
@@ -1756,6 +1917,9 @@ func printDoc(w io.Writer, project string, rows []runview.Row, tot runview.Total
 	}
 	if showMode {
 		header += "\tMODE"
+	}
+	if showResume {
+		header += "\tRESUME"
 	}
 	fmt.Fprintln(tw, header)
 	endings := runEndings(rows)
@@ -1795,6 +1959,9 @@ func printDoc(w io.Writer, project string, rows []runview.Row, tot runview.Total
 		}
 		if showMode {
 			line += "\t" + modeCell(r)
+		}
+		if showResume {
+			line += "\t" + pauseCell(r)
 		}
 		fmt.Fprintln(tw, line)
 	}
@@ -1971,7 +2138,41 @@ func statusCell(r runview.Row) string {
 	return r.Status
 }
 
-// changedFilesCell is a row's recorded changed-path count (design D27): the
+// pauseCell is a paused run's resume fact for the listing's RESUME column
+// (contract-pause R15, D3195): the instant the orchestrator will resume its
+// chain at, in RFC 3339 UTC like the document's other instants, and the run
+// that resumed it, shortened the way a run id is spelled in a cell
+// (task.ShortRun). It is the two facts `internal/watch`'s plain frame draws for
+// a paused finished row, spelled for this table.
+//
+// `-` for a run that is not paused, and for a paused run whose pause this read
+// could not see at all: a node the lookup could not read leaves the instant
+// unknown and a listing that holds no resumer leaves the resumer unknown, and
+// an unknown answer is never rendered as an empty one (the rule the changed-
+// files and mode cells beside it follow). A paused run the reader can place
+// always has at least one of the two, since the node names the instant it was
+// written with.
+func pauseCell(r runview.Row) string {
+	// The question is asked by an equality with the word it is about — is this
+	// run paused? — rather than by negating it: a status read is always an
+	// equality with the value being asked about, so a status a later release
+	// adds is never swept into an answer it does not belong to (the rule
+	// TestRunsListsReadTheStatusWord holds this file's reads to).
+	if r.Status == string(runstore.StatusPaused) {
+		var parts []string
+		if r.ResumeAt != nil {
+			parts = append(parts, r.ResumeAt.UTC().Format(time.RFC3339))
+		}
+		if r.ResumedBy != "" {
+			parts = append(parts, "by "+task.ShortRun(r.ResumedBy))
+		}
+		if len(parts) > 0 {
+			return cellOneLine(strings.Join(parts, " "))
+		}
+	}
+	return "-"
+}
+
 // count of paths the record holds, and "N/M" when the record was truncated at
 // M paths, so a reader can see that the set it holds is not the whole set.
 // "-" for a run that recorded none — an unknown answer, never a zero.

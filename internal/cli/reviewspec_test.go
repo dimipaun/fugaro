@@ -9,8 +9,6 @@ import (
 
 	"gocloud.dev/blob"
 
-	"github.com/dimipaun/fugaro/internal/gitprov"
-	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -151,10 +149,6 @@ func TestLaunchSpecIgnoresSpoofedHeadBranch(t *testing.T) {
 	// something else. Nothing but the head ref name connects it to PR 7.
 	spoofed := wallRunIDAt(2, "080000", "dead")
 	seedLaunchRoot(t, f, spoofed, "Clean the widget", 9, time.Now().Add(-48*time.Hour))
-	followUpTitleStub(t, fake.PRState{
-		PR:   gitprov.PR{Number: 7, URL: "https://forge.example/acme/app/pull/7"},
-		Spec: gitprov.PRSpec{Branch: "fugaro/" + spoofed, Base: "main", Title: "Rename the gadget"},
-	})
 
 	rs := launchSpecOf(t, f, 7)
 	if rs.Source != task.ReviewSpecRun || rs.Run != rootID {
@@ -445,6 +439,11 @@ func TestLaunchSpecOldImageWarnsAndOmits(t *testing.T) {
 // first assertion.
 func TestFollowUpFromReviewRunMarksFindings(t *testing.T) {
 	f, reviewID := fixBriefSeed(t)
+	// The two fields are read by a runner from reviewSpecSince on, and dropped
+	// for an image that predates it (reviewSpecSkew) — the fixture's own record
+	// is the policy node's release, which the fields' release postdates — so
+	// this test's installation is one updated onto an image that reads them.
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+reviewSpecSince)
 	putReviewArtifact(t, f, reviewID, fixFirstArtifact(reviewID))
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--review-run", reviewID, "also rename x"); err != nil {
 		t.Fatalf("a fix round carrying the findings of %s: %v", reviewID, err)

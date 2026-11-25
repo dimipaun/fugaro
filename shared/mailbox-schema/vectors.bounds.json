@@ -182,6 +182,33 @@
       }
     },
     {
+      "name": "a mode of exactly MODE_MAX",
+      "why": "a launch's mode is bounded by MODE_MAX (O10, J5a), and the bound itself is accepted: the mode is a short word, and 64 code units is the longest one the field set takes",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "start it in pro",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "action",
+        "agent": "orchestrator",
+        "action": {
+          "id": "a-0003",
+          "verb": "launch",
+          "mode": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        }
+      },
+      "past": {
+        "mode": "grow",
+        "at": "action.mode",
+        "code": "too-long"
+      }
+    },
+    {
       "name": "a head SHA of exactly SHA_MIN",
       "why": "a head SHA is 40 or 64 hex characters: 40 is one of the two",
       "record": "message",

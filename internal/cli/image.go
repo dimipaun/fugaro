@@ -1011,7 +1011,7 @@ func loadCheckoutResolved(ctx context.Context, dir string, lc *localcfg.Config, 
 	out, err := exec.CommandContext(ctx, "git", args...).Output()
 	if err != nil {
 		if dir != "" {
-			return "", rf, &ExitError{Code: ExitUserError, Err: fmt.Errorf("%s is not inside a git checkout; point at the repository's checkout", dir)}
+			return "", rf, &ExitError{Code: ExitUserError, Err: fmt.Errorf("%s is not inside a git checkout; it takes the checkout's PATH, not owner/name: run it from inside the checkout (for update, --repo alone), or pass the checkout's path", dir)}
 		}
 		return "", rf, &ExitError{Code: ExitUserError, Err: errors.New("not inside a git checkout; run this from the repository")}
 	}
@@ -1019,6 +1019,12 @@ func loadCheckoutResolved(ctx context.Context, dir string, lc *localcfg.Config, 
 	data, err := requireFugaroYAML(filepath.Join(root, "fugaro.yaml"))
 	if err != nil {
 		return "", rf, userErr("%v", err)
+	}
+	if updateLeavesTheRemoval(ctx) {
+		// The update's own read: the file as this run's removal offer leaves it
+		// (F22). Every other reader resolves the bytes as they are and refuses
+		// a file that still says the word (D3022).
+		data, _ = fugaroYAMLWithoutRemovedMode(data)
 	}
 	if lc == nil {
 		lc = selectedProjectConfig(ctx)

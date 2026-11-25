@@ -37,6 +37,13 @@ locals {
     # Check 85). Gated on the hop like the entries above: the call exists only
     # for an installation that carries it.
     local.voice_on ? ["texttospeech.googleapis.com"] : [],
+    # The consumer's signing key lives in Cloud KMS (mailbox_key.tf, plan task
+    # J6): a key cannot be created in a project whose KMS API is off, and the
+    # key exists exactly where its own switch does — the pairing front end or
+    # the resident orchestrator. Gated on the same local as every entry above,
+    # so an installation that has neither plans the API list it planned before
+    # the key existed.
+    local.mailbox_key_on ? ["cloudkms.googleapis.com"] : [],
   ))
 }
 

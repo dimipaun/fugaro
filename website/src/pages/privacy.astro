@@ -42,23 +42,34 @@
  * "latest release" endpoint, at most once a day, cached on the machine, and the two switches
  * that turn it off), the phone app's two credentials and its secure storage from
  * `mobile/src/accounts/`, and the app's reporting from the other direction — the page names
- * Firebase Crashlytics and Firebase Analytics, so the same gate refuses that naming unless
+ * Firebase Crashlytics, so the same gate refuses that naming unless
  * the repository carries the plan for it (`docs/mobile/telemetry-plan.md`) or the
- * app's own dependency list already carries the two packages, and it refuses the app's
- * carrying them without the page naming them. The app's "no advertising identifier" is read
+ * app's own dependency list already carries the package, and it refuses the app's
+ * carrying it without the page naming it. **Analytics left both sides together** (T3.1 of
+ * `docs/review-levels-ab-jobmax/`, the owner's ruling of 2026-10-30, D731): the package is out
+ * of `mobile/package.json` and the page names no usage report, and the gate refuses either
+ * half coming back alone. The app's "no advertising identifier" is read
  * off the tree, not asserted: the scan refuses the platform's advertising-identifier APIs
- * anywhere under `mobile/`. The project the app signs in to is the reader's own — the CLI and
+ * anywhere under `mobile/`, and the Android permission Play reads is blocked in the resolved
+ * config rather than sworn to in prose. The project the app signs in to is the reader's own — the CLI and
  * the console reach nothing the Fugaro project operates except the licence service, and the
  * app's reports are the one flow that reaches a project of ours, which is why the page states
- * them and says that the app versions carrying
- * them have no switch to turn them off (the owner's ruling of 2026-10-19). The clause that
+ * them and says what turns them off: the project's own published switch, which the owner's
+ * ruling of 2026-10-30 (D731) answers with, superseding the always-on answer of 2026-10-19.
+ * The clause that
  * says which of the other things a reader may hold these reports do not touch names the two
  * other tools and not the website: the website's own measurement is part one's subject, it is
  * Google Analytics under a consent that part states, and a software-part sentence calling the
  * website unaffected would be this page contradicting its own first half.
  *
+ * **The switch is the project's own published policy, not one inside the app** (D731, built by
+ * T3.1): crash reports are on by default and opt-out, the project publishes `mobile_crash_reports`
+ * in its policy (a top-level key beside the `mobile` block), and the app follows it — so the page says the reports are on by default, that
+ * nothing is sent before the app has read the switch, that a project publishing it `false` sends
+ * nothing, and that uninstalling or not installing the app is still a reader's way out.
+ *
  * **The app's paragraph is held to the build that ships, and no sentence of it moved for
- * that.** The two reporters it names are in the app's own dependency list and wired into its
+ * that.** The one reporter it names is in the app's own dependency list and wired into its
  * native build (P7.1a and P7.1b of the telemetry plan), the app carries the statement and the
  * closed event allow-list (P7.2 and P7.3), and the plan is in this repository — so
  * `website/test/privacy.mjs` now reads this paragraph against the plan **and** against
@@ -68,7 +79,10 @@
  * may hold does, because the earlier builds — the voice-less first one — send nothing at all
  * (D258). **Task P7.4 of the telemetry plan is that holding and not a rewrite**: it adds no
  * sentence here, and the count this page carries is the one `website/README.md` derives the
- * words ceiling from, so a sentence added here re-derives it in the same commit.
+ * words ceiling from, so a sentence added here re-derives it in the same commit. **T3.1 rewrote
+ * the paragraph rather than extending it** — the Analytics clause and the "no switch" clause left
+ * with the ruling that superseded them, and the opt-out sentence took the second one's place —
+ * so the words ceiling moved with it, in that commit.
  *
  * **The key sign-up is the portal's now, and the key request page asks for nothing.** A licence
  * key — the free seat, the open-source programme, the requests a person reads — is asked for in
@@ -83,6 +97,19 @@
  * obliges the notice to name the merchant of record as a recipient — and `website/test/privacy.mjs`
  * rule 9 holds each sentence to the source that makes it true. The owner approved the whole of it
  * with the plan's tasks on 2026-11-16.
+ *
+ * **The push card states what the design and the tree hold, and it is Task P5.2.10's.** A paired
+ * phone's notifications are the one flow this page describes that a reader's own installation
+ * drives: the app registers a token with the publisher's relay (the design's Q7, answered
+ * 2026-11-21 — the publisher holds the delivery credentials once), a notification Fugaro sends
+ * carries a category and nothing else, the app resolves the detail from its own authenticated
+ * mailbox and — on Android — alerts rather than acts, a forged push is not covered, and an iOS
+ * alert is the system's own drawing of the sender's text, quiet hours store one zone
+ * name (Q5), and retention is the pairing's (Q10). The card is written against the design's §9
+ * (`docs/mobile/design/push-notifications.md`), the sender `internal/cli/push.go` (Task P5.2.6)
+ * and the receipt `mobile/src/push/` (Task P5.2.9), and `website/test/privacy.mjs` rule 10 holds
+ * each sentence to them. It moved the page's count, which is why `website/README.md`'s ceiling is
+ * re-derived in the same commit.
  *
  * **The software part's sentence about the project's hosts is restated, and the tree is why.**
  * The page said the CLI and the console talk "to nothing the Fugaro project operates", and
@@ -379,26 +406,57 @@ const repo = site.facts.repository
           Keystore, and nowhere else.
         </p>
         <p>
-          <strong>Crash reports and anonymous usage.</strong> The app version that carries these
-          reports sends two things to a Firebase project the Fugaro project operates, and not to
-          your own: crashes, through <strong>Firebase Crashlytics</strong>, and anonymous usage,
-          through <strong>Firebase Analytics</strong>. A crash report holds the crash's logs,
-          diagnostics and app performance data; the usage count says which screens were opened.
-          Firebase gives the app an app-instance identifier of its own, and that travels with both.
-          Google holds all of it, as Firebase's processor, for the Fugaro project, under{' '}
+          <strong>Crash reports.</strong> The app version that carries these reports sends
+          crashes, through <strong>Firebase Crashlytics</strong>, to a Firebase project the
+          Fugaro project operates, and not to your own. A crash report holds the crash's logs,
+          diagnostics and app performance data. Firebase gives the app an app-instance
+          identifier of its own, and that travels with the report. Google holds all of it, as
+          Firebase's processor, for the Fugaro project, under{' '}
           <a href="https://firebase.google.com/support/privacy" rel="noopener">Google's Firebase
           privacy policy</a>.
         </p>
         <p>
           Never sent: the contents of any message, anything from your installation or its mailbox,
-          your credentials and your keys. The reports are read to find and fix crashes and to see
-          which screens are used, and for nothing else. The app carries no advertising identifier.
+          your credentials and your keys. The reports are read to find and fix crashes, and for
+          nothing else. The app carries no advertising identifier.
         </p>
         <p>
-          The app versions that carry these reports send them. There is no switch inside the app to
-          turn them off: uninstalling the app stops them, and not installing it avoids them. The
-          command line tool and the console are unaffected: they carry none of these reports.
-          Earlier builds of the app send nothing at all.
+          The app versions that carry these reports send them. The switch is the project's own
+          published policy and not one inside the app: it is on by default, nothing is sent before
+          the app has read it, and a project that publishes it as false sends nothing. A reader's
+          own way out is deletion: uninstalling the app stops them, and not installing it avoids
+          them. The command line tool and the console are unaffected: they carry none of these
+          reports. Earlier builds of the app send nothing at all.
+        </p>
+      </div>
+
+      <div class="card privacy-card">
+        <h3>Push notifications</h3>
+        <p>
+          A paired phone can be told when something needs you: a kill switch goes on, a spending
+          cap is reached or nearly reached, your orchestrator goes offline, or a question is
+          waiting. Turning this on is your act. The app asks its platform for a device token,
+          hands it to the relay the Fugaro project operates — the publisher holds the delivery
+          credentials once, so a phone on somebody else's Firebase project can still be reached —
+          and writes the token the relay answers with into your own installation, where it lives
+          only as long as the pairing. <strong>Nothing here delivers yet</strong>: no build of the
+          app registers a phone, and the sender only posts to your installation's own project
+          rather than through the relay.
+        </p>
+        <p>
+          <strong>A notification Fugaro sends carries a category and nothing else: no run title,
+          repository name, code, error text or amount.</strong> The app fetches the detail itself
+          over its authenticated connection, so a notification is never the source of truth, and
+          on receipt the app resolves the change and, on Android, shows an alert in its own
+          words — it cannot make the app act: no action, no link and no write. On iOS the system
+          draws any alert itself, before the app runs, so what is shown there can only be the
+          sender's text and never a sentence the app chose. A notification Fugaro did not send is not
+          covered by any of this: a forged push can lie on your lock screen and the system cannot
+          tell it from ours, which is why you open the app rather than trust the banner. If you
+          set quiet hours, the app stores the time zone your device reports, in your installation
+          only. Revoking the device deletes the push data with it — the push data lives only as
+          long as the pairing — but what Google and Apple keep on their side is not this project's
+          to delete, and neither is what the relay holds.
         </p>
       </div>
 
@@ -407,9 +465,10 @@ const repo = site.facts.repository
         <p>
           Everything else the software holds lives in your own accounts, your own cloud project and
           your own devices, and removing the installation removes it. Two things are the project's
-          rather than yours. The crash reports and anonymous usage above: deleting the app does not
+          rather than yours. The crash reports above: deleting the app does not
           remove them, and Google holds them for the Fugaro project, under the policy linked above.
-          Uninstalling the app stops the sending. It does not take a report already sent out of
+          Uninstalling the app stops the sending, and the project can stop it by publishing its
+          switch off. It does not take a report already sent out of
           Google's hands. And what you give the licence service when you ask for a key: that is the
           service's own, and the key sign-up card above says what it collects. The issue tracker is
           where to ask about a report already sent, or about what the licence service still holds
