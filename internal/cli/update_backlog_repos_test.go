@@ -189,30 +189,64 @@ func TestFoldRepositoryIsTheSource(t *testing.T) {
 // not, and what the step is there to say is how many items it would fold (spec
 // §Interactions) — the count line, and per repository the state that says
 // nothing was written.
+//
+// The count is the one the update behind it would WRITE, not the number of open
+// files: an id the node already knows is an item already filed (D2716), so the
+// second case folds a folder a fold has already dealt with and the step says
+// what the real run would — the items of the repository whose file is not
+// already in the node, and silence for the one whose is.
 func TestFoldPlanOnlyCounts(t *testing.T) {
-	e, db := foldUpdateRig(t, true,
-		backlogView("acme/app", folderOf(
-			itemFile("20261021-01", "one", "the first thing left open", "open"),
-			itemFile("20261021-03", "three", "a thing already dealt with", "closed"))),
-		backlogView("acme/lib", folderOf(itemFile("20261021-02", "two", "the second thing left open", "open"))),
-	)
-	e.foldBacklog(t.Context())
+	t.Run("nothing is folded yet", func(t *testing.T) {
+		e, db := foldUpdateRig(t, true,
+			backlogView("acme/app", folderOf(
+				itemFile("20261021-01", "one", "the first thing left open", "open"),
+				itemFile("20261021-03", "three", "a thing already dealt with", "closed"))),
+			backlogView("acme/lib", folderOf(itemFile("20261021-02", "two", "the second thing left open", "open"))),
+		)
+		e.foldBacklog(t.Context())
 
-	out := e.r.w.(*syncBuf).String()
-	if !strings.Contains(out, "would fold 2 open item(s)") {
-		t.Errorf("a plan-only run does not say how many items it would fold:\n%s", out)
-	}
-	if v := db.Value(orchestratorPath(t, orchestrator.BacklogNode)); v != nil {
-		t.Errorf("a plan-only run wrote the backlog node: %v", v)
-	}
-	if v := db.Value(orchestratorPath(t, orchestrator.StateNode)); v != nil {
-		t.Errorf("a plan-only run wrote the state node: %v", v)
-	}
-	want := []initflow.RepoLine{
-		newRepoLine("acme/app", initflow.RepoSkipped, "would fold 1 open item(s); --plan-only writes nothing"),
-		newRepoLine("acme/lib", initflow.RepoSkipped, "would fold 1 open item(s); --plan-only writes nothing"),
-	}
-	if got := reportedOf(e, "backlog"); !slices.Equal(got, want) {
-		t.Errorf("the step reported %+v, want %+v", got, want)
-	}
+		out := e.r.w.(*syncBuf).String()
+		if !strings.Contains(out, "would fold 2 open item(s)") {
+			t.Errorf("a plan-only run does not say how many items it would fold:\n%s", out)
+		}
+		if v := db.Value(orchestratorPath(t, orchestrator.BacklogNode)); v != nil {
+			t.Errorf("a plan-only run wrote the backlog node: %v", v)
+		}
+		if v := db.Value(orchestratorPath(t, orchestrator.StateNode)); v != nil {
+			t.Errorf("a plan-only run wrote the state node: %v", v)
+		}
+		want := []initflow.RepoLine{
+			newRepoLine("acme/app", initflow.RepoSkipped, "would fold 1 open item(s); --plan-only writes nothing"),
+			newRepoLine("acme/lib", initflow.RepoSkipped, "would fold 1 open item(s); --plan-only writes nothing"),
+		}
+		if got := reportedOf(e, "backlog"); !slices.Equal(got, want) {
+			t.Errorf("the step reported %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("an id the node already knows is not counted", func(t *testing.T) {
+		e, db := foldUpdateRig(t, true,
+			backlogView("acme/app", folderOf(itemFile("20261021-01", "one", "the first thing left open", "open"))),
+			backlogView("acme/lib", folderOf(itemFile("20261021-02", "two", "the second thing left open", "open"))),
+		)
+		// The node as a fold that already ran left it: acme/app's file is filed.
+		seedBacklogNode(t, db, orchestrator.Actor{Class: orchestrator.Daemon, Name: "daemon", Now: orchestratorTestNow},
+			workItemUpsert("20261021-01", "the first thing left open"))
+		e.foldBacklog(t.Context())
+
+		out := e.r.w.(*syncBuf).String()
+		if !strings.Contains(out, "would fold 1 open item(s)") {
+			t.Errorf("a plan-only run counts the items the node already holds, so it claims work the update behind it would not do:\n%s", out)
+		}
+		byID := storedBacklogItems(t, db)
+		if len(byID) != 1 || byID["20261021-01"].Title != "the first thing left open" {
+			t.Errorf("a plan-only run wrote the backlog node: %+v", byID)
+		}
+		want := []initflow.RepoLine{
+			newRepoLine("acme/lib", initflow.RepoSkipped, "would fold 1 open item(s); --plan-only writes nothing"),
+		}
+		if got := reportedOf(e, "backlog"); !slices.Equal(got, want) {
+			t.Errorf("the step reported %+v, want %+v: a repository whose every item the node already holds has nothing to report", got, want)
+		}
+	})
 }

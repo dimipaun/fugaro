@@ -154,7 +154,6 @@ func (e *initEngine) foldBacklog(ctx context.Context) {
 	// wrong one is work sent to the wrong job.
 	var (
 		items    []backlogItem
-		planned  = map[string]int{}
 		itemRepo = map[string]string{}
 	)
 	for _, f := range folders {
@@ -169,7 +168,6 @@ func (e *initEngine) foldBacklog(ctx context.Context) {
 			continue
 		}
 		items = append(items, backlogFoldItems(keep, f.repo)...)
-		planned[f.repo] = len(keep)
 		for _, it := range keep {
 			itemRepo[it.ID] = f.repo
 		}
@@ -201,13 +199,6 @@ func (e *initEngine) foldBacklog(ctx context.Context) {
 	// not read or fold, and nothing else.
 	if len(items) == 0 {
 		report(nil)
-		return
-	}
-	// Under --plan-only the reads happen and the write does not: the count it
-	// would fold is what the step is here to say (spec §Interactions).
-	if o.planOnly {
-		report(planned)
-		fmt.Fprintf(r.w, "backlog: would fold %d open item(s) from every repository's %s into the standing backlog, queued and unapproved: each runs once a person approves it (fugaro orchestrator patch)\n", len(items), backlog.Dir)
 		return
 	}
 	// A run that never opened the cloud, or a project with no shared backend at
@@ -248,6 +239,34 @@ func (e *initEngine) foldBacklog(ctx context.Context) {
 	node, err := orchestratorNodeShard(db, id, orchestrator.ShardBacklog)
 	if err != nil {
 		r.warn(fmt.Sprintf("%s was not folded into the backlog: %s", backlog.Dir, safetext.FieldErr(err)))
+		return
+	}
+	// Under --plan-only the reads happen and the write does not: the count it
+	// would fold is what the step is here to say (spec §Interactions). It is the
+	// count the real update would WRITE and not the number of open files, which
+	// is the number the node decides (backlogUpsert's skip, D2716): a plan-only
+	// run over folders a fold has already filed says nothing, exactly as the
+	// update behind it would write nothing. The node is read once and no write
+	// follows it.
+	if o.planOnly {
+		s, _, err := node.Load(ctx)
+		if err != nil {
+			r.warn(fmt.Sprintf("%s was not folded into the backlog: %s", backlog.Dir, safetext.FieldErr(dbErr(e.lc, err, false))))
+			return
+		}
+		would := map[string]int{}
+		for _, it := range backlogUnknownItems(s, items) {
+			would[itemRepo[it.ID]]++
+		}
+		report(would)
+		n := 0
+		for _, c := range would {
+			n += c
+		}
+		if n == 0 {
+			return
+		}
+		fmt.Fprintf(r.w, "backlog: would fold %d open item(s) from every repository's %s into the standing backlog, queued and unapproved: each runs once a person approves it (fugaro orchestrator patch)\n", n, backlog.Dir)
 		return
 	}
 	// One patch carries at most orchestrator.MaxOps ops, so a few hundred open
@@ -302,6 +321,20 @@ func backlogOpenItems(items []backlog.Item) []backlog.Item {
 	var out []backlog.Item
 	for _, it := range items {
 		if it.Status == backlogOpenStatus {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// backlogUnknownItems is the items of a fold the node does not already hold,
+// which is what backlogUpsert would write: the same skip, asked before the
+// write, so what a --plan-only run counts is what an update would do.
+func backlogUnknownItems(s orchestrator.State, items []backlogItem) []backlogItem {
+	have := backlogKnown(s)
+	var out []backlogItem
+	for _, it := range items {
+		if !have[it.ID] {
 			out = append(out, it)
 		}
 	}
