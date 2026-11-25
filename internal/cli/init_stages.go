@@ -287,8 +287,10 @@ func (e *initEngine) options() initflow.Options {
 //
 // Both front doors run this one list, and the door only removes: `update` is
 // everything `setup` registers, minus the project stage's creation path (a
-// project it never creates) and minus the Batch backend's (the stage is
-// behind --provision-batch, which update refuses). So update's stages are
+// project it never creates) and minus the Batch backend's --provision-batch
+// registration, which update refuses; where the installation's opt-in fact
+// says it is on Batch, update registers the same stage without the flag
+// instead (R2, D3110, see below). So update's stages are
 // preflight, installation, Firebase, images, installation a second time,
 // secrets, plugin, the repository of the checkout it is run in (W5.1), the
 // deployed security rules generation, the published policy node itself
@@ -422,12 +424,20 @@ func initStages(e *initEngine) []initflow.Stage {
 	} else {
 		stages = append(stages, newOrchestratorUnitStage(e))
 	}
-	// The Batch backend's provisioning is the owner's step and nothing else
-	// reaches it: the stage is registered only under its own flag, so an
-	// installation reaches it by asking for it and never as part of an update
-	// (design compute-backend §8.1 tasks 6 and 9).
+	// The Batch backend's provisioning. `setup` reaches the root by asking for
+	// it: the first provisioning is registered under its own flag and is the
+	// owner's step, never part of an update (design compute-backend §8.1 tasks
+	// 6 and 9). `fugaro update` reaches the SAME root by the installation's own
+	// fact instead (R2, D3110): where the block's opt-in says this installation
+	// is on Batch, every operator's update
+	// converges the root -- tightened like the installation's other roots -- and
+	// a machine whose credential is not an operator's, or one whose root was
+	// never provisioned, skips the moment with one line. Which machine is
+	// updating, and what its own `backend:` says, decide nothing (F32).
 	if e.r.o.provisionBatch {
 		stages = append(stages, newComputeStage(e))
+	} else if e.updatesComputeRoot() {
+		stages = append(stages, newUpdateComputeStage(e))
 	}
 	// The project stage, which is the one stage that may create the GCP
 	// project. `setup` registers it on every first run: a first run makes its
