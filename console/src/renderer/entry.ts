@@ -1254,6 +1254,13 @@ export const RAIL_PROJECT_CLASS = 'console-rail-project'
 export const RAIL_STATE_CLASS = 'console-rail-state'
 export const RAIL_SPEND_CLASS = 'console-rail-spend'
 export const RAIL_ADD_CLASS = 'console-rail-add'
+/** RAIL_ADD_PROJECT_CLASS is the foot's **second** door (SW3c, R4): the add row
+ * above it opens the picker window, which is how an installation is added by
+ * checkout path, and this one opens the setup wizard in the main area. It is a
+ * class of its own rather than a second `console-rail-add` because the two are
+ * different affordances -- and because the rail's own e2e locator holds the add
+ * row to being exactly one element. */
+export const RAIL_ADD_PROJECT_CLASS = 'console-rail-add-project'
 export const RAIL_HINT_CLASS = 'console-rail-hint'
 /** RAIL_EMPTY_CLASS is the line the rail draws in place of rows when it has
  * none; the `+` below it stays the way to add one. */
@@ -1272,6 +1279,10 @@ export const RAIL_TITLE = 'Installations'
 export const RAIL_HINT = 'Switch with the shortcut keys 1 2 3'
 export const RAIL_EMPTY_TEXT = 'No installations yet'
 export const RAIL_ADD_LABEL = '+ Add installation'
+/** RAIL_ADD_PROJECT_LABEL is the second door's own word, and it is the same word
+ * the picker window's button carries (`ADD_PROJECT_LABEL`,
+ * `src/renderer/installations.ts`): one affordance, two windows. */
+export const RAIL_ADD_PROJECT_LABEL = 'Add project'
 
 /** RailState is the rail's three words, and the glyph each is drawn beside. The
  * word is drawn **and** the glyph is drawn, never one instead of the other
@@ -1627,6 +1638,7 @@ export function drawRail(
   activate: (row: RailRow, byKeyboard: boolean) => void,
   openPicker: () => void,
   onState: (shown: RailState) => void = () => undefined,
+  openAddProject: () => void = () => undefined,
 ): RailView {
   const factory = surface.factory
   const rail = factory.create('aside')
@@ -1656,6 +1668,21 @@ export function drawRail(
   add.textContent = RAIL_ADD_LABEL
   foot.append(add)
   surface.nodeOf(add).addEventListener('click', openPicker)
+
+  // **The second door in the same foot** (SW3c, R4): with installations present,
+  // a console can set up another one from here, and the wizard opens in the main
+  // area over the installation it is reading. It is drawn **only with a row on
+  // the rail**: a machine with no installation is already showing the wizard in
+  // the main area (the onboarding screen), and a door beside it would be a second
+  // control for one state.
+  if (rows.length > 0) {
+    const addProject = factory.create('button')
+    addProject.setAttribute('class', RAIL_ADD_PROJECT_CLASS)
+    addProject.setAttribute('type', 'button')
+    addProject.textContent = RAIL_ADD_PROJECT_LABEL
+    foot.append(addProject)
+    surface.nodeOf(addProject).addEventListener('click', openAddProject)
+  }
 
   const hint = factory.create('p')
   hint.setAttribute('class', RAIL_HINT_CLASS)
@@ -1981,6 +2008,86 @@ export function drawOnboarding(
   command.setAttribute('class', ONBOARDING_COMMAND_CLASS)
   command.textContent = onboarding.command
   section.append(command)
+  return section
+}
+
+// ---------------------------------------------------------------------------
+// Add project: the same wizard, for a console that already has an installation
+// ---------------------------------------------------------------------------
+
+export const ADD_PROJECT_CLASS = 'installation-add-project'
+export const ADD_PROJECT_TITLE_CLASS = 'installation-add-project-title'
+export const ADD_PROJECT_LEAD_CLASS = 'installation-add-project-lead'
+export const ADD_PROJECT_CANCEL_CLASS = 'installation-add-project-cancel'
+
+/** ADD_PROJECT_TITLE is the heading of the screen the rail's and the picker's
+ * Add project door opens (SW3c, R4). The first-run screen's heading is the
+ * picker's own (`ONBOARDING_COPY`); this one is the rail's word for the door,
+ * because the screen behind it is the same wizard with a different subject: an
+ * installation that already exists beside the one being set up. */
+export const ADD_PROJECT_TITLE = 'Add project'
+export const ADD_PROJECT_CANCEL_LABEL = 'Cancel'
+/** ADD_PROJECT_LEAD is the one sentence that says what this screen is. It says
+ * *second* because that is the whole difference from the first run, and it
+ * repeats the rule the run itself keeps: `setup` is asked in an empty directory,
+ * so nothing here wires a repository -- repositories are added afterwards from
+ * Manage. */
+export const ADD_PROJECT_LEAD = 'Set up a second installation beside this one.'
+
+/**
+ * drawAddProject is the main area for a console that already has an installation
+ * and was asked for another (SW3c, R4): the heading, the one sentence, **the
+ * same wizard as the first run** (`drawWizard`, SW3b -- one screen, two doors),
+ * and Cancel, which is what makes this a view rather than a flow the operator
+ * cannot leave.
+ *
+ * It draws its own `h1` where the first-run screen uses the picker's, and that
+ * is deliberate: this screen is not the onboarding screen and must not borrow
+ * its title. Everything below the heading is SW3b's module unchanged --
+ * including that the wizard reads no answers from anywhere but the operator, and
+ * that the setup run itself is main's (SW3a), started from the bytes main holds.
+ */
+export function drawAddProject(
+  surface: DomSurface,
+  deps: OnboardingDeps & {
+    readonly cancel: () => void
+    /** applied is called when a setup run has ended, whatever its outcome: the
+     * run is the moment the machine can hold an installation it did not hold
+     * when this screen opened, so it is the moment the rail's list is worth
+     * reading again. The wizard draws the outcome either way -- this hook is
+     * about the list behind the screen, not about the screen. */
+    readonly applied?: () => void
+  },
+): SkewElement {
+  const factory = surface.factory
+  const section = factory.create('section')
+  section.setAttribute('class', ADD_PROJECT_CLASS)
+  const title = factory.create('h1')
+  title.setAttribute('class', ADD_PROJECT_TITLE_CLASS)
+  title.textContent = ADD_PROJECT_TITLE
+  section.append(title)
+  const lead = factory.create('p')
+  lead.setAttribute('class', ADD_PROJECT_LEAD_CLASS)
+  lead.textContent = ADD_PROJECT_LEAD
+  section.append(lead)
+  const wizard = drawWizard({
+    factory,
+    plan: (request) => deps.ops.planSetup(request),
+    apply: (request) =>
+      deps.ops.applySetup(request).then((answer) => {
+        deps.applied?.()
+        return answer
+      }),
+    copy: deps.copy,
+    ...(deps.paint === undefined ? {} : { paint: deps.paint }),
+  })
+  section.append(wizard as unknown as SkewElement)
+  const cancel = factory.create('button')
+  cancel.setAttribute('class', ADD_PROJECT_CANCEL_CLASS)
+  cancel.setAttribute('type', 'button')
+  cancel.textContent = ADD_PROJECT_CANCEL_LABEL
+  surface.nodeOf(cancel).addEventListener('click', deps.cancel)
+  section.append(cancel)
   return section
 }
 
@@ -2898,7 +3005,7 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
   const onboarding = railOnboarding(listed)
   // The rail is drawn before the dashboard for the DOM order, and a click on it
   // is answered by the dashboard's own views: `mountDashboard` binds `activate`.
-  const wiring: RailWiring = { activate: () => undefined, home: () => undefined }
+  const wiring: RailWiring = { activate: () => undefined, home: () => undefined, addProject: () => undefined }
   // The switcher is drawn after the rail it holds, so the rail's first state
   // word reaches it through this holder rather than through a view not yet made.
   const status: { switcher: SwitcherView | null; word: RailState } = { switcher: null, word: 'running' }
@@ -2916,6 +3023,10 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
     (shown) => {
       status.word = shown
       status.switcher?.setState(shown)
+    },
+    () => {
+      status.switcher?.close(false)
+      wiring.addProject()
     },
   )
   const header = surface.factory.create('header')
@@ -2960,8 +3071,25 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
     railListed: listedRows !== null,
     onboarding,
     wiring,
+    // The picker's Add project door, if it was the door this window was opened
+    // for (SW3c): main consumed the request on this read, and this window is the
+    // one opened for it.
+    addProject: addProjectRequested(installation),
     navigator: scope.navigator,
   })
+}
+
+/** addProjectRequested reads the one member main adds to `installation.current`
+ * for the window the picker's Add project door asked for (SW3c, R4). It is
+ * `true` only when the answer says so: any other answer -- a read that failed, an
+ * older main process -- leaves the console opening where it always opens. The
+ * member rides the answer that names no installation too, because the picker's
+ * door is drawn on its rows and a console whose projects are all unchosen is a
+ * first run that can still be asked for one more. */
+export function addProjectRequested(installation: unknown): boolean {
+  const answer = replyData(installation)
+  if (!answer.ok || typeof answer.data !== 'object' || answer.data === null) return false
+  return (answer.data as Record<string, unknown>)['addProject'] === true
 }
 
 /** RailWiring is the rail's click, bound by `mountDashboard` once the views a
@@ -2970,6 +3098,9 @@ interface RailWiring {
   activate: (row: RailRow, byKeyboard: boolean) => void
   /** home is the wordmark's click: the Live view. */
   home: () => void
+  /** addProject is the rail's second foot door (SW3c, R4): the wizard, in the
+   * main area, in place of the installation the console is reading. */
+  addProject: () => void
 }
 
 /**
@@ -3082,6 +3213,10 @@ interface DashboardDeps {
    * because nothing was read, and the Graph's no-checkout card decides whether
    * it has an action from whether the CLI listed one. */
   readonly railListed: boolean
+  /** addProject is whether this window was opened by the picker's Add project
+   * door (SW3c, R4): the console opens on the wizard, in place of the
+   * installation it is reading, and Cancel returns to that installation. */
+  readonly addProject?: boolean
   /** onboarding is the screen the list answer names for a machine with no
    * installation, or `null`. */
   readonly onboarding: RailOnboarding | null
@@ -3431,6 +3566,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * the read are held to. */
   const show = (id: string): void => {
     const mine = markCurrent(id)
+    backToView = () => show(id)
     rail.view(null)
     // A section's busy mark and its fifteen-second line belong to the tab the
     // operator is on: leaving Spend ends both, so nothing that was armed for a
@@ -3528,6 +3664,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   wiring.home = (): void => {
     show('live')
     buttons.get('live')?.focus()
+  }
+  wiring.addProject = (): void => {
+    showAddProject()
   }
 
   // The gauge and Halt fleet close the header row. The gauge's figures are the
@@ -7798,6 +7937,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // while it is up, and the Live poll stops -- a poll that kept running under
     // it would replace the run the operator opened a second later.
     markCurrent('run')
+    backToView = () => showRun(run)
     const mine = claim()
     const drawn = renderRunFrame(factory, theme, run)
     replace(drawn.root)
@@ -8123,6 +8263,67 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     )
   }
 
+  /** backToView is the call that draws the screen the main area is showing
+   * again. The five tabs are `show`'s, and the two screens that are not tabs --
+   * an installation's issue and a run's detail -- record their own, because
+   * neither is reachable by a view id.
+   *
+   * **The Add project screen is its one reader** (SW3c, R4): it is drawn in
+   * place of the current view and not beside it, so the way back is remembered
+   * here rather than recomputed, and "back to the current installation" means
+   * the screen the operator was standing on. */
+  let backToView: () => void = () => show('live')
+
+  /** addProjectReturn is that call as the Add project door found it: the door
+   * remembers the screen it replaced rather than reading `backToView` when
+   * Cancel is clicked, because anything that drew in between would have moved
+   * it. */
+  let addProjectReturn: () => void = () => show('live')
+
+  /** refreshRail is the rail's list read again, after a setup run ended: the
+   * installation the wizard created is a row now, and the rail is the list that
+   * has to carry it (SW3c, R4). The **rows** are re-read and nothing else -- the
+   * switcher's line and the header's figures are about the installation the
+   * console is reading, which a second installation does not change. A read that
+   * fails leaves the rows the console has: it is the same rule `currentRailRows`
+   * keeps for the first paint, and a console that blanked its rail for a failed
+   * list read would hide the installation it is working in. */
+  const refreshRail = async (): Promise<void> => {
+    const listed = railRows(await deps.railBridge.listInstallations({}))
+    if (listed === null) return
+    railNow = listed
+    deps.rail.setRows(listed)
+  }
+
+  /** showAddProject puts the wizard in the main area, in place of the
+   * installation the console is reading (SW3c, R4). It is the rail's second foot
+   * door's whole behaviour and the destination of the picker's Add project
+   * operation, and both are the same screen: `drawAddProject` draws one heading
+   * of its own over SW3b's wizard, and Cancel hands the main area back to the
+   * view this was opened from.
+   *
+   * **The setup run is main's** (SW3a) and this file starts nothing: the wizard's
+   * two operations go through the console's own door (`ops`), which is the
+   * dashboard document's -- the picker window cannot ask them, which is why the
+   * door hands over a request rather than drawing this screen itself. */
+  const showAddProject = (): void => {
+    if (currentView !== 'add-project') addProjectReturn = backToView
+    markCurrent('add-project')
+    rail.view(null)
+    replace(
+      drawAddProject(surface, {
+        ops,
+        copy: clipboardCopy(navigator),
+        cancel: () => {
+          addProjectReturn()
+        },
+        applied: () => {
+          void refreshRail()
+        },
+      }),
+    )
+  }
+
   /** forgetLive drops what the Live screen held for the installation the
    * console was open on, so the next one is read afresh rather than drawn from
    * the frame and the burn history of an installation that is gone. */
@@ -8197,6 +8398,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * and no Live poll under it. */
   const showIssue = (row: RailRow, focus = false): void => {
     markCurrent('issue')
+    backToView = () => showIssue(row)
     rail.view(row.project)
     const drawn = drawIssue(surface, row, issueActions)
     replace(drawn.root)
@@ -8476,7 +8678,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   // reads nothing (the owner's ruling: "If NO installation is readable, show the
   // issue view of the first one in the main area").
   const opened = railNow.find((row) => row.open)
-  if (opened !== undefined && !opened.readable) showIssue(opened)
+  // The picker's Add project door comes first when it was this window's door
+  // (SW3c): the operator asked for a new project, so the wizard is what they are
+  // shown -- over the installation's issue and over the Live read alike, both of
+  // which Cancel brings back.
+  if (deps.addProject === true) showAddProject()
+  else if (opened !== undefined && !opened.readable) showIssue(opened)
   else if (opened === undefined && railNow.length === 0 && onboardNow !== null) showOnboarding(onboardNow)
   else await pollLive()
   syncPolling()
