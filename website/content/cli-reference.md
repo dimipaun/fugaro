@@ -8597,10 +8597,11 @@ entry's chain spelled the way `fugaro routing set` takes it.
 
 Below it is one row per model a run of this project can be served on — the five
 crafts' resolved models, the four models `agent.models` pins and each review
-level's `agent.levels.<level>.model` the checkout writes — with the entry that
-answers it and why that entry won: the only entry that matches, the longest of
-several patterns, or an exact ID over the patterns that also match. A model no
-entry matches is a run that cannot start, and the row says so.
+level's `agent.levels.<level>.model`, out of the agent the run resolves (this
+checkout's file over the project layer's defaults) — with the entry that answers
+it and why that entry won: the only entry that matches, the longest of several
+patterns, or an exact ID over the patterns that also match. A model no entry
+matches is a run that cannot start, and the row says so.
 
 The read is offline: it reaches no bucket, no database and no host.
 
