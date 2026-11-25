@@ -58,8 +58,15 @@
 # written in no file, and it reaches the command under test on stdin.
 #
 # Usage:      bash scripts/live-checks/check631.sh --sandbox <a sandbox repository checkout> [--project <name>]
+#             bash scripts/live-checks/check631.sh --sandbox <path> --preflight
 #             bash scripts/live-checks/check631.sh --sandbox <path> --dry-run
 #             bash scripts/live-checks/check631.sh --help
+#             --preflight makes the check's own READS and evaluates every
+#             precondition before anything is written or launched (the
+#             installation, the declaration, the craft's access, the pool and the
+#             two credential names the check would declare), prints every
+#             blocker at once with the command that clears it, writes nothing and
+#             launches nothing, and exits non-zero when anything blocks.
 # Needs:      bash, mktemp, date, python3, awk, gcloud (authenticated as YOU:
 #             the runs bucket and Cloud Logging) and fugaro (the installed
 #             release, an admin of the project), and YOUR OWN TERMINAL: the two
@@ -88,7 +95,7 @@
 #             1: a criterion did not hold, or a guard stopped the run. 2: the
 #             check could not measure.
 #
-# Knobs (all CHECK631_*): DRY_RUN, KEEP_SCRATCH, SANDBOX, PROJECT, ANTHROPIC
+# Knobs (all CHECK631_*): DRY_RUN, PREFLIGHT, KEEP_SCRATCH, SANDBOX, PROJECT, ANTHROPIC
 # (chk631-anthropic) and OPENROUTER (chk631-openrouter) — the two names the
 # check declares, so the credentials you already have are never touched — POOL
 # (chk631-pool), CRAFT (coder: the craft whose access the sandbox run is served
@@ -144,6 +151,13 @@ on_error() {
   say "an internal error ended this check at line $line"
   exit 2
 }
+
+# The shared `--preflight` driver (scripts/live-checks/lib/preflight.sh).
+live_check_lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$live_check_lib_dir}
+# shellcheck source=lib/preflight.sh
+. "$LIVE_CHECK_LIB/preflight.sh"
+PREFLIGHT_TOOL=check631
 
 need_tools() {
   command -v bash >/dev/null 2>&1 || die "Check 631 needs bash"
@@ -492,6 +506,126 @@ version_row() {
   local v
   v=$(fugaro version 2>/dev/null | head -n 1 || true)
   fact "fugaro-version" PASS "${v:-fugaro version printed nothing} (the release whose accounts add and accounts rm this check measures)"
+}
+
+# ---------------------------------------------------------------- preflight
+# step_preflight: --preflight. The reads the check makes before it writes or
+# launches anything — the installation, the declaration (the craft, the pools
+# and the credentials) — with every precondition evaluated and nothing written:
+# no credential declared, no pool written, no node published, no run launched.
+# The two names it would declare and the pool it would write are read for
+# collision, and never written. The two values are not read: a preflight is safe
+# with no terminal.
+step_preflight() {
+  if [ ! -d "$SANDBOX" ]; then
+    die "--sandbox is not a directory: $SANDBOX (pass the checkout of a repository of the sandbox project)"
+  fi
+  if [ ! -f "$SANDBOX/fugaro.yaml" ]; then
+    die "--sandbox carries no fugaro.yaml: $SANDBOX is not a Fugaro repository's checkout, and the credentials, the pool and the run are all read in it"
+  fi
+  local pflag=()
+  [ -z "$PROJECT_ARG" ] || pflag=(--project "$PROJECT_ARG")
+
+  say "preflight: reading the installation: fugaro doctor --all, in ${SANDBOX}"
+  local args=(doctor --all)
+  [ -z "$PROJECT_ARG" ] || args=(doctor --project "$PROJECT_ARG" --all)
+  run_bounded "$DOCTOR_TIMEOUT" pf-doctor "$SANDBOX" "$FUGARO_BIN" "${args[@]}"
+  local line
+  line=$(grep -m1 '^project: ' "$SCRATCH/pf-doctor.out" 2>/dev/null || true)
+  local named_gcp=""
+  if [ -n "$line" ]; then
+    PROJECT=$(printf '%s' "$line" | sed -n 's/^project: \([^ ]*\) .*/\1/p')
+    named_gcp=$(printf '%s' "$line" | sed -n 's/^.*(GCP \([^,]*\),.*/\1/p')
+  fi
+  case "${named_gcp:-$PROJECT}" in
+  *belong*) stop "the checkout at $SANDBOX belongs to ${named_gcp:-$PROJECT}: this check is never run there" ;;
+  esac
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ -z "$line" ]; then
+    preflight_block installation \
+      "fugaro ${args[*]} does not answer for $SANDBOX (exit ${BOUNDED_STATUS}), so the installation this check would write to cannot be read" \
+      "cd $SANDBOX && fugaro ${args[*]}"
+  else
+    preflight_note installation "the installation is ${PROJECT:-unknown} (GCP ${named_gcp:-unknown}), read from fugaro ${args[*]} in ${SANDBOX}"
+  fi
+
+  say "preflight: reading the declaration: fugaro craft ls --json, fugaro accounts pool ls and fugaro accounts ls --json, in ${SANDBOX}"
+  run_bounded "$CLI_TIMEOUT" pf-crafts "$SANDBOX" "$FUGARO_BIN" craft ls --json ${pflag[@]+"${pflag[@]}"}
+  local crafts_ok=no
+  if [ "$BOUNDED_TIMED_OUT" != yes ] && [ "$BOUNDED_STATUS" = 0 ] &&
+    read_json crafts "$SCRATCH/pf-crafts.out" "$SCRATCH/pf-crafts.txt"; then
+    crafts_ok=yes
+  else
+    preflight_block declaration \
+      "fugaro craft ls --json does not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}), and the craft the sandbox run is served through is in that document" \
+      "cd $SANDBOX && fugaro craft ls --json${PROJECT_ARG:+ --project $PROJECT_ARG}"
+  fi
+  run_bounded "$CLI_TIMEOUT" pf-pools "$SANDBOX" "$FUGARO_BIN" accounts pool ls ${pflag[@]+"${pflag[@]}"}
+  local pools_ok=no
+  if [ "$BOUNDED_TIMED_OUT" != yes ] && [ "$BOUNDED_STATUS" = 0 ]; then
+    pools_ok=yes
+  else
+    preflight_block wiring \
+      "fugaro accounts pool ls does not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}), and the pool this check would declare cannot be read" \
+      "cd $SANDBOX && fugaro accounts pool ls${PROJECT_ARG:+ --project $PROJECT_ARG}"
+  fi
+  run_bounded "$CLI_TIMEOUT" pf-creds "$SANDBOX" "$FUGARO_BIN" accounts ls --json ${pflag[@]+"${pflag[@]}"}
+  local creds_ok=no
+  if [ "$BOUNDED_TIMED_OUT" != yes ] && [ "$BOUNDED_STATUS" = 0 ] &&
+    read_json credentials "$SCRATCH/pf-creds.out" "$SCRATCH/pf-creds.txt"; then
+    creds_ok=yes
+  else
+    preflight_block add-anthropic \
+      "fugaro accounts ls --json does not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}), and whether the two names this check declares are taken is in that document" \
+      "cd $SANDBOX && fugaro accounts ls --json${PROJECT_ARG:+ --project $PROJECT_ARG}"
+  fi
+
+  if [ "$crafts_ok" = yes ]; then
+    local have_craft access other target
+    have_craft=$(table_field "$SCRATCH/pf-crafts.txt" craft "$CRAFT" 2)
+    access=$(table_field "$SCRATCH/pf-crafts.txt" craft "$CRAFT" 5)
+    other=$(awk -F'\t' '$1 == "craft" { print $2; exit }' "$SCRATCH/pf-crafts.txt" 2>/dev/null || true)
+    target=$(awk -F'\t' '$1 == "cred" { print $2; exit }' "$SCRATCH/pf-creds.txt" 2>/dev/null || true)
+    [ -n "$target" ] || target=$(awk 'NR > 2 && $1 != "" { print $1; exit }' "$SCRATCH/pf-pools.out" 2>/dev/null || true)
+    if [ -z "$have_craft" ]; then
+      preflight_block declaration \
+        "the installation names no craft ${CRAFT}, and the sandbox run is served through a craft's access" \
+        "CHECK631_CRAFT=${other:-$CRAFT} bash scripts/live-checks/check631.sh --sandbox $SANDBOX"
+    elif [ -z "$access" ]; then
+      preflight_block declaration \
+        "the craft ${CRAFT} declares no access, and the sandbox run is served by the credential that access names" \
+        "fugaro accounts craft set $CRAFT --access ${target:-$CRAFT}"
+    else
+      preflight_note declaration "the craft ${CRAFT} declares the access ${access}, which this check takes over for the sandbox run and puts back"
+    fi
+  fi
+
+  if [ "$pools_ok" = yes ]; then
+    local existing
+    existing=$(awk -v p="$POOL" 'NR > 2 && $1 == p { print $0; exit }' "$SCRATCH/pf-pools.out" 2>/dev/null || true)
+    if [ -n "$existing" ]; then
+      preflight_block wiring \
+        "the pool ${POOL} is already declared (${existing}), and this check declares it with its own member" \
+        "fugaro accounts pool rm $POOL"
+    fi
+  fi
+
+  if [ "$creds_ok" = yes ]; then
+    local a_type o_type
+    a_type=$(table_field "$SCRATCH/pf-creds.txt" cred "$ANTHROPIC" 3)
+    o_type=$(table_field "$SCRATCH/pf-creds.txt" cred "$OPENROUTER" 3)
+    if [ -n "$a_type" ]; then
+      preflight_block add-anthropic \
+        "the credential ${ANTHROPIC} is already declared (type ${a_type}), and this check declares it from a value you paste, replacing the one in use" \
+        "fugaro accounts rm $ANTHROPIC"
+    fi
+    if [ -n "$o_type" ]; then
+      preflight_block add-openrouter \
+        "the credential ${OPENROUTER} is already declared (type ${o_type}), and this check declares it from a value pasted at the command's own prompt" \
+        "fugaro accounts rm $OPENROUTER"
+    fi
+    [ -n "$a_type" ] || [ -n "$o_type" ] ||
+      preflight_note add-anthropic "the two names this check declares (${ANTHROPIC} and ${OPENROUTER}) are both free in the config"
+  fi
 }
 
 # ---------------------------------------------------------------- the steps
@@ -1239,6 +1373,12 @@ finish() {
   local status=$?
   trap - EXIT
   trap - ERR
+  if [ "$PREFLIGHT_MODE" = yes ]; then
+    # A preflight wrote nothing and launched nothing: it prints its own lines
+    # and no RESULT block.
+    remove_scratch
+    exit "$status"
+  fi
   CLEANUP_RUNNING=yes
   cleanup
   local facts=$FACTS_CAPTURED
@@ -1330,6 +1470,7 @@ on_signal() {
 
 # ---------------------------------------------------------------------- inputs
 DRY_RUN_CLI=""
+PREFLIGHT_CLI=""
 SANDBOX_CLI=""
 PROJECT_CLI=""
 ANTHROPIC_CLI=""
@@ -1383,6 +1524,10 @@ while [ $# -gt 0 ]; do
     RECIPE_CLI=$2
     shift 2
     ;;
+  --preflight)
+    PREFLIGHT_CLI=1
+    shift
+    ;;
   --dry-run)
     DRY_RUN_CLI=1
     shift
@@ -1416,6 +1561,9 @@ PREV_ACCESS_FROM=""
 TASK=${CHECK631_TASK:-${TASK_CLI:-"Reply with the single word ok and change nothing in the repository."}}
 RECIPE=${CHECK631_RECIPE:-${RECIPE_CLI:-}}
 DRY_RUN=${CHECK631_DRY_RUN:-$DRY_RUN_CLI}
+PREFLIGHT=${CHECK631_PREFLIGHT:-$PREFLIGHT_CLI}
+PREFLIGHT_MODE=no
+[ -z "$PREFLIGHT" ] || PREFLIGHT_MODE=yes
 KEEP_SCRATCH=${CHECK631_KEEP_SCRATCH:-}
 VALUE_FILE=${CHECK631_VALUE_FILE:-}
 REGION=${CHECK631_REGION:-us-east5}
@@ -1472,6 +1620,10 @@ main() {
   if [ -n "$DRY_RUN" ]; then
     plan
     return 0
+  fi
+  if [ -n "$PREFLIGHT" ]; then
+    step_preflight
+    preflight_report
   fi
   open_terminal
   if [ -z "$VALUE_FILE" ] && [ "$HAVE_TTY" != yes ]; then

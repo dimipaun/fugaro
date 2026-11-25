@@ -1073,6 +1073,47 @@ test_an_unknown_argument_is_refused() {
   expect_contains "$err" "unknown argument: --wat" "an unknown argument: the message"
 }
 
+# ------------------------------------------------------------- the preflight
+test_preflight_passes_and_writes_nothing() {
+  local dir=$work/preflight-ok
+  prepare "$dir"
+  run_check "$dir" -- --preflight
+  expect_status "$status" 0 "a preflight with nothing blocking"
+  expect_contains "$err" "preflight passed" "a preflight: the pass line"
+  expect_contains "$err" "read: the installation is $installation" "a preflight: the installation it read"
+  expect_contains "$err" "read: the craft $craft declares the access" "a preflight: the craft's access it read"
+  expect_contains "$err" "read: the two names this check declares" "a preflight: the two names it read are free"
+  expect_absent "$out" "CHECK 631 RESULT" "a preflight: no result block is printed"
+  expect_absent "$fugaro_calls" "accounts add" "a preflight: no credential is declared"
+  expect_absent "$fugaro_calls" "accounts pool add" "a preflight: no pool is written"
+  expect_absent "$fugaro_calls" "project policy publish" "a preflight: no node is published"
+  expect_absent "$fugaro_calls" "fugaro run" "a preflight: no run is launched"
+  assert_scratch_removed "a preflight"
+}
+
+test_preflight_reports_every_blocker_at_once() {
+  local dir=$work/preflight-blocked
+  prepare "$dir"
+  run_check "$dir" CHECK631_CRAFT=ghost CHECK631_ANTHROPIC=work -- --preflight
+  expect_status "$status" 1 "a preflight with blockers"
+  expect_contains "$err" "BLOCKED declaration: the installation names no craft ghost" "a preflight: the missing craft"
+  expect_contains "$err" "BLOCKED add-anthropic: the credential work is already declared" "a preflight: the credential already declared"
+  expect_contains "$err" "fix: CHECK631_CRAFT=$craft bash scripts/live-checks/check631.sh --sandbox $dir/sandbox" "a preflight: the command that names a craft"
+  expect_contains "$err" "fix: fugaro accounts rm work" "a preflight: the command that clears the credential"
+  expect_contains "$err" "found 2 blocker(s)" "a preflight: both blockers at once"
+  expect_absent "$fugaro_calls" "accounts add" "a preflight: no credential is declared"
+  expect_absent "$fugaro_calls" "fugaro run" "a preflight: no run is launched"
+}
+
+test_preflight_is_refused_for_a_coding_agents_session() {
+  local dir=$work/preflight-agent
+  prepare "$dir"
+  run_check "$dir" CLAUDECODE=1 -- --preflight
+  expect_status "$status" 1 "a coding agent's preflight"
+  expect_contains "$err" "a coding agent's session" "a preflight: the session refusal"
+  expect_absent "$fugaro_calls" "accounts ls --json" "a preflight: no live read is made"
+}
+
 # Sharding, so a Go test could run these side by side: CHECK_TEST_SHARD="i/n"
 # runs every n-th test starting at i (each case works in its own directory under
 # $work), CHECK_TEST_ONLY=name runs that one alone.
@@ -1129,6 +1170,9 @@ t test_a_path_that_is_not_a_checkout_is_refused
 t test_an_empty_value_file_is_not_measured
 t test_kept_scratch_is_reported
 t test_an_unknown_argument_is_refused
+t test_preflight_passes_and_writes_nothing
+t test_preflight_reports_every_blocker_at_once
+t test_preflight_is_refused_for_a_coding_agents_session
 
 if [ "$failures" -ne 0 ]; then
   echo "check631_test.sh: $failures failure(s)" >&2

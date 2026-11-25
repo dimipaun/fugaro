@@ -902,6 +902,46 @@ test_an_unknown_argument_is_refused() {
   expect_contains "$err" "unknown argument: --wat" "an unknown argument: the message"
 }
 
+test_preflight_passes_and_writes_nothing() {
+  local dir=$work/preflight-ok
+  prepare "$dir"
+  run_check "$dir" -- --preflight
+  expect_status "$status" 0 "a preflight"
+  expect_contains "$err" "check628: preflight passed" "a preflight: the verdict"
+  expect_contains "$err" "read: $dir/sandbox is a checkout of the installation $installation" "a preflight: the installation it read"
+  expect_contains "$err" "read: the project layer sets agent.crafts.coder.model = $model" "a preflight: the layer it read"
+  expect_contains "$err" "read: fugaro craft ls --json resolves the coder craft to model $model" "a preflight: the craft it read"
+  expect_contains "$err" "read: $model is in the published node's allowed_models" "a preflight: the allow-list it read"
+  expect_absent "$fugaro_calls" "fugaro run " "a preflight: nothing is launched"
+  expect_absent "$out" "CHECK 628 RESULT" "a preflight: no RESULT block"
+  assert_scratch_removed "$dir" "a preflight"
+}
+
+test_preflight_reports_every_blocker_at_once() {
+  local dir=$work/preflight-blocked
+  prepare "$dir" repo-source
+  run_check "$dir" FAKE_MODE=node-other-allow-list -- --preflight
+  expect_status "$status" 1 "a blocked preflight"
+  expect_contains "$err" "BLOCKED layer:" "a blocked preflight: the layer"
+  expect_contains "$err" "BLOCKED craft-ls:" "a blocked preflight: the craft"
+  expect_contains "$err" "BLOCKED allow-list:" "a blocked preflight: the allow-list"
+  expect_contains "$err" "fix: fugaro update" "a blocked preflight: the layer's fix"
+  expect_contains "$err" "fix: fugaro models add $model" "a blocked preflight: the allow-list's fix"
+  expect_contains "$err" "found 3 blocker(s)" "a blocked preflight: every blocker at once"
+  expect_absent "$fugaro_calls" "fugaro run " "a blocked preflight: nothing is launched"
+  expect_absent "$out" "CHECK 628 RESULT" "a blocked preflight: no RESULT block"
+  assert_scratch_removed "$dir" "a blocked preflight"
+}
+
+test_preflight_is_refused_for_a_coding_agents_session() {
+  local dir=$work/preflight-agent
+  prepare "$dir"
+  run_check "$dir" CLAUDECODE=1 -- --preflight
+  expect_status "$status" 1 "a preflight in a coding agent's session"
+  expect_contains "$err" "a coding agent's session" "a preflight in a coding agent's session: the refusal"
+  expect_absent "$fugaro_calls" "fugaro " "a preflight in a coding agent's session: nothing is read"
+}
+
 # Sharding, so a Go test could run these side by side: CHECK_TEST_SHARD="i/n"
 # runs every n-th test starting at i (each case works in its own directory under
 # $work), CHECK_TEST_ONLY=name runs that one alone.
@@ -954,6 +994,9 @@ t test_belong_is_refused_by_name
 t test_an_installation_naming_belong_stops_the_check
 t test_kept_scratch_is_reported
 t test_an_unknown_argument_is_refused
+t test_preflight_passes_and_writes_nothing
+t test_preflight_reports_every_blocker_at_once
+t test_preflight_is_refused_for_a_coding_agents_session
 
 if [ "$failures" -ne 0 ]; then
   echo "check628_test.sh: $failures failure(s)" >&2

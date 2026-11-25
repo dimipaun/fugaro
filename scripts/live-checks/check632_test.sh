@@ -985,6 +985,46 @@ test_an_unknown_argument_is_refused() {
   expect_contains "$err" "unknown argument: --wat" "an unknown argument: the message"
 }
 
+# ------------------------------------------------------------- the preflight
+test_preflight_passes_and_writes_nothing() {
+  local dir=$work/preflight-ok
+  prepare "$dir"
+  run_check "$dir" -- --preflight
+  expect_status "$status" 0 "a preflight with nothing blocking"
+  expect_contains "$err" "preflight passed" "a preflight: the pass line"
+  expect_contains "$err" "read: the installation is $installation" "a preflight: the installation it read"
+  expect_contains "$err" "read: the installation is behind this CLI" "a preflight: the version it read"
+  expect_contains "$err" "read: before the update, $installation held" "a preflight: what the installation held before the update"
+  expect_absent "$out" "CHECK 632 RESULT" "a preflight: no result block is printed"
+  expect_absent "$fugaro_calls" "fugaro run " "a preflight: no run is launched"
+  expect_absent "$fugaro_calls" "fugaro update" "a preflight: no update is run"
+  [ -z "$gcloud_calls" ] || fail "a preflight: gcloud was called at all"
+  assert_scratch_removed "$dir" "a preflight"
+}
+
+test_preflight_reports_every_blocker_at_once() {
+  local dir=$work/preflight-blocked
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=doctor-no-project -- --preflight
+  expect_status "$status" 1 "a preflight with blockers"
+  expect_contains "$err" "BLOCKED installation: fugaro doctor --project $installation --all does not answer" "a preflight: the installation blocker"
+  expect_contains "$err" "BLOCKED version-before: fugaro doctor --json does not answer" "a preflight: the version blocker"
+  expect_contains "$err" "fix: cd $dir/sandbox && fugaro doctor --project $installation --all" "a preflight: the command that reads the installation"
+  expect_contains "$err" "fix: cd $dir/sandbox && fugaro doctor --project $installation --json" "a preflight: the command that reads the version"
+  expect_contains "$err" "found 2 blocker(s)" "a preflight: both blockers at once"
+  expect_absent "$fugaro_calls" "fugaro run " "a preflight: no run is launched"
+  expect_absent "$fugaro_calls" "fugaro update" "a preflight: no update is run"
+}
+
+test_preflight_is_refused_for_a_coding_agents_session() {
+  local dir=$work/preflight-agent
+  prepare "$dir"
+  run_check "$dir" CLAUDECODE=1 -- --preflight
+  expect_status "$status" 1 "a coding agent's preflight"
+  expect_contains "$err" "a coding agent's session" "a preflight: the session refusal"
+  expect_absent "$fugaro_calls" "doctor --project" "a preflight: no live read is made"
+}
+
 # Sharding, so a Go test could run these side by side: CHECK_TEST_SHARD="i/n"
 # runs every n-th test starting at i (each case works in its own directory under
 # $work), CHECK_TEST_ONLY=name runs that one alone.
@@ -1038,6 +1078,9 @@ t test_belong_is_refused_by_name
 t test_an_installation_naming_belong_stops_the_check
 t test_kept_scratch_is_reported
 t test_an_unknown_argument_is_refused
+t test_preflight_passes_and_writes_nothing
+t test_preflight_reports_every_blocker_at_once
+t test_preflight_is_refused_for_a_coding_agents_session
 
 if [ "$failures" -ne 0 ]; then
   echo "check632_test.sh: $failures failure(s)" >&2

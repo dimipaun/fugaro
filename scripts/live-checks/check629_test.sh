@@ -217,7 +217,7 @@ accounts)
   case "${2:-}" in
   ls)
     case "$mode" in
-    creds-fail)
+    creds-fail | config-fail)
       echo "fugaro: cannot read the config" >&2
       exit 1
       ;;
@@ -231,7 +231,7 @@ accounts)
     ;;
   pool)
     case "$mode" in
-    pools-fail)
+    pools-fail | config-fail)
       echo "fugaro: cannot read the config" >&2
       exit 1
       ;;
@@ -921,6 +921,66 @@ test_an_installation_naming_belong_stops_the_check() {
   expect_absent "$fugaro_calls" "policy publish" "an installation naming belong: no node is published"
 }
 
+# --preflight reads every precondition the check has and prints every blocker
+# with the command that clears it, writing nothing and launching nothing. On a
+# project where every precondition holds it exits 0 and prints no RESULT block.
+test_preflight_passes_and_writes_nothing() {
+  local dir=$work/pf-pass
+  prepare "$dir"
+  run_check "$dir" -- --preflight
+  expect_status "$status" 0 "a preflight"
+  expect_contains "$err" "check629: preflight passed" "a preflight: the report"
+  expect_contains "$err" "read: " "a preflight: what it read"
+  expect_absent "$out" "CHECK 629 RESULT" "a preflight: no RESULT block"
+  # Neither of the check's two writers ran: no publish, no launch.
+  expect_absent "$fugaro_calls" "policy publish" "a preflight: no node is published"
+  expect_absent "$fugaro_calls" "fugaro run " "a preflight: no run is launched"
+  expect_absent "$fugaro_calls" "update" "a preflight: no update runs"
+  expect_absent "$gcloud_calls" "storage cat" "a preflight: no record is read"
+  expect_absent "$gcloud_calls" "logging read" "a preflight: no log is read"
+  assert_scratch_removed "$dir" "a preflight"
+}
+
+# A preflight evaluates every precondition and prints ALL blockers at once, each
+# with a real command and real values.
+test_preflight_reports_every_blocker_at_once() {
+  local dir=$work/pf-blocked
+  prepare "$dir" config-fail
+  run_check "$dir" FAKE_MODE=config-fail -- --preflight
+  expect_status "$status" 1 "a preflight with blockers"
+  expect_contains "$err" "found 2 blocker(s)" "a preflight: every blocker at once"
+  expect_contains "$err" "fix: cd $dir/sandbox && fugaro accounts ls --json" "a preflight: the credentials fix"
+  expect_contains "$err" "fix: cd $dir/sandbox && fugaro accounts pool ls" "a preflight: the pools fix"
+  expect_absent "$err" "preflight passed" "a preflight: not a pass"
+  expect_absent "$out" "CHECK 629 RESULT" "a preflight: no RESULT block"
+  expect_absent "$fugaro_calls" "policy publish" "a preflight: no node is published"
+}
+
+# The fix a pool blocker carries names real values, taken from what the preflight
+# read: the declared credentials of the config, never a placeholder.
+test_preflight_names_the_pool_fix_with_real_values() {
+  local dir=$work/pf-pool
+  prepare "$dir" pool-none
+  run_check "$dir" FAKE_MODE=pool-none -- --preflight
+  expect_status "$status" 1 "a preflight with no declared pool"
+  expect_contains "$err" "declares no pool '$pool'" "a preflight: the pool blocker"
+  expect_contains "$err" "fix: cd $dir/sandbox && fugaro accounts pool add $pool $first_member $second_member" "a preflight: the pool fix names the declared credentials"
+  expect_absent "$fugaro_calls" "policy publish" "a preflight: no node is published"
+}
+
+# The coding-agent refusal is the check's own guard, made before the preflight
+# reads: --preflight is the owner's read, not an agent's.
+test_preflight_is_refused_for_a_coding_agents_session() {
+  local dir=$work/pf-agent
+  prepare "$dir"
+  run_check "$dir" CLAUDECODE=1 -- --preflight
+  expect_status "$status" 1 "a preflight in a coding agent's session"
+  expect_contains "$err" "a coding agent's session" "a preflight: the refusal"
+  expect_contains "$err" "CLAUDECODE is set" "a preflight: the marker is named"
+  expect_absent "$fugaro_calls" "accounts ls --json" "a preflight: no read is made"
+  expect_absent "$out" "CHECK 629 RESULT" "a preflight: no RESULT block"
+}
+
 test_kept_scratch_is_reported() {
   local dir=$work/kept
   prepare "$dir"
@@ -992,6 +1052,10 @@ t test_a_run_with_no_trace_of_the_first_member_is_a_finding
 t test_a_record_carrying_craft_credentials_is_measured
 t test_craft_credentials_naming_another_member_is_a_finding
 t test_xtrace_refused
+t test_preflight_passes_and_writes_nothing
+t test_preflight_reports_every_blocker_at_once
+t test_preflight_names_the_pool_fix_with_real_values
+t test_preflight_is_refused_for_a_coding_agents_session
 t test_a_coding_agents_session_is_refused
 t test_belong_is_refused_by_name
 t test_an_installation_naming_belong_stops_the_check

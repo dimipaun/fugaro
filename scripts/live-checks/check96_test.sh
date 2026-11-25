@@ -719,12 +719,16 @@ setup_case() {
 # then, and for the cases that name a repository of their own). RUN96_ARGS adds
 # arguments, RUN96_PATH prefixes PATH (for a fake that has to come first), and
 # RUN96_ENV names environment variables (NAME=value). Sets $status, $out and
-# $dir/err.
+# $dir/err. The agent markers are dropped from this test's own environment: a
+# preflight refuses a coding agent's session by name, and this suite may itself
+# be started from one — the case that measures that refusal sets the marker
+# again, and a variable given as an argument wins over `env -u`.
 run96() {
   status=0
   local named=("$SANDBOX_REPO")
   [ "${RUN96_UNNAMED:-no}" = yes ] && named=()
-  out=$(env TMPDIR="$dir/tmp" FAKE96_DIR="$dir/state" FUGARO_CONFIG="$dir/state/fugaro.yaml" \
+  out=$(env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE -u CURSOR_AGENT -u AI_AGENT \
+    TMPDIR="$dir/tmp" FAKE96_DIR="$dir/state" FUGARO_CONFIG="$dir/state/fugaro.yaml" \
     PATH="${RUN96_PATH:+$RUN96_PATH:}$dir/bin:$PATH" \
     LIVE_CHECK_LIB="$LIVE_CHECK_LIB" \
     ${RUN96_ENV[@]+"${RUN96_ENV[@]}"} \
@@ -836,6 +840,60 @@ test_dry_run_runs_nothing_that_writes() {
   expect_absent "$(cat "$dir/state/calls")" "sign-jwt" "dry run: a signed run identity"
   expect_absent "$(cat "$dir/state/calls")" "accounts:delete" "dry run: a deletion"
   expect_scratch_gone "$dir" "dry run"
+}
+
+test_preflight_passes_and_writes_nothing() {
+  setup_case preflight-ok
+  run96 --preflight
+  expect_status "$status" 0 "preflight: every precondition holds"
+  expect_contains "$(cat "$dir/err")" "preflight passed" "preflight: says so"
+  # A preflight prints its own lines and no RESULT block, and records no fact.
+  expect_absent "$out" "CHECK 96 RESULT" "preflight: no block"
+  expect_absent "$out" "FACT " "preflight: no fact"
+  # The reads happened, the calls that write and launch did not.
+  expect_contains "$(cat "$dir/state/calls")" "gcloud run services list" "preflight: the service read"
+  expect_contains "$(cat "$dir/state/calls")" "gcloud run jobs list" "preflight: the job read"
+  expect_absent "$(cat "$dir/state/calls")" "curl " "preflight: a network call"
+  expect_absent "$(cat "$dir/state/calls")" "sign-jwt" "preflight: a signed run identity"
+  expect_absent "$(cat "$dir/state/calls")" "add-iam-policy-binding" "preflight: a grant"
+  expect_absent "$(cat "$dir/state/calls")" "accounts:delete" "preflight: a deletion"
+  expect_no_credential_anywhere "$dir" "preflight"
+  expect_scratch_gone "$dir" "preflight"
+}
+
+test_preflight_reports_every_blocker_at_once() {
+  setup_case preflight-blocked
+  # Two preconditions bent at once: no credentials service is deployed, and the
+  # repository has two jobs of its own with no --workflow to tell them apart.
+  # Both have to appear in one report, each with the command that clears it.
+  printf '[]\n' >"$dir/state/services.json"
+  JOB_SECOND=yes write_job "$dir"
+  run96 --preflight
+  expect_status "$status" 1 "preflight: a bent precondition blocks"
+  local err
+  err=$(cat "$dir/err")
+  expect_contains "$err" "preflight found 2 blocker(s)" "preflight: both at once"
+  expect_contains "$err" "BLOCKED service: no single credentials service is deployed in $PROJECT/$REGION" \
+    "preflight: the service blocker"
+  expect_contains "$err" "fix: fugaro update" "preflight: the service fix"
+  expect_contains "$err" "BLOCKED job: $SANDBOX_REPO has 2 jobs of its own in $PROJECT/$REGION" \
+    "preflight: the job blocker"
+  expect_contains "$err" "fix: bash scripts/live-checks/check96.sh --preflight --workflow default $SANDBOX_REPO" \
+    "preflight: the job fix names a real workflow and repository"
+  expect_absent "$out" "CHECK 96 RESULT" "preflight: no block"
+  expect_absent "$(cat "$dir/state/calls")" "curl " "preflight: a call that writes"
+  expect_scratch_gone "$dir" "preflight: blocked"
+}
+
+test_preflight_is_refused_for_a_coding_agents_session() {
+  setup_case preflight-agent
+  RUN96_ENV=(CLAUDECODE=1)
+  run96 --preflight
+  expect_status "$status" 2 "preflight in a coding agent's session"
+  expect_contains "$(cat "$dir/err")" "coding agent" "preflight: the refusal"
+  expect_absent "$out" "CHECK 96 RESULT" "preflight: no block"
+  expect_absent "$(cat "$dir/state/calls")" "gcloud run services list" "preflight: no read before the refusal"
+  expect_scratch_gone "$dir" "preflight refused"
 }
 
 test_a_named_repository_is_the_one_checked_and_a_lone_one_needs_no_name() {
@@ -1802,6 +1860,9 @@ t() {
 t test_happy_path
 t test_doctor_exit_1_is_an_answer
 t test_dry_run_runs_nothing_that_writes
+t test_preflight_passes_and_writes_nothing
+t test_preflight_reports_every_blocker_at_once
+t test_preflight_is_refused_for_a_coding_agents_session
 t test_a_named_repository_is_the_one_checked_and_a_lone_one_needs_no_name
 t test_belong_is_refused
 t test_a_repository_argument_that_is_not_owner_name_is_refused
@@ -1867,4 +1928,4 @@ if [ "$failures" -ne 0 ]; then
   echo "check96_test: $failures failure(s)" >&2
   exit 1
 fi
-echo "check96_test: all tests passed" >&2
+echo "check96_test.sh: ok" >&2

@@ -162,6 +162,7 @@ cmd	recipe
 cmd	recipes
 cmd	recipes ls
 cmd	recipes publish
+cmd	recipes rm
 cmd	recipes show
 cmd	recipes validate
 cmd	report
@@ -997,6 +998,11 @@ flag	recipes publish	value		--config
 flag	recipes publish	value		--gcp-project
 flag	recipes publish	value		--project
 flag	recipes publish	value		--region
+flag	recipes rm	bool	-h	--help
+flag	recipes rm	value		--config
+flag	recipes rm	value		--gcp-project
+flag	recipes rm	value		--project
+flag	recipes rm	value		--region
 flag	recipes show	bool		--json
 flag	recipes show	bool	-h	--help
 flag	recipes show	value		--config
