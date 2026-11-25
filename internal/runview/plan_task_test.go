@@ -151,6 +151,19 @@ var planTaskReaders = map[string]string{
 	"internal/orchestrator/state.go":    "defines WorkItem.PlanTask, the node of a plan the item stands for",
 	"internal/orchestrator/validate.go": "applies task.PlanTaskProblem to the id a patch writes, the shape rule the launcher applies on write",
 	"internal/orchestrator/patch.go":    "the upsert op that carries a plan's node id into the state",
+	// The claim one item's work is keyed by (CG4, D3209): ClaimRef reads the
+	// item's plan task so that two orchestrators of one project that imported
+	// one plan claim the SAME node for it, and only one of them works it. The
+	// id decides which claim node one item's work stands under and nothing
+	// else. The node is `orchestrator/~claims/<plan task>` with the id escaped
+	// by budget.Key, so no id leaves that node, it is under the daemon's own
+	// IAM fence like the state beside it (the rules refuse every token there),
+	// and the claim admits no run, budgets nothing and grants nothing. Both
+	// sides of the choice are items already in the node, and the worst a forged
+	// id can reach is a collision -- an item whose claim stands where another's
+	// was taken -- which makes an orchestrator SKIP work rather than start a
+	// second run of it, the refusing direction this rule cares about.
+	"internal/orchestrator/claim.go": "keys an item's claim node by the plan task it stands for, so the project's orchestrators claim one node per task (CG4, D3209)",
 	// Adoption (R4, D2702): a run in flight whose launch recorded a plan task
 	// is filed in that plan's own node rather than beside it, which is the one
 	// thing here the id decides -- and it decides it about a record of a run
