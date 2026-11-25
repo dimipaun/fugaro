@@ -75,7 +75,7 @@ const (
 	// service at all (R22). It is this read's own line rather than the read
 	// mint's longer one: a repository's reason is one line a stage prints, and
 	// the fix has to survive in it.
-	enrolledNoService = "no credentials service is published for this project, so no read of it can be made: run `fugaro update` at the installation's checkout to publish one"
+	enrolledNoService = "no credentials service is published for this project: run `fugaro update` at the installation's checkout to publish one"
 )
 
 // enrolledAdmits is the published policy's allow-list, and the seam a test
