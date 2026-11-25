@@ -160,7 +160,6 @@
     {
       "package": "./deploy/terraform",
       "reads": [
-        "*[!0-9]*",
         "SECURITY.md",
         "cmd/fugaro/**",
         "deploy/**",
@@ -4736,8 +4735,6 @@
         "*",
         "*a",
         "*a*",
-        "a*",
-        "a**",
         "cmd/fugaro/**",
         "deploy/terraform/**",
         "docs/plans/*",
@@ -10966,7 +10963,6 @@
       "package": "./internal/gateway",
       "reads": [
         "*",
-        "a*",
         "cmd/fugaro/**",
         "d**",
         "deploy/terraform/**",
@@ -16543,7 +16539,6 @@
         "CLAUDE.md",
         "README.md",
         "SECURITY.md",
-        "a*",
         "docs/**",
         "docs/**/*.graph.json",
         "docs/console-dependency-graph/implementation-plan.graph.json",
@@ -17303,7 +17298,6 @@
         "**",
         "*a",
         "*b",
-        "a*",
         "brand/*.png",
         "cmd/fugaro/**",
         "deploy/terraform/**",
