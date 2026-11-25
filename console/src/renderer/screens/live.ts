@@ -203,12 +203,17 @@ export const LIVE_REVIEW_EMPTY = 'no finished run in this feed is ready for revi
  * `<PAUSED> <ending> <title> · expected resume <stamp> · resumed by <ending>`,
  * and the console's row draws the same three facts in the same words.
  *
+ * **The state word is upper case in the markup, not lower case under a
+ * transform.** The CLI upper-cases it on the line, the styling spec's §2 pins
+ * this hook as the word `PAUSED` and the Run screen draws the same word
+ * (`run.ts`'s `PAUSED_WORD`), so a theme cannot peel the two screens apart.
+ *
  * **The state word is on the row and not only on the section.** The CLI says it
  * once per run, and a row that carried only its own facts would leave a reader
  * who reaches it without the rows above it -- a screen reader, or a search --
  * with no word for what the run is.
  */
-export const LIVE_PAUSED_STATE = 'paused'
+export const LIVE_PAUSED_STATE = 'PAUSED'
 
 export const LIVE_PAUSED_RESUME_WORD = 'expected resume'
 

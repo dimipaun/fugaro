@@ -208,14 +208,14 @@ describe('the Live screen: the runs that suspended themselves', () => {
       'rotate the pool a project\'s second stage was served from',
       'carry the cascade\'s third source into the switch log',
     ])
-    // The state word is the record's own, and it is the same word on every row:
-    // a run cannot be suspended two ways.
+    // The state word is the CLI's own upper-cased one and the same word on every
+    // row: a run cannot be suspended two ways.
     expect(texts(tree, 'live-paused-state')).toEqual([
       LIVE_PAUSED_STATE,
       LIVE_PAUSED_STATE,
       LIVE_PAUSED_STATE,
     ])
-    expect(LIVE_PAUSED_STATE, 'the state word is the record’s own status').toBe(PAUSED_STATUS)
+    expect(LIVE_PAUSED_STATE, 'the Live row draws the state word §2 pins').toBe('PAUSED')
     expect(texts(tree, 'live-paused-resume-word')).toEqual([
       LIVE_PAUSED_RESUME_WORD,
       LIVE_PAUSED_RESUME_WORD,
