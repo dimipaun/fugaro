@@ -1,7 +1,7 @@
 # G3.1 — every secrets-flow claim in the security text, checked against the code
 
-**Status: done 2026-11-11, verification only. Five gaps, each with wording for the owner to approve;
-`SECURITY.md` is untouched.** Plan: [implementation-plan.md](implementation-plan.md) G3.1.
+**Status: done 2026-11-11, verification only. Five gaps, four of them with wording for the owner to
+approve (G2 is closed below); `SECURITY.md` is untouched by this task.** Plan: [implementation-plan.md](implementation-plan.md) G3.1.
 Reconciliation: [reconciliation.md](reconciliation.md) R4 ("the SECURITY work is a verification task
 (F3), and the owner approves any wording change").
 
@@ -130,9 +130,9 @@ row is folded into it.
 
 ## The gaps
 
-Five. Each is a sentence the code does not back as written, with replacement wording for the owner
-to approve; the first two are completeness, the last three are wording. Nothing here is a hole in the
-design: none of the five makes a run reach a credential it should not. G5 is the one whose factual
+Five, one of them since closed. Each open gap is a sentence the code does not back as written, with
+replacement wording for the owner to approve; G1 is completeness and G3–G5 are wording. Nothing here
+is a hole in the design: none of them makes a run reach a credential it should not. G5 is the one whose factual
 assertion holds and whose stated reason does not — it is listed because a reader plans from the
 reason.
 
@@ -167,34 +167,30 @@ version's state), not the document, so it does not belong in the list.
 > apply to decide the switch's record for a repository — whether the bundle holds a model credential
 > at all. (`fugaro doctor`'s own service check reads the bundle's versions, not the document.)
 
-### G2 — "Once shared project jobs exist" is stale: they exist
+### G2 — "Once shared project jobs exist" is stale: they exist — **closed**
 
-**The sentence** (`SECURITY.md:35`, "Inside a shared job there is no IAM boundary between
+The sentence this gap objected to is gone: `SECURITY.md` was rewritten and now states the fact it was
+missing, in the words this gap proposed for it.
+
+**The sentence** (`SECURITY.md:36`, "Inside a shared job there is no IAM boundary between
 repositories — the profile is the boundary"):
 
-> Today each repository still has its own job and its own service account, and a project secret is
-> mounted on that job only for a name the repository may use … **Once shared project jobs exist**,
-> one job carries runs for several repositories …
+> A per-repository job today mounts a project secret only for a name the repository may use (a
+> reserved secret; a provider's key or a named Claude account's token per its own `allow_data_to`).
+> A shared project job carries runs for several repositories, so the boundary between them is the
+> profile the run is admitted under, not an IAM grant: a project secret in that job's environment is
+> readable by every one of those runs.
+
+No wording is proposed; the evidence below stands as the record that shared project jobs exist.
 
 **What the code does.** Shared project jobs exist on this base commit. `internal/infra`'s
 `ProjectJobs` builds one Cloud Run job and one job service account per (profile, provider, Claude
 account) of the local config's profiles (`internal/infra/projectjobs.go:56-68`), and an installation
-whose local config names a profile gets them from an ordinary `fugaro setup`. The same document says
-so four times over in its own limits section — `:103` ("a shared project job is the one job it does
-not reach"), `:207` ("a shared project job widens that from one repository to every repository in
-the runs bucket, not to a profile, and that regression is stated here"), `:208` (the account's
-OAuth token), `:212` ("the phase-3 module has no switch input") — so `:35` contradicts the rest of
-the file rather than the code.
-
-**Proposed wording** (the two clauses that date the sentence; the rest of the paragraph stands):
-
-> **Inside a shared job there is no IAM boundary between repositories — the profile is the
-> boundary.** A repository's own job and its own service account are the ordinary case, and a
-> project secret is mounted on that job only for a name the repository may use … **In a shared
-> project job** — one job carrying runs for several repositories, which an installation whose local
-> config names a profile already has — the boundary between them is the profile the run is admitted
-> under, not an IAM grant, and a project secret in that job's environment is readable by every one
-> of those runs.
+whose local config names a profile gets them from an ordinary `fugaro setup`. The same document said
+so four times over in its own limits section even when the sentence objected to here did not — `:103`
+("a shared project job is the one job it does not reach"), `:207` ("a shared project job widens that
+from one repository to every repository in the runs bucket, not to a profile, and that regression is
+stated here"), `:208` (the account's OAuth token), `:212` ("the phase-3 module has no switch input").
 
 ### G3 — the service's own cap check is described as built; it is not
 
@@ -313,24 +309,24 @@ The docs tests pin sentences, so a wording change is not one edit. Checked one g
 | Gap | Pinned string that has to move | What else the same PR runs |
 | --- | --- | --- |
 | G1 (`:68`) | none — no test carries a phrase from that sentence | `go run ./internal/clidoc` (below) |
-| G2 (`:35`) | the paragraph's heading sentence, verbatim — `internal/cli/docs_project_wide_git_test.go:119` (`TestSecurityMdStatesTheProjectScopeDefault`, `:104`); the wording below keeps it word for word and rewrites only the two clauses beside it, which no test carries | `go run ./internal/clidoc` |
+| G2 (`:35`) | none — closed below: the heading sentence is already in the document and no wording is proposed | nothing |
 | G3 (`:113`) | the word `ADVISORY` — `internal/cli/docs_security_test.go:450` (in `TestSecurityMdStatesTheCredentialsService`, `:371`); both wordings above keep it | `go run ./internal/clidoc` |
 | G4 (`:195`) | the sentence itself, verbatim — `internal/cli/docs_security_test.go:40` (in `TestSecurityMdStatesTheModelAndItsLimits`, `:17`), so the pinned string changes in the same PR | `go run ./internal/clidoc` |
 | G5 (`:189`) | none — no test carries a phrase from that sentence | `go run ./internal/clidoc` |
 
-Two rules hold for all five:
+Two rules hold for all four:
 
 - **`website/content/security.md` is regenerated whatever the section is.** It is `SECURITY.md`
   byte for byte below a generated header, and a test fails on any drift
   (`internal/cli/docs_website_security_test.go:81`), so `go run ./internal/clidoc` runs in the
   same PR even for a "Known limits" sentence the page does not render.
 - **`website/test/security.mjs` is not in the way.** The page renders two sections, "In short" and
-  "Reporting a vulnerability", and none of the five gaps is in either — so no website test pins
+  "Reporting a vulnerability", and none of the four open gaps is in either — so no website test pins
   the changed text. The one website-side consequence is the regenerated byte copy above.
 - **A new backticked name has to be a real one.** `TestSecurityMdStatesTheModelAndItsLimits` checks
   every `` `[A-Z][A-Z0-9_]{2,}` `` token the document carries against the environment variables the
   code actually sets or passes (`internal/cli/docs_security_test.go:79-86`), so a wording that
-  introduces one has to name a variable that exists. None of the five wordings above adds one.
+  introduces one has to name a variable that exists. None of the four wordings above adds one.
 
 ## Checked, and not a gap
 
@@ -362,10 +358,11 @@ file (or to the owner as a trivial commit).
 1. **G3's shape.** (a) or (b) above — the owner's call, because both say the same thing about the
    binding cap and differ in how much of the service's latitude they describe. My recommendation is
    (a). Either keeps the pinned word `ADVISORY`.
-2. **G1 and G2 need no decision, only an approval of wording** — both are completeness. The G2
-   wording keeps the paragraph's pinned heading sentence word for word, and neither rewrites a
-   clause any test carries, so landing them is one edit to `SECURITY.md` plus
-   `go run ./internal/clidoc` for the page, in one PR. G5 is the same — no decision, and no pinned
+2. **G1 needs no decision, only an approval of wording** — it is completeness. It rewrites no clause
+   any test carries, so landing it is one edit to `SECURITY.md` plus
+   `go run ./internal/clidoc` for the page, in one PR. **G2 is closed**: a later `SECURITY.md`
+   rewrite states that shared project jobs exist, which is the change this gap asked for, so no
+   wording is left to approve. G5 is the same — no decision, and no pinned
    string moves — but it is the one that changes what the document *says the code does*, so it is the
    one worth the owner's eyes rather than an editor's.
 3. **G4 is the one wording that moves a pinned string**: the sentence it rewrites is pinned verbatim
