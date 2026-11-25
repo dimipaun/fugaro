@@ -19675,6 +19675,7 @@
         ".*",
         "cmd/fugaro/**",
         "deploy/terraform/**",
+        "docs/model-credentials-routing/**",
         "docs/plans/*",
         "docs/release-streams.yaml",
         "ee/ab/**",
