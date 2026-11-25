@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -178,10 +179,47 @@ func (e *initEngine) repos(ctx context.Context) ([]repoView, []string) {
 
 // reportRepos records the lines a stage or a step after the loop reports
 // under its own name. A stage also hands the same lines back from RepoLines,
-// which is how the loop reads them (U13); a step after the loop has no Stage
-// and reports this way alone.
+// which is how the loop reads them and where it prints them (U13, emitRepos);
+// a step after the loop has no Stage and reports this way alone, and its lines
+// are the run's notices (notices).
 func (e *initEngine) reportRepos(name string, lines []initflow.RepoLine) {
 	e.reposState.report(name, lines)
+}
+
+// printRepoLines is the loop's OnRepos: one line per repository, printed under
+// the stage's header in the run's own account — "<repo>: <state>: <detail>",
+// the hint's repository first and the rest in the order the lines came
+// (hintFirst, spec §Output).
+//
+// The hint is the working directory's own repository, which is why the order
+// is decided here and not in the loop: it is the one thing about these lines
+// that is a fact about where the run was started, and the document and the
+// feed, built from the same slice in canonical order, never move with it.
+func (e *initEngine) printRepoLines(lines []initflow.RepoLine) {
+	w := e.r.stageDetail()
+	for _, ln := range hintFirst(e.r.o.repoHint, lines) {
+		if ln.Detail == "" {
+			fmt.Fprintf(w, "%s: %s\n", ln.Repo, ln.State)
+			continue
+		}
+		fmt.Fprintf(w, "%s: %s: %s\n", ln.Repo, ln.State, ln.Detail)
+	}
+}
+
+// notices is the lines the run's steps after the stage loop reported, in the
+// order they were reported, as the document's `notices` member and the stream's
+// `notice` lines carry them (R12, R19). A step has no stage of its own, so its
+// own name is on every line.
+func (e *initEngine) notices() []initflow.Notice {
+	e.reposState.mu.Lock()
+	defer e.reposState.mu.Unlock()
+	var out []initflow.Notice
+	for _, rep := range e.reposState.reported {
+		for _, ln := range rep.lines {
+			out = append(out, initflow.Notice{Step: rep.name, Repo: ln.Repo, State: ln.State, Detail: ln.Detail})
+		}
+	}
+	return out
 }
 
 // hintFirst is lines with the hinted repository's own line first and the rest

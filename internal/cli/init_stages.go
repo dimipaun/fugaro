@@ -261,6 +261,11 @@ func (e *initEngine) options() initflow.Options {
 		Detail:  r.accountWriter(),
 		Project: r.projectName, GCPProject: r.gcpProject, Region: e.lc.Region,
 		Redact: e.redact, OnPreview: func(rs []initflow.StageResult) { e.previewed = rs },
+		// The per-repository lines a stage reported go to the run's own
+		// account, hint first (U13): a stage that does per-repository work
+		// says one line per repository under its header, whatever door the run
+		// came in by.
+		OnRepos: e.printRepoLines,
 		// The managed gate is `fugaro update`'s (D1016, update_managed.go):
 		// managedStage answers which door and which stages, and the loop asks
 		// it only in a coding agent's session, so a person's run never reads a
