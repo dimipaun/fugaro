@@ -203,7 +203,7 @@ func TestTheUpdateNamesWhatWillStopFirst(t *testing.T) {
 		}
 		want := []string{
 			"this repository's runs are refused: agent.models.coder acme-1 has no price",
-			f.repoPath + " says budget.mode: off, which is not a mode any more: this update offers the removal of the line",
+			f.repoPath + " says budget.mode: off, which is not a mode any more: delete the line",
 			"this repository's model key (" + f.modelKey + ") leaves its job at this apply",
 			"this machine's local config says budget.mode: off, which is removed: the update rewrites it to observe, and this machine's runs come under the database's mode " + budget.ModeEnforce,
 			"this installation launches runs on " + backend.CloudBatch,

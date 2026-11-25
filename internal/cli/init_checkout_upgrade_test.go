@@ -397,8 +397,9 @@ func agentCheckout(t *testing.T) (string, *testutil.ClaudePluginFake, *[]string)
 
 // leftCommand reports whether the run left the user a step of stage st that
 // names cmd: a session's left-for-you is identified by the step and the command
-// it hands back, never by a count alone — the plugin stage leaves the pin's
-// removal there (U5) beside the cloud half.
+// it hands back, never by a count alone. Since U6a the only step there is the
+// checkout's cloud half — the plugin stage's pin removal, which a session also
+// handed back, is deleted — so the count is one.
 func leftCommand(res *initflow.Result, stage, cmd string) bool {
 	for _, l := range res.Left {
 		if l.Stage == stage && slices.Contains(l.Commands, cmd) {
@@ -433,11 +434,12 @@ func TestUpdateLocalStepsRunInAgentSession(t *testing.T) {
 	if len(f.Changes(t)) == 0 {
 		t.Errorf("the plugin was not installed in an agent's session\n%s", out)
 	}
-	// What a session leaves is the two checkout writes: the pin's removal,
-	// whose route is the door it is in (U5), and the cloud half.
+	// What a session leaves is the cloud half alone: the plugin stage's own
+	// step is the machine's install, which a session applies, and the pin's
+	// removal — the other step a session handed back — is a notice the run
+	// prints now (U6a).
 	root := filepath.Dir(filepath.Dir(settings))
-	if len(res.Left) != 2 || res.ExitCode() != 1 ||
-		!leftCommand(res, initflow.Plugin, selfCommand()+" update") ||
+	if len(res.Left) != 1 || res.ExitCode() != 1 ||
 		!leftCommand(res, checkoutStageName, selfCommand()+" update --repo "+root) {
 		t.Fatalf("an agent's session reported the checkout done with the images untouched: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
 	}
@@ -462,8 +464,7 @@ func TestUpdateCloudWritesRefusedInAgentSessionEvenWithYes(t *testing.T) {
 		t.Errorf("the cloud step was not refused by name:\n%s", out)
 	}
 	root := filepath.Dir(filepath.Dir(settings))
-	if len(res.Left) != 2 || res.ExitCode() != 1 ||
-		!leftCommand(res, initflow.Plugin, selfCommand()+" update") ||
+	if len(res.Left) != 1 || res.ExitCode() != 1 ||
 		!leftCommand(res, checkoutStageName, selfCommand()+" update --repo "+root) {
 		t.Fatalf("the cloud half was not left for the user: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
 	}
@@ -547,9 +548,10 @@ func TestUpdateAgentSessionRunsThePluginBeforeTheCheckout(t *testing.T) {
 	}
 	// The install is not handed back to the user: `fugaro update-skills`, the
 	// machine-side route a session that left it would name, is not what this run
-	// leaves. The stage's one step that IS left is the pin's removal, whose route
-	// is the door the checkout's write is in — `fugaro update` (U5) — and the
-	// test below reads that step for what it is.
+	// leaves. Since U6a the plugin stage leaves nothing at all — the pin's
+	// removal, the one step a session handed back here, is a notice now — and
+	// the checkout's cloud half, which the test below reads, is the run's only
+	// parked step.
 	for _, l := range res.Left {
 		if l["stage"] != initflow.Plugin {
 			continue
@@ -557,18 +559,9 @@ func TestUpdateAgentSessionRunsThePluginBeforeTheCheckout(t *testing.T) {
 		if slices.Contains(strings.Split(l["commands"], "\n"), selfCommand()+" update-skills") {
 			t.Errorf("the plugin install is left for the user (%q), want it applied in a coding agent's session\n%s", l["text"], out)
 		}
-	}
-	// The checkout's write is, with the command that makes it: nothing unsets
-	// the marker, and --yes does not stand in for the session's own decision
-	// (U5, spec §8).
-	removal := false
-	for _, l := range res.Left {
-		if l["stage"] == initflow.Plugin && slices.Contains(strings.Split(l["commands"], "\n"), selfCommand()+" update") {
-			removal = true
+		if slices.Contains(strings.Split(l["commands"], "\n"), selfCommand()+" update") {
+			t.Errorf("the plugin stage leaves %q for the user, want nothing: the pin is a notice (U6a)\n%s", l["text"], out)
 		}
-	}
-	if !removal {
-		t.Errorf("the pin a coding agent's session may not take out is not left for the user:\n%s", out)
 	}
 	// The stage behind it is reached, and it is the checkout whose cloud half
 	// this session may not take: its own line is done with what this session
@@ -704,8 +697,7 @@ func TestUpdateLocalStepsRunInAgentSessionWithoutAYes(t *testing.T) {
 		t.Errorf("the session reached the cloud without --yes: steps %q\n%s", *ran, out)
 	}
 	root := filepath.Dir(filepath.Dir(settings))
-	if len(res.Left) != 2 || res.ExitCode() != 1 ||
-		!leftCommand(res, initflow.Plugin, selfCommand()+" update") ||
+	if len(res.Left) != 1 || res.ExitCode() != 1 ||
 		!leftCommand(res, checkoutStageName, selfCommand()+" update --repo "+root) {
 		t.Fatalf("the cloud half was not left for the user: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
 	}
