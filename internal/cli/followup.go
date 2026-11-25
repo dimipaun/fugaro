@@ -957,7 +957,7 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		if c.PrevReport {
 			return nil, refuseReportFollowUp(rcp.Name)
 		}
-		if err := refuseFollowUpRepoRecipe(ctx, repo, rcp.Name); err != nil {
+		if err := refuseFollowUpRepoRecipe(ctx, env, repo, rcp.Name); err != nil {
 			return nil, err
 		}
 	}
@@ -984,6 +984,19 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	if err != nil {
 		return nil, err
 	}
+	// The promote block, for the follow-up that raises an area: the shape
+	// 12a's reading most often takes, since the pull request that pays an
+	// item down is the one the run is on and it is what the item's `## Closed
+	// by` names (D31). Resolved against this repository's own file, exactly as
+	// a first run's is (resolvePromote), and on the mode this follow-up
+	// resolved rather than the flag's: the target is the level the run really
+	// works at, and the raise-only rule below has already raised it.
+	var promote *task.Promote
+	if o.promote != "" {
+		if promote, err = resolvePromote(ctx, repo, o.promote, string(mode)); err != nil {
+			return nil, err
+		}
+	}
 	// The follow-up's tier is the flag's when it is given, else the tier the
 	// run it continues recorded: the envelope its pull request was dispatched
 	// under, which a follow-up of it keeps (resolvePR). No flag and no
@@ -994,7 +1007,7 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		CompressionOff: c.CompressionOff,
 		Branch:         c.Branch, PR: o.pr[0], PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp,
 		OwnerRuled: o.ownerRuled, ChangeSet: c.ChangeSet,
-		Rigor: mode, Paths: o.paths, Tier: cmp.Or(tier.Tier(o.tier), c.Tier)}
+		Rigor: mode, Paths: promotePaths(promote, o.paths), Promote: promote, Tier: cmp.Or(tier.Tier(o.tier), c.Tier)}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
 	}
@@ -1129,7 +1142,7 @@ func carryChosenRecipe(ctx context.Context, env *cloudEnv, repo string, c *prCha
 	var rcp *task.Recipe
 	changed := false
 	if ch.Source == string(recipe.SourceRepo) {
-		if err := refuseFollowUpRepoRecipe(ctx, repo, ch.Name); err != nil {
+		if err := refuseFollowUpRepoRecipe(ctx, env, repo, ch.Name); err != nil {
 			return nil, err
 		}
 		rcp = &task.Recipe{Name: ch.Name, Source: ch.Source}

@@ -407,6 +407,28 @@ type Spec struct {
 	// matches nothing changes nothing. Each is bounded and non-blank below,
 	// since every one of them is matched against every rule.
 	Paths []string `json:"paths,omitempty"`
+	// Promote is the area this run raises to a higher level: the promote
+	// task of docs/rigor-modes/levels-spec.md §4 (LD6, fugaro run
+	// --promote, docs/rigor-modes/levels-reconciliation.md §3b item 12). A
+	// promote run reads the area's own backlog items and the area's code,
+	// works at the level its rigor request names, and closes the items it
+	// pays down (D31, reconciliation §3b item 12e). Nil for every launch
+	// that is not a promote run, which is every launch before this release
+	// and every one that passes no --promote.
+	//
+	// The block carries what the launcher resolved about the area — its
+	// name and this repository's part of it — and nothing else. The level
+	// rides Spec.Rigor, which is the request the launcher's own --mode wrote
+	// and the resolver already holds; a promote run with no level is refused
+	// by Validate below, because the level is the whole of what the run
+	// changes about the area.
+	//
+	// A runner before the release that reads this field refuses the whole
+	// spec (Parse decodes with DisallowUnknownFields), so the launcher gates
+	// a promote launch on the job image (internal/cli's promoteSince) rather
+	// than let the run fail at bootstrap after the task was written. A spec
+	// without it is byte-identical to what the previous release wrote.
+	Promote *Promote `json:"promote,omitempty"`
 	// Inputs are the files the launching CLI attached (fugaro run
 	// --attach; design artifact-runs.md §4): what it uploaded, under
 	// runs/<slug>/<run>/inputs/<name>, with the size and the hash it read
@@ -1181,6 +1203,79 @@ func (c *ChangeSet) Member(repo string) (ChangeSetMember, bool) {
 	return ChangeSetMember{}, false
 }
 
+// MaxPromoteAreaBytes bounds the area name a promote task carries
+// (Spec.Promote, fugaro run --promote). The name is the launcher's own
+// resolution of the area the operator named — it reaches the run's brief,
+// the run record and the pull request body — so a hand-written task.json
+// cannot make it arbitrarily long. The area rules themselves bound a name at
+// rigor.MaxAreaName; this is the task side's own bound, and the two are
+// deliberately separate: the launcher has already matched the name against a
+// layer by the time it writes this field, and this refusal is for the file
+// nobody's layer produced.
+const MaxPromoteAreaBytes = 80
+
+// Promote is the area a promote run raises to a higher level (Spec.Promote,
+// fugaro run --promote; docs/rigor-modes/levels-spec.md §4, LD6,
+// docs/rigor-modes/levels-reconciliation.md §3b item 12). The run reads the
+// area's own backlog items and the area's code, works at the level Spec.Rigor
+// names, and closes the items it pays down (D31).
+//
+// It is a *first run's* block and a follow-up's alike: promoting an area an
+// earlier pull request left at a lower level is the follow-up that raises it,
+// and the follow-up is the shape in which the closing D31 asks for can name
+// the pull request that closes an item.
+type Promote struct {
+	// Area is the area's name, as the layer that declared it spells it
+	// (D20c): the project layer's rule, or one of the repository's own.
+	// Matching it is a string comparison and nothing more — the rules that
+	// could match it live in the layer, and this is the answer a layer gave.
+	Area string `json:"area"`
+	// Paths are this repository's part of the area: the paths of the member
+	// the area names for this repository, empty when the member is the whole
+	// repository. They are the scope the run's items are read from and the
+	// scope a closed item's code has to fall inside.
+	Paths []string `json:"paths,omitempty"`
+}
+
+// Problem reports what is wrong with a promote block — "" when nothing is —
+// for the two places one is accepted: the launcher, at fugaro run --promote,
+// and the runner, reading a stored task back (Spec.Validate), one list with
+// two callers as TitleProblem is.
+//
+// The rules are: an area that is non-blank, one line, at most
+// MaxPromoteAreaBytes bytes and free of control characters, and paths that
+// are each non-blank and bounded (MaxDeclaredPathBytes). It is a shape check
+// and nothing more: whether an area of that name exists, and whether this
+// repository is a member of it, is the launcher's question — it is the side
+// that holds the layers.
+func (p Promote) Problem() string {
+	switch {
+	case strings.TrimSpace(p.Area) == "":
+		return "must name the area it promotes"
+	case len(p.Area) > MaxPromoteAreaBytes:
+		return fmt.Sprintf("names an area longer than %d bytes", MaxPromoteAreaBytes)
+	case strings.ContainsAny(p.Area, "\x00\n\r"):
+		return "names an area with a NUL or a newline in it: an area's name is one line"
+	}
+	for _, r := range p.Area {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Sprintf("names an area with a control character (U+%04X) in it", r)
+		}
+	}
+	if len(p.Paths) > MaxDeclaredPaths {
+		return fmt.Sprintf("names more than %d paths", MaxDeclaredPaths)
+	}
+	for i, path := range p.Paths {
+		switch {
+		case strings.TrimSpace(path) == "":
+			return fmt.Sprintf("names an empty path at paths[%d]", i)
+		case len(path) > MaxDeclaredPathBytes:
+			return fmt.Sprintf("names a path longer than %d bytes at paths[%d]", MaxDeclaredPathBytes, i)
+		}
+	}
+	return ""
+}
+
 // PlanTaskElemRE is the form of one "/"-separated element of a plan task
 // id: letters, digits, '.', '_' and '-', starting with a letter or a digit.
 // An allow-list rather than a list of refusals, because the id is shown as
@@ -1953,6 +2048,23 @@ func (s *Spec) Validate() error {
 			bad("task spec: paths[%d] is empty", i)
 		case len(p) > MaxDeclaredPathBytes:
 			bad("task spec: paths[%d] is longer than %d bytes", i, MaxDeclaredPathBytes)
+		}
+	}
+	// The promote block (Spec.Promote, fugaro run --promote): the area it
+	// names and this repository's part of it. The level it raises the area to
+	// is Spec.Rigor, and a promote task that carries none is refused rather
+	// than resolved: the level is the whole of what the run changes about the
+	// area, so a promote task without one would be a run that does nothing
+	// under a name that says it raises something.
+	if p := s.Promote; p != nil {
+		if msg := p.Problem(); msg != "" {
+			bad("task spec: promote %s", msg)
+		}
+		if s.Rigor == "" {
+			bad("task spec: promote names no rigor level: a promote run says which level it raises the area to (fugaro run --promote --mode LEVEL)")
+		}
+		if s.ReviewPRs != nil {
+			bad("task spec: promote and review_prs don't go together: a promote run raises an area's level, and a review run reads pull requests")
 		}
 	}
 	// Mode is the recipe's mode, so the only values a spec may carry are

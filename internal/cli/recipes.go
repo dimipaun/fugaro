@@ -27,12 +27,14 @@ func newRecipesCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "recipes",
 		Aliases: []string{"recipe"},
-		Short:   "List, show, validate and publish recipes, the task loop a run follows after implement",
-		Long: "A recipe is found by name in .fugaro/recipes/NAME.yaml in the repository, then in the\n" +
-			"project's fugaro/recipes/NAME.yaml in the runs bucket, then in the catalog\n" +
-			"(" + strings.Join(recipe.CatalogNames(), ", ") + "). See docs/recipes.md.",
+		Short:   "List, show, validate, publish and remove recipes, the task loop a run follows after implement",
+		Long: "A recipe is found by name in the project's fugaro/recipes/NAME.yaml in the runs\n" +
+			"bucket, then in the catalog (" + strings.Join(recipe.CatalogNames(), ", ") + "). A\n" +
+			"repository's own recipe is the project's copy of it, fugaro/recipes/NAME.<repo>-<8 hex>.yaml,\n" +
+			"which fugaro update publishes; .fugaro/recipes/ in a checkout is not read.\n" +
+			"See docs/recipes.md.",
 	}
-	cmd.AddCommand(newRecipesLsCmd(), newRecipesShowCmd(), newRecipesPublishCmd(), newRecipesValidateCmd())
+	cmd.AddCommand(newRecipesLsCmd(), newRecipesShowCmd(), newRecipesPublishCmd(), newRecipesRmCmd(), newRecipesValidateCmd())
 	return cmd
 }
 
@@ -115,9 +117,13 @@ func stepsSummary(steps []stepView) string {
 }
 
 // listRecipes lists every recipe of every layer, the winning layer first for
-// each name: the repository at root ("" for none), the project (read
-// afresh, refreshing the cache), the catalog. A lower layer's row of a name
-// a higher layer has says which one shadows it.
+// each name: the project (read afresh, refreshing the cache), the catalog. A
+// lower layer's row of a name a higher layer has says which one shadows it.
+//
+// The checkout at root ("" for none) is not read, and a note says so when
+// there is one: a repository's own recipe is the project's copy of it, which
+// fugaro update publishes, and the copy is listed here under its own name
+// (D3302, D3303).
 func listRecipes(ctx context.Context, env *cloudEnv, root string, now time.Time) ([]recipeRow, []string, error) {
 	var rows, project []recipeRow
 	var notes []string
@@ -157,27 +163,9 @@ func listRecipes(ctx context.Context, env *cloudEnv, root string, now time.Time)
 		r.Launchable = r.Problem == ""
 		return r
 	}
-	var repo []recipeRow
 	if root != "" {
-		entries, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(recipe.RepoDir)))
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return nil, nil, userErr("%s: %v", recipe.RepoDir, err)
-		}
-		for _, e := range entries {
-			name, ok := strings.CutSuffix(e.Name(), ".yaml")
-			if !ok || !recipe.NameRE.MatchString(name) {
-				if !strings.HasPrefix(e.Name(), ".") {
-					notes = append(notes, fmt.Sprintf("skipped %s/%s: not <recipe name>.yaml (the runner reads only that)", recipe.RepoDir, e.Name()))
-				}
-				continue
-			}
-			data, found, err := recipe.ReadRepoFile(root, name)
-			if found || err != nil {
-				repo = append(repo, row(name, recipe.SourceRepo, data, err))
-			}
-		}
+		notes = append(notes, fmt.Sprintf("%s/ is not read: a repository's own recipe is the project's copy of it, which fugaro update publishes and which is listed here under its own name", recipe.RepoDir))
 	}
-	add(repo)
 	if note := projectRecipesNote(env.lc); note != "" {
 		notes = append(notes, note)
 	} else {
@@ -191,7 +179,7 @@ func listRecipes(ctx context.Context, env *cloudEnv, root string, now time.Time)
 				return nil, nil, bucketErr("gs://fugaro-runs-"+env.lc.GCPProject, "listing "+recipe.ObjectPrefix, err)
 			}
 			name, ok := strings.CutSuffix(strings.TrimPrefix(obj.Key, recipe.ObjectPrefix), ".yaml")
-			if !ok || !recipe.NameRE.MatchString(name) {
+			if !ok || !recipe.IsNameOrCopy(name) {
 				notes = append(notes, fmt.Sprintf("skipped gs://fugaro-runs-%s/%s: not <recipe name>.yaml (the runner reads only that)", env.lc.GCPProject, obj.Key))
 				continue
 			}
@@ -255,7 +243,7 @@ func newRecipesLsCmd() *cobra.Command {
 	var asJSON, verbose bool
 	cmd := &cobra.Command{
 		Use:   "ls",
-		Short: "List the recipes of this checkout, the project and the catalog, and which one wins for each name",
+		Short: "List the project's recipes and the catalog, and which one wins for each name",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
@@ -371,7 +359,73 @@ func newRecipesPublishCmd() *cobra.Command {
 			_ = localcfg.SaveRecipeCache(os.Getenv, env.lc.Name, rcp.Name, localcfg.SharedCacheEntry{GCPProject: env.lc.GCPProject, Bucket: bucket, Generation: gen, CheckedAt: time.Now(), YAML: string(data)})
 			fmt.Fprintf(cmd.OutOrStdout(), "published %s to gs://%s/%s (sha256 %s)\n", rcp.Name, bucket, key, recipe.Sum(data))
 			if _, ok := recipe.CatalogText(rcp.Name); ok {
-				fmt.Fprintf(cmd.ErrOrStderr(), "note: it replaces the catalog's %s for every repository of project %s that has no %s/%s.yaml\n", rcp.Name, env.lc.Name, recipe.RepoDir, rcp.Name)
+				fmt.Fprintf(cmd.ErrOrStderr(), "note: it replaces the catalog's %s for every repository of project %s that has no copy of its own under another name\n", rcp.Name, env.lc.Name)
+			}
+			return nil
+		},
+	}
+	addCloudFlags(cmd, &o)
+	return cmd
+}
+
+// newRecipesRmCmd removes one of the project's recipes, the store's own half of
+// "an admin can replace or remove a migrated copy" (D3303): the copy a
+// repository's recipe became is an ordinary project recipe from here on, so it
+// is replaced with fugaro recipes publish and removed with this. It is a
+// project-level surface like publish — it changes the loop of every run of
+// every repository that names the recipe — so it takes the same access gate,
+// the same agent refusal and the same conditional write, and it asks nothing.
+func newRecipesRmCmd() *cobra.Command {
+	var o cloudOptions
+	cmd := &cobra.Command{
+		Use:   "rm NAME",
+		Short: "Remove one of the project's recipes (fugaro/recipes/NAME.yaml in the runs bucket)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			name := args[0]
+			if !recipe.IsNameOrCopy(name) {
+				return userErr("%q is not a recipe name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit, or the name of the project's copy of one (that name, a dot, the repository's slug and 8 hex)", pluginwire.Printable(name))
+			}
+			if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
+				return userErr("nothing was removed: fugaro recipes rm writes to the cloud and changes the loop of every run of the project that names this recipe: %s", initflow.AgentRefusal(m))
+			}
+			env, err := openCloud(ctx, o)
+			if err != nil {
+				return err
+			}
+			defer env.Close()
+			if err := settingsAccessGate(ctx, env.lc, "fugaro recipes rm"); err != nil {
+				return err
+			}
+			if note := projectRecipesNote(env.lc); note != "" {
+				return userErr("nothing was removed: %s", note)
+			}
+			if fakeEndpointsOnGS(env.lc, env.lc.BucketURL()) {
+				return userErr("nothing was removed: the project's storage endpoint is a fake")
+			}
+			key := recipe.ObjectKey(name)
+			old, gen, err := env.bucket.ReadMaxStrict(ctx, key, recipe.MaxBytes)
+			switch {
+			case errors.Is(err, blobx.ErrNotExist):
+				return userErr("the project has no recipe %s (fugaro recipes ls)", name)
+			case errors.Is(err, blobx.ErrTooLarge):
+				return userErr("nothing was removed: %s is an oversized object (over 16 KiB), which is not a recipe this CLI wrote: delete it by hand", key)
+			case err != nil:
+				return remote(fmt.Errorf("nothing was removed: reading %s: %w", key, err))
+			}
+			switch err := env.bucket.DeleteIf(ctx, key, gen, old); {
+			case errors.Is(err, blobx.ErrConflict):
+				return userErr("nothing was removed: another publisher changed %s while this ran; look at it (fugaro recipes show %s) and run this again", key, name)
+			case errors.Is(err, blobx.ErrForbidden):
+				return operatorWriteErr("gs://"+env.bucket.GCSName, key, err, "nothing was removed")
+			case err != nil:
+				return remote(fmt.Errorf("nothing was removed: deleting %s: %w", key, err))
+			}
+			_ = localcfg.DropRecipeCache(os.Getenv, env.lc.Name, name)
+			fmt.Fprintf(cmd.OutOrStdout(), "removed %s from gs://%s/%s\n", name, "fugaro-runs-"+env.lc.GCPProject, key)
+			if _, ok := recipe.CatalogText(name); ok {
+				fmt.Fprintf(cmd.ErrOrStderr(), "note: %s now resolves to the catalog's recipe for every repository of project %s that has no copy of its own\n", name, env.lc.Name)
 			}
 			return nil
 		},
