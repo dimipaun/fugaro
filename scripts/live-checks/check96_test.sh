@@ -1921,6 +1921,10 @@ test_a_user_list_whose_second_page_holds_the_survivors_is_read_through() {
   restore_line=$(printf '%s\n' "$out" | sed -n 's/^FACT restore: //p')
   expect_absent "$restore_line" "read back holding none of their uids" "a survivor on the second page: the restore line a run with survivors must not print"
   expect_contains "$restore_line" "still holds 2 of the uids this check may have created" "a survivor on the second page: the restore line"
+  # Every one of the row's three facts about the users counts the deletions that
+  # answered 200, this one included: a survivor row that named the uids without
+  # the count left the one number a person reads it for unsaid.
+  expect_contains "$restore_line" "deletions answered 200" "a survivor on the second page: the restore line counts the deletions that went through"
 }
 
 test_an_exchange_whose_answer_was_lost_names_its_user() {

@@ -358,7 +358,7 @@ restore_detail() {
     users="the run identity users were deleted ($DELETED_N of ${#UIDS_CREATED[@]} answered 200) and the project's own user list was read back holding none of their uids"
   else
     left=${UIDS_CREATED[*]}
-    users="the project's own user list was read back and still holds $SURVIVORS_READ of the uids this check may have created ($left): this is the call that deletes each of them — $delete_call"
+    users="the project's own user list was read back and still holds $SURVIVORS_READ of the uids this check may have created ($DELETED_N of ${#UIDS_CREATED[@]} deletions answered 200): the uids are $left, and this is the call that deletes each of them — $delete_call"
   fi
   local grants
   if [ "${#GRANTS_LEFT[@]}" -gt 0 ]; then
