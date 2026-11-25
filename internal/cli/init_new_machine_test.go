@@ -129,12 +129,10 @@ func TestAdoptModeNamesMissingRole(t *testing.T) {
 // A rerun on an installation an older init made (its config, its state, its
 // marks) adopts it without moving anything of the installation: nothing is
 // applied, the installation stage says No changes, and the engines' plans are
-// the ones they always made. The one write such a run has is the checkout's
-// own: the plugin stage runs in setup as it does in update, so the pin an older
-// fugaro left in the checkout is taken out here too (U5, spec §8) — the
-// migration is the stage's, not the update door's — and that is the change
-// below, with the repository stage still skipped over the fugaro.yaml the
-// default branch has not got.
+// the ones they always made. Nothing writes the checkout either: the plugin
+// stage installs this machine's plugin alone, and the pin an older fugaro left
+// in the checkout is a notice `update` prints (U6a) — the repository stage is
+// still skipped over the fugaro.yaml the default branch has not got.
 func TestAdoptOlderInstallationReportsNoChanges(t *testing.T) {
 	r := newInitRig(t)
 	r.installationState(t)
@@ -162,10 +160,10 @@ func TestAdoptOlderInstallationReportsNoChanges(t *testing.T) {
 	for _, s := range res.Stages {
 		states[s.Name], details[s.Name] = s.State, s.Detail
 		if s.State != "done" && s.State != "skipped" && s.State != "changed" {
-			t.Errorf("stage %s is %s (%s), want done, skipped, or the pin's removal", s.Name, s.State, s.Detail)
+			t.Errorf("stage %s is %s (%s), want done, skipped, or changed", s.Name, s.State, s.Detail)
 		}
 	}
-	for name, state := range map[string]initflow.State{"installation": "done", "plugin": "changed", "repository": "skipped"} {
+	for name, state := range map[string]initflow.State{"installation": "done", "plugin": "skipped", "repository": "skipped"} {
 		if states[name] != state {
 			t.Errorf("stage %s is %q, want %q\nstages %+v", name, states[name], state, res.Stages)
 		}
@@ -173,13 +171,14 @@ func TestAdoptOlderInstallationReportsNoChanges(t *testing.T) {
 	if !strings.Contains(details["installation"], "No changes") {
 		t.Errorf("the installation stage says %q, want No changes", details["installation"])
 	}
-	// The plugin stage's whole account is the removal: nothing is installed (no
-	// claude in this rig), and the two entries are what the file lost.
-	if !strings.Contains(details["plugin"], "removed the fugaro@fugaro pin from") {
-		t.Errorf("the plugin stage says %q, want the pin it took out\nstages %+v", details["plugin"], res.Stages)
+	// The plugin stage has nothing to do: no claude in this rig, so there is no
+	// install to make, and the pin is not its write (U6a).
+	if !strings.Contains(details["plugin"], "claude is not on PATH") {
+		t.Errorf("the plugin stage says %q, want the install half's own skip\nstages %+v", details["plugin"], res.Stages)
 	}
-	if got := convergeRead(t, settings); got != "{}\n" {
-		t.Errorf("the checkout's settings after the run:\n%s\nwant the leftover pin taken out:\n%s", got, "{}\n")
+	pinned := `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"dimipaun/fugaro","ref":"v0.2.0"}}},"enabledPlugins":{"fugaro@fugaro":true}}` + "\n"
+	if got := convergeRead(t, settings); got != pinned {
+		t.Errorf("the checkout's settings after the run:\n%s\nwant the leftover pin left alone (U6a):\n%s", got, pinned)
 	}
 }
 

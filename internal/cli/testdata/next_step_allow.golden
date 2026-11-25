@@ -119,7 +119,6 @@ launch_budget.go	then the job image from it with fugaro image build
 launch_budget.go	with fugaro image build
 launch_budget.go	with fugaro image refresh
 launch_budget.go	with fugaro update
-managed_flag.go	fugaro update that applies it
 operator_write.go	with fugaro update
 orchestrator_identity.go	run fugaro update
 pair_invite.go	fugaro update, which writes it
