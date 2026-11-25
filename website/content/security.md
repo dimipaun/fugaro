@@ -82,8 +82,8 @@ That hash is **integrity in transit, not tamper evidence**: it and the artifact 
 
 - **Firestore** (the run history) is in the region where Firestore offers one, else the place's default region: `us-east5` in the US and `europe-west1` in the EU.
 - **The Realtime Database** (the budget) is in the nearest of its three locations: `us-central1` for a US region, `europe-west1` for a European one.
-- **Secret containers** created from now on are replicated in the region, on an installation made before this work too; a container that already exists keeps its own replication (D3092).
-- **The run log bucket** is in the region where Cloud Logging offers one, else the place's multi-region, `us` or `eu` — a US installation whose region offers no bucket, `us-east5` for instance, gets `us`.
+- **Secret containers** created from now on are replicated in the installation's region — `us-east5` in the US, `europe-west1` in the EU — on an installation made before this work too; a container that already exists keeps its own replication (D3092).
+- **The run log bucket** is in the region where Cloud Logging offers one — `europe-west1` in the EU — else the place's multi-region, `us` or `eu`: a US installation whose region offers no bucket, `us-east5` for instance, gets `us`.
 
 **What the promise does not cover.** Prompt and code sent to a model provider are outside it: model calls reach the provider, wherever it is, and nothing Fugaro enforces would hold for a provider that is not Google (D3083). Also outside: the git host; Google's global control plane — IAM, service accounts, resource names and labels, the API key and Identity Platform's configuration; the project's own `_Default` and `_Required` log buckets, which stay in `global`; and everything an installation made before this work already has. Such an installation is mixed — its databases are permanent where they were made and its existing secret containers stay automatic — and only what is created afterwards is placed by its region. A database found outside the place is adopted, recorded where it really is, and reported by `fugaro doctor` (D3091).
 
