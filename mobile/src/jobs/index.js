@@ -22,10 +22,15 @@
 //     the gate for any link the app ever opens; this task draws no link, so
 //     nothing here imports it. The dependency stands: the first task with a
 //     link is the one that calls it.
-//   * **A repository row, and a run row.** The read grant does not cover the
-//     runs bucket, and the resolution of 2026-10-17 names repositories among the
-//     things the list does not show. `scope.test.js` is the scan that holds
-//     both.
+//   * **A repository row.** `config/caps/repos/$slug` and `spend/$day/repos/$slug`
+//     are granted, and the resolution of 2026-10-17 names repositories among the
+//     things the list does not show: `scope.test.js` refuses the token in every
+//     file here, and D2797 amended the ban on **run** rows without touching that
+//     one.
+//   * **A run's own record.** The runs bucket still carries no read for a user
+//     claim, so nothing here names `runs/$slug/$run` or `agents/**`. What a
+//     running row reads is the one `outcomes` node J1 opened, and `running.js`
+//     is the only file `scope.test.js` allows that family in.
 
 export {
   HEARTBEAT_STATES,
@@ -42,5 +47,7 @@ export { killState, projectRow } from './row.js';
 export { READ_STATES, heartbeatRow } from './heartbeat.js';
 
 export { JobList, createJobList, jobList } from './list.js';
+
+export { RUN_STATES, RUNNING_CODES, runningJobs } from './running.js';
 
 export { NO_REASON, NOT_SHOWN, SERIES, lines, text } from './lines.js';

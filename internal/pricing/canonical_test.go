@@ -243,3 +243,127 @@ func TestCanonicalMapHoldsTheMeasuredPairs(t *testing.T) {
 		}
 	}
 }
+
+// The map's Vertex half, written out here for the same reason expectedPairs is:
+// TestSpellingFor below checks the map against itself in one direction, and a
+// Vertex spelling that was swapped between two rows, or dropped, round-trips
+// perfectly. Vertex's spelling of a Claude model is data — the model's own ID
+// where Vertex serves it dateless (table.go's own note), and Vertex's "@"
+// snapshot where it does not (claude-haiku-4-5's alias, which table.go already
+// records as Vertex's spelling) — so it is a fixture here and a live check
+// (Check 882, U5) rather than anything derived.
+var expectedVertex = map[string]string{
+	"claude-fable-5-1":  "claude-fable-5-1",
+	"claude-haiku-4-5":  "claude-haiku-4-5@20251001",
+	"claude-opus-5":     "claude-opus-5",
+	"claude-opus-5-5":   "claude-opus-5-5",
+	"claude-sonnet-5":   "claude-sonnet-5",
+	"claude-sonnet-5-5": "claude-sonnet-5-5",
+}
+
+// TestSpellingFor is CS3's pin on the real translation behind SpellingFor —
+// which spelling a source of each kind is sent, and the fail-closed direction
+// where the map has none (D3175). The stub it replaces answered "no spelling"
+// for everything (spelling_stub.go), so every non-empty answer below is also the
+// proof that canonical.go's assignment is the one standing.
+//
+// Hand mutations this fails on: leaving the stub in place (everything answers
+// false); dropping a Vertex spelling (that model then answers false); writing
+// Vertex's "@" snapshot as a separator variant of the canonical ID (the fixture
+// is written out, not derived); answering the model the agent asked with for a
+// Claude model a provider key has no measured route ID for, which is a call to a
+// route nobody measured; and spelling a vendor's own model on a provider key as
+// anything but the ID it was written with.
+func TestSpellingFor(t *testing.T) {
+	// The kinds that carry the call to the Claude API. The API's own spelling
+	// of a Claude model is the ID a pin carries, so the answer is the model
+	// itself — and it is answered for a model the map does not carry too,
+	// because nothing is looked up here. Whether the source reaches that model
+	// is RT3's reach rule, not this map's.
+	for _, kind := range []string{"anthropic", "pool", "launcher-pool"} {
+		for _, model := range []string{"claude-sonnet-5-5", "claude-opus-5", "claude-sonnet-4-5"} {
+			got, ok := SpellingFor(kind, model)
+			if !ok || got != model {
+				t.Errorf("SpellingFor(%q, %q) = (%q, %v), want (%q, true): the Claude API's own spelling of a model is the ID a pin carries", kind, model, got, ok, model)
+			}
+		}
+	}
+
+	// A provider key: the route's own ID, which only the map has.
+	for _, tc := range []struct{ model, want string }{
+		{"claude-fable-5-1", "anthropic/claude-fable-5.1"},
+		{"claude-opus-5-5", "anthropic/claude-opus-5.5"},
+		{"claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"},
+	} {
+		got, ok := SpellingFor("provider", tc.model)
+		if !ok || got != tc.want {
+			t.Errorf("SpellingFor(%q, %q) = (%q, %v), want (%q, true)", "provider", tc.model, got, ok, tc.want)
+		}
+	}
+	for _, model := range expectedUnmapped {
+		if got, ok := SpellingFor("provider", model); ok {
+			t.Errorf("SpellingFor(%q, %q) = (%q, true), want no answer: no route's own ID was measured for it, and the ID the agent asked with is not one", "provider", model, got)
+		}
+	}
+
+	// A vendor's own model under a provider route: there is no canonical ID and
+	// route ID to translate between, because the route's own ID for it is its
+	// name — so the answer is the model as written, and nothing is derived from
+	// it. spec.md's own routing example is this case (`deepseek-*` → OpenRouter
+	// key), and whether the route serves the model is the provider entry's own
+	// claim (config.ModelProvider.Matches, which RT3's reach rule asks), never a
+	// spelling this map measured.
+	for _, model := range []string{"deepseek/deepseek-v4", "qwen/qwen3-coder"} {
+		got, ok := SpellingFor("provider", model)
+		if !ok || got != model {
+			t.Errorf("SpellingFor(%q, %q) = (%q, %v), want (%q, true): a vendor's model under a provider route is spelled as its own ID", "provider", model, got, ok, model)
+		}
+	}
+
+	// Vertex: the map's Vertex half, and it is exactly this fixture — a row the
+	// fixture does not name is a spelling nobody checked, and one the fixture
+	// names but the map lacks is a model this build could no longer send there.
+	for canonical, want := range expectedVertex {
+		got, ok := SpellingFor("vertex", canonical)
+		if !ok || got != want {
+			t.Errorf("SpellingFor(%q, %q) = (%q, %v), want (%q, true)", "vertex", canonical, got, ok, want)
+		}
+	}
+	if len(claudeRoutes) != len(expectedVertex) {
+		t.Fatalf("the map has %d rows and the Vertex fixture %d: every row of the map has a Vertex spelling", len(claudeRoutes), len(expectedVertex))
+	}
+	for _, r := range claudeRoutes {
+		want, ok := expectedVertex[r.Canonical]
+		if !ok {
+			t.Errorf("the map carries %s, which the Vertex fixture does not name: a Vertex spelling for it is a fact somebody has to check, not add", r.Canonical)
+			continue
+		}
+		if r.Vertex != want {
+			t.Errorf("the map spells %s on Vertex as %q, want %q", r.Canonical, r.Vertex, want)
+		}
+	}
+
+	// The fail-closed direction: a model the map does not carry, a kind that is
+	// not one of the five, and no model at all are all "no spelling" — never the
+	// ID that came in. A name that is not a model ID at all is refused with
+	// them, on a provider key too: an alias is not a model (nothing may pin,
+	// route or charge one), and a variant suffix is another route and another
+	// price.
+	for _, tc := range []struct{ kind, model string }{
+		{"vertex", "claude-nova-9"},
+		{"vertex", "gemini-2.5-pro"},
+		{"provider", "claude-nova-9"},
+		{"provider", "sonnet"},
+		{"provider", "deepseek/deepseek-v4:free"},
+		{"vertex", ""},
+		{"provider", ""},
+		{"anthropic", ""},
+		{"", "claude-sonnet-5-5"},
+		{"gemini", "claude-sonnet-5-5"},
+		{"Vertex", "claude-sonnet-5-5"},
+	} {
+		if got, ok := SpellingFor(tc.kind, tc.model); ok {
+			t.Errorf("SpellingFor(%q, %q) = (%q, true), want no answer: a source this map does not spell for may not be sent the model", tc.kind, tc.model, got)
+		}
+	}
+}

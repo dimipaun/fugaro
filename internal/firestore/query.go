@@ -99,7 +99,7 @@ func (c *Client) RunQuery(ctx context.Context, q Query) ([]Doc, error) {
 		sq["where"] = map[string]any{"compositeFilter": map[string]any{"op": "AND", "filters": filters}}
 	}
 	if q.StartAfter != nil {
-		values, err := c.cursorValues(q.StartAfter, fields)
+		values, err := c.cursorValues(q.Collection, q.StartAfter, fields)
 		if err != nil {
 			return nil, err
 		}
@@ -148,10 +148,19 @@ func equalityFilters(where map[string]any) ([]any, error) {
 	return filters, nil
 }
 
-// cursorValues is the exclusive startAt cursor for a query ordered by fields:
-// one value per ordered field, taken from doc, then doc's own resource name
-// (the __name__ the query orders by last).
-func (c *Client) cursorValues(doc *Doc, fields []string) ([]any, error) {
+// cursorValues is the exclusive startAt cursor for a query on coll ordered by
+// fields: one value per ordered field, taken from doc, then doc's own resource
+// name (the __name__ the query orders by last).
+//
+// doc must be a document of coll. The service reads a cursor's values
+// positionally against the query's order, so a document of another collection —
+// one whose fields and name are not the ones the order names — would be sent as
+// a cursor over values it never carried, and the page after it would be
+// silently wrong rather than refused.
+func (c *Client) cursorValues(coll string, doc *Doc, fields []string) ([]any, error) {
+	if doc.Collection != coll {
+		return nil, fmt.Errorf("firestore: the cursor document %s/%s is not from the queried collection %s", doc.Collection, doc.ID, coll)
+	}
 	ref, err := c.docPath(doc.Collection, doc.ID)
 	if err != nil {
 		return nil, err

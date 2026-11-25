@@ -129,7 +129,8 @@ closed, not yours to read) the restore proceeds only on --budget and
 --budget-currency. The billing account is always yours to give: the creation
 fact is not a credential and records none.
 
-NEW_PROJECT_ID must not exist: an existing project is refused (Fugaro only starts fresh).
+NEW_PROJECT_ID must not exist: restore creates a project, and adopts nothing
+(setup is the command that adopts one that holds nothing of Fugaro's).
 If the creation fails or does not end in a project this run created and
 marked, the local project config file is put back as it was and the restore
 can be run again; what the creation did in the cloud (the project, its
@@ -1033,7 +1034,7 @@ func (rr *restoreRun) say(format string, args ...any) {
 // sayThrough is the writer a command prints its own lines through: the writer
 // it was given — a person's stdout, or the stderr a warning belongs on — and
 // the run's log beside it (D1352, Reporter.Log), so the log is the run's full
-// output and not only its steps, and a failure's "full output:" path holds the
+// output and not only its steps, and a failure's "Log:" path holds the
 // sentences the run printed under its step.
 func sayThrough(rep *report.Reporter, w io.Writer) io.Writer {
 	return through(rep, w, true)

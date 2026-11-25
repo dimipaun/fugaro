@@ -18,9 +18,10 @@ tasks **KS6, KS9 and KS10**; each is marked where it bites.
 
 **Amended on 2026-11-22 by [model credentials routing](../model-credentials-routing/reconciliation.md)
 (D3170).** That plan's routing table supersedes this plan's craft access, so **every task of this
-plan that is not merged is withdrawn** and carried by a task there, and **contract C1 is withdrawn
-with its draft pull request #3460 still open, to be closed unmerged**, re-cut as that plan's C1.
-What is merged
+plan that is not merged is withdrawn**, carried by a task there except CM2 (per-repository crafts),
+which is not replaced: one table per project, and that plan's RT2 carries admission. **Contract C1
+is withdrawn with its draft pull request #3460 still open, to be closed unmerged**, re-cut as that
+plan's C1. What is merged
 (CM1, CM3, CM22, CM32, CM35), the two-release removal of `agent.auth` and R3's rule for an
 unmigrated repository are kept. The withdrawn set, what carries each, and the decisions the
 amendment reverses are in §4's amendment below; the withdrawn tasks are stopped by the owner by
@@ -545,7 +546,7 @@ stand: the retired keys are read and named for one release and then rejected, wi
 bump. D3067's two-release removal of the token from the agent's environment is that plan's CS7.
 
 **The keys plan moves with this one.** Its KS13, which this plan's CM35 had pointed at this plan's
-I1, now waits on model credentials routing's I1 instead (its F50), so keys release B still cannot
+I1, now waits on model credentials routing's I1 instead (its A1), so keys release B still cannot
 drop its mounts before a release integrates the work.
 
 ## 5. Resolutions
@@ -705,7 +706,7 @@ No two answers pull against each other.
   D3071's "its removal step ships with keys release B" holds; the order inside that release is
   this plan's I1, then KS13, then CM28. *Amended 2026-11-22 (D3170):* every task of this plan that
   is not merged is withdrawn, its I1 among them, so the keys plan's KS13 waits on model credentials
-  routing's I1 instead (its F50) — that plan's release 1, in this plan's place — and the order
+  routing's I1 instead (its A1) — that plan's release 1, in this plan's place — and the order
   inside keys release B is that plan's I1, then KS13, then CM28.
 
 - **O9.** The graph cannot say that I1 and the contract change wait for C1: it records a wait on

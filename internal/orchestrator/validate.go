@@ -31,9 +31,8 @@ import (
 // "<item>:<attempt>", so an item whose id carried one would name two attempts
 // at once.
 var (
-	idRE    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
-	agentRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
-	roleRE  = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+	idRE   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
+	roleRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 )
 
 // headRE is a head as the ladder records one in its ledger: a git object name
@@ -182,8 +181,9 @@ func ValidateState(s State) error {
 	if s.Rev < 0 {
 		return fmt.Errorf("%w: the revision is %d", ErrInvalid, s.Rev)
 	}
-	if !agentRE.MatchString(s.AgentID) {
-		return fmt.Errorf("%w: the agent id %q is not a name", ErrInvalid, safetext.OneLine(s.AgentID))
+	if !ValidOrchestratorID(s.AgentID) {
+		return fmt.Errorf("%w: the agent id %q is not an orchestrator id: an id is a project's name, or a project's name, a %s and a slug (naming.go)",
+			ErrInvalid, safetext.OneLine(s.AgentID), NameSeparator)
 	}
 	if !roleRE.MatchString(s.Role) {
 		return fmt.Errorf("%w: the role %q is not a loop's name", ErrInvalid, safetext.OneLine(s.Role))
@@ -385,6 +385,25 @@ func validateItem(s State, w WorkItem) error {
 		return fmt.Errorf("%w: %q depends on %d items, at most %d", ErrTooLarge, w.ID, len(w.DependsOn), MaxDependsOn)
 	}
 	for i, dep := range w.DependsOn {
+		ref, cross, err := depRef(dep)
+		if err != nil {
+			return err
+		}
+		if cross {
+			// A reference names another orchestrator's item, or this node's by
+			// its orchestrator (D3208). Whether the far end exists is not a
+			// shape: a node sees only its own items, so the tick's reading is
+			// what resolves one, and a reference nothing resolves holds the
+			// item rather than being refused here. What is a shape is the item
+			// depending on itself, which no reader could ever start.
+			if ref.Orchestrator == s.AgentID && namesItself(ref.Item, w) {
+				return fmt.Errorf("%w: %q depends on itself", ErrInvalid, w.ID)
+			}
+			if slices.Contains(w.DependsOn[:i], dep) {
+				return fmt.Errorf("%w: %q depends on %q twice", ErrInvalid, w.ID, safetext.OneLine(dep))
+			}
+			continue
+		}
 		if dep == w.ID {
 			return fmt.Errorf("%w: %q depends on itself", ErrInvalid, w.ID)
 		}
@@ -396,6 +415,37 @@ func validateItem(s State, w WorkItem) error {
 		}
 	}
 	return nil
+}
+
+// depRef reads one `depends_on` entry: the reference to an item it is, and
+// whether that item is named from outside this node's own state (D3208).
+//
+// A work item's id carries no `/` anywhere (idRE), so the separator is the
+// whole parse. An entry with none names an item of the state the document
+// carries and is resolved there, which is F44 unchanged: a dependency never
+// crosses the shards of one orchestrator by a bare name. An entry with a `/`
+// is `<orchestrator>/<item>` or it is refused — a plan task's own `/`
+// included, since the reference's item half may be the `<plan>/<task>` an item
+// stands for.
+func depRef(dep string) (ItemRef, bool, error) {
+	if !strings.Contains(dep, "/") {
+		if !idRE.MatchString(dep) {
+			return ItemRef{}, false, fmt.Errorf("%w: the dependency %q is not a work item id", ErrInvalid, safetext.OneLine(dep))
+		}
+		return ItemRef{}, false, nil
+	}
+	ref, err := ParseItemRef(dep)
+	if err != nil {
+		return ItemRef{}, false, err
+	}
+	return ref, true, nil
+}
+
+// namesItself reports whether an item named from outside by name is w: the
+// item's own id, or the plan task it stands for — the two identities one item
+// is named by (validItem), either of which a reference may spell.
+func namesItself(name string, w WorkItem) bool {
+	return name == w.ID || (w.PlanTask != "" && name == w.PlanTask)
 }
 
 // validateEscalation is the ladder's ledger, as a document this release reads
@@ -697,10 +747,17 @@ func validateUpsert(op WorkItemOp) error {
 			return fmt.Errorf("%w: %d dependencies, at most %d", ErrTooLarge, len(*op.DependsOn), MaxDependsOn)
 		}
 		for _, dep := range *op.DependsOn {
-			if !idRE.MatchString(dep) {
-				return fmt.Errorf("%w: the dependency %q is not a work item id", ErrInvalid, safetext.OneLine(dep))
+			// The shape of one entry is the validator's own rule (depRef): a
+			// work item id of this node, or a reference to another
+			// orchestrator's item (D3208). Whether the reference resolves is
+			// the tick's reading, so it is not asked here — and neither is
+			// whether it names the item itself, which needs the item's plan
+			// task and is asked of the state the patch lands on (validateItem).
+			_, cross, err := depRef(dep)
+			if err != nil {
+				return err
 			}
-			if dep == op.ID {
+			if !cross && dep == op.ID {
 				return fmt.Errorf("%w: %q depends on itself", ErrInvalid, safetext.OneLine(op.ID))
 			}
 		}

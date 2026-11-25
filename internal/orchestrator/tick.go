@@ -76,6 +76,16 @@ type Tick struct {
 	// Mint mints that run id. It is the daemon's (internal/task in O8): this
 	// package knows no run ids of its own.
 	Mint MintFunc
+	// Pauses reads the pauses the credentials service recorded for this project
+	// (PR4, D3185): the nodes under runstore.PauseNodeRoot, each with the paused
+	// run's own status and the run that has resumed it. Left unset the cycle
+	// resumes nothing at all, which is the direction a daemon that was given no
+	// path to the project's database fails in.
+	Pauses PauseReader
+	// Resume starts the run that continues one paused run, and answers its id.
+	// Left unset the cycle resumes nothing, for the reason above: a resume it
+	// cannot start is a resume it must not pretend to have made.
+	Resume ResumeLauncher
 	// Caps are the guardrails the cycle plans under. KillSwitch comes from
 	// whoever can read the budget (O8) and is on whenever it could not be
 	// read; a Tick built with the zero Caps starts nothing, which is the
@@ -151,6 +161,13 @@ type Tick struct {
 	// plan task lands either way, and the wiring that reads a graph and hands
 	// its footprints here is the daemon's own.
 	Footprints Footprints
+	// Cross reads the items of the other orchestrators this cycle's own items
+	// reference (D3208), one id at a time and only the ones that are referenced.
+	// Left unset the cycle resolves nothing, which is where a daemon that works
+	// one orchestrator of a project stands: an item depending on another
+	// orchestrator's work then waits, which is the direction a plan that cannot
+	// see the far end fails in.
+	Cross CrossReader
 	// Now is the database server's clock (rtdb.ServerNow). Every stamp a cycle
 	// writes comes from it, and a cycle that cannot read it refuses rather
 	// than stamping anything with this machine's clock (D1230).
@@ -202,6 +219,18 @@ type Report struct {
 	// unclaimed items too, over a daemon doing exactly what the deployment asks
 	// of it (D1228).
 	Skipped int
+	// Resumed is how many paused runs the cycle started again (PR4, D3185): the
+	// pauses the credentials service recorded whose resume time had passed, that
+	// nothing had resumed and whose run really ended `paused`. It is a launch
+	// and not a plan action — nothing about it is a cap's business, because a
+	// chain's remaining budget is the resumed run's (D1045-D1047) — and it is
+	// counted as work for the same reason a re-issue is.
+	Resumed int
+	// Blocked is how many of the cycle's own items the cycle set blocked
+	// because they sit on a dependency cycle that crosses orchestrators (D3220).
+	// It is a write like any other and it is counted like one: a cycle whose
+	// only news is the deadlock it found has done something.
+	Blocked int
 	// Triaged is how many runs the cycle judged past the threshold and acted
 	// on. A run the rule was read about but did not have an outcome for — one
 	// under the threshold — is not counted, and neither is one whose line the
@@ -241,6 +270,12 @@ type Report struct {
 	// the cycle for the same reason: the comment is a channel and the ledger
 	// is the record.
 	LadderErr error
+	// ResumeErr is the pauses the cycle would not resume and why: a node this
+	// release cannot read, and a pause a launcher would not start. It never
+	// fails the cycle — the pause is still due at the next tick, and one pause
+	// that cannot be resumed must not hold the daemon's other work back — and
+	// it is what the loop's log reads.
+	ResumeErr error
 }
 
 // Step runs one cycle.
@@ -411,6 +446,11 @@ type cycle struct {
 	// item whose claim was settled between two cycles is that cycle's work
 	// again.
 	held map[string]bool
+	// cross is what this cycle's own items' cross references resolved to
+	// (D3208), read once for the whole cycle: the plan and the ladder of every
+	// node read it, and it is the reading the cycle's own writes leave alone —
+	// a reference is another orchestrator's item, and nothing here writes one.
+	cross crossPhases
 }
 
 // bind makes the node at i the one this cycle is working on.
@@ -601,6 +641,456 @@ func sameStore(a, b Store) bool {
 	return ta == tb && ta.Comparable() && a == b
 }
 
+// cycleBlockedTransition is the audit transition of the line one item blocked by
+// a cross-orchestrator cycle leaves. It is a name of the log's own alphabet and
+// the item is its subject, so the id an entry derives is that item's and a cycle
+// that writes the line again writes one entry.
+const cycleBlockedTransition = "cycle-blocked"
+
+// crossRef is one reference this cycle's own items make into an orchestrator:
+// the dependency exactly as the item wrote it, and the two halves it parses to.
+// The string is the key the reading is kept under, because it is what the item
+// itself carries and what a person edits.
+type crossRef struct {
+	dep string
+	ref ItemRef
+}
+
+// crossReads is what one cycle's turn at the references read: the orchestrator
+// ids it asked for, in the order it asked, and the shards each answered with. A
+// read that failed has no shards, which resolves nothing of that orchestrator's
+// — the same answer an item that is not there gets.
+type crossReads struct {
+	ids []string
+	far map[string][]State
+}
+
+// readCross is one cycle's turn at the cross-orchestrator references (D3208):
+// what the references this cycle's own items make resolved to, and the cycles
+// among them, which are what D3220 blocks.
+//
+// The reads are the referenced orchestrators' alone, and one each: a reference
+// names an orchestrator, and a cycle that read every id it could find would be
+// the project-wide sweep D3206 refuses rather than the one reading D3208 asks
+// for. A read that failed, and a reference nothing resolves, both leave the
+// reference unresolved, which holds the item that names it — the answer an
+// unfinished dependency gets, and the direction that starts nothing.
+//
+// A cycle with no seam, and one whose own items name nobody else, resolves
+// nothing and blocks nothing. The first is a daemon that works one orchestrator
+// of a project; the second is every project whose work is one orchestrator's,
+// which is planned exactly as it was before there were references.
+func (c *cycle) readCross(ctx context.Context) error {
+	c.cross = nil
+	if c.tick.Cross == nil {
+		return nil
+	}
+	refs := c.crossRefs()
+	if len(refs) == 0 {
+		return nil
+	}
+	read := c.readFar(ctx, refs)
+	c.cross = c.resolveCross(refs, read)
+	return c.blockCycles(ctx, c.crossGraph(read))
+}
+
+// crossRefs is every reference this cycle's own items make, in the order the
+// nodes, their items and their dependencies declare them, each reference once.
+// The order is the document's and not a map's, so what a cycle reads and what it
+// names in a note are the same on every run of it.
+func (c *cycle) crossRefs() []crossRef {
+	var out []crossRef
+	for _, s := range c.states() {
+		for _, w := range s.WorkItems {
+			for _, dep := range w.DependsOn {
+				ref, cross, err := depRef(dep)
+				if err != nil || !cross {
+					continue
+				}
+				if slices.ContainsFunc(out, func(r crossRef) bool { return r.dep == dep }) {
+					continue
+				}
+				out = append(out, crossRef{dep: dep, ref: ref})
+			}
+		}
+	}
+	return out
+}
+
+// readFar reads the orchestrators the references name, other than this one —
+// this cycle's own nodes are already in hand — each once, in the order the
+// references name them.
+func (c *cycle) readFar(ctx context.Context, refs []crossRef) crossReads {
+	read := crossReads{far: map[string][]State{}}
+	for _, r := range refs {
+		if r.ref.Orchestrator == c.agentID() || slices.Contains(read.ids, r.ref.Orchestrator) {
+			continue
+		}
+		read.ids = append(read.ids, r.ref.Orchestrator)
+	}
+	for _, id := range read.ids {
+		shards, err := c.tick.Cross.Shards(ctx, id)
+		if err != nil {
+			// One unreachable orchestrator holds the items that name it and
+			// stops nothing else: what the cycle would have read is another
+			// project's document, and a cycle that failed over it would take
+			// this project's own work down with it.
+			continue
+		}
+		read.far[id] = shards
+	}
+	return read
+}
+
+// resolveCross is what the references resolved to: for each one, the phase of
+// the item it names, searched for in that orchestrator's shards (FindItem) as
+// D3208 says. A reference nothing resolves has no entry, and the item that names
+// it waits — which is also what a reference to this orchestrator resolves to
+// when this cycle's own nodes do not carry the item.
+func (c *cycle) resolveCross(refs []crossRef, read crossReads) crossPhases {
+	phases := crossPhases{}
+	for _, r := range refs {
+		w, ok := FindItem(c.itemsOf(r.ref.Orchestrator, read), r.ref.Item)
+		if !ok {
+			continue
+		}
+		phases[r.dep] = w.Phase
+	}
+	return phases
+}
+
+// itemsOf is every item one orchestrator has: this cycle's own nodes for this
+// orchestrator, and the shards the read answered with for any other.
+func (c *cycle) itemsOf(orch string, read crossReads) []WorkItem {
+	var out []WorkItem
+	if orch == c.agentID() {
+		for _, s := range c.states() {
+			out = append(out, s.WorkItems...)
+		}
+		return out
+	}
+	for _, s := range read.far[orch] {
+		out = append(out, s.WorkItems...)
+	}
+	return out
+}
+
+// agentID is the orchestrator this cycle works. The state node is the cycle's
+// own and every node it works is that orchestrator's, which is what the store
+// each of them was built with says.
+func (c *cycle) agentID() string { return c.nodes[0].state.AgentID }
+
+// knownItem is one item a cycle can see: an item of one of its own nodes, or one
+// of an orchestrator it read. shard is which of that orchestrator's nodes it is
+// on, which is the node a bare dependency of it is resolved in (F44).
+type knownItem struct {
+	orch  string
+	shard int
+	item  WorkItem
+}
+
+// graphEdge is one dependency of one item as a graph: the item it resolves to,
+// and whether the dependency was written as a reference. A reference is the only
+// spelling that can leave a node, so it is the only edge a cycle across
+// orchestrators can be made of (D3208, D3220).
+type graphEdge struct {
+	to  int
+	ref bool
+}
+
+// crossGraph is every item a cycle can see as one graph of dependencies: this
+// orchestrator's items — the nodes it works — and the items of every
+// orchestrator it read. A dependency that resolves to an item the cycle did not
+// see is not an edge at all: nothing is known about where it goes, and a search
+// that guessed would name a cycle nobody can break.
+type crossGraph struct {
+	items  []knownItem
+	edges  [][]graphEdge
+	index  map[itemKey]int
+	byOrch map[string][]int
+}
+
+// itemKey is how one item is addressed in the graph: its orchestrator, which of
+// that orchestrator's nodes it is on, and its own id.
+type itemKey struct {
+	orch  string
+	shard int
+	id    string
+}
+
+// crossGraph builds that graph. This orchestrator's items come first, node by
+// node and item by item, and the orchestrators it read after them in the order
+// the references named them: the order is what makes the search, and the cycle a
+// note names, the same on every run.
+func (c *cycle) crossGraph(read crossReads) *crossGraph {
+	g := &crossGraph{index: map[itemKey]int{}, byOrch: map[string][]int{}}
+	for i, n := range c.nodes {
+		for _, w := range n.state.WorkItems {
+			g.add(c.agentID(), i, w)
+		}
+	}
+	for _, id := range read.ids {
+		for i, s := range read.far[id] {
+			for _, w := range s.WorkItems {
+				g.add(id, i, w)
+			}
+		}
+	}
+	for i, k := range g.items {
+		for _, dep := range k.item.DependsOn {
+			if e, ok := g.edge(k, dep); ok {
+				g.edges[i] = append(g.edges[i], e)
+			}
+		}
+	}
+	return g
+}
+
+func (g *crossGraph) add(orch string, shard int, w WorkItem) {
+	key := itemKey{orch: orch, shard: shard, id: w.ID}
+	if _, ok := g.index[key]; ok {
+		return
+	}
+	g.index[key] = len(g.items)
+	g.byOrch[orch] = append(g.byOrch[orch], len(g.items))
+	g.items = append(g.items, knownItem{orch: orch, shard: shard, item: w})
+	g.edges = append(g.edges, nil)
+}
+
+// edge is where one dependency of one item leads: the item it resolves to, and
+// whether it was written as a reference. A bare dependency is resolved in the
+// node the item is on and nowhere else (F44); a reference is resolved by
+// searching the orchestrator it names, this one included (D3208).
+func (g *crossGraph) edge(from knownItem, dep string) (graphEdge, bool) {
+	ref, cross, err := depRef(dep)
+	if err != nil {
+		return graphEdge{}, false
+	}
+	if cross {
+		for _, j := range g.byOrch[ref.Orchestrator] {
+			if itemNamed(g.items[j].item, ref.Item) {
+				return graphEdge{to: j, ref: true}, true
+			}
+		}
+		return graphEdge{}, false
+	}
+	j, ok := g.index[itemKey{orch: from.orch, shard: from.shard, id: dep}]
+	if !ok {
+		return graphEdge{}, false
+	}
+	return graphEdge{to: j}, true
+}
+
+// visit is one step of the search a cycle's items are read with: an item, and
+// whether the path that reached it used a reference.
+type visit struct {
+	at   int
+	used bool
+}
+
+// refCycle is the cycle one item lies on, if it lies on one that uses at least
+// one reference: the items in order, the first one repeated at the end. It is a
+// search from that item for a path back to it that used a reference, and not the
+// graph's strongly connected components, because what a cycle's note has to name
+// is the cycle and not everything tangled with it — and because the two disagree
+// exactly where they should: two items that each reach the other through an
+// untangled loop are a cycle, and a component that merely contains one is not.
+//
+// The search is bounded by what it has seen: an item is reached at most twice,
+// once by a path that used a reference and once by one that did not, so it
+// terminates on any graph and visits each item a bounded number of times.
+func (g *crossGraph) refCycle(start int) ([]int, bool) {
+	var (
+		seen   = map[visit]bool{}
+		parent = map[visit]visit{}
+		queue  []visit
+	)
+	root := visit{at: -1}
+	for _, e := range g.edges[start] {
+		v := visit{at: e.to, used: e.ref}
+		if v.at == start && v.used {
+			return []int{start, start}, true
+		}
+		if seen[v] {
+			continue
+		}
+		seen[v], parent[v] = true, root
+		queue = append(queue, v)
+	}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, e := range g.edges[cur.at] {
+			v := visit{at: e.to, used: cur.used || e.ref}
+			if v.at == start && v.used {
+				return append(append([]int{start}, pathTo(parent, cur)...), start), true
+			}
+			if seen[v] {
+				continue
+			}
+			seen[v], parent[v] = true, cur
+			queue = append(queue, v)
+		}
+	}
+	return nil, false
+}
+
+// pathTo is the chain of items a search reached v through, in order. Each state
+// is visited once, so the chain is a simple path and the cycle built from it
+// names each item of it once.
+func pathTo(parent map[visit]visit, v visit) []int {
+	var rev []int
+	for v.at >= 0 {
+		rev = append(rev, v.at)
+		v = parent[v]
+	}
+	slices.Reverse(rev)
+	return rev
+}
+
+// name is one item as a note writes it: `<orchestrator>/<item>`, which is the
+// reference that names it from outside (ItemRef) and the spelling a person edits
+// in the item's `depends_on`. A plan item is named by its plan task, which is
+// what its reference carries (validItem).
+func (g *crossGraph) name(i int) string {
+	k := g.items[i]
+	name := k.item.ID
+	if k.item.PlanTask != "" {
+		name = k.item.PlanTask
+	}
+	return k.orch + "/" + name
+}
+
+// blockNote is one item a cycle blocks and the note it leaves on it.
+type blockNote struct {
+	id   string
+	note string
+}
+
+// blockCycles is D3220: for every item of this cycle's own nodes that sits on a
+// cycle using a reference, one write setting it blocked with the cycle on its
+// note, one notification to a person and one line in the log.
+//
+// Nothing of another orchestrator's is written, ever: the far orchestrators are
+// read and no more, and each of them blocks its own items when its own cycle
+// derives the same deadlock. That is what makes the repair safe to run from
+// either end of a cycle and impossible to run from one — and it is why the write
+// is per node, under the ETag that node was read at, like every other write a
+// cycle makes (D2735).
+func (c *cycle) blockCycles(ctx context.Context, g *crossGraph) error {
+	for i := range c.nodes {
+		c.bind(i)
+		if !c.fresh || OverCap(c.state) {
+			continue
+		}
+		notes := c.ownCycles(g, i)
+		if len(notes) == 0 {
+			continue
+		}
+		ops := make([]Op, 0, len(notes))
+		for _, n := range notes {
+			blocked, note := PhaseBlocked, n.note
+			ops = append(ops, Op{Op: OpWorkItemUpsert, WorkItem: &WorkItemOp{ID: n.id, Phase: &blocked, Note: &note}})
+		}
+		next, err := Apply(c.state, Patch{BaseRev: c.state.Rev, Ops: ops}, Actor{Class: Daemon, Now: c.now})
+		if err != nil {
+			return c.settled(err)
+		}
+		if err := c.commit(ctx, next); err != nil {
+			return c.settled(err)
+		}
+		c.rep.Blocked += len(ops)
+		c.settle()
+		for _, n := range notes {
+			c.say(ctx, Notification{Kind: NotifyCycleBlocked, Subject: n.id, Text: n.note})
+			if err := c.auditCycle(ctx, n); err != nil {
+				return err
+			}
+		}
+	}
+	c.bind(0)
+	return nil
+}
+
+// ownCycles is the items of one of this cycle's nodes that sit on a cycle using
+// a reference, and the note each of them carries, in the order the node declares
+// its items. An item the cycle may not block is left out, which is what keeps a
+// cycle that re-derives the same deadlock from writing the same note every tick.
+func (c *cycle) ownCycles(g *crossGraph, at int) []blockNote {
+	orch := c.agentID()
+	var out []blockNote
+	for j, k := range g.items {
+		if k.orch != orch || k.shard != at {
+			continue
+		}
+		path, ok := g.refCycle(j)
+		if !ok || !c.blockable(k.item) {
+			continue
+		}
+		names := make([]string, 0, len(path))
+		for _, i := range path {
+			names = append(names, g.name(i))
+		}
+		out = append(out, blockNote{id: k.item.ID, note: cycleNote(names)})
+	}
+	return out
+}
+
+// blockable reports whether this cycle may set the item blocked: an item
+// nothing is in flight for, and whose phase the table moves to blocked from.
+//
+// An item a run is moving through is left to that run — running, and review,
+// where the run has reported and its pull request waits for a merge. The
+// deadlock is re-derived every tick (D1229), so the cycle after the run reports
+// is the one that blocks an item still waiting on it. Review is left alone for a
+// reason of its own, and the table would let that write through: an item in
+// review waits on nothing — the merge it is waiting for is what frees whatever
+// waits on it (D2705) — so a cycle that reaches one is no deadlock at all, and
+// `blocked` has no move to `done`, so blocking it would put its pull request
+// beyond the merge that is the only thing that can finish it.
+//
+// A finished item is left where it stands: done and cancelled are a person's or
+// the fold's word about the item, and the table has no edge from either to
+// blocked, so a write there would be a refusal rather than a repair. `failed`
+// passes the check above — a person's new approval is what re-opens it, so
+// nothing is in flight for it — and the table is what declines the write there.
+// An item already blocked is left alone for the same reason, and it is what
+// makes the write happen once.
+func (c *cycle) blockable(w WorkItem) bool {
+	if _, open := openIntentOf(c.state, w.ID); open {
+		return false
+	}
+	if w.Phase != PhaseQueued && w.Phase != PhaseFailed {
+		return false
+	}
+	return w.Phase.CanMoveTo(PhaseBlocked)
+}
+
+// cycleNote is the sentence an item blocked by a cross-orchestrator cycle
+// carries: the cycle itself, so a person sees the loop and breaks it by editing
+// one of the items' dependencies. The store clips it to the note's own bound
+// (patch.go's cleanText), which is why nothing here measures it.
+func cycleNote(path []string) string {
+	return "blocked by a dependency cycle across orchestrators: " + strings.Join(path, " -> ") +
+		"; break it by removing one of these dependencies"
+}
+
+// auditCycle is the line the log keeps of one item a cycle blocked: the cycle,
+// under the item's own name, so a person reading the log later reads what the
+// daemon decided and why. The id is derived from the item and the transition, so
+// a cycle that writes the line twice writes one entry.
+func (c *cycle) auditCycle(ctx context.Context, n blockNote) error {
+	if c.tick.Audit == nil {
+		return nil
+	}
+	_, err := c.tick.Audit.Append(ctx, Entry{
+		Subject:    n.id,
+		Transition: cycleBlockedTransition,
+		Text:       n.note,
+	})
+	return err
+}
+
 // load reads every node this cycle works — the state node and the plan and
 // backlog nodes beside it — each under its own ETag, so each is written back
 // under its own precondition (D2735). A node of any of them that cannot be read
@@ -709,6 +1199,15 @@ func (c *cycle) run(ctx context.Context) error {
 	if err := c.syncIssues(ctx); err != nil {
 		return c.settled(err)
 	}
+	// The cross-orchestrator references follow: the items of the other
+	// orchestrators this cycle's own items name (D3208), read once each, and the
+	// cycles among them, which are what D3220 blocks. It lands after the fold and
+	// the merge — an item that just became done is done for the items waiting on
+	// it — and before the counts and the launches, so an item this step blocks is
+	// one the plan below does not start in the same cycle.
+	if err := c.readCross(ctx); err != nil {
+		return c.settled(err)
+	}
 	// The counts are read once, here, and held for every node the cycle plans —
 	// the state node and the plan and backlog nodes after it. Reading them again
 	// per node would count the launches this cycle has itself committed, which
@@ -724,6 +1223,14 @@ func (c *cycle) run(ctx context.Context) error {
 	// has to stop on, which is why the reading is here and not at the load.
 	c.paused = c.anyNode(func(s State) bool { return BreakerOpen(s, c.now) })
 	if err := c.carry(ctx, view); err != nil {
+		return c.settled(err)
+	}
+	// The project's pauses are resumed with the state node's own turn, and once
+	// for the whole cycle: a paused chain belongs to no node of the plan — the
+	// item behind it is in flight and stays so — and the reading is the
+	// project's, so a plan node or the backlog that resumed the same pause again
+	// would be a second resumer of one node (D3185).
+	if err := c.resume(ctx); err != nil {
 		return c.settled(err)
 	}
 	if err := c.escalate(ctx); err != nil {
@@ -960,7 +1467,7 @@ func (c *cycle) carry(ctx context.Context, view RunView) error {
 		c.held = map[string]bool{}
 	}
 	for {
-		actions, planned := planNode(c.state, view, c.tick.Caps, c.now, c.counts, c.planned, c.paused, c.held)
+		actions, planned := planNode(c.state, view, c.tick.Caps, c.now, c.counts, c.planned, c.paused, c.cross, c.held)
 		c.planned = planned
 		if len(actions) == 0 {
 			return nil
@@ -996,6 +1503,40 @@ func (c *cycle) carry(ctx context.Context, view RunView) error {
 	}
 }
 
+// resume is one cycle's turn at the project's pauses (PR4, D3185): every pause
+// the credentials service recorded that is due now is started once as the run
+// that continues it.
+//
+// It writes nothing to the state node, and that is deliberate: what the cycle
+// knows about a resume is the launcher's answer — a run id this side has no item
+// for — and the record of the resume is the chain's own run, whose task names
+// `resumes`. A mark written here would be a second writer of the paused run's
+// chain for a fact the chain already carries.
+//
+// A pause a launcher would not start does not fail the cycle: the pause is still
+// due at the next tick, and one pause that cannot be resumed must not hold the
+// daemon's other work back (the resident pass's own rule). What it is is a line
+// the loop's log carries (Report.ResumeErr). The read failing is different and
+// is the cycle's own failure: a project whose pauses could not be read is a
+// project whose daemon is working blind, and it must not carry on as though
+// nothing were paused.
+//
+// It is a launch and it asks what every launch path asks before it starts
+// anything (Caps.KillSwitch's own note): the kill switch, and the daemon's pause
+// — the same reading the plan is handed, over the same nodes — so a cycle that
+// is stopped resumes nothing, whatever stopped it.
+func (c *cycle) resume(ctx context.Context) error {
+	out, err := ResumePauses(ctx, c.tick.Pauses, c.tick.Resume, c.tick.Caps, c.paused, c.now)
+	if err != nil {
+		return err
+	}
+	c.rep.Resumed += out.Resumed
+	if len(out.Refused) > 0 {
+		c.rep.ResumeErr = errors.Join(out.Refused...)
+	}
+	return nil
+}
+
 // outcome is how the cycle reads itself for the breaker: a cycle that folded,
 // carried or merged something moved the work, a cycle with an attempt that has
 // not reported is waiting on a run — never a failure, however many ticks of one
@@ -1029,7 +1570,7 @@ func (c *cycle) carry(ctx context.Context, view RunView) error {
 // is progress whatever the call beside it came to.
 func (c *cycle) outcome() CycleOutcome {
 	switch {
-	case c.rep.Folded > 0 || c.rep.Carried > 0 || c.rep.Triaged > 0 || c.rep.Escalated > 0 || c.rep.Decided > 0 || c.rep.Merged > 0:
+	case c.rep.Folded > 0 || c.rep.Carried > 0 || c.rep.Triaged > 0 || c.rep.Escalated > 0 || c.rep.Decided > 0 || c.rep.Merged > 0 || c.rep.Blocked > 0 || c.rep.Resumed > 0:
 		return CycleProgress
 	case c.rep.DecideOutcome != "":
 		return c.rep.DecideOutcome

@@ -1,0 +1,7 @@
+version: 1
+project: aurora
+gcp_project: proj-1234
+ab:
+  rate: 0.05
+  repos:
+    console-web: 0.01

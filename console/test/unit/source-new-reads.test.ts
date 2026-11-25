@@ -549,11 +549,11 @@ describe('the fields the contract names', () => {
   })
 
   it('lets the class, not this module, decide what a field may carry', () => {
-    // An image entry's `source` is a label, and a label that carries a path has
-    // the console's path placeholder in it: the read does not decide that, the
-    // class does, and this pins that the answer really went through it.
+    // An image entry's `source` is a label, and a label is a name: a path in one
+    // is drawn as it came (D3213), so this pins that the read put the value
+    // through the class and not through a rule of its own.
     const drawn = throughClasses({ entries: [{ name: 'go', source: 'images/catalog/go/Dockerfile' }] })
-    expect(drawn).toEqual({ entries: [{ name: 'go', source: 'images<path>' }] })
+    expect(drawn).toEqual({ entries: [{ name: 'go', source: 'images/catalog/go/Dockerfile' }] })
   })
 
   it('answers the sanitized document through a handler, not the raw one', async () => {

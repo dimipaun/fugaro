@@ -10,8 +10,8 @@ import (
 
 // OrchestratorAccountID is the resident orchestrator's own service account
 // (mobile plan task P5.1b; docs/mobile/design/always-on-orchestrator.md
-// section 4.3), created by the installation module for an installation that
-// opted into one.
+// section 4.3), created by the installation module for an installation whose
+// tfvars carry the block `fugaro update` writes.
 //
 // It is a fixed account ID and not a per-installation name, like the
 // coordinator's writer and the front door's: `fugaro doctor` reads the account
@@ -23,8 +23,8 @@ import (
 // it for every job account the modules create, and this is the account that
 // holds iam.serviceAccounts.signJwt on the budget signer.
 //
-// The block that turns it on is written by `fugaro update --firebase-project
-// <id> --orchestrator` (internal/cli's ensureOrchestratorBlock), composed by
+// The block that turns it on is written by `fugaro update` (internal/cli's
+// ensureOrchestratorBlock, in the credentials-service stage), composed by
 // Orchestrator below, and carried forward by every later run of the door
 // (CarriedOrchestrator): the account and its bindings are state, and no run
 // writes the block a second time.
@@ -87,9 +87,9 @@ const (
 // value, and no operator types a digest.
 //
 // It is not composed on every run. The block is the installation's own RECORD
-// of having opted in — the account, its five bindings, the container and the
-// service are state — so the writer writes it once, when the installation asks,
-// and every later run carries it (CarriedOrchestrator) and moves only the image
+// that the update wrote it — the account, its five bindings, the container and the
+// service are state — so the writer writes it once, the first update that finds
+// the installation able to carry one, and every later run carries it (CarriedOrchestrator) and moves only the image
 // inside it (SetOrchestratorImage). A run that recomposed the block would be
 // re-deciding the grants, and a service or tick name taken from a default over
 // an installation that holds another one is a force-new replacement plan.
@@ -168,7 +168,7 @@ func Orchestrator(lc *localcfg.Config, image string) (OrchestratorSpec, error) {
 // found, its legacy registry, its imports — and rebuilding it from a spec would
 // plan that discovery away.
 //
-// The writer asks this only for an installation that has not opted in
+// The writer asks this only for an installation that holds no block
 // (OrchestratorRecorded, internal/cli's ensureOrchestratorBlock): the block is
 // the installation's record, and a second write would recompose an account and
 // five bindings that are state.
@@ -190,13 +190,13 @@ func SetOrchestrator(vars []byte, spec OrchestratorSpec) ([]byte, error) {
 // it, because the plan reads the document on disk, and everything between that
 // write and the apply — the guard, the owner's own answer, a plan that cannot be
 // read, the stop --plan-only makes — can end the run with nothing created. A
-// block left behind by such a run is not the record of an opt-in, it IS the
-// opt-in, taken by a run nobody answered: var.orchestrator is the module's
-// switch, so the next `fugaro update --yes`, or a managed project's run, which
-// asks nobody, would bring up the account, its five bindings, the pairing
-// container and the service for an installation whose owner declined or was
-// never asked. The write is what the plan needs; the answer it was written for
-// is the fact that keeps it.
+// block left behind by such a run is not the record of an apply, it IS the
+// switch: var.orchestrator turns the account on, so the next `fugaro update
+// --yes`, or a managed project's run, which asks nobody, would apply the
+// account, its five bindings, the pairing container and the service from a
+// document the failed run left, past the plan and the confirmation the block
+// was written for. The write is what the plan needs; the apply it was written
+// for is the fact that keeps it.
 //
 // It deletes the ONE key, so the document it hands back is what the run's own
 // writers left — the discovery, the images the stages before moved, this

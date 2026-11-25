@@ -164,7 +164,7 @@ func TestDocsCheck311StatesWhatOnlyTheRunSettles(t *testing.T) {
 		"a pipe",
 		// The failure's own lines, and the troubleshoot id that is the log's
 		// stem.
-		"something went wrong. run: fugaro troubleshoot <id>",
+		"help: fugaro troubleshoot <id>",
 		"<command>-<14 digits utc>-<pid>.log",
 		// The two writes the check makes, and the one it never makes.
 		"%temp%",

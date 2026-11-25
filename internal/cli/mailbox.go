@@ -92,8 +92,11 @@ import (
 // `shared/prompts` exports as PROMPT_TTL_MS (M3, §10). It is bound here rather
 // than declared because a ledger's horizon is max(window, prompt TTL) and both
 // are the module's numbers; TestMailboxPromptTtlIsTheModulesNumber holds this
-// one to shared/prompts/index.js, so the two cannot drift.
-const mailboxPromptTtlMs = 72 * 60 * 60 * 1_000
+// one to shared/prompts/index.js, so the two cannot drift. Since T7 it is
+// `internal/mailbox`'s own constant rather than a second copy of the
+// arithmetic: the sweeper in that package draws the same boundary, and two
+// spellings of one number is one spelling too many.
+const mailboxPromptTtlMs = mailbox.PromptTTLMs
 
 // mailboxPromptRetentionMs is how long this machine's memory of a spent id
 // lasts: D118's TTL plus one sweep interval, so a replay cannot outlive the
@@ -123,6 +126,34 @@ const (
 // command's output and a message's text never does.
 const mailboxStaleReply = "nothing was performed: the message arrived outside its window"
 
+// mailboxStopReply is what the phone is told about a **stop request** — the
+// schema's `stop` kind, which the app writes when the human says to stop what
+// they are looking at (mobile plan task P5.1g, the owner's answer Q10(c)). Like
+// mailboxStaleReply it is this command's own sentence — no module declares one
+// — and it carries none of the message's text, because §4.3's rule is that an
+// id may appear in this command's output and a message's text never does.
+//
+// It carries the two halves the resident orchestrator's own answer carries
+// (internal/orchestrator's consumerStopRequest is that sibling pass's sentence
+// for the same request): the request was read, and **nothing was stopped from
+// here**, because there is nothing here to stop it with — the enforcement side
+// is `config/kill/**` and `config/caps/**`, which no client writes and this
+// consumer holds no grant for. It names where the stop can be made, the console
+// or the laptop, where a human can act on the request the phone just made, and
+// the one thing the phone can always do by itself, which is to revoke its own
+// pairing. What it never does is claim a run was stopped: Q10's answer (c) is a
+// request and not a phone-writable kill switch, and an answer that pretended
+// otherwise would be the lie that answer exists to avoid.
+//
+// It is deliberately not a prompt in the outbox either, for the reason the
+// resident pass's own note gives: a prompt is a question the phone reads out
+// and answers, and asking the human to confirm a stop this process cannot
+// perform would be exactly the confirmation of its own prompt D168 forbids the
+// consumer to synthesise. Nothing raises a prompt for a stop record — no
+// console or laptop code does — so the request travels to the human as this
+// answer alone.
+const mailboxStopReply = "nothing was stopped: this consumer read your stop request, and this installation has no phone-writable kill switch. Stop the run from the console or the laptop, or revoke this device's pairing; the phone cannot stop a run by itself."
+
 // mailboxCodeDuplicate is the module's own word for a redelivery. §4.4 counts
 // duplicates among the refusals a pass reports — the message was read and
 // nothing was done with it — so a duplicate lands in refused[] beside the codes
@@ -137,12 +168,13 @@ const mailboxCodeDuplicate = mailbox.Code("duplicate")
 const mailboxCodeActionRefused = mailbox.Code("refused-action")
 
 // mailboxCodeUnexpectedKind is the code a kind this consumer does not read out
-// of an inbox is recorded with. The schema names five kinds and the direction
+// of an inbox is recorded with. The schema names six kinds and the direction
 // decides which of them travel: a `prompt` is written by the host, so one read
 // out of the host's own inbox is a message nothing here can act on — refused
 // and reported rather than delivered to an orchestrator that would take it for
 // a question. A `registration` used to be refused here too; since P5.2.4 it is
-// applied (runRegistration), which is why this code names the one kind left.
+// applied (runRegistration), and a `stop` (P5.1g) is answered rather than
+// refused, which is why this code names the one kind left.
 const mailboxCodeUnexpectedKind = mailbox.Code("unexpected-kind")
 
 // mailboxCodeRegistrationUnpaired is the code a registration whose account has
@@ -277,13 +309,13 @@ const (
 	mailboxOfferQueueFull = "queue-full"
 )
 
-// mailboxKindAction, mailboxKindAnswer, mailboxKindPrompt and
-// mailboxKindRegistration are the kinds this file reads and writes beside the
-// module's own KindMessage. The module declares no constant for any of them —
-// its KindPrompt is the *ledger's* kind vocabulary, which spells one of these
-// the same by coincidence — so they are bound here and held to `mailbox.Kinds`
-// by TestMailboxInboxKindsAreTheSchemas: a kind the schema renames is a failing
-// test rather than a branch nothing reaches.
+// mailboxKindAction, mailboxKindAnswer, mailboxKindPrompt,
+// mailboxKindRegistration and mailboxKindStop are the kinds this file reads and
+// writes beside the module's own KindMessage. The module declares no constant
+// for any of them — its KindPrompt is the *ledger's* kind vocabulary, which
+// spells one of these the same by coincidence — so they are bound here and held
+// to `mailbox.Kinds` by TestMailboxInboxKindsAndVerbsAreTheSchemas: a kind the
+// schema renames is a failing test rather than a branch nothing reaches.
 const (
 	mailboxKindAction = "action"
 	mailboxKindAnswer = "answer"
@@ -293,6 +325,12 @@ const (
 	// consumer applies to `config/admin/push/$uid` and never to a device node
 	// (P5.2.4).
 	mailboxKindRegistration = "registration"
+	// mailboxKindStop is the phone's stop request (the schema's `stop` kind,
+	// mobile plan task P5.1g, the owner's answer Q10(c)): the app asking a
+	// human to stop what they are looking at. It travels phone to host like
+	// every other kind bound here, and it is answered rather than acted on —
+	// the switch's own arm says why, and with what.
+	mailboxKindStop = "stop"
 )
 
 // mailboxCodeHeadMoved is the code a merge refused because the pull request's
@@ -639,6 +677,18 @@ func runMailbox(cmd *cobra.Command, o *mailboxOptions) error {
 	if err != nil {
 		return err
 	}
+	// This machine's mailbox state has one writer at a time (§6), and it is taken
+	// before the ledger is opened: this pass keeps what it reads there in memory
+	// for the life of the process, so a `fugaro mailbox sweep` that rewrote the
+	// same two files under it would drop a delivery this consumer has already
+	// accepted and replied to. The lock is **shared**, so a second consumer is
+	// let through: two of them are the store's lease to refuse (M1, and check
+	// 83's step 7 records that refusal at the store), not a file here.
+	stateLock, err := mailbox.LockState(mailbox.StateLockOptions{Project: lc.Name, Holder: "fugaro mailbox", Shared: true})
+	if err != nil {
+		return userErr("%v", err)
+	}
+	defer func() { _ = stateLock.Release() }()
 	pairings, err := mailboxKeyring(ctx, lc, mailboxClock(db))
 	if err != nil {
 		return err
@@ -1292,7 +1342,7 @@ func (c *mailboxConsumer) deliver(ctx context.Context, pairing mailboxPairing, l
 		// Consumed once and performed for nothing: the reply is still owed (M2),
 		// and it says that nothing happened.
 		pass.refuse(result.Entry.ID, mailbox.Code(mailbox.OutcomeStalePending), false)
-		return c.reply(ctx, pairing, message, pass)
+		return c.reply(ctx, pairing, message, pass, mailboxStaleReply)
 	case mailbox.OutcomeActed:
 		// The runner above saw it: it either performed the delivery or refused
 		// it, and a refusal is recorded by the runner itself.
@@ -1311,7 +1361,9 @@ func (c *mailboxConsumer) deliver(ctx context.Context, pairing mailboxPairing, l
 // or a refusal recorded against the record's own id, and never with both. The
 // kind that does not travel phone to host — `prompt` — is refused here rather
 // than delivered, because an orchestrator handed one out of its own inbox would
-// take it for a question it must answer.
+// take it for a question it must answer. One kind is neither delivered nor
+// refused: a `stop` request is answered in the outbox with nothing performed,
+// which is the whole of what Q10's answer (c) has this consumer do with one.
 //
 // The order of the checks inside a case is the rule: what the record says, then
 // whether this machine has already spent it, then the run. Nothing is run
@@ -1327,6 +1379,18 @@ func (c *mailboxConsumer) run(ctx context.Context, pairing mailboxPairing, messa
 		return c.runAction(ctx, pairing, message, entry, pass)
 	case mailboxKindRegistration:
 		return c.runRegistration(ctx, pairing, message, entry, pass)
+	case mailboxKindStop:
+		// The phone's stop request (P5.1g, the owner's answer Q10(c)): nothing
+		// here acts on it — the enforcement side is `config/kill/**`, which no
+		// client writes and this consumer has no grant for — and it is
+		// **answered** rather than refused, because a record refused outright
+		// is answered by nothing, and an unanswered record is one the phone's
+		// own at-least-once rule keeps owing (M2), so the human's stop request
+		// would sit in the app as a pending utterance with nothing to say about
+		// it. That is exactly what the resident orchestrator does with one it
+		// reads out of the same inbox (internal/orchestrator's consumerCarries
+		// and consumerStopRequest); the sentence is this command's own.
+		return c.reply(ctx, pairing, message, pass, mailboxStopReply)
 	default:
 		pass.refuse(entry.ID, mailboxCodeUnexpectedKind, false)
 		return nil
@@ -1778,15 +1842,21 @@ func mailboxTargetName(record *mailbox.ConfirmRecord) string {
 }
 
 // reply signs and writes the answer a consumed delivery is owed, create-only
-// (§8.2). A write the signer refuses is **not** written and is a per-write
-// refusal of a completed pass — exit 0, M4's third row — and nothing is
-// recorded for it, so the reply is owed again on the next pass.
-func (c *mailboxConsumer) reply(ctx context.Context, pairing mailboxPairing, message *mailbox.Message, pass *mailboxPass) error {
+// (§8.2), in the words the caller passes: mailboxStaleReply for a delivery the
+// ledger consumed and performed nothing for, and mailboxStopReply for the
+// phone's stop request. Both are answers of the same shape — kind `answer`,
+// naming the message they answer (§8.2's `reply_to`, which the schema requires
+// of that kind) — because the outbox is where a phone reads what became of what
+// it sent, whatever the sentence says. A write the signer refuses is **not**
+// written and is a per-write refusal of a completed pass — exit 0, M4's third
+// row — and nothing is recorded for it, so the reply is owed again on the next
+// pass.
+func (c *mailboxConsumer) reply(ctx context.Context, pairing mailboxPairing, message *mailbox.Message, pass *mailboxPass, text string) error {
 	id := mailbox.ReplyID(message.ID)
 	run, err := mailbox.WriteReply(ctx, c.db, pairing.signer, mailbox.Reply{
 		ID:      id,
 		Sender:  pairing.uid,
-		Text:    mailboxStaleReply,
+		Text:    text,
 		At:      c.now(),
 		Kind:    "answer",
 		ReplyTo: message.ID,
@@ -1861,6 +1931,17 @@ func leaseDocument(run mailbox.LeaseRun) mailboxLease {
 // node whose `at` a reader cannot use is kept rather than deleted, because a
 // record that cannot be dated is not one this command can call expired.
 //
+// **Its other half is this machine's own state, and the presence verdict it
+// reports** (T7, §6, §4.2). `sweep` deletes the store's expired prompts under
+// the operator's credential; `local` lets go of the consumer's own expired
+// state — the ledger records past its horizon and the memory's settled prompts
+// and spent ids — through the same two rules the consumer applies to itself, and
+// a delete set naming anything else is **refused and reported** rather than
+// performed (M8). Neither half answers a conversation. And the presence verdict
+// is computed from each mailbox's stored heartbeat and written nowhere: no node
+// and no grant is designated for a verdict, and the sweeper holds no key to
+// verify the MAC with, so it reports what the node says and moves on.
+//
 // **It needs no keychain and no lease.** The mailboxes it walks are the
 // `mailbox.keychain_item` keys of the project config — the uids `fugaro pair`
 // recorded — so a revocation that emptied an item leaves its mailbox sweepable,
@@ -1904,11 +1985,25 @@ func newMailboxSweepCmd() *cobra.Command {
 			"The mailboxes it walks are the pairing uids in this project's\n" +
 			"mailbox.keychain_item block, so a revoked pairing's mailbox is swept too. It\n" +
 			"deletes no Firebase user — the `m~` rule belongs to the history sweeper — and\n" +
-			"nothing outside the mailboxes it is configured for.\n" +
+			"nothing outside the store nodes it is configured for and this machine's own\n" +
+			"state: the ledger records and prompt entries a retention window already\n" +
+			"allows, which it lets go of through the consumer's own two rules.\n" +
+			"\n" +
+			"This machine's state has **one writer at a time**, and this command is not a\n" +
+			"second one: while the consumer that keeps those two files is running, the\n" +
+			"sweep leaves them alone and says so, naming the process to stop, and the\n" +
+			"consumer in turn refuses to start while a sweep is in its own half. The store\n" +
+			"half is not fenced by that: a stored prompt past the TTL is deleted whether a\n" +
+			"consumer is running or not.\n" +
+			"\n" +
+			"It also reports, for each mailbox, what the stored heartbeat says about the\n" +
+			"presence of the consumer that wrote it — live, stale, offline, or a clock\n" +
+			"that differs — and writes nothing for that verdict.\n" +
 			"\n" +
 			"It prints one line per mailbox, or with --json one document, naming each id it\n" +
-			"deleted and how many prompts it kept. With --dry-run it prints the same plan\n" +
-			"and writes nothing. A message's text, a MAC and a key are never printed.",
+			"deleted, how many prompts it kept, the presence it read and what its own half\n" +
+			"let go of. With --dry-run it prints the same plan and writes nothing. A\n" +
+			"message's text, a MAC and a key are never printed.",
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE:   func(cmd *cobra.Command, _ []string) error { return runMailboxSweep(cmd, o) },
@@ -1926,15 +2021,77 @@ func newMailboxSweepCmd() *cobra.Command {
 // outbox key, and never by its text (§4.3's rule, which holds for this command's
 // output as much as for a pass's).
 type mailboxSweepDocument struct {
-	Project   string                `json:"project"`
-	At        string                `json:"at"`
-	DryRun    bool                  `json:"dry_run"`
+	Project string `json:"project"`
+	At      string `json:"at"`
+	DryRun  bool   `json:"dry_run"`
+	// Local is the other half of a sweep (§6): this machine's own state, which
+	// is not in the store at all and which no mailbox entry can report.
+	Local     mailboxSweepLocal     `json:"local"`
 	Mailboxes []mailboxSweepMailbox `json:"mailboxes"`
 	Warnings  []string              `json:"warnings"`
 }
 
+// mailboxSweepLocal is the sweeper's local half — the delete set §6 gives it:
+// the two files the consumer keeps under the operator's own state directory, and
+// the records this sweep let go of in them. **Nothing under `mailbox/` is in it**
+// and the paths are the machine's own; SweepRefusals reads the set before
+// anything is deleted, and a key this command does not own (a Firebase user, a
+// store node) is a refusal rather than a deletion (M8).
+type mailboxSweepLocal struct {
+	// Ledger and Prompts are the two files, absolute, under
+	// $XDG_STATE_HOME/fugaro/mailbox/<project>/. They are reported so an
+	// operator can see the sweep reached this machine's state — a path is not a
+	// secret and it is not a message's text (§4.3).
+	Ledger  string `json:"ledger"`
+	Prompts string `json:"prompts"`
+	// LedgerIDs are the `sender`/`id` pairs the ledger let go of — acked
+	// deliveries past its horizon — and PromptIDs the settled prompts and spent
+	// ids the memory let go of. A prompt still to be answered is in neither:
+	// dropping it would lose the safe answer it is owed.
+	LedgerIDs []string `json:"ledger_ids"`
+	PromptIDs []string `json:"prompt_ids"`
+	// Wrote says whether the two files were rewritten at all. A sweep with
+	// nothing to let go of writes nothing, so a reader can tell "I swept this
+	// machine" from "I rewrote it".
+	Wrote bool `json:"wrote"`
+	// Refused says why this machine's half was **not** performed, when another
+	// writer holds the state — the consumer, or a second sweep — and is empty
+	// otherwise. It is the one fact that tells "there was nothing to let go of"
+	// from "this sweep was not allowed to look", which the empty id lists and
+	// `wrote: false` alone cannot (the same distinction `deleted` and `kept` draw
+	// for a mailbox).
+	Refused string `json:"refused,omitempty"`
+}
+
+// mailboxSweepPresence is the presence verdict (§4.2, `shared/presence`): what
+// the mailbox's stored heartbeat says about the consumer that wrote it, and the
+// readings the rule decided it from. **It is reported and nothing is written
+// for it** — no node and no grant is designated for a verdict — and the sweeper
+// holds no pairing key, so it can honestly report only what the stored node
+// says: the MAC is not verified here, and the lease the node stands for is the
+// consumer's.
+type mailboxSweepPresence struct {
+	// State is one of `live`, `stale`, `offline` and `clock-differs`, or empty
+	// when the stored heartbeat is not one the rule can read — `Code` then says
+	// which refusal it was.
+	State  string `json:"state"`
+	Reason string `json:"reason"`
+	// AgeMs is the heartbeat's age, and **null** when the mailbox has no
+	// heartbeat at all: the module's own answer, and not the same fact as an age
+	// of zero.
+	AgeMs *int64 `json:"age_ms"`
+	// BootID is the boot id the stored heartbeat names — `boot` on the wire, D117
+	// — and empty when there is none.
+	BootID string `json:"boot_id"`
+	// Code is the refusal, when the node is there and is not a heartbeat.
+	Code string `json:"code,omitempty"`
+}
+
 type mailboxSweepMailbox struct {
 	Mailbox string `json:"mailbox"`
+	// Presence is the verdict for this mailbox's stored heartbeat, reported
+	// whether or not the sweep deleted anything.
+	Presence mailboxSweepPresence `json:"presence"`
 	// Deleted is the id of every stored prompt this sweep removed (or, with
 	// `--dry-run`, would remove). It is empty rather than absent when a mailbox
 	// lost nothing: an empty list and a missing field are two different facts to
@@ -2006,6 +2163,20 @@ func (s *mailboxSweeper) sweep(ctx context.Context, uids []string) error {
 		Mailboxes: []mailboxSweepMailbox{},
 		Warnings:  []string{},
 	}
+	// This machine's own state first, and its fence before any store write: the
+	// set this command deletes is the consumer's expired state, and a set that
+	// named anything else (a Firebase user, a store node) is refused — with the
+	// store untouched, so a refusal is never a half-performed sweep.
+	local, err := s.local(now.UnixMilli())
+	if err != nil {
+		return err
+	}
+	if local.Refused == "" {
+		if findings := mailbox.SweepRefusals(localKeys(local)); len(findings) > 0 {
+			return userErr("this sweep's delete set names something it does not own, so nothing was deleted: %s", strings.Join(findings, "; "))
+		}
+	}
+	doc.Local = local
 	for _, uid := range uids {
 		one, warnings, err := s.mailbox(ctx, uid, now)
 		if err != nil {
@@ -2014,7 +2185,137 @@ func (s *mailboxSweeper) sweep(ctx context.Context, uids []string) error {
 		doc.Mailboxes = append(doc.Mailboxes, one)
 		doc.Warnings = append(doc.Warnings, warnings...)
 	}
-	return s.report(doc)
+	if err := s.report(doc); err != nil {
+		return err
+	}
+	// The refusal comes last and still exits 1: the store half is not fenced by
+	// this machine's lock (§4.2 — it touches no file of the consumer's), so what
+	// this sweep owed the operator is both the deletions it made and the reason
+	// its own half did not happen.
+	if local.Refused != "" {
+		return userErr("this machine's own mailbox state was not swept: %s", local.Refused)
+	}
+	return nil
+}
+
+// localKeys is every key a local sweep names: the two files and the ids it let
+// go of, which is the whole of what it is allowed to touch.
+func localKeys(sweep mailboxSweepLocal) []string {
+	keys := append([]string{}, sweep.Ledger, sweep.Prompts)
+	keys = append(keys, sweep.LedgerIDs...)
+	return append(keys, sweep.PromptIDs...)
+}
+
+// local is the sweeper's half for this machine: the same two files the consumer
+// keeps and the same retention boundary it applies to itself (`mailbox.SweepLocal`
+// calls the ledger's eviction and the memory's own prune rather than a second
+// copy of either rule), so a sweep can never let go of something the consumer
+// would have kept.
+//
+// It needs no pairing and no lease, and **it writes nothing when there is nothing
+// to let go of**: a sweep that rewrote an untouched file would be a write the
+// consumer's next pass reads as its own. With `--dry-run` it writes nothing at
+// all and reports the same set, which is why the plan is read one pass earlier
+// than the state it plans over.
+//
+// **It is not a second writer.** §6 names the consumer as the writer of both
+// files and the consumer holds what it read in memory for the life of its
+// process, so a sweep that committed a set read before a delivery the consumer
+// accepted in between would drop that delivery from disk — and a restart would
+// re-read the never-deleted inbox node and run the action again. The sweep
+// therefore takes this machine's state lock (exclusive; the consumer holds it
+// shared — `internal/mailbox`'s statelock.go has the rule) around the whole of
+// its local half, and a lock somebody else holds is a refusal with the process
+// to wait for rather than a sweep that writes anyway. The store half is not
+// fenced by it: it touches no file of the consumer's, and P6.13's reason for it —
+// the consumer expires the question from its own copy when it comes back — holds
+// whether a consumer is running or not.
+func (s *mailboxSweeper) local(nowMs int64) (mailboxSweepLocal, error) {
+	if s.dryRun {
+		// A plan writes nothing, so it takes no lock and creates no file. A plan
+		// that showed a set the sweep would refuse to perform would be a plan
+		// about a different thing, so the lock is read rather than taken —
+		// StateLockHeld creates and writes nothing.
+		holder, pid, held, err := mailbox.StateLockHeld(s.lc.Name)
+		if err != nil {
+			return mailboxSweepLocal{}, userErr("this machine's mailbox state could not be read for the writer that holds it (%v); nothing was written", err)
+		}
+		if held {
+			return refusedLocal(s.lc.Name, &mailbox.StateBusyError{Project: s.lc.Name, Holder: holder, PID: pid})
+		}
+	} else {
+		lock, err := mailbox.LockState(mailbox.StateLockOptions{Project: s.lc.Name, Holder: "fugaro mailbox sweep"})
+		if err != nil {
+			var busy *mailbox.StateBusyError
+			if errors.As(err, &busy) {
+				return refusedLocal(s.lc.Name, busy)
+			}
+			return mailboxSweepLocal{}, userErr("this machine's mailbox state could not be locked (%v); nothing was written", err)
+		}
+		defer func() { _ = lock.Release() }()
+	}
+	ledger, err := mailbox.OpenLedger(mailbox.LedgerOptions{Project: s.lc.Name, PromptTtlMs: mailboxPromptTtlMs})
+	if err != nil {
+		return mailboxSweepLocal{}, userErr("this machine's mailbox ledger could not be read (%v); it is the consumer's own dedupe memory at $XDG_STATE_HOME/fugaro/mailbox/%s/ledger.json, and a sweep that could not read it would delete out of a state it does not know", err, s.lc.Name)
+	}
+	memory, err := mailbox.OpenConfirmMemory(mailbox.ConfirmMemoryOptions{
+		Project:     s.lc.Name,
+		RetentionMs: mailboxPromptRetentionMs(),
+		MaxPrompts:  mailbox.ConfirmMaxPrompts,
+	})
+	if err != nil {
+		return mailboxSweepLocal{}, userErr("this machine's prompt memory could not be read (%v); it is the consumer's own record of the prompts it is holding and the ids it has spent, at $XDG_STATE_HOME/fugaro/mailbox/%s/pending.json, and a sweep that could not read it would let go of nothing rather than of what the window allows", err, s.lc.Name)
+	}
+	var sweep mailbox.LocalSweep
+	if s.dryRun {
+		sweep, err = mailbox.PlanLocal(ledger, memory, nowMs)
+	} else {
+		sweep, err = mailbox.SweepLocal(ledger, memory, nowMs)
+	}
+	if err != nil {
+		return mailboxSweepLocal{}, userErr("this machine's mailbox state could not be swept (%v); nothing was written", err)
+	}
+	// The two id lists are empty rather than absent when nothing was dropped: an
+	// empty list and a missing field are two different facts to a reader that has
+	// to tell "this sweep had nothing to let go of" from "this sweep never
+	// looked".
+	ids := func(list []string) []string {
+		if list == nil {
+			return []string{}
+		}
+		return list
+	}
+	return mailboxSweepLocal{
+		Ledger:    sweep.Ledger,
+		Prompts:   sweep.Prompts,
+		LedgerIDs: ids(sweep.LedgerIDs),
+		PromptIDs: ids(sweep.PromptIDs),
+		Wrote:     !s.dryRun && !sweep.Empty(),
+	}, nil
+}
+
+// refusedLocal is this machine's half when another writer holds its state: the
+// two files, named so a reader can tell "this sweep reached this machine's state
+// and left it alone" from "this sweep never looked", no ids — it let go of
+// nothing — and the refusal that says which process to wait for. What it carries
+// is the fix: the state has one writer at a time, so stopping the process it
+// names (or waiting for it) and rerunning is what makes a sweep possible again.
+func refusedLocal(project string, busy error) (mailboxSweepLocal, error) {
+	ledger, err := mailbox.LedgerPath(project)
+	if err != nil {
+		return mailboxSweepLocal{}, userErr("%v", err)
+	}
+	prompts, err := mailbox.ConfirmMemoryPath(project)
+	if err != nil {
+		return mailboxSweepLocal{}, userErr("%v", err)
+	}
+	return mailboxSweepLocal{
+		Ledger:    ledger,
+		Prompts:   prompts,
+		LedgerIDs: []string{},
+		PromptIDs: []string{},
+		Refused:   busy.Error(),
+	}, nil
 }
 
 // mailbox sweeps one mailbox: one read of its outbox, one decision per child,
@@ -2029,6 +2330,11 @@ func (s *mailboxSweeper) sweep(ctx context.Context, uids []string) error {
 // kept: this command deletes what it can prove is past the TTL.
 func (s *mailboxSweeper) mailbox(ctx context.Context, uid string, now time.Time) (mailboxSweepMailbox, []string, error) {
 	out := mailboxSweepMailbox{Mailbox: uid, Deleted: []string{}}
+	presence, err := s.presence(ctx, uid, now)
+	if err != nil {
+		return out, nil, err
+	}
+	out.Presence = presence
 	var raw map[string]json.RawMessage
 	found, err := s.db.Get(ctx, "mailbox/"+uid+"/outbox", &raw)
 	if err != nil {
@@ -2075,9 +2381,57 @@ func (s *mailboxSweeper) mailbox(ctx context.Context, uid string, now time.Time)
 	return out, warnings, nil
 }
 
+// presence reads `mailbox/<uid>/heartbeat` — D117's node, `{at, boot, mac}` —
+// and reports what `shared/presence` decides about it, or the refusal when the
+// node is there and is not a heartbeat. An absent node is the module's own
+// `offline`/`no-heartbeat`, which is a fact about the account rather than a
+// refusal.
+//
+// **The MAC is not verified here and nothing is written for the verdict.** The
+// sweeper holds no pairing key (§4.2: it needs none), so what it can honestly
+// report is what the stored node says; the lease that node stands for is the
+// consumer's, taken with its own key under an if-match, and a sweep that
+// believed a forged heartbeat would be a sweep that could be made to report a
+// consumer alive. It reports and moves on.
+func (s *mailboxSweeper) presence(ctx context.Context, uid string, now time.Time) (mailboxSweepPresence, error) {
+	out := mailboxSweepPresence{}
+	var value any
+	found, err := s.db.Get(ctx, "mailbox/"+uid+"/heartbeat", &value)
+	if err != nil {
+		return out, dbErr(s.lc, err, false)
+	}
+	var heartbeat *mailbox.PresenceHeartbeat
+	if found {
+		// The client decodes a node into `map[string]any` and this package's
+		// record is that same map behind a name, so the reading is converted
+		// rather than asserted: what is asserted is that the node is an object at
+		// all, and anything else is the module's `invalid-heartbeat`.
+		decoded, ok := value.(map[string]any)
+		if !ok {
+			out.Code = string(mailbox.CodePresenceInvalidHeartbeat)
+			return out, nil
+		}
+		record := mailbox.Record(decoded)
+		boot, _ := record["boot"].(string)
+		heartbeat = &mailbox.PresenceHeartbeat{At: mailbox.RecordAt(record), BootID: boot}
+	}
+	answer := mailbox.EvaluatePresence(mailbox.PresenceOptions{Heartbeat: heartbeat, Now: now.UnixMilli()})
+	if !answer.OK {
+		out.Code = string(answer.Code)
+		return out, nil
+	}
+	out.State, out.Reason, out.BootID = string(answer.State), answer.Reason, answer.BootID
+	if answer.HasAge {
+		age := answer.AgeMs
+		out.AgeMs = &age
+	}
+	return out, nil
+}
+
 // report prints one sweep: the JSON document, or one line per mailbox with the
-// ids it deleted under it. Either way the text of a message never appears — an
-// id is a key and a fact about the sweep, and what a prompt said is not.
+// ids it deleted under it, the machine's own half, and the warnings. Either way
+// the text of a message never appears — an id is a key and a fact about the
+// sweep, and what a prompt said is not.
 func (s *mailboxSweeper) report(doc mailboxSweepDocument) error {
 	if s.asJSON {
 		return json.NewEncoder(s.out).Encode(doc)
@@ -2088,12 +2442,56 @@ func (s *mailboxSweeper) report(doc mailboxSweepDocument) error {
 	}
 	for _, one := range doc.Mailboxes {
 		fmt.Fprintf(s.out, "mailbox %s: %d stored prompt(s) past the TTL, %d kept\n", one.Mailbox, len(one.Deleted), one.Kept)
+		fmt.Fprintf(s.out, "  presence %s (%s)\n", presenceWord(one.Presence), presenceReason(one.Presence))
 		for _, id := range one.Deleted {
 			fmt.Fprintf(s.out, "  %s %s\n", verb, id)
 		}
+	}
+	fmt.Fprintf(s.out, "local state: %d ledger record(s) and %d prompt memory entr(ies) past the retention window%s\n", len(doc.Local.LedgerIDs), len(doc.Local.PromptIDs), writtenWord(doc.Local, doc.DryRun))
+	if doc.Local.Refused != "" {
+		fmt.Fprintf(s.out, "  refused: %s\n", doc.Local.Refused)
+	}
+	for _, id := range doc.Local.LedgerIDs {
+		fmt.Fprintf(s.out, "  %s %s\n", verb, id)
+	}
+	for _, id := range doc.Local.PromptIDs {
+		fmt.Fprintf(s.out, "  %s %s\n", verb, id)
 	}
 	for _, warning := range doc.Warnings {
 		fmt.Fprintf(s.out, "  warning: %s\n", warning)
 	}
 	return nil
+}
+
+// presenceWord is a verdict in one word for the line output: the state, or
+// `unreadable` when the stored node is there and is not a heartbeat.
+func presenceWord(p mailboxSweepPresence) string {
+	if p.State == "" {
+		return "unreadable"
+	}
+	return p.State
+}
+
+// presenceReason is why, in the rule's own words: the refusal's code when the
+// node could not be read, and otherwise the module's reason.
+func presenceReason(p mailboxSweepPresence) string {
+	if p.Code != "" {
+		return p.Code
+	}
+	return p.Reason
+}
+
+// writtenWord says what the local half did, which is the one thing a reader of a
+// dry run must be able to tell from a sweep that wrote.
+func writtenWord(l mailboxSweepLocal, dryRun bool) string {
+	switch {
+	case l.Refused != "":
+		return " (refused: another writer holds this machine's state, so nothing was written)"
+	case dryRun:
+		return " (a dry run: nothing was written)"
+	case l.Wrote:
+		return " (rewritten)"
+	default:
+		return " (nothing to let go of, so nothing was written)"
+	}
 }

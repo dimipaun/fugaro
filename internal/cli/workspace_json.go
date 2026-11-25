@@ -76,13 +76,22 @@ type workspaceDocRow struct {
 
 // workspaceDocShared is one credential the workspace offers, as the owner's
 // config declares it: the name the workspace's bundle holds it under, its kind
-// spelled as the route record spells it, the member projects it may be served
-// to, and — for a forge entry — the repositories it covers.
+// spelled as the route record spells it, who it may be served to, and — for a
+// forge entry — the repositories it covers.
+//
+// **Who it may be served to is one of two declarations and never both** (D2977,
+// contract C3's rule 5): the member projects in Projects, or AllMembers, which
+// offers it to every member of the workspace — the ones that join later
+// included. Projects is emitted either way, so a consumer that reads only that
+// field reads [] for an entry offered to every member; AllMembers is what tells
+// the two apart, and it is why the pair is stated here rather than left to the
+// empty list's own meaning.
 type workspaceDocShared struct {
-	Name     string   `json:"name"`
-	Kind     string   `json:"kind"`
-	Projects []string `json:"projects"`
-	Covers   []string `json:"covers"`
+	Name       string   `json:"name"`
+	Kind       string   `json:"kind"`
+	Projects   []string `json:"projects"`
+	AllMembers bool     `json:"all_members"`
+	Covers     []string `json:"covers"`
 }
 
 // workspaceDocCap is the workspace's own spend ceiling, in the file's own unit:
@@ -185,10 +194,11 @@ func (r *workspaceRow) document(m *workspaceMachine) workspaceDocRow {
 	for _, name := range slices.Sorted(maps.Keys(shared)) {
 		sh := shared[name]
 		row.Shared = append(row.Shared, workspaceDocShared{
-			Name:     name,
-			Kind:     sh.Kind,
-			Projects: nonNil(sh.Projects),
-			Covers:   nonNil(sh.Covers),
+			Name:       name,
+			Kind:       sh.Kind,
+			Projects:   nonNil(sh.Projects),
+			AllMembers: sh.AllMembers,
+			Covers:     nonNil(sh.Covers),
 		})
 	}
 	return row

@@ -30,8 +30,8 @@
     },
     "agent_id": {
       "type": "string",
-      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
-      "description": "The orchestrator this document belongs to, which is also its node's id."
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?(?:~[a-z0-9][a-z0-9-]{0,39})?$",
+      "description": "The orchestrator this document belongs to, which is also its node's id. The pattern is the orchestrator id rule (internal/orchestrator/naming.go, D3207): the project's name for the project's default orchestrator, or `<project>~<name>` for a named one, and no id may name a project a project cannot be. A work item's id is deliberately not this rule (F36): it admits no `~`, so an item's id and an orchestrator's can never be one string in one keyspace."
     },
     "role": {
       "type": "string",
@@ -149,8 +149,8 @@
         "depends_on": {
           "type": "array",
           "maxItems": 32,
-          "description": "Work items that have to be done before this one starts. Each names a live item, and an item that something live depends on cannot be archived.",
-          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" }
+          "description": "Work items that have to be done before this one starts. Each is a work item id of this document, or a reference `<orchestrator>/<item>` to an item of another orchestrator (D3208) whose item half is a work item id or the `<plan>/<task>` a plan item stands for. A bare id resolves in this document alone (F44), so a dependency that crosses a node is written as a reference; one that resolves nowhere holds the item rather than being read as done. An item that something live depends on cannot be archived. The pattern carries the shape of both spellings — depRef's rule, with the orchestrator half held to ParseOrchestratorID's — and not the 128-byte bound task.PlanTaskProblem puts on the item half of a reference.",
+          "items": { "type": "string", "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9_-]{0,63}|[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?(?:~[a-z0-9][a-z0-9-]{0,39})?/(?:[A-Za-z0-9][A-Za-z0-9_-]{0,63}|[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)+))$" }
         },
         "phase": {
           "enum": ["queued", "running", "review", "done", "failed", "blocked", "cancelled"],

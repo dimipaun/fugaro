@@ -50,6 +50,29 @@ variable "members" {
   }
 }
 
+variable "people" {
+  description = "The workspace roster's people: the addresses of the workspace roster's `human` entries, one invoke grant on the workspace's own credentials service per address (R6, D2971). fugaro update renders them from the workspace's own roster node (workspaceRosters/<name>). An empty list (the default) makes no person's invoke grant, and a person the roster no longer names is a grant deleted and nothing else."
+  type        = list(string)
+  default     = []
+
+  # A roster row is a person or a machine by its kind AND by its address (WC2's
+  # review): the member below is rendered from the address alone, and IAM refuses
+  # a `user:` member that is a machine's — so a row marked a `human` at a service
+  # account's address fails at apply, in the API's own words about the member and
+  # not in a line an owner can trace to the roster row that caused it. The class
+  # is refused here instead: `<id>@<project>.iam.gserviceaccount.com` is the one
+  # spelling a machine's address has — the same one `members` above holds a job
+  # account to — and a machine the workspace admits is admitted as a member,
+  # through the invoker grant of that variable and never as a person of this one.
+  validation {
+    condition = alltrue([
+      for p in var.people :
+      can(regex("^[^@[:space:]]+@[^@[:space:]]+$", p)) && !can(regex("\\.iam\\.gserviceaccount\\.com$", p))
+    ])
+    error_message = "people must be the workspace roster's own people (a person's email address, and never a machine's): the invoke grant is bound to the address itself as `user:<address>`, so an entry that is not an address would grant roles/run.invoker on the workspace's own service to whatever was written there, and a service account's address (`<id>@<project>.iam.gserviceaccount.com`) is the roster's `sa` kind, whose callers are the members' own job accounts — IAM refuses a `user:` member that is a machine."
+  }
+}
+
 variable "credentials_service" {
   description = "The workspace's own credentials service (D2980): the same image an installation's service runs, in the workspace's own project, told what it is by its environment. Null — the default — creates no service, no bundle accessor and no invoke grant, which is the state of a workspace whose owner has not deployed it yet. The image's host, project and repository are checked against region, project and the remote repository below."
   type = object({

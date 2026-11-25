@@ -16,8 +16,13 @@
 # What the fakes never do is what the check is written to hold them to: the
 # diagnosis's answer, its cost, its class marker, its artifacts and the bundle
 # that must be gone all come out of a mini object store this test lays out under
-# the fake bucket, and the execution count comes out of a file the fake appends
-# to when it answers — exactly as a launched job would.
+# the fake bucket, and the executions come out of a list the fake appends a row
+# to when it answers — the name, the job it ran as and the moment it was created,
+# exactly as a launched job would, and the record of the run names that execution
+# the way the runner writes both. The fake `gcloud` answers a read of the newest
+# executions, newest first, bounded by --limit — and refuses a read of a whole
+# list that is longer than one page, which is the read that stopped this check on
+# a real project and the read a check counting a total would have to make.
 #
 # No value in this file is secret-shaped: the one sentinel planted in the config
 # is a plainly-named string whose whole purpose is that the block must never
@@ -92,16 +97,21 @@ bad=0.1.0
 subject=run-20261120120000-4242
 cost=0.31
 sentinel=sentinel-680-must-not-print
+# The two jobs of this installation: the repository's own (a plain launch), and
+# the REVIEW-ONLY VARIANT a diagnosis runs as, which is the job the run's own
+# record names.
+repo_job=$slug-main
+run_job=$slug-main-review
 
 # Every fact key the run's block must carry, whatever it measured.
 BLOCK_KEYS=(xtrace agent-session project belong checkout config login subject
-  baseline a-config a-decline a-launch a-executions b-config b-tier
+  baseline a-config a-decline a-launch a-executions b-config b-tier b-executions
   c-answer c-run c-cost c-marker c-artifacts c-bundle c-executions restore scratch)
 # The keys that have to hold in the run where everything is right, with no
 # deviation: left-behind and scratch are the two that carry their own verdicts
 # there by design.
 PASS_KEYS=(xtrace agent-session project belong checkout config login subject
-  baseline a-config a-decline a-launch a-executions b-config b-tier
+  baseline a-config a-decline a-launch a-executions b-config b-tier b-executions
   c-answer c-run c-cost c-marker c-artifacts c-bundle c-executions restore scratch)
 
 # --------------------------------------------------------------------- fakes
@@ -124,6 +134,12 @@ GCP = os.environ["FAKE680_GCP"]
 SLUG = os.environ["FAKE680_SLUG"]
 REQUIRED = (1, 6, 0)
 COST = float(os.environ["FAKE680_COST"])
+# The job names of this installation: the repository's own per-repo job, which
+# `fugaro run --repo <repo>` resolves to, and the REVIEW-ONLY VARIANT a diagnosis
+# runs as (a review class run is admitted to the variant, not to the repo's job).
+REGION = os.environ["FAKE680_REGION"]
+REPOJOB = os.environ["FAKE680_REPOJOB"]
+RUNJOB = os.environ["FAKE680_RUNJOB"]
 
 
 def flag(name):
@@ -199,13 +215,39 @@ def judge(cfg):
     return None
 
 
-def executions(added):
-    with open(os.path.join(D, "executions.txt"), "a") as fh:
-        for i in range(added):
-            fh.write("fugaro-job-680-%d\n" % (len(open(os.path.join(D, "executions.txt")).readlines()) + i + 1))
+def executions(added, job, run_id=None):
+    """One launched job is one execution: a row on the project's own list, with
+    the job it ran as and the moment it was created — the two things the check
+    reads a window by — and, for the run the tier answers, the execution its
+    record names, exactly as the runner writes both."""
+    job = job or RUNJOB
+    path = os.path.join(D, "executions.txt")
+    rows = [line for line in open(path).read().splitlines() if line.strip()] if os.path.exists(path) else []
+    made = []
+    base = len(rows)
+    for i in range(added):
+        name = "%s-%04d" % (job, base + i + 1)
+        rows.append("%s\t%s\t%d" % (name, job, int(time.time())))
+        made.append(name)
+    with open(path, "w") as fh:
+        fh.write("".join(row + "\n" for row in rows))
+    if run_id and not flag("no-record-execution"):
+        record = os.path.join(D, "store", "runs", SLUG, run_id, "result.json")
+        try:
+            doc = json.load(open(record))
+        except Exception:
+            return
+        doc["execution"] = "projects/%s/locations/%s/jobs/%s/executions/%s" % (GCP, REGION, job, made[-1])
+        with open(record, "w") as fh:
+            json.dump(doc, fh, indent=1)
 
 
 def evidence(run_id, reason):
+    if flag("b-execution") and reason.startswith("the budget's database could not be read"):
+        # (b)'s own leak: the tier pointed at a project that is not there launched
+        # a job anyway, so one execution of the project's list appears between the
+        # window (a) opened and the read (b) is measured by.
+        executions(1, RUNJOB)
     print(json.dumps({
         "version": 1, "run_id": run_id, "command": "run", "model": "example-model",
         "tier": "evidence", "offline": True,
@@ -227,6 +269,8 @@ def main(argv):
             sys.stdout.write(fh.read())
         sys.exit(0)
     if argv and argv[0] == "troubleshoot":
+        if flag("troubleshoot-hangs"):
+            time.sleep(20)
         run_id = argv[1] if len(argv) > 1 else ""
         cfg = config()
         reason = judge(cfg)
@@ -236,8 +280,9 @@ def main(argv):
             print(json.dumps({"version": 1, "run_id": run_id, "tier": "local", "offline": False,
                               "outcome": "explained", "answer": "The failing command was refused by the launch gate."}))
             sys.exit(0)
-        # The tier launched one job, and a job that ran is one execution.
-        executions(2 if flag("double-execution") else 1)
+        # The tier launched one job on the review-only variant, and a job that
+        # ran is one execution — two, where this case makes it launch twice.
+        executions(2 if flag("double-execution") else 1, RUNJOB, run_id)
         print(json.dumps({
             "version": 1, "run_id": run_id, "command": "run", "tier": "cloud", "offline": False,
             "outcome": "explained", "cloud_run": SLUG + "/" + run_id, "cloud_cost_usd": COST,
@@ -252,7 +297,7 @@ def main(argv):
         if reason and not flag("run-admitted"):
             sys.stderr.write("fugaro: " + reason + "\n")
             if flag("a-execution"):
-                executions(1)
+                executions(1, REPOJOB)
             sys.exit(6)
         sys.stdout.write("launching the run\n")
         sys.exit(0)
@@ -268,11 +313,19 @@ FUGARO_EOF
 # The fake gcloud for check680.sh's test: the executions of the project's jobs,
 # `projects describe`, and a mini object store under $FAKE680_DIR/store that the
 # bucket's reads come out of. Every call is recorded.
+import json
 import os
 import sys
+import time
 
 D = os.environ.get("FAKE680_DIR") or sys.exit("fake680: FAKE680_DIR is not set")
 GCP = os.environ["FAKE680_GCP"]
+# The most rows one page of this fake's executions read answers. A project that
+# holds more than this is one whose whole list gcloud does not answer in one go,
+# and the fake refuses to answer it: a check that reads a TOTAL of the project's
+# executions has to ask for one here, and a total it cannot read is a row it did
+# not measure rather than a number it guessed.
+PAGE = 1600
 
 with open(os.path.join(D, "logs", "gcloud.calls"), "a") as fh:
     fh.write("gcloud " + " ".join(sys.argv[1:]) + "\n")
@@ -282,11 +335,45 @@ def flag(name):
     return os.path.exists(os.path.join(D, name))
 
 
-def value(flag_name):
-    argv = sys.argv[1:]
-    if flag_name in argv:
-        return argv[argv.index(flag_name) + 1]
+def flag_value(name):
+    for i, a in enumerate(sys.argv[1:]):
+        if a == name and i + 2 < len(sys.argv):
+            return sys.argv[i + 2]
+        if a.startswith(name + "="):
+            return a.split("=", 1)[1]
     return ""
+
+
+def executions_rows():
+    """The project's executions, as `<name>\\t<job>\\t<created epoch>` rows: what
+    the fake `fugaro` appends to when a job runs, and what this fake answers a
+    read from."""
+    path = os.path.join(D, "executions.txt")
+    rows = []
+    if not os.path.isfile(path):
+        return rows
+    for line in open(path):
+        if not line.strip():
+            continue
+        parts = line.rstrip("\n").split("\t")
+        name, job, when = (parts + ["", "", "0"])[:3]
+        rows.append((name, job, int(when)))
+    return rows
+
+
+def stamp(epoch):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
+
+
+def project_read_number():
+    """How many project-wide reads this run has made, this one included: the
+    window's own read is the first, (a)'s the second and (b)'s the third, and a
+    case that wants one particular read to fail counts them."""
+    path = os.path.join(D, "reads-project")
+    n = (int(open(path).read().strip() or "0") if os.path.exists(path) else 0) + 1
+    with open(path, "w") as fh:
+        fh.write("%d\n" % n)
+    return n
 
 
 def store_path(path):
@@ -301,27 +388,47 @@ if len(argv) > 9 or False:
     pass
 
 if argv[:3] == ["run", "jobs", "executions"]:
-    if flag("executions-fail"):
+    job = flag_value("--job")
+    if not job and flag("executions-fail-b") and project_read_number() == 3:
         sys.stderr.write("ERROR: (gcloud.run.jobs.executions.list) The request failed\n")
         sys.exit(1)
-    project = value("--project")
+    if flag("executions-fail") or (job and flag("executions-fail-job")):
+        sys.stderr.write("ERROR: (gcloud.run.jobs.executions.list) The request failed\n")
+        sys.exit(1)
+    if flag_value("--format") != "json":
+        sys.stderr.write("ERROR: (gcloud.run.jobs.executions.list) this test's fake answers --format=json "
+                         "only\n")
+        sys.exit(2)
+    if flag_value("--filter"):
+        sys.stderr.write("ERROR: (gcloud.run.jobs.executions.list) this test's fake implements no --filter: "
+                         "a filter whose key gcloud does not know answers an empty list, and this test will "
+                         "not let that stand for a list that was read\n")
+        sys.exit(2)
+    project = flag_value("--project")
     if project != GCP:
         sys.stderr.write(
             "ERROR: (gcloud.run.jobs.executions.list) The project [%s] was not found or you do not have "
             "permission to access it\n" % project)
         sys.exit(1)
-    with open(os.path.join(D, "executions.txt")) as fh:
-        names = [line for line in fh if line.strip()]
-    limit = ""
-    for i, a in enumerate(argv):
-        if a == "--limit" and i + 1 < len(argv):
-            limit = argv[i + 1]
-        elif a.startswith("--limit="):
-            limit = a.split("=", 1)[1]
-    if limit.isdigit():
-        names = names[:int(limit)]
-    sys.stdout.write("".join(names))
+    rows = executions_rows()
+    limit = flag_value("--limit")
+    if not limit.isdigit():
+        limit = ""
+    if (not limit or int(limit) > PAGE) and len(rows) > PAGE:
+        sys.stderr.write(
+            "ERROR: (gcloud.run.jobs.executions.list) this project holds more executions (%d) than one page "
+            "of this read answers (%d), and this test's fake answers a read with a --limit of at most that\n"
+            % (len(rows), PAGE))
+        sys.exit(1)
+    if job:
+        rows = [row for row in rows if row[1] == job]
+    rows.sort(key=lambda row: -row[2])
+    if limit:
+        rows = rows[:int(limit)]
+    sys.stdout.write(json.dumps([{"metadata": {"name": name, "creationTimestamp": stamp(when)}}
+                                 for name, _job, when in rows]) + "\n")
     sys.exit(0)
+
 
 if argv[:2] == ["projects", "describe"]:
     project = argv[2] if len(argv) > 2 else ""
@@ -409,10 +516,10 @@ prepare() { # prepare DIR
   : >"$dir/logs/fugaro.calls"
   : >"$dir/logs/gcloud.calls"
   : >"$dir/logs/git.calls"
-  python3 - "$dir" <<'PY'
-import json, os, sys
+  python3 - "$dir" "$repo_job" "$run_job" <<'PY'
+import json, os, sys, time
 
-dir = sys.argv[1]
+dir, repo_job, run_job = sys.argv[1], sys.argv[2], sys.argv[3]
 
 
 def write(path, text):
@@ -453,7 +560,18 @@ write(os.path.join(dir, "installations.json"), json.dumps({
     }],
 }, indent=1) + "\n")
 
-write(os.path.join(dir, "executions.txt"), "".join("fugaro-job-680-%d\n" % n for n in range(1, 4)))
+# The project's executions as this test's fake gcloud keeps them, one `<name>`,
+# `<job>`, `<created epoch>` per line. All three are OLDER than the window the
+# check opens when it starts — one of them on the review-only job a diagnosis
+# runs as — so a read that counts a window sees none of them and a read that
+# counted the project would see three.
+now = int(time.time())
+write(os.path.join(dir, "executions.txt"), "".join(
+    "%s\t%s\t%d\n" % row for row in (
+        ("fugaro-job-680-1", repo_job, now - 172800),
+        ("fugaro-job-680-2", run_job, now - 7200),
+        ("fugaro-job-680-3", repo_job, now - 3600),
+    )))
 
 write(os.path.join(dir, "home", ".local", "state", "fugaro", "logs", subject + ".log"),
       "fugaro run --repo acme/sandbox\n"
@@ -540,8 +658,9 @@ run_check() { # run_check DIR ENV... [-- ARGS...]
     -u XDG_CONFIG_HOME -u FUGARO_PROJECT -u FUGARO_CONFIG \
     -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY \
     PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
-    FAKE680_DIR="$dir" FAKE680_GCP="$gcp" FAKE680_SLUG="$slug" \
+    FAKE680_DIR="$dir" FAKE680_GCP="$gcp" FAKE680_SLUG="$slug" FAKE680_REGION="$region" \
     FAKE680_REPO="$repo" FAKE680_WORKFLOW="$workflow" FAKE680_COST="$cost" \
+    FAKE680_REPOJOB="$repo_job" FAKE680_RUNJOB="$run_job" \
     FAKE680_ORIGIN="git@github.com:$repo.git" \
     ${args[@]+"${args[@]}"} \
     bash ${bashargs[@]+"${bashargs[@]}"} "$script" \
@@ -558,6 +677,29 @@ sidecar_of() { printf '%s\n' "$1/home/.config/fugaro/projects/$name.yaml.check68
 fugaro_calls() { cat "$1/logs/fugaro.calls" 2>/dev/null || true; }
 gcloud_calls() { cat "$1/logs/gcloud.calls" 2>/dev/null || true; }
 executions_now() { wc -l <"$1/executions.txt" | tr -d ' '; }
+executions_calls() { grep '^gcloud run jobs executions list' "$1/logs/gcloud.calls" || true; }
+# Every read of the project's executions this check makes has to be a WINDOW on
+# creation time: the newest few, newest first, of which it counts the ones
+# created since the window opened. A read of a total is what this check is not
+# allowed to make, and one of the cases below holds a project fuller than any
+# page to a fake that refuses such a read.
+assert_paged_reads() { # DIR what
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+    *"--limit"*) ;;
+    *) fail "$2: an executions read with no --limit: $line" ;;
+    esac
+    case "$line" in
+    *"--sort-by=~metadata.creationTimestamp"*) ;;
+    *) fail "$2: an executions read that is not newest first: $line" ;;
+    esac
+    case "$line" in
+    *"--format=json"*) ;;
+    *) fail "$2: an executions read that asks for something other than the document: $line" ;;
+    esac
+  done < <(executions_calls "$1")
+}
 
 t() {
   local i=$test_index
@@ -624,6 +766,28 @@ test_the_whole_check_passes() {
   expect_row a-decline "tier 'evidence'" "everything right: (a) answers from tier 4"
   expect_row a-launch "refused by the gate the tier quoted" "everything right: the launch met the same gate"
   expect_row a-executions "created no execution" "everything right: (a) created no execution"
+  # The baseline is a window on creation time, not a total of the project: the
+  # three executions the project holds are all older than it, and the row says
+  # which moment the window opened at and that nothing was created in it.
+  expect_row baseline "no execution of $gcp created in it" "everything right: the window opened empty"
+  expect_row baseline "how many older executions the project holds never enters any of them" \
+    "everything right: the row says what it does not rest on"
+  # Every read of the executions is the newest few, newest first — and there are
+  # exactly four of them: the window's own read, (a)'s, (b)'s and (c)'s.
+  assert_paged_reads "$dir" "everything right"
+  [ "$(executions_calls "$dir" | wc -l | tr -d ' ')" = 4 ] ||
+    fail "everything right: the check read the executions $(executions_calls "$dir" | wc -l | tr -d ' ') time(s), and it reads them four: the window's own read, (a)'s, (b)'s and (c)'s"
+  # Only (c) narrows its read with --job, to the job the run's own record names,
+  # which is the review-only variant a diagnosis is admitted to: (a) and (b) read
+  # the whole project, because a leak of theirs is a leak into any job.
+  expect_contains "$(executions_calls "$dir")" "--job $run_job" \
+    "everything right: (c) narrows its read to the job the record names"
+  [ "$(grep -c -- '--job ' <<<"$(executions_calls "$dir")" || true)" = 1 ] ||
+    fail "everything right: $(grep -c -- '--job ' <<<"$(executions_calls "$dir")" || true) read(s) narrow by --job, and one does: (c)'s. (a)'s and (b)'s read the whole project"
+  # (b): the tier's own reads were made unavailable, and the project's list is
+  # read once more for it — a read of its own, project-wide.
+  expect_row b-executions "created no execution" "everything right: (b) created no execution"
+  expect_row c-executions "$run_job" "everything right: the job the record named is in the row"
   # (b): the tier's own project read could not be made, after the image was put back.
   expect_row b-config "fugaro-sandbox-680" "everything right: the config was pointed at an absent project"
   expect_row b-tier "tier 'evidence'" "everything right: (b) answers from tier 4"
@@ -890,8 +1054,14 @@ test_a_refused_launch_that_created_an_execution_is_a_finding() {
   run_check "$dir"
   expect_status "$status" 1 "an execution created by the refused launch"
   expect_row a-executions "created 1 execution(s)" "an execution created by the refused launch: the row"
+  expect_row a-executions "at or after" "an execution created by the refused launch: it was created in the window"
   expect_row a-executions "costs a person a sentence and not a job" \
     "an execution created by the refused launch: why it matters"
+  # The window is what caught it: the same project holds three older executions,
+  # and a row that counted a total would have had to read all of them to see it.
+  expect_row a-executions "$repo_job" "an execution created by the refused launch: the job it ran as is named"
+  expect_row a-executions "looks exactly the same" \
+    "an execution created by the refused launch: a real run of the project going on is named as the other reading of the row"
 }
 
 test_the_image_gate_answering_in_b_is_not_measured() {
@@ -1001,6 +1171,76 @@ test_the_executions_could_not_be_listed_is_not_measured() {
     "executions that could not be listed: no part of the check went further"
 }
 
+test_a_diagnosis_that_created_two_executions_is_a_finding() {
+  local dir=$work/double
+  prepare "$dir"
+  : >"$dir/double-execution"
+  run_check "$dir"
+  expect_status "$status" 1 "a diagnosis that launched twice"
+  expect_row c-executions "created 2 executions" "a diagnosis that launched twice: the row counts the window"
+  expect_row c-executions "$run_job" "a diagnosis that launched twice: the job both ran as is named"
+  expect_row c-executions "looks exactly the same" \
+    "a diagnosis that launched twice: a real run of that job going on is named as the other reading of the row"
+}
+
+test_an_unavailable_tier_that_created_an_execution_is_a_finding() {
+  local dir=$work/bleak
+  prepare "$dir"
+  # The tier is pointed at a project that is not there, and it launches a job
+  # anyway: one execution of the real project's list, in the window (a) opened.
+  : >"$dir/b-execution"
+  run_check "$dir"
+  expect_status "$status" 1 "an execution created by the tier pointed at a project that is not there"
+  expect_row b-executions "created 1 execution(s)" "an unavailable tier that launched: the row counts the window"
+  expect_row b-executions "at or after" "an unavailable tier that launched: it was created in the window"
+  expect_row b-executions "$run_job" "an unavailable tier that launched: the job it ran as is named"
+  expect_row b-executions "looks exactly the same" \
+    "an unavailable tier that launched: a real run of the project's jobs going on is named as the other reading"
+}
+
+test_the_read_b_is_measured_by_could_not_be_listed_is_not_measured() {
+  local dir=$work/nob
+  prepare "$dir"
+  # (b)'s own read is the third project-wide one: the window's own, (a)'s, (b)'s.
+  # A read that could not be taken is a row that was not measured, never a row
+  # that passes over it.
+  : >"$dir/executions-fail-b"
+  run_check "$dir"
+  expect_status "$status" 2 "the read (b) is measured by could not be listed"
+  expect_row a-executions "created no execution" \
+    "the read (b) is measured by could not be listed: (a), whose read answered, was measured"
+  expect_row b-executions "answered nothing after the tier was pointed at" \
+    "the read (b) is measured by could not be listed: (b) was not measured rather than passed"
+}
+
+test_the_last_read_could_not_be_listed_is_not_measured() {
+  local dir=$work/nofinal
+  prepare "$dir"
+  # The read (c) narrows to the job the record names is the one D2407's "one
+  # execution and no retry" is answered from — and the reads (a) makes are
+  # project-wide, so this case fails exactly that one. A read that could not be
+  # taken is a row that was not measured, never a row that passes over it.
+  : >"$dir/executions-fail-job"
+  run_check "$dir"
+  expect_status "$status" 2 "the read narrowed to the record's job could not be listed"
+  expect_row a-executions "created no execution" \
+    "the read narrowed to the record's job could not be listed: (a), whose read answered, was measured"
+  expect_row c-executions "answered nothing after the diagnosis" \
+    "the read narrowed to the record's job could not be listed: (c) was not measured rather than passed"
+}
+
+test_a_record_that_names_no_execution_is_not_measured() {
+  local dir=$work/noexec
+  prepare "$dir"
+  # The runner writes the execution its run ran as onto the record; a record
+  # without one has nothing at all to hold the window's count to.
+  : >"$dir/no-record-execution"
+  run_check "$dir"
+  expect_status "$status" 2 "a record that names no execution"
+  expect_row c-executions "names no execution this check can read" \
+    "a record that names no execution: the row"
+}
+
 test_an_absent_project_that_exists_is_not_measured() {
   local dir=$work/absentexists
   prepare "$dir"
@@ -1058,42 +1298,43 @@ test_a_config_listing_that_fails_is_not_measured() {
   expect_absent "$(gcloud_calls "$dir")" "gcloud" "a config listing that fails: no cloud call was made"
 }
 
-test_a_project_fuller_than_the_read_limit_still_measures() {
-  local dir=$work/limited
+test_a_project_fuller_than_any_read_still_measures() {
+  local dir=$work/full
   prepare "$dir"
-  # Three executions read two at a time. Both of the check's readings are counts,
-  # and a read that stops at the limit it was given reads 2 before and 2 after a
-  # diagnosis that really created one: (c) would report a finding about a project
-  # it never measured and (a)'s safety row would pass over the leak it exists to
-  # find. The read has to be widened past the limit, and this case holds it to
-  # the count it can only get that way.
-  run_check "$dir" -- --executions-limit 2
-  expect_status "$status" 0 "a project fuller than the read limit"
-  expect_row baseline "has 3 execution(s)" "a project fuller than the read limit: the baseline is the exact count"
-  expect_row a-executions "created no execution" "a project fuller than the read limit: (a)"
-  expect_row c-executions "exactly one execution" "a project fuller than the read limit: (c)"
-}
-
-test_a_project_too_full_to_count_is_not_measured() {
-  local dir=$work/toofull
-  prepare "$dir"
-  # 39 executions and a limit of 2: the widest read this check makes is 8× the
-  # limit, so no read it can take is the count — and a count it could not take is
-  # a row it did not measure, never a pass (nor a finding about a project it
-  # cannot count).
+  # A project that has run for weeks: 1605 executions, every one of them older
+  # than the window this check opens. This is the project the check stopped on —
+  # a total of its executions is a read gcloud does not answer in one page, and
+  # the fake refuses to answer one at all — and a window on creation time reads
+  # it exactly as it reads an empty project: none of the 1605 was created since
+  # the window opened, so (a) and (b) read none and (c) reads the one the
+  # diagnosis created.
   python3 - "$dir" <<'PY'
 import sys
 
 path = sys.argv[1] + "/executions.txt"
+rows = [line.split("\t") for line in open(path).read().splitlines() if line.strip()]
+oldest = min(int(row[2]) for row in rows)
+job = rows[0][1]
 with open(path, "a") as fh:
-    for n in range(4, 40):
-        fh.write("fugaro-job-680-%d\n" % n)
+    for n in range(4, 1606):
+        fh.write("fugaro-job-680-%d\t%s\t%d\n" % (n, job, oldest - n))
 PY
-  run_check "$dir" -- --executions-limit 2
-  expect_status "$status" 2 "a project too full to count"
-  expect_row baseline "not the exact one" "a project too full to count: the row says which count it could not take"
-  expect_row a-executions "not reached" "a project too full to count: nothing behind the baseline was measured"
-  expect_absent "$(fugaro_calls "$dir")" "troubleshoot" "a project too full to count: no diagnosis was asked for"
+  run_check "$dir" -- --executions-limit 5
+  expect_status "$status" 0 "a project fuller than any read"
+  expect_row baseline "no execution of $gcp created in it" \
+    "a project fuller than any read: the window opened empty over a project holding 1605"
+  expect_row a-executions "created no execution" "a project fuller than any read: (a) reads the window, not the project"
+  expect_row c-executions "exactly one execution" "a project fuller than any read: (c) reads exactly one created in the window"
+  assert_paged_reads "$dir" "a project fuller than any read"
+  # What a check that counted a TOTAL of this project's executions would meet
+  # here, so a regression to one cannot pass this case: the read of the whole
+  # list is refused rather than answered.
+  local refused=0
+  FAKE680_DIR="$dir" FAKE680_GCP="$gcp" \
+    "$dir/bin/gcloud" run jobs executions list --project "$gcp" --region "$region" \
+    --format=json >/dev/null 2>&1 || refused=1
+  [ "$refused" = 1 ] ||
+    fail "a project fuller than any read: the fake answered a read of the whole list, so this case holds nothing to anything — a check that counted a total would have measured everything here"
 }
 
 test_the_launch_is_bounded() {
@@ -1110,6 +1351,24 @@ test_the_launch_is_bounded() {
   expect_status "$status" 1 "a launch the bound had to end"
   expect_row a-launch "bound" "a launch the bound had to end: the row names the bound that fired"
   expect_row a-executions "not reached" "a launch the bound had to end: nothing behind the launch was measured"
+}
+
+test_the_tier_read_is_bounded() {
+  # Every call of this check that reaches the cloud goes through the same bound
+  # (fg_bounded), and this is the one the launch case above does not cover: the
+  # tier's own read in part (a). Like that case it needs timeout(1), which macOS
+  # does not ship.
+  if ! command -v timeout >/dev/null 2>&1; then
+    echo "check680_test: the bound case needs timeout(1), which this machine has not: skipped" >&2
+    return 0
+  fi
+  local dir=$work/bound-read
+  prepare "$dir"
+  : >"$dir/troubleshoot-hangs"
+  run_check "$dir" -- --cloud-seconds 2
+  expect_status "$status" 2 "a tier read the bound had to end"
+  expect_row a-decline "bound" "a tier read the bound had to end: the row names the bound that fired"
+  expect_row a-launch "not reached" "a tier read the bound had to end: nothing behind the read was measured"
 }
 
 # Sharding, so the package's Go test can run the tests of this file side by
@@ -1144,12 +1403,17 @@ t test_a_cost_the_record_does_not_hold_is_a_finding
 t test_a_surviving_bundle_is_a_finding
 t test_an_answer_with_no_artifact_is_a_finding
 t test_the_executions_could_not_be_listed_is_not_measured
+t test_an_unavailable_tier_that_created_an_execution_is_a_finding
+t test_the_read_b_is_measured_by_could_not_be_listed_is_not_measured
+t test_the_last_read_could_not_be_listed_is_not_measured
+t test_a_record_that_names_no_execution_is_not_measured
+t test_a_diagnosis_that_created_two_executions_is_a_finding
 t test_an_absent_project_that_exists_is_not_measured
 t test_the_restore_row_is_not_vacuous
 t test_a_config_listing_that_fails_is_not_measured
-t test_a_project_fuller_than_the_read_limit_still_measures
-t test_a_project_too_full_to_count_is_not_measured
+t test_a_project_fuller_than_any_read_still_measures
 t test_the_launch_is_bounded
+t test_the_tier_read_is_bounded
 
 if [ "$failures" -ne 0 ]; then
   echo "check680_test: $failures failure(s)" >&2

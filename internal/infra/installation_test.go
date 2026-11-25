@@ -497,6 +497,162 @@ func TestCredentialsReviewJobAccountsCarryTheImplicitJob(t *testing.T) {
 	}
 }
 
+// CredentialsSharedJobAccounts is the shared coding class's table: one row per
+// (profile, provider, account) the installation deploys a SHARED project job
+// under, each with the repositories that job may serve. The service admits a
+// shared caller by that triple (B5.1) and binds its clone to the row's
+// repositories; a caller it has no row for falls through to the
+// per-repository table and comes back unverified_job_identity — which on a
+// shared job is every clone, the per-repository table holding no triple for a
+// job whose account serves one profile's whole admitted set (Check 580's 403).
+//
+// The empty case is the installation that names no profile, and deliberately
+// NOT "an installation that names no shared profile": every kind of
+// config.Providers is answered by SharedJobProvider today, so the two are the
+// same installation. The test with the gate below pins that the shared set is
+// that predicate, and not a second list that could drift from the jobs the
+// deployment actually builds.
+//
+// Mutations (each run and restored): taking the SharedJobProvider gate out
+// admits a row for a provider the deployment builds no job for, and the
+// closed-set assertion below fails on it; deriving the rows from ProjectJobs
+// instead of from lc.Profiles loses a carried profile the deployment skipped
+// this round, which no assertion here would see (the job exists beside the
+// row either way) — it is the carry that needs the walk.
+func TestCredentialsSharedJobAccountsDerivesTheSharedJobs(t *testing.T) {
+	// An installation that names no profile deploys no shared project job and
+	// has no row: none, and no error. The empty set is the fail-closed state —
+	// a service that admits no shared caller — and, on the wire, the absence
+	// of the member, so an installation with no shared job writes the
+	// credentials_service key it wrote before this field existed and the
+	// module renders no FUGARO_SHARED_JOB_ACCOUNTS for it.
+	plain := credentialsLC(t)
+	if got, err := CredentialsSharedJobAccounts(plain); err != nil || got != nil {
+		t.Errorf("CredentialsSharedJobAccounts of an installation with no profile = %v, %v, want none and no error: it deploys no shared project job, and a service that admits no shared caller is the fail-closed state", got, err)
+	}
+	image := "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3@sha256:" + strings.Repeat("ab", 32)
+	plainSvc, err := Credentials(plain, image, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plainSvc.SharedJobAccounts != nil {
+		t.Errorf("credentials_service.shared_job_accounts = %+v, want none for an installation with no profile", plainSvc.SharedJobAccounts)
+	}
+	plainDoc, err := json.Marshal(plainSvc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(plainDoc), "shared_job_accounts") {
+		t.Errorf("the opt-in's document carries shared_job_accounts for an installation with no profile:\n%s", plainDoc)
+	}
+
+	// A config with two profiles on GitHub: apikey, which names no allow_repos,
+	// and standard, which names one and holds a named Claude account beside its
+	// default. The default account is the axis's own empty string — never the
+	// review table's "default", which is a different axis's spelling of a
+	// different job — and the repositories are the profile's own allow_repos
+	// verbatim, patterns kept, because that is what the service matches a
+	// caller's repository against. apikey names none, so its row takes the
+	// repositories this installation records for GitHub, canonicalised.
+	lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+credentialsBudgetLC+projectAccountLCBlock)
+	rows, err := CredentialsSharedJobAccounts(lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []CredentialsSharedJob{
+		{Profile: "apikey", Provider: "github", Account: "", Repos: []string{"github/acme/webapp"}},
+		{Profile: "standard", Provider: "github", Account: "", Repos: []string{"github/acme/webapp"}},
+		{Profile: "standard", Provider: "github", Account: "acme-personal", Repos: []string{"github/acme/webapp"}},
+	}
+	if !reflect.DeepEqual(rows, want) {
+		t.Fatalf("CredentialsSharedJobAccounts = %+v, want %+v (one row per shared project job's triple, sorted, each with the repositories it may serve)", rows, want)
+	}
+	// The rows are the deployment's own set, both ways round: a row naming a
+	// triple no job was created for admits an account nothing ever calls as,
+	// and a shared job with no row is that job's every caller refused
+	// unverified_job_identity. Neither half is visible from the other, which is
+	// why this test holds both.
+	jobs, err := ProjectJobs(lc, "fugaro-runs-proj-1234", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		job, ok := jobs[gcp.ProjectJobName(row.Profile, row.Provider, row.Account)]
+		if !ok {
+			t.Fatalf("the deployment built %v, and the row %+v names a job nothing created: the service would admit an account no shared job runs as", sortedJobNames(jobs), row)
+		}
+		if got, want := job.ServiceAccount.AccountID, gcp.ProjectServiceAccountID(row.Profile, row.Provider, row.Account); got != want {
+			t.Errorf("the account %s runs the job the row %+v names, and the service admits %s: a shared caller is admitted by the account its job runs as", got, row, want)
+		}
+	}
+	for _, j := range jobs {
+		if !slices.ContainsFunc(rows, func(r CredentialsSharedJob) bool {
+			return r.Profile == j.Profile && r.Provider == j.Provider && r.Account == j.Account
+		}) {
+			t.Errorf("the deployment builds %s (%s, %s, %q) and no row carries its triple: that job's every caller falls through to the per-repository table and is refused unverified_job_identity", j.Job, j.Profile, j.Provider, j.Account)
+		}
+	}
+	// And the tfvars carry them, under the key the module reads. The
+	// credentials_service object type is declared twice — in the module and in
+	// the installation root's own variables.tf, which is what the document
+	// decodes against — and an attribute the root's copy is missing is dropped
+	// in silence, so this is asserted on what InstallationVars really writes.
+	svc, err := Credentials(lc, image, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(svc.SharedJobAccounts, want) {
+		t.Errorf("credentials_service.shared_job_accounts = %+v, want %+v", svc.SharedJobAccounts, want)
+	}
+	s, err := Installation(lc, InstallOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.CredentialsService = &svc
+	data, err := InstallationVars(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		CredentialsService *CredentialsServiceSpec `json:"credentials_service"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.CredentialsService == nil || !reflect.DeepEqual(doc.CredentialsService.SharedJobAccounts, want) {
+		t.Errorf("the tfvars' credentials_service.shared_job_accounts = %+v, want %+v:\n%s", doc.CredentialsService, want, data)
+	}
+
+	// The Bitbucket path is the one Check 580's 403 came back on, and the
+	// provider on a row is the profile's own: the shared table serves whatever
+	// provider the profile names, and the repositories are that provider's.
+	bb := parseLC(t, m4LocalConfig+m5Additions+credentialsBudgetLC+bitbucketProjectLC)
+	rows, err = CredentialsSharedJobAccounts(bb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBB := []CredentialsSharedJob{
+		{Profile: "standard", Provider: "bitbucket", Account: "", Repos: []string{"bitbucket/acme/sandbox"}},
+	}
+	if !reflect.DeepEqual(rows, wantBB) {
+		t.Errorf("CredentialsSharedJobAccounts of a Bitbucket project = %+v, want %+v: a shared job's provider and repositories are its profile's", rows, wantBB)
+	}
+	// The gate is SharedJobProvider, the same predicate the deployment skips a
+	// profile with: a provider whose path is not admitted deploys no shared job,
+	// and the service must carry no row for one. Both providers are admitted
+	// today, so this is the only way to see the gate at all — and it is why the
+	// empty case above is an installation with no profile rather than one whose
+	// profiles are all "not shared".
+	admitSharedJobProviders(t, "github")
+	rows, err = CredentialsSharedJobAccounts(bb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows != nil {
+		t.Errorf("CredentialsSharedJobAccounts = %+v with only github admitted, want none: the installation builds no shared Bitbucket job, and a row for one admits an account nothing calls as", rows)
+	}
+}
+
 // credentialsBudgetYAML is the local config of an installation with a
 // Firebase backend and no repository yet: the budget block the service's two
 // Firebase facts come from, ready to have repos: appended to it.
@@ -763,7 +919,11 @@ func TestDeleteHints(t *testing.T) {
 }
 
 // An API only the local config or the budget flags declare, planned away,
-// says where each comes from.
+// says where each comes from. The Billing Budgets API is named with the flags
+// that declare one AND with the alert an installation already holds, which is
+// what keeps it through a run that passes no budget flag at all (the carry,
+// R5 and R7 of docs/managed-flag-ergonomics) — the flags alone would send a
+// reader to re-pass a trio the run did not need.
 func TestDeleteHintsAPIs(t *testing.T) {
 	p := &tf.Plan{ResourceChanges: []tf.ResourceChange{
 		{Address: `module.installation.google_project_service.this["aiplatform.googleapis.com"]`, Change: tf.Change{Actions: []string{"delete"}}},
@@ -773,10 +933,13 @@ func TestDeleteHintsAPIs(t *testing.T) {
 	if len(hints) != 1 {
 		t.Fatalf("hints = %q, want one about the APIs", hints)
 	}
-	for _, want := range []string{"Vertex AI", "repos.<repo>.vertex", "fugaro update", "--budget"} {
+	for _, want := range []string{"Vertex AI", "repos.<repo>.vertex", "fugaro update", "--budget", "the alert the installation already holds"} {
 		if !strings.Contains(hints[0], want) {
 			t.Errorf("the APIs' hint lacks %q: %q", want, hints[0])
 		}
+	}
+	if strings.Contains(hints[0], "pass them again") {
+		t.Errorf("the APIs' hint still tells the reader to pass the budget flags again, which the carry made unnecessary: %q", hints[0])
 	}
 }
 

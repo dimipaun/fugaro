@@ -87,8 +87,24 @@ type JSONRun struct {
 	// run whose rules predate the two children rather than a row with nothing to say.
 	// The mode is the run's own — the project's observe/enforce switch is this
 	// document's top-level `mode`, which is a different thing.
-	Mode     string   `json:"mode"`
-	From     string   `json:"from"`
+	Mode string `json:"mode"`
+	From string `json:"from"`
+	// Source is what the run's running stage goes out on, as the routing table
+	// answered it: the kind of the source that served the stage and, when the
+	// kind names one, its name after a colon (`pool:team`, `anthropic`)
+	// (model-credentials-routing CS9, D3070). Always present, "-" when the
+	// registry entry carries none, exactly as Stage, Verify and Mode are: a run
+	// the project's table does not serve, or one whose rules predate the member
+	// and whose entry goes without it, is a row with nothing recorded rather
+	// than a member a reader has to decide the absence of.
+	//
+	// The entry's own `fallback` flag is deliberately not carried here: the
+	// contract fixes this member and no other (contract-table.md), and the flag
+	// qualifies the source on the row a person is looking at (RunRow.Fallback,
+	// the expanded detail) rather than being a second fact of its own. A reader
+	// that needs it for a live row is the console's Live screen, and it reads
+	// the source this member carries.
+	Source   string   `json:"source"`
 	Notional bool     `json:"notional"` // SpentUSD is a subscription's list price
 	SpentUSD *float64 `json:"spent_usd"`
 	AgeSecs  *float64 `json:"age_seconds"`
@@ -222,6 +238,27 @@ type JSONFinished struct {
 	// JSONRun: a reader that follows a run into finished[] must not lose the
 	// node it was joined to either. Absent when the launch record has none.
 	PlanTask string `json:"plan_task,omitempty"`
+	// ResumeAt and ResumedBy are a paused run's own two facts (contract-pause,
+	// R15): the instant its resume is due at, in RFC 3339 UTC as this document
+	// spells every instant, and the run that resumed it.
+	//
+	// Both are `JSONFinished`'s and not `JSONRun`'s, which is the asymmetry
+	// `credential` and `waiting_until` carry on the other side: a run that
+	// suspended itself is over — its registry entry is gone, so it is read from
+	// the runs bucket like every other finished row — and a run still going is
+	// not paused. So a reader that follows a run out of runs[] into finished[]
+	// gains the two there and loses them nowhere.
+	//
+	// Each is absent rather than empty when the reader had nothing to fill it
+	// from, and the two are absent independently: the instant comes from the
+	// credentials service's own node for the pause (which a project whose rules
+	// or service are older may not have) and the resumer from another run's
+	// task, so a pause still standing has the instant alone and a node this
+	// reader could not read leaves the resumer alone. `status: "paused"` is what
+	// says the run suspended itself, and it is present either way: the run's own
+	// record is the one thing a paused row always has.
+	ResumeAt  string `json:"resume_at,omitempty"`
+	ResumedBy string `json:"resumed_by,omitempty"`
 }
 
 // JSONDoc is one watch --json document.
@@ -251,10 +288,14 @@ type JSONDoc struct {
 }
 
 func jsonFinished(slug, repo string, r RunRow) JSONFinished {
-	return JSONFinished{Run: r.Run, Slug: slug, Repo: repo, Title: r.Title, Status: r.Stage, Outcome: r.Outcome,
+	j := JSONFinished{Run: r.Run, Slug: slug, Repo: repo, Title: r.Title, Status: r.Stage, Outcome: r.Outcome,
 		Failed: r.Failed, PRURL: r.PRURL, PRNumber: r.PRNumber, AgeSecs: r.Age.Seconds(),
 		Job: r.Job, Profile: r.Profile, Provider: r.Provider, Account: r.Account,
-		LaunchedBy: r.LaunchedBy, PlanTask: r.PlanTask}
+		LaunchedBy: r.LaunchedBy, PlanTask: r.PlanTask, ResumedBy: r.ResumedBy}
+	if r.ResumeAt > 0 {
+		j.ResumeAt = time.UnixMilli(r.ResumeAt).UTC().Format(time.RFC3339)
+	}
+	return j
 }
 
 // LeasedUSD is the outstanding leased dollars: counted minus spent, floored at
@@ -316,7 +357,7 @@ func BuildJSON(project string, v View) JSONDoc {
 		for _, run := range r.Runs {
 			j := JSONRun{Run: run.Run, Slug: jr.Slug, Repo: r.Name, Title: run.Title, Stage: run.Stage, Round: run.Round,
 				Verify: run.Verify, Models: run.Models, Recipe: run.Recipe, Auth: run.Auth, Notional: run.Notional, Halted: run.Halted,
-				Mode: run.Mode, From: run.From,
+				Mode: run.Mode, From: run.From, Source: run.Source,
 				Health:      [...]string{HealthOK: "ok", HealthSilent: "silent", HealthLost: "lost"}[run.Health],
 				Deadline:    [...]string{DeadlineOK: "ok", DeadlineNear: "near", DeadlineOver: "over"}[run.Deadline],
 				Queued:      run.Queued,

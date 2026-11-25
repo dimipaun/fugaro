@@ -232,7 +232,11 @@ AB8b. **Slice 5, the edges:** AB9, AB10. **Documents and checks:** AB12, AB13, A
 - Acceptance: the Firebase stage can run with no flag, on `setup` and `update`, in the
   installation's own project, and acts only to adopt or to create: where the database is known on
   this machine it is skipped as today, so an operator's update of such an installation does what
-  it did (F34); otherwise it first probes for a database that exists and is unknown on this machine, by the
+  it did (F34; amended by console-fixes RI2: the skip is decided on the Firebase root's state, and
+  an installation whose state does not carry the run index's composite indexes yet runs the stage,
+  because nothing but an apply of that root creates them — unless the credential may not make the
+  project's IAM changes that apply makes, which is the operator's own update, and that run keeps
+  F34's skip and converges); otherwise it first probes for a database that exists and is unknown on this machine, by the
   Firebase state and never by the history account (F23), and adopts it only if it is in the
   installation's own project (F24); where there is none it probes whether the person can make the
   project's IAM changes; if so it creates the database in observe and records it; if not, or the

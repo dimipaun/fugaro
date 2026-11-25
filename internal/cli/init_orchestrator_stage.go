@@ -96,7 +96,9 @@ func (s *orchestratorUnitStage) Apply(ctx context.Context, _ initflow.Env) (init
 		return initflow.Outcome{}, userErr("%v", err)
 	}
 	fmt.Fprintf(s.e.r.w, "%s\n", st.Detail)
-	if err := installUnit(ctx, m, u); err != nil {
+	// No name: `fugaro setup` writes the project's own orchestrator's unit, and
+	// never a named one (D3206).
+	if err := installUnit(ctx, m, u, ""); err != nil {
 		return initflow.Outcome{}, err
 	}
 	fmt.Fprintf(s.e.r.w, "  no confirmation of its own: the login unit is one line of the plan you confirmed with this run\n")

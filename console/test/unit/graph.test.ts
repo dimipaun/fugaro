@@ -2109,20 +2109,19 @@ describe('the graph screen and its scope', () => {
     // **And what it was given is the sanitizer's answer, which is the class's and
     // not the screen's.** The field goes through `scopeText` with the class the
     // wire key `id` declares -- `label`, a free-text class -- and that class
-    // placeholders the `<owner>/<name>` a coordinator id begins with: the console
-    // reads it as a repository named in prose, which is the false positive
-    // `REPO_TOKEN_RE`'s own comment owns out loud. The digits the cell exists for
-    // are kept, so the row for `acme/widgets#42` draws `[redacted]#42`. A cell that
-    // read `acme/widgets#42` whole would be the console drawing a repository path
-    // out of a free-text field, which is what the rule is there to stop -- and the
-    // repository itself is drawn whole in its own cell beside this one, from the
-    // `repo` key and its `repository` class, which is where a reader reads it.
+    // draws the `<owner>/<name>` a coordinator id begins with as the words they
+    // are (D3213, 2026-11-21): the repository rule that used to eat them is
+    // gone, and the console no longer reads a repository named in prose as
+    // something to hide. The digits the cell exists for are kept with them, so
+    // the row for `acme/widgets#42` draws `acme/widgets#42` -- and the repository
+    // is drawn again in its own cell beside this one, from the `repo` key and its
+    // `repository` class, which is where a reader reads it.
     const pull = stateRow(drawn, 'coordinator:acme/widgets#42')
     expect(classedIn(pull, 'graph-scope-title')[0]?.textContent).toBe('Tidy the widget loader')
     expect(classedIn(pull, 'graph-scope-repo')[0]?.textContent).toBe('acme/widgets')
     expect(classedIn(pull, 'graph-word')[0]?.textContent).toBe('open')
     const number = classedIn(pull, 'graph-scope-pr')[0]
-    expect(number?.textContent).toBe('[redacted]#42')
+    expect(number?.textContent).toBe('acme/widgets#42')
     expect(number?.getAttribute('title')).toBe(GRAPH_PR_NO_LINK_REASON)
     // **The run's node draws no door**: a coordinator node names no run of the
     // console's list, and a tooltip promising one would be a door that opens

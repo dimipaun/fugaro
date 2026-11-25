@@ -5,10 +5,22 @@ package register
 
 import (
 	eeorch "github.com/dimipaun/fugaro/ee/orchestrator"
+	mapcli "github.com/dimipaun/fugaro/ee/orchestrator/cli"
+	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 )
 
 func init() {
+	// The map is a command of the core's own `orchestrator` family and not one of
+	// its own (CG6): the family is the core's — `ls`, `run`, `patch` — and the
+	// map is the one member of it that reads the coordinator's stored views, so
+	// it is a paid command living in ee/ (D1362, F26). An untagged build has no
+	// `orchestrator map` at all, which is what the contract's "this release's
+	// core CLI has no such command" says. The setter refuses a second call, and
+	// this package panics on any error rather than ship a tree without it (§5.5).
+	if err := fcli.RegisterSubcommand("orchestrator", "map", mapcli.NewMapCmd); err != nil {
+		panic("ee/register: " + err.Error())
+	}
 	// The orchestrator's shared half — a handoff between developers, the agent
 	// the project owns rather than a person, how many work items one approval
 	// covers, and whether a run came back refused by the workspace its

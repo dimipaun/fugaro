@@ -10,7 +10,10 @@ project jobs are served) and D1299 as amended (the service holds no write on a m
 are `internal/credsvc/scope.go`: `Scope`, `ScopeResolver`, `ScopeFault`, `StateStore`, `RepoAuthReader`,
 `OfferingReader`, `ForgeReader`, `WorkspaceNodeReader`, `WorkspaceScopeConfig`,
 `WorkspaceScopeResolverFunc`, `NewWorkspaceScopeResolver` and `WorkspaceKeepWarmPath`. The stub this
-package ships while the sides are built (`scope_stub.go`, with its test) is deleted by **I1**.
+package shipped while the sides were built (`scope_stub.go`, with its test) was deleted by **I1**;
+what stands in its place is WS1's case for a scope that serves nothing
+(`unservedResolver`, `TestARouteTheScopeDoesNotServeIsRefused`), which is a scope inside a test
+rather than a resolver a deployment can be built with.
 
 **WS1** (the installation's scope), **WS2** (the workspace's scope) and **WS5** (the process) are
 written against this document in parallel; **WS13** reads the keep-warm path from it, and **WS16**
@@ -64,13 +67,12 @@ not admitted. The type's own comment carries the whole of it, the audit line and
 
 `NewWorkspaceScopeResolver` is a **variable** of the constructor's signature
 (`WorkspaceScopeResolverFunc`) and not a function, and that is the contract's own shape rather than an
-accident: WS5 builds a workspace-mode process through the constructor while WS2 — which owns its body,
-in `scope_workspace.go` — is still being written, and Go has no way to declare a function in one file
-of a package and define it in another. Both sides therefore assign it from `init`: `scope_stub.go`
-assigns a resolver whose scope refuses every call, and WS2's file assigns the real one. The toolchain
-presents a package's files in name order, so the stub is initialized first and WS2's assignment is
-what answers from the moment WS2 lands. A caller does not have to know any of that: it calls the
-constructor and gets either the workspace's resolver or a refusal, never a nil.
+accident: WS5 built a workspace-mode process through the constructor while WS2 — which owns its body,
+in `scope_workspace.go` — was still being written, and Go has no way to declare a function in one file
+of a package and define it in another. The two sides therefore assigned it from `init` while the
+scaffold was up: `scope_stub.go` assigned a resolver whose scope refused every call, and WS2's file
+assigns the real one, which I1 is what left as the single assignment. A caller does not have to know
+any of that: it calls the constructor and gets the workspace's resolver, never a nil.
 
 ## The rules
 

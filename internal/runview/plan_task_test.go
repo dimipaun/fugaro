@@ -121,8 +121,27 @@ var planTaskReaders = map[string]string{
 	// ids against the id the row already carries, and both sides are display
 	// only -- the id decides nothing, and the state it produces is a word a
 	// screen draws.
-	"internal/plan/state.go":      "joins the id the row published to a plan's task, for the states a screen draws",
-	"internal/cli/plan_status.go": "turns the read's own sanitised rows into the facts the join reads; it never opens launch.json",
+	// The index entry carries it as the join key plan status and graph match a
+	// run to a node by (C-INDEX, D3201). The entry is a fold of the run's own
+	// launch record, the id is shape-checked where it is read, and the join it
+	// serves decides nothing but which node of a plan a row is drawn under --
+	// the same display-only join the rows already carry, from the same field,
+	// and no path is built from it.
+	"internal/runindex/contract.go": "the index entry's own plan_task field: the id plan status and graph join a run to a node by, display-only",
+	// The fold that writes such an entry (RI4): it copies the id out of the
+	// run's own task record into the document and decides nothing by it -- no
+	// path is built from it, nothing is matched on it, and it admits no run,
+	// budgets nothing and grants nothing.
+	"internal/runindex/fold.go": "writes the entry's plan_task from the run's own task record, for the join a screen draws",
+	// The reader of that entry (RI3): it names the field as the equality one
+	// page of the index is queried by, and the value is compared and nothing
+	// else -- no path is built from it, no record is opened by it, and what the
+	// query returns carries it as the display text contract.go's entry above
+	// already allows. The id a page was filtered by is the caller's own
+	// argument, never a value read out of a run.
+	"internal/runindex/firestore.go": "names the field as the equality a page of the index is queried by, and decides nothing by it",
+	"internal/plan/state.go":         "joins the id the row published to a plan's task, for the states a screen draws",
+	"internal/cli/plan_status.go":    "turns the read's own sanitised rows into the facts the join reads; it never opens launch.json",
 	// The orchestrator's own graph: an item carries the plan task it stands
 	// for, so the import of a plan (D2704) and the plan's adopted runs in
 	// flight (D2702) meet in one node instead of duplicating it (D2746). The
@@ -198,6 +217,25 @@ var planTaskReaders = map[string]string{
 	// and a person re-approves, and it admits no run, budgets nothing and
 	// launches nothing.
 	"internal/orchestrator/fold_discovered.go": "matches the id an entry of a run's own record carries against the items' plan tasks in the run's own node, to add one edge in front of an item that has not launched (E3, D2709)",
+	// The resolution of a cross-orchestrator reference (CG3, D3208): the item
+	// half of `<orchestrator>/<item>` may be a work item id or the plan task an
+	// item stands for (validItem), so finding the item a reference names means
+	// matching against the id an item carries -- and the match decides exactly
+	// what the fold's and the import's do: which item of a graph the operator
+	// already holds an edge points at. Both sides are items a node already
+	// carries, written by a plan's import or adopted from a launch record under
+	// the daemon's own lease, and the edge is written by the operator's own
+	// patch or by the fold, which only adds one in front of an item that has not
+	// launched. What a match can reach is a phase, and a phase decides nothing
+	// by itself: the item it holds or frees is still gated by its own approval,
+	// its spec digest, the caps and the breaker, so nothing is admitted,
+	// budgeted or granted by the id.
+	"internal/orchestrator/shard.go": "finds the item a cross-orchestrator reference names in one orchestrator's shards, by work item id or by the plan task an item stands for (D3208)",
+	// The note a blocked cycle leaves (CG3, D3220): it names each item of the
+	// cycle the way a reference does, so the person who reads it edits the
+	// dependency the note points at. It is the text of one bounded line and
+	// nothing is matched, decided or reached by it.
+	"internal/orchestrator/tick.go": "writes the plan task an item stands for into the note of a cycle it blocked, so the note names the item a person would edit (D3220)",
 }
 
 // TestPlanTaskIsDisplayTextOnly walks every non-test Go file of the module

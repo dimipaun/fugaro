@@ -269,8 +269,8 @@ drift the shared one exists to prevent, and the narrowness `invalidAllowDataToEn
 
 **Claim of the design:** that `settings set` is a second writer of the same decision.
 
-**What the code does.** `internal/settings/registry.go:644` registers
-`project_secrets.*.allow_data_to` (default `nobody`) and `:645` `project_secrets.*.proxy`, and
+**What the code does.** `internal/settings/registry.go:663` registers
+`project_secrets.*.allow_data_to` (default `nobody`) and `:664` `project_secrets.*.proxy`, and
 `schemas/settings.schema.json:968` and `:971` publish both. The command that writes them is built:
 `fugaro settings set` landed with S5 (`f09f10e5`, #1525) and lives in
 `internal/cli/settings_set.go`, reading the same registry to decide which keys it may write. (This
@@ -825,7 +825,7 @@ specification rather than an open question.
 `ProjectSecretCandidate` and `projectSecretAllowed` (`:1145`), which gain the new block as a fourth
 source — no new column, no `--json` field, no format version (F17). One settings registry row and one
 schema key land in the same task that adds the block (F13), with the row's **Owner** being the family
-that writes it: `secrets`, as `project_secrets.*.allow_data_to`'s own row is (`registry.go:644`), so
+that writes it: `secrets`, as `project_secrets.*.allow_data_to`'s own row is (`registry.go:663`), so
 `fugaro secrets set --allow-data-to` writes the new block's list and `settings set` stays out of it —
 the key is not named in `settingsGenericKeys` (`settings_set.go:116`), which is the allowlist that
 decides what the generic path writes, so a row the family owns and the generic path does not carry is

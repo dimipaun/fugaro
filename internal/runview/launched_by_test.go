@@ -41,6 +41,16 @@ var launchedByReaders = map[string]string{
 	"internal/watch/facts.go":      "stamps the launcher a scan read onto the rows a frame draws",
 	"internal/cli/watch_queued.go": "reads launch.json for the rows the watch scan produces",
 	"internal/cli/runs.go":         "the runs ls text column",
+	// The index entry carries it as the display text runs stats groups by
+	// (C-INDEX). It is a fold of the run's own launch record and not a read of
+	// the run: the entry is written by the history job from the record the
+	// launcher wrote, and every reader of it prints the row it names and
+	// decides nothing by it.
+	"internal/runindex/contract.go": "the index entry's own launched_by field: the launcher as display text, the runs stats group key",
+	// The fold that writes such an entry (RI4): it copies the launcher out of
+	// the run's own launch record into the document and decides nothing by it --
+	// no policy, no admission, no budget rule, no grant and no sweep reads it.
+	"internal/runindex/fold.go": "writes the entry's launched_by from the run's own launch record, for the row it names and nothing else",
 	// runs stats groups by the launcher and prints it: the group key IS the
 	// identity, sanitised and capped by internal/userstats before it reaches a
 	// row, and read for nothing but the row it names. The view the caller is

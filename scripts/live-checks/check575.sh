@@ -145,7 +145,8 @@
 #
 # Knobs, all read with a default so an unset shell runs it as written:
 # CHECK575_PROJECT, CHECK575_TOKEN_FILE, CHECK575_API (the portal's origin; the
-# staging default is the `fugaro-portal` hosting site's own Firebase domain, P9.2),
+# staging default is the staging site's own domain, `app.staging.fugaro.dev`,
+# and the production one is `app.fugaro.dev` — P0.1, P9.2),
 # CHECK575_CUSTOMER, CHECK575_WORKSPACE_ID (empty: the sale's workspace is read
 # from the customer's own workspaces — the one bound to the key's Firebase project
 # id — and this names it instead when the token's account is not a member of the
@@ -1479,11 +1480,14 @@ STATEMENT_PATH=${CHECK575_STATEMENT_PATH:-/api/statements/run}
 CURL_SECONDS=${CHECK575_CURL_SECONDS:-60}
 RUN_SECONDS=${CHECK575_RUN_SECONDS:-150}
 LOG_FRESHNESS=${CHECK575_LOG_FRESHNESS:-15m}
+# The portal's origin, per project (P0.1): `fugaro-portal-staging` serves
+# app.staging.fugaro.dev and `fugaro-portal` serves app.fugaro.dev, each site's
+# custom domain being the host the owner attached to it.
 if [ -z "$API" ]; then
   if [ "$PRODUCTION" = 1 ]; then
     API=https://app.fugaro.dev
   else
-    API=https://fugaro-portal.web.app
+    API=https://app.staging.fugaro.dev
   fi
 fi
 case "$API" in

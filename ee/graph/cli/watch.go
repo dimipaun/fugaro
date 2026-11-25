@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/ee/graph"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/runindex"
 )
 
 // `fugaro graph --watch --json`: the console's live graph. It is CG7 of
@@ -44,8 +45,8 @@ import (
 //     cost: a burst of events is one read, and at most one a second.
 //   - **A scope that is down is a state, and a refusal is terminal.** A
 //     transport that has fallen over, a listen the server has withdrawn, and a
-//     read that failed while the listen stood — an unreachable database, a
-//     bucket that refused a listing — are all carried in `sources[].state`, and
+//     read that failed while the listen stood — an unreachable database, a run
+//     index that refused a query — are all carried in `sources[].state`, and
 //     the child keeps running with the last document's nodes (H3, F20(3),
 //     contract §6.22, §10.6); a read this CLI is *refused* is the one thing that
 //     ends it, with a sentence naming the command, because that is what the
@@ -95,7 +96,7 @@ const withdrawnListen = "the server withdrew the listen"
 // here with a second check worded alike; and the store over it, the
 // subscription on it and every read behind a document share one client, one
 // credential and one connection.
-func runGraphWatch(ctx context.Context, out io.Writer, env *fcli.Cloud, db *rtdb.Client, scope graph.Scope) error {
+func runGraphWatch(ctx context.Context, out io.Writer, env *fcli.Cloud, db *rtdb.Client, index runindex.Reader, scope graph.Scope) error {
 	subs, err := graph.ScopeSubtrees(scope)
 	if err != nil {
 		return fcli.UserErr("%v", err)
@@ -106,13 +107,15 @@ func runGraphWatch(ctx context.Context, out io.Writer, env *fcli.Cloud, db *rtdb
 	// read that goes through it (readGraph, StoredProjectThrough). One per
 	// document would build an rtdb client, and mint its credential, on every
 	// change a console is watching for, which is the cost this one store is here
-	// to take off it.
+	// to take off it. The index the coordinator scope falls back to is the
+	// caller's for the same reason (runGraph), and it is handed on rather than
+	// built here so that one child reads through one of each.
 	stream, err := graph.NewStream()
 	if err != nil {
 		return fcli.RemoteErr(err)
 	}
 	stream.Floor, stream.Keep = graphFloor, graphKeepAlive
-	w := &watcher{env: env, out: out, st: stream, store: coordinator.NewStore(db), db: db, scope: scope, subs: subs}
+	w := &watcher{env: env, out: out, st: stream, store: coordinator.NewStore(db), index: index, db: db, scope: scope, subs: subs}
 	return w.run(ctx)
 }
 
@@ -125,6 +128,9 @@ type watcher struct {
 	// store is the connection every document's read goes through, and the same
 	// one for as long as the child lives (runGraphWatch).
 	store *coordinator.Store
+	// index is the run index the coordinator scope's runs-half fallback reads
+	// (IR3, F3), held for the same reason and for the same life as the store.
+	index runindex.Reader
 	// db is that connection's client, which the orchestrator scopes are read
 	// through: the same client the subscriptions are on, so one credential
 	// serves the stream and every read behind it (runGraphWatch).
@@ -403,7 +409,7 @@ func (w *watcher) write(ctx context.Context, now time.Time) error {
 // (H3, H4, H6).
 //
 // A read that *fails* is such a state, and never the end of the child: an
-// unreachable database, a bucket that refused a listing, a server that answered
+// unreachable database, a run index that refused a query, a server that answered
 // 503. The stream is the one output that must survive one — the console holds it
 // open for as long as its tab is — so the failure is carried in the document and
 // the change stays pending, which makes the next floor read again and the graph
@@ -421,7 +427,7 @@ func (w *watcher) snapshot(ctx context.Context, now time.Time) (graph.Document, 
 	// The read's own instant is the age the stream can give (contract §6.22):
 	// it is the caller that read the views and knows when (CG7), where the
 	// one-shot read has no such time to hand over.
-	doc, err := readGraph(ctx, w.env, w.store, w.db, w.scope, now, now, &warned)
+	doc, err := readGraph(ctx, w.env, w.store, w.index, w.db, w.scope, now, now, &warned)
 	switch {
 	case err == nil:
 		w.base = doc

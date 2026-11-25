@@ -1,12 +1,13 @@
 package infra
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"go/build"
+	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,11 +19,28 @@ import (
 // The holder is this test binary, re-executed with lockHelperEnv set: a real
 // second process, because that is what the lock is about — the kernel holds it
 // on the open file, so it has to be a process the kernel can end.
+//
+// The two talk over the holder's own ends, and neither waits on a clock: the
+// holder says it holds the lock on its stdout, and the test lets it go by
+// closing its stdin. A file the holder wrote, a sleep or a deadline is a moment
+// the test guessed at, and a holder that ends on the guess rather than on the
+// test's word leaves the assertions beside it proving nothing.
 const (
-	lockHelperEnv      = "FUGARO_WORKDIRLOCK_HELPER"
-	lockHelperReadyEnv = "FUGARO_WORKDIRLOCK_READY"
-	lockHelperGoEnv    = "FUGARO_WORKDIRLOCK_GO"
+	lockHelperEnv        = "FUGARO_WORKDIRLOCK_HELPER"
+	lockHelperLockedLine = "the workdir lock is held"
 )
+
+// lockHelperHeld is the lock the holder took, in a variable that outlives every
+// collection. The kernel's lock is on the *os.File inside the *WorkdirLock, and
+// an os.File nothing references is closed by a finalizer — so a holder that
+// dropped the value (LockWorkdirs's first result is the one that matters, and
+// the tempting `if _, err := LockWorkdirs(...)` drops it) would have the lock
+// given up by a garbage collection at a moment nothing chose: still alive,
+// still believing it holds the lock, and holding nothing. That is the flake of
+// 2026-11-22 under load — the collection landed between the holder's ready line
+// and the parent's next question, and the lock read as free while the holder
+// was running.
+var lockHelperHeld *WorkdirLock
 
 func TestMain(m *testing.M) {
 	if mode := os.Getenv(lockHelperEnv); mode != "" {
@@ -42,45 +60,36 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// runWorkdirLockHelper is the second process: it takes the lock, says so by
-// writing the ready file, and then does what the mode names. It exits 3 when
-// it cannot take the lock, which is a failed test and not a mode.
+// runWorkdirLockHelper is the second process: it takes the lock, says so on its
+// stdout, and then does what the mode names. It exits 3 when it cannot take the
+// lock, which is a failed test and not a mode.
 func runWorkdirLockHelper(mode string) {
-	if _, err := LockWorkdirs(os.Getenv, "proj-1234", "fugaro update"); err != nil {
+	var err error
+	lockHelperHeld, err = LockWorkdirs(os.Getenv, "proj-1234", "fugaro update")
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "the helper could not take the lock:", err)
 		os.Exit(3)
 	}
-	if ready := os.Getenv(lockHelperReadyEnv); ready != "" {
-		if err := os.WriteFile(ready, nil, 0o600); err != nil {
-			fmt.Fprintln(os.Stderr, "the helper could not write the ready file:", err)
-			os.Exit(3)
-		}
-	}
+	fmt.Fprintln(os.Stdout, lockHelperLockedLine)
 	switch mode {
 	case "sleep":
 		select {} // ended by the parent's kill
 	case "wait":
-		waitForFile(os.Getenv(lockHelperGoEnv))
+		// Ended by the parent's closing of this process's stdin: the holder
+		// goes when the test says so, which is what makes the exit this mode is
+		// about the holder's own and not a timer's.
+		_, _ = io.Copy(io.Discard, os.Stdin)
 		os.Exit(0)
 	}
 	os.Exit(3)
 }
 
-func waitForFile(path string) {
-	for i := 0; i < 2000; i++ {
-		if _, err := os.Stat(path); err == nil {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-}
-
-// lockChildEnv is os.Environ with the helper's own variables replaced rather
-// than appended: the child reads the first match, so a key the parent also has
-// would otherwise win.
-func lockChildEnv(state, mode, ready, goFile string) []string {
+// lockChildEnv is os.Environ with the helper's own variables and the state
+// directory replaced rather than appended: the child reads the first match, so
+// a key the parent also has would otherwise win.
+func lockChildEnv(state, mode string) []string {
 	drop := map[string]bool{
-		lockHelperEnv: true, lockHelperReadyEnv: true, lockHelperGoEnv: true,
+		lockHelperEnv:    true,
 		"XDG_STATE_HOME": true, "XDG_CONFIG_HOME": true, "HOME": true,
 	}
 	out := []string{lockHelperEnv + "=" + mode, "XDG_STATE_HOME=" + state}
@@ -90,45 +99,52 @@ func lockChildEnv(state, mode, ready, goFile string) []string {
 		}
 		out = append(out, kv)
 	}
-	if ready != "" {
-		out = append(out, lockHelperReadyEnv+"="+ready)
-	}
-	if goFile != "" {
-		out = append(out, lockHelperGoEnv+"="+goFile)
-	}
 	return out
 }
 
 // lockHolder is the second process, holding the lock until the test lets it
 // go: killing it is the other way to end it, and the one a crash looks like.
 type lockHolder struct {
-	cmd    *exec.Cmd
-	goFile string
+	cmd   *exec.Cmd
+	stdin io.WriteCloser
 }
 
 func startLockHolder(t *testing.T, state, mode string) *lockHolder {
 	t.Helper()
-	ready := filepath.Join(t.TempDir(), "ready")
-	goFile := filepath.Join(t.TempDir(), "go")
 	cmd := exec.Command(os.Args[0])
-	cmd.Env = lockChildEnv(state, mode, ready, goFile)
+	cmd.Env = lockChildEnv(state, mode)
 	cmd.Stderr = os.Stderr
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "the second process to take the workdir lock", func() bool {
-		_, err := os.Stat(ready)
-		return err == nil
-	})
-	return &lockHolder{cmd: cmd, goFile: goFile}
+	// The holder's own word that it holds the lock, read from its stdout. The
+	// read ends when the holder writes the line and when it ends, so a holder
+	// that could not take the lock is this failure at once — with the reason it
+	// printed on stderr — rather than a deadline this test spent twenty seconds
+	// on and then called the same thing.
+	line, err := bufio.NewReader(stdout).ReadString('\n')
+	if err != nil || strings.TrimSpace(line) != lockHelperLockedLine {
+		_ = cmd.Wait()
+		t.Fatalf("the second process did not report the lock (%q, %v)", line, err)
+	}
+	return &lockHolder{cmd: cmd, stdin: stdin}
 }
 
 // letGo ends the holder by its own exit, so the lock is given up by an exit and
-// not by a signal.
+// not by a signal: closing the holder's stdin is the event it is waiting on,
+// and the wait below is for the process itself.
 func (h *lockHolder) letGo(t *testing.T) {
 	t.Helper()
-	if err := os.WriteFile(h.goFile, nil, 0o600); err != nil {
-		t.Fatal(err)
+	if err := h.stdin.Close(); err != nil {
+		t.Fatalf("letting the holder go: %v", err)
 	}
 	if err := h.cmd.Wait(); err != nil {
 		t.Fatalf("the holder ended with %v, want a clean exit", err)
@@ -143,21 +159,6 @@ func (h *lockHolder) kill(t *testing.T) {
 		t.Fatalf("killing the holder: %v", err)
 	}
 	_ = h.cmd.Wait()
-}
-
-// waitFor polls until cond, or fails the test: the lock is taken by another
-// process, so every assertion about it is about something that happens in
-// another process's time.
-func waitFor(t *testing.T, what string, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("waited 20s for %s", what)
 }
 
 // lockIsFree reports whether this process can take the lock right now, giving
@@ -295,7 +296,13 @@ func TestWorkdirLockGoesWithTheProcess(t *testing.T) {
 				t.Fatal("the lock was free while the second process held it")
 			}
 			tc.end(t, holder)
-			waitFor(t, "the lock to be free once the holder ended", func() bool { return lockIsFree(t, getenv) })
+			// The holder has been waited for, so the question is asked once and
+			// not polled for: the claim is that the lock goes with the process,
+			// and a poll would pass on a lock freed a moment later, or one the
+			// holder never took.
+			if !lockIsFree(t, getenv) {
+				t.Fatal("the lock outlived the process that held it")
+			}
 			// The file stays — it is the next run's to take — and holding the
 			// lock means holding it, not finding a file.
 			path, err := WorkdirLockPath(getenv, "proj-1234")

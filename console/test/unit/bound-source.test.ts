@@ -23,7 +23,7 @@
 //     stopped showing that installation. It is **not** D13's no-installation
 //     state, which says no binary can be found while one is chosen and running.
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   NoInstallation,
@@ -35,7 +35,14 @@ import {
   noInstallationState,
 } from '../../src/source/cli'
 import type { BoundInstallation } from '../../src/source/cli'
-import { NO_GRAPH_SCOPE, NO_PLAN_CHECKOUT, SourceRefusal } from '../../src/source/source'
+import {
+  NO_GRAPH_SCOPE,
+  NO_NAMED_SCOPE,
+  NO_ORCHESTRATOR_MAP,
+  NO_PLAN_CHECKOUT,
+  NO_PLAN_NO_MERGES,
+  SourceRefusal,
+} from '../../src/source/source'
 import type { RoadmapMoveAnswer, RoadmapMoveOutcome, Snapshot } from '../../src/source/source'
 import { itHostRoute } from '../support/hostRoute'
 
@@ -49,6 +56,68 @@ const SECOND: BoundInstallation = {
   id: 'b2',
   project: 'other',
   binaryPath: '/opt/fugaro/bin/fugaro',
+}
+
+/**
+ * floor is the version floor this file's map-read case sets.
+ * `ORCHESTRATOR_MAP_CLI_FLOOR` is `null` on this tree -- `orchestrator map
+ * --json` is registered from `ee/` and no release carries it -- so the map read
+ * is refused for every installation and the teaching it does could not be
+ * reached at all. The mock below changes the one thing a case cannot reach: the
+ * predicate's default, exactly as `settings-write-floor.test.ts` does for
+ * `noApplySupported`. With it unset every other case in this file reads the real
+ * constant, which is `null`, and so nothing here behaves differently.
+ */
+const floor = vi.hoisted(() => ({ value: null as string | null, merges: null as string | null }))
+
+vi.mock('../../src/shared/version', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../src/shared/version')>()
+  return {
+    ...real,
+    orchestratorMapSupported: (version: string, at: string | null = floor.value) =>
+      real.orchestratorMapSupported(version, at),
+    // IR4's own floor, mocked the same way and for the same reason:
+    // `PLAN_STATUS_NO_MERGES_CLI_FLOOR` is `null` on this tree, so a `noMerges`
+    // payload is refused for every installation and the branch a release takes
+    // -- the argument reaching the child, and its own entry in the cadence --
+    // could not be driven at all.
+    planStatusNoMergesSupported: (version: string, at: string | null = floor.merges) =>
+      real.planStatusNoMergesSupported(version, at),
+  }
+})
+
+/** MAP_FLOOR is the release that first carries `orchestrator map --json`, and
+ * MAP_VERSION the installation's own line: one patch above it, so the read is
+ * admitted. Both are spelled rather than imported -- the claim is about the
+ * comparison, not about a constant's value. */
+const MAP_FLOOR = '1.4.0'
+const MAP_VERSION = '1.4.2'
+
+/** MERGES_FLOOR is the release that first carries `plan status --no-merges`
+ * (IR4's floor) and MERGES_VERSION the installation's own line: one patch above
+ * it, so the argument is admitted. Spelled rather than imported, on the two
+ * above's terms. */
+const MERGES_FLOOR = '0.33.0'
+const MERGES_VERSION = '0.33.1'
+
+afterEach(() => {
+  floor.value = null
+  floor.merges = null
+})
+
+/** MAP is the map document the teaching case is answered with: two active
+ * orchestrators of the project `acme`, the project's default one and one named
+ * (C-ORCH's id rule). Only `nodes[].id` is read by the surface. */
+const MAP = {
+  version: 1,
+  project: 'acme',
+  generated_at: '2026-11-07T12:00:00Z',
+  nodes: [
+    { id: 'acme', name: '', driver: 'dev@example.com', active_tasks: 1, running_jobs: 0, lease_age_seconds: 3 },
+    { id: 'acme~blue', name: 'blue', driver: '', active_tasks: 0, running_jobs: 2, lease_age_seconds: null },
+  ],
+  edges: [],
+  health: { sweep: true, started_at: null, ok_at: null, at: null, note: '' },
 }
 
 /** aSource is a `CliSource`-shaped stand-in: it answers a version and records
@@ -493,6 +562,102 @@ describe('the plan read, whose directory is the binding’s', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// The plan's `--no-merges` argument and its floor (IR4 of the console-fixes
+// plan, D3217 as amended).
+// ---------------------------------------------------------------------------
+
+describe('the plan read’s `noMerges` argument', () => {
+  /** aPlanSource is the same stand-in as the cadence case's, with the bindings
+   * this describe can flip: the installation the console is on, and the child
+   * factory's recording of what each read was asked for. */
+  function aPlanSource(installation: () => BoundInstallation, spawned: unknown[]): CliSource {
+    let reads = 0
+    return {
+      version: async () => ({ text: FIRST.id, receivedAt: '2026-10-15T12:00:00Z' }),
+      close: async () => undefined,
+      planStatus: async (args: unknown): Promise<Snapshot> => {
+        reads += 1
+        spawned.push(args)
+        return {
+          document: { read: reads },
+          receivedAt: '2026-10-15T12:00:00Z',
+          sequence: reads,
+          day: null,
+          rolled: false,
+          notices: [],
+        }
+      },
+    } as unknown as CliSource
+  }
+
+  it('refuses `--no-merges` below the flag’s floor, before a child exists', async () => {
+    // **The floor is asked before `resolve`**, on `orchestratorMap`'s terms: an
+    // installation whose CLI predates the release that carries the flag answers
+    // `unknown flag: --no-merges` and fails the whole read, which is a failure
+    // the operator can do nothing about. The constant names no release on this
+    // tree, so this is every installation today -- and the branch a release
+    // takes is driven below with the predicate's own argument.
+    const built: unknown[] = []
+    const spawned: unknown[] = []
+    const installation: BoundInstallation = { ...FIRST, checkout: '/home/operator/src/acme', version: '0.32.0' }
+    const source = createBoundSource({
+      installation: () => installation,
+      create: async () => {
+        built.push('child')
+        return aPlanSource(() => installation, spawned)
+      },
+    })
+
+    const error = await refusalOf(source.planStatus({ all: true, noMerges: true }))
+    expect(error, 'a read below the flag’s floor was not refused').toBeInstanceOf(SourceRefusal)
+    expect((error as SourceRefusal).message).toBe(NO_PLAN_NO_MERGES)
+    expect(built, 'the refusal spawned a child after all').toEqual([])
+
+    // **The refusal is the argument's and not the read's.** The same binding
+    // still answers the plain read -- which is the whole point of the floor: an
+    // older CLI gets the single read it has always had rather than a Graph tab
+    // with no canvas.
+    expect((await source.planStatus({ all: true })).document).toEqual({ read: 1 })
+    expect(spawned).toEqual([{ all: true }])
+  })
+
+  it('passes the argument above the floor, and caches it as its own document', async () => {
+    // The branch a release takes: the constant becomes the version whose flag
+    // lands, and the source hands the word to the child. **The cadence is keyed
+    // by the argv the arguments become**, so the canvas read and the plain read
+    // are two documents and neither is served for the other -- without this the
+    // merge section would draw the canvas document, or the first paint would be
+    // handed the merge-inclusive one, for up to a minute.
+    floor.merges = MERGES_FLOOR
+    const spawned: unknown[] = []
+    const installation: BoundInstallation = {
+      ...FIRST,
+      checkout: '/home/operator/src/acme',
+      version: MERGES_VERSION,
+    }
+    const source = createBoundSource({
+      installation: () => installation,
+      create: async () => aPlanSource(() => installation, spawned),
+    })
+
+    // The first paint: `--all --no-merges`, served from the cache on a repeat.
+    expect((await source.planStatus({ all: true, noMerges: true })).document).toEqual({ read: 1 })
+    expect((await source.planStatus({ all: true, noMerges: true })).document).toEqual({ read: 1 })
+    expect(spawned).toHaveLength(1)
+    // The merge section: the same command with the lookups left in, and a child
+    // of its own.
+    expect((await source.planStatus({ all: true })).document).toEqual({ read: 2 })
+    expect((await source.planStatus({ all: true })).document).toEqual({ read: 2 })
+    expect(spawned).toHaveLength(2)
+    expect(spawned).toEqual([{ all: true, noMerges: true }, { all: true }])
+    // And `noMerges: false` is the same argv as no `noMerges` at all, which is
+    // the plain read above rather than a third document.
+    expect((await source.planStatus({ all: true, noMerges: false })).document).toEqual({ read: 2 })
+    expect(spawned).toHaveLength(2)
+  })
+})
+
 describe('the graph read, whose scope a previous answer taught', () => {
   /** aGraphSource is a `CliSource`-shaped stand-in whose graph read answers one
    * document per call: `documents` is what each call returns, in order, and the
@@ -606,6 +771,157 @@ describe('the graph read, whose scope a previous answer taught', () => {
     const afterSwitch = await refusalOf(source.graphRead({ source: 'coordinator' }))
     expect((afterSwitch as SourceRefusal).message).toBe(NO_GRAPH_SCOPE)
     expect(spawned, 'the previous installation’s scopes were still admitted').toHaveLength(3)
+  })
+
+  it('refuses a named orchestrator scope below the floor, before the membership rule and before any child', async () => {
+    // **F40's widening sits behind a floor** (`ORCHESTRATOR_MAP_CLI_FLOOR`,
+    // `src/shared/version.ts`): `GRAPH_SCOPE_RE` now admits C-ORCH's named id
+    // (`orchestrator:<project>~<name>`, `src/main/ipc.ts`), and the release that
+    // first reads one is the release that ships `orchestrator map --json`. The
+    // constant is `null` today -- the command is registered from `ee/` and no
+    // tag carries it -- so every named scope is refused here with the console's
+    // own sentence about the CLI being too old, and **not** with `NO_GRAPH_SCOPE`:
+    // an older CLI's document can never list a named scope either, so the
+    // membership rule would give the same refusal for the wrong reason, and a
+    // renderer would be told the scope is missing rather than that this
+    // installation cannot read one.
+    //
+    // The refusal is thrown **before** `resolve`, so no binary is probed and no
+    // child exists: `built` and `spawned` are both empty, which is what makes
+    // this a fence rather than a sentence.
+    const built: string[] = []
+    const spawned: unknown[] = []
+    const source = createBoundSource({
+      installation: () => FIRST,
+      create: async (each) => {
+        built.push(each.id)
+        return aGraphSource([{ sources: [{ source: 'coordinator' }] }], spawned)
+      },
+    })
+
+    for (const scope of ['orchestrator:acme~blue', 'local:acme~blue']) {
+      const error = await refusalOf(source.graphRead({ source: scope }))
+      expect(error, scope).toBeInstanceOf(SourceRefusal)
+      expect((error as SourceRefusal).message, scope).toBe(NO_NAMED_SCOPE)
+    }
+    // The feed is refused by the same guard, thrown where the subscription is
+    // opened rather than when it is first polled -- so a screen cannot open a
+    // live child on a spelling the installation's CLI does not read.
+    expect(() => source.subscribeGraph({ source: 'orchestrator:acme~blue' })).toThrow(NO_NAMED_SCOPE)
+    expect(built, 'a named scope built a source, which is a child').toEqual([])
+    expect(spawned, 'a named scope spawned a read after all').toEqual([])
+
+    // The unnamed scopes are untouched by the floor: `all` and an id-carrying
+    // scope with no separator are the grammar the released CLI already reads.
+    expect((await source.graphRead({})).document['sources']).toEqual([{ source: 'coordinator' }])
+    expect(spawned).toHaveLength(1)
+  })
+
+  it('refuses the map read below the floor, and spawns nothing for it', async () => {
+    // `orchestrator map --json` is on this tree and in no release
+    // (`ORCHESTRATOR_MAP_CLI_FLOOR` is `null`), so the read the Coordinator tab
+    // opens with is refused at the source: no binary probed, no child started,
+    // and no `unknown command "map"` drawn as a failure the operator cannot act
+    // on. The refusal is its own sentence rather than the named scope's, because
+    // the states differ -- one is a read this installation cannot make at all,
+    // the other a scope it cannot name -- and the two fixes are different lines
+    // on the screen.
+    const built: string[] = []
+    const source = createBoundSource({
+      installation: () => FIRST,
+      create: async (each) => {
+        built.push(each.id)
+        return aSource([], each.id)
+      },
+    })
+
+    const error = await refusalOf(source.orchestratorMap({}))
+    expect(error).toBeInstanceOf(SourceRefusal)
+    expect((error as SourceRefusal).message).toBe(NO_ORCHESTRATOR_MAP)
+    expect(built, 'the refusal built a source, which is a child').toEqual([])
+
+    // ...and with no installation chosen it is D13's state rather than this
+    // floor's: the read has no version to ask about.
+    const unbound = createBoundSource({ installation: () => null, create: async (each) => aSource([], each.id) })
+    expect(await refusalOf(unbound.orchestratorMap({}))).toBeInstanceOf(NoInstallation)
+  })
+
+  /** aMapSource is a `CliSource`-shaped stand-in for the two reads the
+   * Coordinator makes: `orchestratorMap` answers one document, and `graphRead`
+   * answers a document listing the one scope it was asked for -- which is what a
+   * scoped read of a real CLI does, and what keeps a later `graphRead`'s own
+   * teaching from covering for the map's. Every call is recorded, so "the
+   * refusal spawned nothing" is a count. */
+  function aMapSource(map: Record<string, unknown>, spawned: unknown[]): CliSource {
+    return {
+      version: async () => ({ text: FIRST.id, receivedAt: '2026-11-07T12:00:00Z' }),
+      close: async () => undefined,
+      orchestratorMap: async (args: unknown): Promise<Snapshot> => {
+        spawned.push(args)
+        return {
+          document: map,
+          receivedAt: '2026-11-07T12:00:00Z',
+          sequence: 1,
+          day: null,
+          rolled: false,
+          notices: [],
+        }
+      },
+      graphRead: async (args: unknown): Promise<Snapshot> => {
+        spawned.push(args)
+        const source = (args as { readonly source?: unknown }).source
+        return {
+          document: { sources: [{ source: typeof source === 'string' ? source : 'all' }] },
+          receivedAt: '2026-11-07T12:00:00Z',
+          sequence: 1,
+          day: null,
+          rolled: false,
+          notices: [],
+        }
+      },
+    } as unknown as CliSource
+  }
+
+  it('admits the scope of every box the map drew, and nothing the map did not', async () => {
+    // **The drill-down's admission, and the reason the map read teaches at all**
+    // (CG7b). The Coordinator draws one box per `nodes[].id` and the press on a
+    // box opens that orchestrator through `graph.read --source
+    // orchestrator:<id>`; the membership rule above admits a scope only once an
+    // answer of this installation named it, and C-ORCH's map carries no
+    // `sources[]` -- so the map read records its own nodes, the same union
+    // `graphRead` records. Without that, the press the drawing itself invites
+    // would be refused `NO_GRAPH_SCOPE`. An id the map did not draw is refused
+    // all the same, which is what keeps this a rule rather than a licence.
+    floor.value = MAP_FLOOR
+    const spawned: unknown[] = []
+    const source = createBoundSource({
+      installation: () => ({ ...FIRST, version: MAP_VERSION }),
+      create: async () => aMapSource(MAP, spawned),
+    })
+
+    const map = await source.orchestratorMap({})
+    expect(spawned, 'the map read spawned no child').toHaveLength(1)
+    expect(map.document['nodes']).toHaveLength(2)
+
+    // One child each, because a scope is its own cadence key: the press is a
+    // real read and not the map's own answer handed back.
+    await source.graphRead({ source: 'orchestrator:acme' })
+    await source.graphRead({ source: 'orchestrator:acme~blue' })
+    expect(spawned).toHaveLength(3)
+
+    const refused = await refusalOf(source.graphRead({ source: 'orchestrator:acme~green' }))
+    expect((refused as SourceRefusal).message).toBe(NO_GRAPH_SCOPE)
+    expect(spawned, 'the scope the map did not draw reached the source').toHaveLength(3)
+
+    // A map with no `nodes[]` teaches nothing, on `graphSourcesOf`'s terms: a
+    // malformed answer must not admit every scope rather than none.
+    const bare = createBoundSource({
+      installation: () => ({ ...FIRST, version: MAP_VERSION }),
+      create: async () => aMapSource({}, []),
+    })
+    await bare.orchestratorMap({})
+    const error = await refusalOf(bare.graphRead({ source: 'orchestrator:acme' }))
+    expect((error as SourceRefusal).message).toBe(NO_GRAPH_SCOPE)
   })
 
   /** aMoveSource is `aGraphSource` plus the record's one write: what the next

@@ -12,7 +12,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -719,6 +721,10 @@ func TestTheCredentialsStageAppliesForAMovedRecord(t *testing.T) {
 	// release's image, so the stage has no image of its own to move and its
 	// skip has nothing to decide on but the records.
 	seedCredentialsService(t, r, r.credentialsRef())
+	// The installation already holds the resident orchestrator's block: this
+	// test is about the records, and a block still to be written is the other
+	// reason the stage has an apply to make.
+	seedOrchestratorBlock(t, r, r.credentialsRef())
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 
 	// The records have not moved: the door derived the jobs from them, nothing
@@ -1666,6 +1672,116 @@ func markSwitchRepoRecord(t *testing.T, r *initRig, name string, ready bool) {
 	}
 	if lc, err := localcfg.Load(r.cfg); err != nil || lc.Repos[name].CredentialsServiceOn() != ready {
 		t.Fatalf("the record the helper wrote does not read back as %v (err %v): the fixture is not the state this test starts from", ready, err)
+	}
+}
+
+// TestTheBackfillJudgesASwitchedRepositoryByItsOwnRecord is the owner's
+// installation of 2026-11-24 at the door that switched it on: a repository
+// whose root the state says was applied with the service on, and whose record
+// (creds.PathRepoAuth, written by the repository door from that checkout's
+// fugaro.yaml) says an auth the bundle in this installation cannot serve. Every
+// model call of that repository is refused at the service — its jobs' model
+// mounts are gone, so it has nothing to fall back on — and the door that put it
+// there is this one: the weak question ("the bundle holds a model credential")
+// is right only for the cascade, and the grant in the state does not say which
+// auth the apply that made it was for. Since config.ServiceServedAuths shipped
+// in 0.26.0 an `api-key` or `oauth` root is applied switched on too, and the
+// weak answer records ON a repository the bundle serves nothing.
+//
+// The record is the only thing at this door that says which auth, so the sharp
+// question is asked wherever one is there — and the fail-safe direction is the
+// point: recorded off, the launch withholds the address and the repository's
+// own `fugaro update --repo` re-applies its root with the mounts back, one
+// command and no `fugaro creds set`. The arms below are the three answers that
+// has to keep apart.
+//
+// Mutation (verified, run and restored): answer every switched entry from the
+// weak question (the pre-fix body) and the two false arms fail, recorded ON over
+// a bundle that serves their auth nothing.
+func TestTheBackfillJudgesASwitchedRepositoryByItsOwnRecord(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// auth and accounts are the record the repository door left: what that
+		// repository's own runs go out on.
+		auth     string
+		accounts []string
+		// bundle is the document `fugaro creds set` left in the installation's
+		// container.
+		bundle string
+		want   bool
+	}{
+		{
+			name:     "an oauth record whose account the bundle does not hold",
+			auth:     config.AuthOAuth,
+			accounts: []string{"belong"},
+			bundle:   config.AnthropicSecret + ": " + credsValue(t, "model") + "\n",
+			want:     false,
+		},
+		{
+			name:     "an oauth record whose account the bundle holds",
+			auth:     config.AuthOAuth,
+			accounts: []string{"belong"},
+			bundle: config.AnthropicSecret + ": " + credsValue(t, "model") + "\n" +
+				config.ClaudeOAuthTokenPrefix + "belong: " + credsValue(t, "belong") + "\n",
+			want: true,
+		},
+		{
+			name:     "an api-key record over a bundle holding no Anthropic key",
+			auth:     config.AuthAPIKey,
+			accounts: nil,
+			bundle:   config.ClaudeOAuthTokenPrefix + "belong: " + credsValue(t, "belong") + "\n",
+			want:     false,
+		},
+		{
+			name:     "a cascade record, which any model credential settles",
+			auth:     config.AuthCascade,
+			accounts: nil,
+			bundle:   config.ClaudeOAuthTokenPrefix + "belong: " + credsValue(t, "belong") + "\n",
+			want:     true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := switchRig(t)
+			db := buildBudgetForRig(t, r)
+			putSwitchBundle(t, r, []byte(tc.bundle))
+			slug, err := task.Slug("bitbucket", "acme/sandbox")
+			if err != nil {
+				t.Fatal(err)
+			}
+			seedRepoStateGrant(t, r, slug)
+			writeRepoAuthRecord(t, db, slug, creds.RepoAuth{
+				Version: creds.RepoAuthVersion, Auth: tc.auth, Accounts: tc.accounts,
+			})
+
+			e := rigEngine(t, r, &initOptions{yes: true})
+			c, err := newInitClients(t.Context(), e.lc)
+			if err != nil {
+				t.Fatalf("the rig's clients do not build: %v", err)
+			}
+			e.r.backfillCredentialsServiceReady(t.Context(), c, initStateBucket, e.lc, switchOutputs())
+			entry := e.lc.Repos["acme/sandbox"]
+			if entry.CredentialsServiceReady == nil {
+				t.Fatalf("the installation door left the entry unrecorded for a root whose state carries the grant: a repository whose record no door wrote is one every machine of this installation keeps asking about (localcfg.Repo.CredentialsServiceReady is a pointer for exactly this reason)")
+			}
+			if entry.CredentialsServiceOn() != tc.want {
+				t.Errorf("the installation door recorded the switch %v for a root whose state carries the grant and whose record is %s %v; want %v: a true here hands a launch the service's address for a credential this bundle does not hold, and the repository's jobs have no model mount left to fall back on (D143)",
+					entry.CredentialsServiceOn(), tc.auth, tc.accounts, tc.want)
+			}
+		})
+	}
+}
+
+// writeRepoAuthRecord writes one repository's record into the rig's budget
+// database the way the repository door does (creds.PutRepoAuth), so the
+// backfill below reads it through internal/creds' own reader.
+func writeRepoAuthRecord(t *testing.T, db *gcpfake.RTDB, slug string, rec creds.RepoAuth) {
+	t.Helper()
+	client, err := newBudgetClient(t.Context(), db.URL, true)
+	if err != nil {
+		t.Fatalf("opening the installation's budget database: %v", err)
+	}
+	if err := creds.PutRepoAuth(t.Context(), client, slug, rec); err != nil {
+		t.Fatalf("writing %s: %v", creds.PathRepoAuth(slug), err)
 	}
 }
 

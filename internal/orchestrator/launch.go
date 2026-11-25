@@ -263,7 +263,7 @@ type Action struct {
 // ladder launches on top (LadderLaunch): a rung's runs are the executor's to
 // ask for, and its own bound is not this plan's caps.
 func Plan(s State, view RunView, caps Caps, now time.Time) []Action {
-	actions, _ := planNode(s, view, caps, now, CountsOf(s, now), 0, BreakerOpen(s, now), nil)
+	actions, _ := planNode(s, view, caps, now, CountsOf(s, now), 0, BreakerOpen(s, now), nil, nil)
 	return actions
 }
 
@@ -290,7 +290,13 @@ func Plan(s State, view RunView, caps Caps, now time.Time) []Action {
 // cycle's allowance — a project whose first items are a rival's would otherwise
 // spend every cycle on skips and never plan past them. A plan that has learned
 // nothing (Plan, which reads no claims) hands nil and plans as it always did.
-func planNode(s State, view RunView, caps Caps, now time.Time, counts Counts, planned int, paused bool, held map[string]bool) ([]Action, int) {
+//
+// other is what the cycle resolved this node's cross references to (D3208), and
+// nil for a caller that read no other orchestrator: an item depending on one
+// then waits, which is the direction a plan that cannot see the far end fails
+// in. The reading is of this node's references alone, so a node whose items name
+// nobody else is planned exactly as it was before there were references.
+func planNode(s State, view RunView, caps Caps, now time.Time, counts Counts, planned int, paused bool, other crossPhases, held map[string]bool) ([]Action, int) {
 	if caps.KillSwitch || OverCap(s) || paused {
 		return nil, planned
 	}
@@ -306,7 +312,7 @@ func planNode(s State, view RunView, caps Caps, now time.Time, counts Counts, pl
 			}
 			continue
 		}
-		a, ok := nextAttempt(s, w)
+		a, ok := nextAttempt(s, other, w)
 		if !ok {
 			continue
 		}

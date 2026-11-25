@@ -239,6 +239,73 @@ func listItemLeaf(keyField, keyValue, field string, values []string) leafOf {
 	}
 }
 
+// seqItemLines is one item of a nested sequence of mappings — the keyField
+// first, then its scalars, then its lists of scalars, then its own sequences of
+// mappings — at the indentation the item holds its own keys at.
+func seqItemLines(indent, step int, it SeqItem) []string {
+	lines := []string{indentOf(indent) + "- " + renderKey(it.KeyField) + ": " + renderValue(it.Key, 0)}
+	for _, f := range sortedKeys(it.Fields) {
+		lines = append(lines, indentOf(indent+2)+renderKey(f)+": "+renderValue(it.Fields[f], 0))
+	}
+	for _, f := range sortedListKeys(it.Lists) {
+		lines = append(lines, listLines(indent+2, step, f, it.Lists[f])...)
+	}
+	for _, f := range sortedItemKeys(it.Items) {
+		lines = append(lines, itemsFieldLines(indent+2, step, f, it.Items[f])...)
+	}
+	return lines
+}
+
+// seqItemValueLines is a nested sequence's items alone, at the indentation a
+// list under a key at indent writes them: listValueLines' shape with each item a
+// mapping rather than a scalar.
+func seqItemValueLines(indent, step int, items []SeqItem) []string {
+	var lines []string
+	for _, it := range items {
+		lines = append(lines, seqItemLines(indent+step, step, it)...)
+	}
+	return lines
+}
+
+// itemsFieldLines is a sequence-of-mappings field as a block sequence: the key on
+// its own line and one item per line under it — listLines for a field whose items
+// are mappings.
+func itemsFieldLines(indent, step int, field string, items []SeqItem) []string {
+	return append([]string{indentOf(indent) + renderKey(field) + ":"}, seqItemValueLines(indent, step, items)...)
+}
+
+// itemsLeaf renders `key:` with one sequence item under it, that item a mapping
+// whose keyField comes first and whose field is a sequence of mappings of its own
+// — listItemLeaf's shape one level deeper, which UpsertSeqItemItemsByKey writes.
+func itemsLeaf(keyField, keyValue, field string, items []SeqItem) leafOf {
+	return func(key string, indent, step int) []string {
+		lines := []string{indentOf(indent) + renderKey(key) + ":"}
+		item := SeqItem{KeyField: keyField, Key: keyValue, Items: map[string][]SeqItem{field: items}}
+		return append(lines, seqItemLines(indent+step, step, item)...)
+	}
+}
+
+// sortedItemKeys keeps a map of nested sequences' fields in one order, so that
+// two runs of the same edit write the same bytes.
+func sortedItemKeys(m map[string][]SeqItem) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// sortedListKeys is sortedItemKeys for a map of sequences of scalars.
+func sortedListKeys(m map[string][]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // chain renders a path as a block of nested mappings, calling leaf for its last
 // element. The intermediate keys are written empty, which is how a document
 // grows a level a hand-written file did not have yet.

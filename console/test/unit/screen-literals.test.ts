@@ -198,6 +198,10 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
         'the caps panel\'s own word for what a figure is (`CAPS_BILLED_WORD` and its neighbours, this file\'s constants: the panel draws no column headers, so every figure carries one), and the caller passes those constants and nothing else',
     },
     note: 'model.notes holds only the console\'s own sentences (`buildSpendModel`), the one interpolation being a count the console computed',
+    'caps.note':
+      '`SpendCaps.note` has one writer, `capsFromFeed`, and what it writes is this file\'s own `CAPS_STREAM_ABSENT`; the whole-document read leaves it `null`. A document\'s own sentences take the `putText` branch beside it (`caps.warnings`, the `sentence` class)',
+    'caps.modeCarried ? CAPS_MODE_UNSET_WORD : CAPS_MODE_ABSENT_WORD':
+      'both words are this file\'s: `CAPS_MODE_UNSET_WORD` is the console\'s reading of the CLI\'s empty `mode` (the help\'s "unset, which acts as observe" -- the JSON carries `""` and never the phrase), and `CAPS_MODE_ABSENT_WORD` is the console\'s own name for a read that carried no `mode` member at all (RS5\'s streamed caps feed). The choice between them is `caps.modeCarried`, a boolean the model sets from the document\'s own keys, so no string a document wrote reaches this cell',
     'series.empty': "the console's own sentence for an account with no point to draw, written by `buildSeries`/`withheldSeries` -- or `null`, the branch that draws no cell at all",
   },
   'projects.ts': {
@@ -336,31 +340,26 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
   },
   'coordinator.ts': {
     word: {
-      within: 'numberCell',
+      within: 'wordCellNS',
       reason:
-        'the parameter of the `numberCell` helper itself; every call site passes one of this file\'s own count words (`COORDINATOR_RECORDS_WORD`, `COORDINATOR_IN_FLIGHT_COUNT_WORD`, `COORDINATOR_COLLISIONS_WORD`), so no document string reaches the sink',
+        'the parameter of the `wordCellNS` helper itself, which draws one of the console\'s own words as an SVG `tspan` on the canvas (CG7b): every call site passes one of this file\'s own words (`COORDINATOR_DEPENDS_WORD`, `COORDINATOR_OVERLAP_WORD`, `COORDINATOR_LEASE_WORD`, `COORDINATOR_TASKS_COUNT_WORD`, `COORDINATOR_JOBS_COUNT_WORD`, `COORDINATOR_HEALTH_BEAT_WORD`), so no document string reaches the sink',
     },
-    label: {
-      within: 'jobsControl',
+    'model.health.sweep ? COORDINATOR_HEALTH_ON_WORD : COORDINATOR_HEALTH_OFF_WORD': {
+      within: 'healthLine',
       reason:
-        'the parameter of the `jobsControl` helper itself, which is the job list\'s two controls (console 0.119.0, K4): its two call sites pass `COORDINATOR_JOBS_LOAD_WORD` and `COORDINATOR_JOBS_OLDER_WORD`, this file\'s own control words, so no document string reaches the sink',
+        'the health line\'s own word for whether the sweep is running: both are this file\'s constants, and the document\'s `health.sweep` boolean only **chooses** between them -- the boolean itself is never drawn, and the times beside it go through `putText`',
     },
-    'question.word': {
-      within: 'fillTranscriptQuestions',
+    '`${model.overlaps === 1 ? COORDINATOR_OVERLAP_SINGULAR : COORDINATOR_OVERLAP_PLURAL} — ${COORDINATOR_OVERLAP_WARNING_WORD}`':
+      'the overlap warning\'s own sentence: the singular/plural pair and the warning word are this file\'s constants, chosen by the count the model took from the document -- that count is drawn beside the sentence through `putReading`, and no document string is in the sentence itself',
+    '`${word} `': {
+      within: 'factRow',
       reason:
-        'a word of `COORDINATOR_TRANSCRIPT_QUESTIONS`, the console\'s own frozen table of the pane\'s three fixed questions (console 0.119.0, K5), so no document string reaches the sink',
+        'the parameter of the `factRow` helper itself, which draws one of a fallback row\'s two counts as the console\'s word then the document\'s number: its two call sites pass `COORDINATOR_TASKS_COUNT_WORD` and `COORDINATOR_JOBS_COUNT_WORD`, and the number goes through `putReading` rather than into this sentence',
     },
-    STAMP_REFRESH_LABEL:
-      'the console\'s own word for the stamp\'s one control (`src/renderer/section.ts`), the label `renderStamp` already writes on every screen\'s Refresh: K4\'s and K5\'s follow-ups draw the row a **refused** read is left with (`coordinatorRefreshLine`), and its control is the console\'s press and never a string a document chose',
-    sentence: {
-      within: 'floorNote',
+    '`${edge.kind === COORDINATOR_OVERLAP ? COORDINATOR_OVERLAP_WORD : COORDINATOR_DEPENDS_WORD} `': {
+      within: 'fallbackList',
       reason:
-        'the parameter of the `floorNote` helper itself, which is the sentence a floor is drawn as (`coordinatorJobsFloorNote` and `coordinatorWindowNote`): its two call sites pass `COORDINATOR_JOBS_FLOOR_WORD` and `COORDINATOR_WINDOW_FLOOR_WORD`, this file\'s own floor words, and the version drawn beside each is the handshake\'s own line rather than a document string',
-    },
-    drawn: {
-      within: 'drawRunId',
-      reason:
-        'the ending `displayRuns` answered for one run -- a job list row\'s `runs[].run_id` or a record\'s `runs[].id` (`shared/shortid.ts`): the shortest suffix that tells the run apart from the other rows drawn in the same list, never shorter than four characters, and -- in its cross-repository form -- that suffix with the repository in front of it. It is drawn only when it is a tail of the id **this cell would draw**, and the row\'s own four characters (`shortRun` of the sanitized id) otherwise. The id has already been through `sanitizeText` in the `runId` class in the same function -- a refusal, and a marker the recorder wrote, take the `putText` branch that draws no ending at all -- and the endings are cut from `drawnRef`, which puts the id and the repository through their own classes *before* `displayRuns` cuts and prefixes them, so either answer is a cut of a string the console would draw whole. No whole id travels on this cell: a coordinator row opens no run, so the cell carries no `data-run-id` (`live.ts`\'s `putRunId` is the door-carrying half of the same drawing)',
+        'the verb of one fallback edge line: both words are this file\'s constants and the document\'s `kind` only chooses between them. The line\'s other half -- the name of the orchestrator the edge joins to -- is a document string and goes through `textCell`',
     },
   },
   // The two drawings console 0.116.1 adds: the panel's reading placeholder and
@@ -978,16 +977,60 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     'missing.account': 'the account whose figure the document does not carry, off the closed `SPEND_ACCOUNTS` union',
   },
   'coordinator.ts': {
-    "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
-    theme: {
-      within: 'renderCoordinatorFrame',
+    "classes.join(' ')": {
+      within: ['make', 'makeNS'],
       reason:
-        'a `CoordinatorTheme`, the closed theme tuple. The write is the frame\'s: it is the shell the entry mounts in the frame the tab is opened in, and `renderCoordinator` draws the whole screen by calling it (console 0.117.0)',
+        'the class list of the two element makers; every call site passes string-literal class names',
     },
-    'pullName(label, link.repo)': {
-      within: 'pullButton',
+    theme: {
+      within: ['renderCoordinatorFloor', 'renderCoordinator'],
       reason:
-        'a pull request number\'s accessible name (K2b), and the same kind of value as `graph.ts`\'s `cardLabel`: the console\'s own verb, the repository that passed `pullLink` (main\'s own `PULL_REQUEST_REPO_RE` **and** the `repository` text class the cell beside it draws), and the label the row draws. The label is not a second conversion of a document string: `pullButton` is only reached with a link, and `pullLink` builds one only from a record that carries a whole positive `pr.number` -- which is exactly the case `recordLabel` answers `#<n>` for, so no run id, title or branch ever reaches the name. It is a name and not a drawing: it is never painted, and what a reader who cannot see the row hears is the number and where it lives',
+        'a `CoordinatorTheme`, the closed theme tuple. The write is the screen\'s own `data-theme`, and both call sites are this file\'s two renderers (CG7b)',
+    },
+    'coord(value)': {
+      within: 'geometry',
+      reason:
+        'one SVG geometry number: `coord` is this file\'s one place a number becomes a string (`String(value)`), and every value it is handed is a finite number the layout client answered with -- the engine\'s own placement of a box, or a constant this file declares (`COORDINATOR_NODE_WIDTH`). No document string is a coordinate: the document\'s counts are drawn through `putReading`, never as geometry',
+    },
+    '`0 0 ${coord(width)} ${coord(height)}`': {
+      within: 'viewBox',
+      reason:
+        'the canvas\'s own window: two literal zeroes and the two numbers `coordinatorDrawing` measured the placed boxes into, which is the extent of what this file is drawing and not a value a document chose',
+    },
+    '`translate(${coord(x)} ${coord(y)})`': {
+      within: 'shift',
+      reason:
+        'one box\'s placement as an SVG translation: two numbers `coord` wrote, out of the rectangle the layout client answered with',
+    },
+    'pathOf(route.sections)': {
+      within: 'edgePath',
+      reason:
+        'one routed edge as an SVG path: `pathOf` spells only `M`/`L` verbs and the bend points the engine answered with, every number through `coord`. No document string is in it -- an edge\'s `reason` is drawn as a `<title>` through `putText`',
+    },
+    'box.node.id': {
+      within: 'nodeBox',
+      reason:
+        'an orchestrator\'s id as the `data-orchestrator` hook a press joins on: an id is the document\'s own key and is **never drawn** -- `schema.ts` refuses a sanitised one because a rewritten id would name another orchestrator -- and it is not markup, a URL or a selector. What a press does with it is `graph.read --source orchestrator:<id>`, which `src/main` admits only against its own scope grammar',
+    },
+    'node.id': {
+      within: ['healthLine', 'fallbackList'],
+      reason:
+        'the same `data-orchestrator` hook as a canvas box\'s, on a lease row and on a fallback row: the id is the document\'s key, drawn nowhere and used only to tell one row from another',
+    },
+    'selected.id': {
+      within: 'tasksPanel',
+      reason:
+        'the same hook on the drill-down panel, so the panel says which orchestrator its rows are about',
+    },
+    'task.key': {
+      within: 'tasksPanel',
+      reason:
+        'one drill-down row\'s `data-key`: the key `graph.read`\'s own document joins its node on (`GraphNode.key`), used to tell one row from another and drawn nowhere. The three strings the row **does** draw (title, state, repository) each go through their own text class',
+    },
+    'edge.kind': {
+      within: 'fallbackList',
+      reason:
+        'an edge\'s own kind as the `data-kind` hook the fallback line wears, so a case can tell the two kinds apart in a tree. It is a value of the contract\'s closed pair (`dependency`, `overlap`), never drawn, and a kind this file does not know selects no rule and reads as the dependency it is drawn as',
     },
   },
   'reading.ts': {
@@ -1833,12 +1876,14 @@ describe('no module under src/renderer writes an inline style', () => {
       'manage/kinds/keys.ts',
       'manage/kinds/models.ts',
       'manage/kinds/people.ts',
+      'manage/kinds/pools.ts',
       'manage/kinds/read.ts',
       'manage/kinds/recipes.ts',
       'manage/kinds/repos.ts',
       'manage/shell.ts',
       'manage/types.ts',
       'new-bridge.ts',
+      'prewarm.ts',
       'screens/accountkeys.ts',
       'screens/coordinator.ts',
       'screens/credentialsservice.ts',
@@ -1860,7 +1905,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'section.ts',
       'skeleton.ts',
       'stream.ts',
-      'stubs/bridge-stub.ts',
+      'wizard/wizard.ts',
       'writes.ts',
     ])
   })

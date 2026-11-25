@@ -9,10 +9,10 @@
 // screens read the answers. Written in that order, each of them would invent its
 // own spelling of a name or a field and the console would discover the
 // disagreement at runtime, in a window, in front of an operator. So the names,
-// the payloads and the answer shapes are frozen here first, the stub bridge
-// (`src/renderer/stubs/bridge-stub.ts`) answers each of them with a fixture that
-// decodes against them, and I-OPS holds those fixtures to the goldens the CLI
-// tasks record. The allow-list task implements the operations **beside** this
+// the payloads and the answer shapes are frozen here first, the fixture bridge
+// the consumers build against (`console/test/support/newOpAnswers.ts`) answers
+// each of them with a value that decodes against them, and I-OPS holds those
+// fixtures to the goldens the CLI tasks record. The allow-list task implements the operations **beside** this
 // module and imports nothing from it: what it must agree with is the wire, and
 // the wire is the CLI's.
 //
@@ -43,9 +43,9 @@
 // them. Everything a screen reads -- the rows, the `end`, the failure -- is
 // derived from those lines here, in one place, rather than by each reader
 // slicing an array of its own. A one-shot read's `document` is the CLI's own
-// document, unchanged, which is what makes I-OPS's job possible: a stub fixture
-// for a feed is the golden's own lines, and a stub fixture for a read is the
-// golden's own document.
+// document, unchanged, which is what makes I-OPS's job possible: a fixture for a
+// feed is the golden's own lines, and a fixture for a read is the golden's own
+// document.
 //
 // **The answer envelope.** Every operation's reply is the console's ordinary one
 // (`ConsoleReply`, `src/main/ipc.ts`): `{ok: true, data}` or

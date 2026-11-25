@@ -1,6 +1,6 @@
 # Dynamic secret delivery
 
-**Status: every task has merged except DS3.4 (token ownership on the run record); DS4.3, the docs, is this sweep.** The owner answered D1930–D1946 on 2026-11-09, all as recommended (D1938–D1940 after review round 1, D1941–D1943 after round 2, D1944–D1946 after round 3). No item is open.
+**Status: every task has merged — DS4.3, the docs, as #3521 and DS3.4, token ownership on the run record, as #3522, its last two.** The owner answered D1930–D1946 on 2026-11-09, all as recommended (D1938–D1940 after review round 1, D1941–D1943 after round 2, D1944–D1946 after round 3). No item is open.
 
 **Spec owner:** the Fugaro owner. **Date:** 2026-11-09. **Base:** `main` at `934bb23f8`.
 
@@ -14,7 +14,7 @@ in the reconciliation.
 | --- | --- |
 | [spec.md](spec.md) | The addendum, verbatim |
 | [reconciliation.md](reconciliation.md) | The unified design (§4), conflicts C1–C10 (§3), findings F1–F37, decisions D1930–D1946, resolutions R1–R12, UNVERIFIED. **Where it disagrees with `spec.md`, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Slices DS0–DS4, tasks, levels, critical path, shared-files table, Checks 510–511. **DS3.4 is the one task still open** |
+| [implementation-plan.md](implementation-plan.md) | Slices DS0–DS4, tasks, levels, critical path, shared-files table, Checks 510–511. **Every task has merged; DS3.4, token ownership on the run record, was the last, #3522** |
 | [check510-steps.md](check510-steps.md) | Check 510's owner steps (U3, F30: the name-prefix IAM condition, the grants IAM may not be able to make conditioned, the secret ID length). The owner ran it on 2026-11-11 (its conditioned create was ADMITTED, contradicting F30's create half) and again on 2026-11-12 (a create outside the prefixes was REFUSED, so create is fenced by name and DS2.2 conditions it) |
 | [check511-steps.md](check511-steps.md) | Check 511's owner steps (U4: a request every N seconds keeps one service instance up). The owner ran it on 2026-11-12 and it exited 2: a request every 15 s kept the service warm for the whole 300 s window (20 of 20 answered, no cold start) with `min_instance_count` 0, but its `instance-ids` row came back empty, so the one-instance reading is not settled |
 

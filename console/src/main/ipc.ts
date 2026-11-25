@@ -193,6 +193,56 @@ export const MODEL_PRICE_MAX_LENGTH = 11
  * refused by the same check: a model billed at nothing is not a price. */
 export const MAX_MODEL_PRICE = 1000
 
+/**
+ * IMAGE_NAME_RE, IMAGE_TAG_RE, IMAGE_TAGS_MAX and MAX_IMAGE_DESCRIPTION_LENGTH
+ * are the image write's four grammars (the console improvements plan's MW2,
+ * D2903), and every one of them is checked in main **before any child exists**.
+ *
+ * **The entry name is the CLI's own catalog-name rule** -- `ValidCatalogName`,
+ * `internal/config/catalog.go:221`, which is `ProjectNameRE`: 1 to 40 of a-z,
+ * 0-9 and `-`, starting and ending with a letter or a digit. It is deliberately
+ * **narrower than the model ID's shape** (`MODEL_ID_RE` above, whose grammar the
+ * plan gives the image name as well): a name reaches a tag of an image in the
+ * shared registry and a key of the project's bucket, so the CLI refuses a `.`, a
+ * `/` and a 41st character in one -- and a grammar here that admitted them would
+ * be a console that spells words its own child then refuses.
+ *
+ * **A tag is the CLI's own tag rule and not a list of tags.** `catalogTagRE`
+ * (`internal/config/catalog.go:236`) is the shape 1 to 64 of a-z, 0-9, `.`, `_`
+ * and `-` beginning with a letter or a digit, and the plan's "tags from the CLI's
+ * closed list" is a claim about a list that does not exist: a tag is free-form
+ * (`docs/project-image-catalog/spec.md`, "a **free-form** list of what the image
+ * provides"), and the words the flag's help names -- node, postgres, redis,
+ * firebase-emulator, docker -- are examples rather than a set. So main checks the
+ * shape, exactly as it checks a route's (`modelRoute`), and whether the tags are
+ * the ones a repository needs is the selection's own rule, one process later.
+ *
+ * **The description is printable and bounded**, which is the CLI's rule for it
+ * (`maxCatalogDescriptionLen`, 200) and the reason `hiddenCharacterReason` above
+ * is the rest of it: a listing prints a description on one line, so a tab and a
+ * newline are refused with every other control character, and a bidi override
+ * with every other invisible one.
+ */
+export const IMAGE_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/
+export const IMAGE_TAG_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/
+/** IMAGE_TAGS_MAX is how many tags one list may carry: the CLI's own
+ * `maxCatalogTags` (`internal/config/catalog.go:141`). */
+export const IMAGE_TAGS_MAX = 32
+/** MAX_IMAGE_TAGS_LENGTH and MAX_IMAGE_DOCKERFILE_LENGTH are the console's own
+ * bounds on those two arguments, and they are the same bound for the same
+ * reason: each is handed to a child as **one argv element**, so what has to be
+ * bounded is how large a word this process will make -- `MAX_ARGUMENT_LENGTH` in
+ * `src/main/spawn.ts`. They are narrower than the CLI's own limits (a list may
+ * be 32 tags of 64 characters there, a definition names a repository of up to
+ * `MAX_REPOSITORY_LENGTH` and a path of up to 200), and narrow is the direction
+ * this surface is built in: the console may refuse a word the CLI would take and
+ * must never spell one it would not. */
+export const MAX_IMAGE_TAGS_LENGTH = 200
+export const MAX_IMAGE_DOCKERFILE_LENGTH = 200
+/** MAX_IMAGE_DESCRIPTION_LENGTH bounds an entry's description, and it is the
+ * CLI's own `maxCatalogDescriptionLen` (`internal/config/catalog.go:145`). */
+export const MAX_IMAGE_DESCRIPTION_LENGTH = 200
+
 /** MAX_REPOSITORY_LENGTH bounds an `owner/name` argument in characters. It is
  * checked before the grammar runs, so a hostile payload cannot make a regular
  * expression work: every repository that matches the grammar is ASCII anyway,
@@ -293,27 +343,53 @@ export const RUNS_STREAM_SINCE_WINDOWS: readonly string[] = Object.freeze(['24h'
 
 /**
  * GRAPH_SCOPE_RE is the closed shape of a `graph.read` scope argument: the two
- * selector words, and an id-carrying scope whose id is one lower-case letter or
- * digit followed by up to 39 more of those or a hyphen. It is **the CLI's own
- * pattern, spelled the same way** (`graph.ParseScope`'s `scopeIDPattern`,
- * `ee/graph/key.go`), because the value reaches argv from a renderer and both
- * ends have to refuse the same strings: an id this process admitted and that
- * command refused would be a child spawned to fail.
+ * selector words, and an id-carrying scope whose id is **C-ORCH's orchestrator
+ * id and nothing else** -- the project's own name rule (`config.ProjectNameRE`),
+ * optionally a `~` (`orchestrator.NameSeparator`) and a name
+ * (`^[a-z0-9][a-z0-9-]{0,39}$`). The id half is one rule, held by
+ * `orchestrator.ValidScopeID` (`internal/orchestrator/naming.go`, F40), the same
+ * rule `graph.ParseScope` reads: an id written twice here would drift from the
+ * command's own, and an id this process admitted and that command refused would
+ * be a child spawned to fail.
+ *
+ * **A named id is admitted by the grammar and by nothing else.** A scope whose
+ * id carries a `~` reaches a child only from a CLI at or above
+ * `ORCHESTRATOR_MAP_CLI_FLOOR` (`src/shared/version.ts`), because the named
+ * scope grammar and `orchestrator map --json` are one release's; the floor is
+ * asked at the source (`createBoundSource`, `src/source/cli.ts`), the one place
+ * a scope and an installation's version are read together, and `graphScopeIsNamed`
+ * is the one spelling of "this scope names a named orchestrator" both use.
  *
  * Anchored, so nothing before or after it gets in. A leading `-` (which would
  * reach argv as a flag, the plan's H1), a path separator, an uppercase letter,
- * a whitespace character, a `.`, an `@` and a 41-character id are each refused
- * here -- before a child exists -- and `isSafeArgumentValue` refuses the leading
- * `-` and the alphabet a second time on the way into the argv.
+ * a whitespace character, a `.`, an `@`, a trailing hyphen on the project half
+ * and an over-long id are each refused here -- before a child exists -- and
+ * `isSafeArgumentValue` refuses the leading `-` and the alphabet a second time
+ * on the way into the argv.
  */
-const GRAPH_SCOPE_RE = /^(?:all|coordinator|(?:orchestrator|local):[a-z0-9][a-z0-9-]{0,39})$/
+const GRAPH_SCOPE_RE =
+  /^(?:all|coordinator|(?:orchestrator|local):[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?(?:~[a-z0-9][a-z0-9-]{0,39})?)$/
 
 /**
  * MAX_GRAPH_SCOPE_LENGTH bounds a scope argument before the grammar runs, so a
  * hostile payload cannot make the regular expression work. It is the longest
- * value the pattern admits: `orchestrator:` plus a 40-character id.
+ * value the pattern admits: `orchestrator:` plus `orchestrator.MaxOrchestratorIDLength`
+ * (81: a project name at its 40-character cap, the `~`, and a name at its cap).
  */
-export const MAX_GRAPH_SCOPE_LENGTH = 'orchestrator:'.length + 40
+export const MAX_GRAPH_SCOPE_LENGTH = 'orchestrator:'.length + 81
+
+/**
+ * graphScopeIsNamed reports whether a well-formed scope names a **named**
+ * orchestrator -- whether its id half carries the separator. It is one spelling
+ * for the one reader that has to tell the two apart: `createBoundSource`'s scope
+ * guard (`src/source/cli.ts`), which admits a named scope only at or above
+ * `ORCHESTRATOR_MAP_CLI_FLOOR`. It takes a scope `GRAPH_SCOPE_RE` already
+ * admitted and looks for the separator the pattern allows in one place only, so
+ * it is a reading and not a second grammar.
+ */
+export function graphScopeIsNamed(scope: string): boolean {
+  return scope.includes('~')
+}
 
 /**
  * ROADMAP_NODE_RE is the shape of the **document key** a move names: the
@@ -488,13 +564,16 @@ const MAX_ROADMAP_RELEASE_LENGTH = 64
  * is what ties the three together: a `set` carries a value and an `unset` does
  * not.
  *
- * **`graphSource` is the graph read's one argument** (the graph plan's CG9a):
- * the scope the document is about, held to `GRAPH_SCOPE_RE` -- the CLI's own
- * anchored pattern -- and, at the source, to the set a previous read of the same
- * document listed (F21). It is the one kind here whose *shape* is a closed
- * grammar and whose *membership* is the read's own answer, which is why the two
- * checks live apart: this module refuses a spelling no scope could have, and
- * `createBoundSource` refuses an id the CLI never named.
+ * **`graphSource` is the graph read's one argument** (the graph plan's CG9a;
+ * its named ids arrived with the console-fixes plan's CG7a): the scope the
+ * document is about, held to `GRAPH_SCOPE_RE` -- C-ORCH's own id rule, the one
+ * `graph.ParseScope` reads -- and, at the source, to the set a previous read of
+ * the same document listed (F21). It is the one kind here whose *shape* is a
+ * closed grammar and whose *membership* is the read's own answer, which is why
+ * the two checks live apart: this module refuses a spelling no scope could have,
+ * and `createBoundSource` refuses an id the CLI never named -- and refuses a
+ * **named** id below `ORCHESTRATOR_MAP_CLI_FLOOR`, the release whose CLI reads
+ * one at all.
  *
  * **`licenceKey` is the licence section's one argument** (subscriptions plan
  * S2.7), and it is the only argument on this surface whose value is a
@@ -543,6 +622,13 @@ export type ArgumentKind =
   | 'modelId'
   | 'modelRoute'
   | 'modelPrice'
+  // The image write's four (the same plan's MW2, D2903): the entry's name, the
+  // positional the command reads, the `owner/name:path` definition it is built
+  // from, the tags it provides and the description a listing prints.
+  | 'imageName'
+  | 'imageDockerfile'
+  | 'imageTags'
+  | 'imageDescription'
 
 /** ArgumentSpec is one field of an operation's closed argument schema. */
 export interface ArgumentSpec {
@@ -627,12 +713,15 @@ export interface ConsoleOperation {
    * **It is a field of the row and never a list of names beside the table.** The
    * design states the rule and its reason: a later cancel is admitted to the kept
    * set by its own row differing from the launch's in this one field, so a gate
-   * that classified by name would refuse a cancel the day it was added. Two rows
-   * carry it today -- `run.launch` and `settings.edit`, the whole of what T12
-   * takes away -- and `assertReachableSurface` refuses the column on a row that
-   * spawns no command, because the rows that spawn nothing are the console's own
-   * answers (the design's kept set, and the key screen §5.6 keeps ungated as the
-   * way out).
+   * that classified by name would refuse a cancel the day it was added. The rows
+   * carrying it are the ones that spawn a command and change something --
+   * `run.launch`, `settings.edit`, `roadmap.move`, `setup.apply` and `models.add`
+   * -- and one row that spawns nothing **as itself** because it drives another
+   * one of them: `settings.editor.open` is the settings write's window, and it
+   * names the row whose plan its every child comes from (`drivesOperation`
+   * below). `assertReachableSurface` refuses the column on every other row that
+   * spawns no command, because those rows are the console's own answers (the
+   * design's kept set, and the key screen §5.6 keeps ungated as the way out).
    *
    * Every other operation is the design's kept set: every read, including the
    * paid views, and the kill switch's state.
@@ -665,6 +754,34 @@ export interface ConsoleOperation {
    * at registration instead.
    */
   readonly installationArgument?: string
+  /**
+   * `drivesOperation` names the operation whose command a row spawns while
+   * fixing no command of its own. `settings.editor.open` is the one row with it:
+   * that operation is the settings write's window (SU1, D2902), its `command` is
+   * `null` because no payload of it becomes an argv here, and every child it
+   * spawns is one phase of `settings.edit`'s own plan, built and spawned through
+   * the source (`src/main/settingsedit.ts`, `createSettingsEditor`).
+   *
+   * **It is a column for `refusedAfterLapse`'s reason, and it is what keeps the
+   * lapse's class honest about a write reached through a window.** The class is
+   * the operations that take a capability away when the key has lapsed, and a
+   * window that drives one of them is one of them: a lapse that refused the write
+   * and kept the window would leave the Project tab's pencil on screen with a
+   * working write behind it, which is exactly what the design's T12 refuses
+   * (`docs/lapse-read-only/spec.md` §3.2).
+   *
+   * `assertReachableSurface` holds it: the name must be a row of this same
+   * table, and it must itself be in the refused class and spawn a command --
+   * which is what admits a row that spawns no command to that class at all.
+   *
+   * **It is a `string` and not an `OperationName`**, for the reason
+   * `installationArgument` is one: `OperationName` is derived from this same
+   * table (`(typeof CONSOLE_OPERATIONS)[number]['name']`), so a column typed
+   * with it would make the table's own type depend on itself. The name is
+   * checked at registration instead, which is where a name no row answers has to
+   * fail.
+   */
+  readonly drivesOperation?: string
 }
 
 /**
@@ -694,7 +811,7 @@ export const LAUNCH_PAYLOAD_WIDTH =
   LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Forty-three operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Fifty-seven operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -1058,13 +1175,20 @@ export const CONSOLE_OPERATIONS = [
   // path"). `argvFor` builds every word of the argv from the spawn table, and no
   // row can emit `--dir` for this command.
   //
-  // **`all` and nothing else.** `--all` is the screen's own control: it lists
-  // the closed tasks (merged and cancelled) that the read otherwise counts per
-  // release. It is a boolean and never a string, so a payload cannot spell a
-  // flag with it, and the cloud flags (`--project`, `--config`) are the
-  // installation's, exactly as `runs ls` carries them -- never `--gcp-project`
-  // or `--region`, which are no part of this surface. There is no positional
-  // argument: `newPlanStatusCmd` is cobra's `NoArgs`.
+  // **`all` and `noMerges`, and nothing else.** `--all` is the screen's own
+  // control: it lists the closed tasks (merged and cancelled) that the read
+  // otherwise counts per release. `--no-merges` is the Graph tab's first paint
+  // (IR4 of the console-fixes plan, D3217 as amended): the read spawns no `gh`
+  // and answers `merges_read: false`, so the canvas does not wait for up to
+  // thirty-two forge lookups -- and it is held behind
+  // `PLAN_STATUS_NO_MERGES_CLI_FLOOR` (`src/shared/version.ts`), which no
+  // release names yet, so the source refuses the argument below it rather than
+  // handing an older CLI a flag it answers `unknown flag` for. Both are
+  // booleans and never strings, so a payload cannot spell a flag with either,
+  // and the cloud flags (`--project`, `--config`) are the installation's,
+  // exactly as `runs ls` carries them -- never `--gcp-project` or `--region`,
+  // which are no part of this surface. There is no positional argument:
+  // `newPlanStatusCmd` is cobra's `NoArgs`.
   {
     name: 'plan.status',
     method: 'planStatus',
@@ -1076,7 +1200,13 @@ export const CONSOLE_OPERATIONS = [
         key: 'all',
         kind: 'flag',
         required: false,
-        why: '`newPlanStatusCmd` has this flag, and it is the screen’s own control: it lists the tasks the read otherwise counts per release, which is narrower than the count the screen already has. It is the one argument this operation declares, and the design’s §5.1 table has not carried a row for the command yet.',
+        why: '`newPlanStatusCmd` has this flag, and it is the screen’s own control: it lists the tasks the read otherwise counts per release, which is narrower than the count the screen already has. The design’s §5.1 table has carried a row for the command since IR4.',
+      },
+      {
+        key: 'noMerges',
+        kind: 'flag',
+        required: false,
+        why: '`newPlanStatusCmd` has this flag (IR2 of the indexed-reads plan), and the Graph tab’s first paint is its one caller: the canvas is drawn from the read that spawns no `gh`, and the plain read follows as its own section to decorate the merged nodes. Below `PLAN_STATUS_NO_MERGES_CLI_FLOOR` the argument reaches no child at all.',
       },
     ],
   },
@@ -1090,10 +1220,14 @@ export const CONSOLE_OPERATIONS = [
   // **Its one argument is the scope, and it is the only argument on this
   // surface held to a grammar *and* to a membership.** `GRAPH_SCOPE_RE` refuses
   // every spelling no scope could have (`-x`, `all --source local:o1`,
-  // `orchestrator:../..`, a 41-character id) before a child exists, and
-  // `createBoundSource` refuses a scope the previous document of this read did
-  // not list (F21) -- a value a renderer invented, or one that names a scope
-  // the CLI's own sources array never mentioned, is a refusal and not a spawn.
+  // `orchestrator:../..`, a project half over 40 characters) before a child
+  // exists, and `createBoundSource` refuses a scope the previous document of
+  // this read did not list (F21) -- a value a renderer invented, or one that
+  // names a scope the CLI's own sources array never mentioned, is a refusal and
+  // not a spawn. **A named id is the same check's second half** (CG7a): the
+  // grammar admits `orchestrator:<project>~<name>`, and the source refuses it
+  // below `ORCHESTRATOR_MAP_CLI_FLOOR`, because the CLI that reads a named
+  // orchestrator is the release that ships `orchestrator map --json`.
   // The read is also the one place the console may name a *paid* command
   // (`ee/graph`, D1362), which is why it takes no other word: the `--watch`
   // stream that holds a child open is a different argv and its own row
@@ -1758,6 +1892,41 @@ export const CONSOLE_OPERATIONS = [
     summary: 'what the fleet’s writers have declared, newest first',
     args: [],
   },
+  // The orchestrator map (the console-fixes plan's CG7a; C-ORCH's document,
+  // `internal/orchestrator/mapdoc.go`; D3221): `fugaro orchestrator map --json`,
+  // the project's **active** orchestrators, the connections between them and the
+  // coordinator's own heartbeat. It is the read the Coordinator tab draws, and
+  // it sits beside the stored view and the declarations above because it is the
+  // same screen's third read -- and the one that replaces the tab's v2 sections
+  // (CG7b, D3210).
+  //
+  // **It has no argument at all**, like the declarations read: the whole argv is
+  // the row's own words (`src/main/spawn.ts`), so there is no field a renderer
+  // could fill and nothing it could steer. `--json` is fixed rather than a
+  // control, and `--project`/`--config` come from the row's `takesProject` like
+  // every other project read (rule 3). The document is one project's, so the
+  // scope a screen is looking at is not an argument of this read: the map is
+  // already the project's active set.
+  //
+  // **The command is registered from `ee/`** (`ee/orchestrator/cli/map.go`) and
+  // no released CLI carries it, so `ORCHESTRATOR_MAP_CLI_FLOOR` is `null` today
+  // (`src/shared/version.ts`) and the tab draws the version it needs rather than
+  // spawning this row at all. The two ends of that floor are one release: the
+  // command, and the named graph scope beside it (`GRAPH_SCOPE_RE`, F40).
+  //
+  // Like the stored view, this read asks nothing of the host: the map is built
+  // from the caller's own database -- the orchestrator nodes, their leases, the
+  // claims and the coordinator's heartbeat (`roles/firebasedatabase.viewer`) --
+  // so no App key is read, no installation token is minted and no provider is
+  // opened.
+  {
+    name: 'orchestrator.map',
+    method: 'orchestratorMap',
+    command: 'orchestrator map',
+    flags: ['--json'],
+    summary: 'the project’s active orchestrators, their connections and the coordinator’s heartbeat',
+    args: [],
+  },
   // The roadmap record's one write (the dependency-graph plan's GV3.2; the
   // console's third write, after rule 11's launch and rule 12's settings edit):
   // `fugaro coordinator roadmap move <plan>/<task> --to <release|none> --json`,
@@ -2413,12 +2582,161 @@ export const CONSOLE_OPERATIONS = [
     ],
   },
   {
+    // The image write's plan (the console improvements plan's MW2, D2903):
+    // `image add --no-apply --dry-run --json --dockerfile=<owner/name:path>
+    // --tags=<a,b> --description=<text> --project <name> [--config <path>] --
+    // <name>`.
+    //
+    // **It is the CLI's own dry run and nothing else**, the models plan's
+    // property one command over. `--dry-run` is what makes this row a read: the
+    // child validates the definition exactly as the real add would -- the
+    // entry's name, its tags, its source, the installation's own skew gate and
+    // D1573's coding-agent refusal -- and prints the versioned document
+    // (`schemas/image-add-plan.schema.json`) with the entry it would add and the
+    // steps it would run or save. Nothing is written: no catalog entry, no
+    // build, no saved apply step, and no repository redeployed. The window the
+    // operator confirms is drawn from that document, so there is no second
+    // description of the change for the console to get wrong.
+    //
+    // **The payload is four values and every one is held to a grammar before any
+    // child exists**: the entry's name (`imageName`, the positional), its
+    // definition (`imageDockerfile`) and its tags and description (`imageTags`,
+    // `imageDescription`) -- each checked in main against the CLI's own rule for
+    // it, and each emitted as **one word** of the argv, the definition, the tags
+    // and the description as `--flag=value` and the name as the positional behind
+    // the row's `--` (`src/main/spawn.ts`), so no value a renderer sends can
+    // parse as a flag.
+    //
+    // **`--no-apply` is main's**, a word of the command path rather than an
+    // argument, and here it is the word that keeps the expensive step off this
+    // machine: the add's own follow-up steps -- the catalog's **build**, the
+    // repository's redeploy and the publish of the node every run is admitted by
+    // (D1561) -- are saved for `fugaro apply` (D1565). The build is the one of
+    // the console's writes that bills by itself, which is exactly why the console
+    // saves it and owes it rather than running it.
+    //
+    // **`--inline`, `--image` and `--default` are arguments of no operation on
+    // this surface**, and `--branch` with them. The CLI refuses three of them --
+    // with `--branch` -- only when an agent marker is in the environment
+    // (`imageAddAgentRefusal`, D1573), and a console's child carries no such
+    // marker, so that refusal would not fire for this surface: what keeps those
+    // definitions off the wire is the spawn table, whose every row declares the
+    // three `=`-form arguments above and none of them, plus `assertArgvFlags`,
+    // which refuses each of the four for every operation that does not declare
+    // it. A console that could write `--inline` would be one that writes
+    // executable content from a renderer's text.
+    name: 'image.add.plan',
+    method: 'planImageAdd',
+    command: 'image add --no-apply --dry-run',
+    flags: ['--json'],
+    summary: 'what adding an image catalog entry would change, as the CLI’s own plan document and with nothing written',
+    args: [
+      {
+        key: 'name',
+        kind: 'imageName',
+        required: true,
+        why: 'the entry name `image add` reads as its positional word — the name the catalog is keyed by, and the shape the CLI’s own catalog-name rule gives it',
+      },
+      {
+        key: 'dockerfile',
+        kind: 'imageDockerfile',
+        required: true,
+        why: 'the definition the entry is built from, as `owner/name:path`: a Dockerfile in one of the project’s repositories. It is the one definition this surface admits — `--inline` writes executable content from a renderer’s text and `--image` names an image that already exists, and neither is a word any row of this table may spawn',
+      },
+      {
+        key: 'tags',
+        kind: 'imageTags',
+        required: false,
+        why: 'the tags the image provides, comma-separated — optional, and free-form by shape rather than by membership: the tags a repository needs are the project’s own, so main checks the CLI’s tag grammar and the selection checks the cover',
+      },
+      {
+        key: 'description',
+        kind: 'imageDescription',
+        required: false,
+        why: 'what the entry is for, printed beside it in a listing — optional, one line, printable and bounded',
+      },
+    ],
+  },
+  {
+    // The image write (the same plan's MW2, D2903): the row above less
+    // `--dry-run --json`, and the console's **sixth write** — after the launch,
+    // the settings write, the record's move, the wizard's apply and the models
+    // write.
+    //
+    // **It changes a project setting every run is admitted by.** The entry it
+    // appends to the installation's image catalog is what the tag-cover rule
+    // selects a job's image from, and through the steps `--no-apply` saves it is
+    // the build the project's images come from: a project setting, which is the
+    // class of change rule 12's modal exists for. It is **not a widening** in
+    // the tick's sense — it raises no limit, and MD2's document has no
+    // `widening` member for a window to classify it by — so its yes is one
+    // deliberate click, as the wizard's is.
+    //
+    // **It is a project admin's and nothing else.** `image add` refuses anyone
+    // but a project admin (`accessGateProject`, `internal/cli/image_catalog.go`),
+    // and that is the authority check that survives this console: the window's
+    // action is enabled only for a project admin (RB4's gating), and a role that
+    // changed between the two is refused by the CLI's own sentence, which the
+    // screen shows like any other refusal. The console decides no role of its own
+    // (D2907).
+    //
+    // **It declares the plan's own four arguments and no others.** The window
+    // showed one argv; the apply runs *that* argv, held by main with the plan
+    // document's digest, and never one a renderer sends again
+    // (`src/main/imageadd.ts`): an IPC apply with no plan, or one whose payload
+    // does not match the held one, spawns nothing.
+    //
+    // **It is one of the lapse's rows.** A write is taken away with the launch
+    // and the settings write when the licence has lapsed (`refusedAfterLapse`);
+    // the plan above is the same command as a read and keeps answering.
+    name: 'image.add',
+    method: 'addImage',
+    command: 'image add --no-apply',
+    flags: [],
+    summary: 'the write: add the catalog entry the plan showed and save the build that publishes it for `fugaro apply`',
+    refusedAfterLapse: true,
+    args: [
+      {
+        key: 'name',
+        kind: 'imageName',
+        required: true,
+        why: 'the entry name the confirmed plan was about — the same four values the plan carried, so the argv main re-runs is the argv the window drew',
+      },
+      {
+        key: 'dockerfile',
+        kind: 'imageDockerfile',
+        required: true,
+        why: 'the definition the confirmed plan showed, word for word',
+      },
+      {
+        key: 'tags',
+        kind: 'imageTags',
+        required: false,
+        why: 'the tags the confirmed plan showed, or absent when the plan set none',
+      },
+      {
+        key: 'description',
+        kind: 'imageDescription',
+        required: false,
+        why: 'the description the confirmed plan showed, or absent',
+      },
+    ],
+  },
+  {
     // The settings editor (SU1, D2902): the one operation of the nine whose
-    // command is **null**, because it spawns nothing as itself. It opens the
+    // command is **null**, because it fixes no argv of its own. It opens the
     // main process's own window for one key of the document the settings read
     // answered -- the entry, the validation, the dry run and the confirmation
     // window are that window's -- and it answers the outcome object rather than
     // a document, exactly as `settings.edit` does.
+    //
+    // **It is the settings write, reached through a window**, so it is in the
+    // lapse's refused class beside `settings.edit` and says which row's command
+    // its children come from: SU2b wires the Project tab's pencil to this row,
+    // and a lapse that refused the write and kept the window would leave the
+    // pencil on screen with a working write behind it. Its payload names no
+    // installation, exactly as the write's does not: the flow writes the settings
+    // document of the installation this console is driving.
     //
     // **`key` is the whole payload.** The layer and the phase are main's,
     // decided from the read's own row and the dry run's document, so a renderer
@@ -2430,6 +2748,8 @@ export const CONSOLE_OPERATIONS = [
     name: 'settings.editor.open',
     method: 'openSettingsEditor',
     command: null,
+    drivesOperation: 'settings.edit',
+    refusedAfterLapse: true,
     flags: [],
     summary: 'the write’s window: one setting’s entry, its dry run and the operator’s confirmation',
     args: [
@@ -3040,6 +3360,15 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     value: 'image add',
     why: 'a write: it appends an entry to the installation’s image catalog, a project setting a reviewer signed off on',
     where: 'internal/cli/image_catalog.go:337 (Use: "add <name>")',
+    // **The console's sixth write, and the only way into it** (the console
+    // improvements plan's MW2, D2903), granted for the models write's reason one
+    // group over: the two rows that make the write are the CLI's own dry run and
+    // the write itself, the operator's yes is rule 12's own window's top frame's,
+    // and main re-runs the argv it showed rather than one a renderer sends. Every
+    // other operation under `image`, and every other word of this group -- `rm`
+    // and `promote` above, `build`, `gate`, `record`, `refresh` and
+    // `git-credential` beside them -- is refused as before.
+    except: ['image.add.plan', 'image.add'],
   },
   {
     shape: 'command',
@@ -3059,6 +3388,12 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     value: 'add',
     why: 'the catalog write above, refused as a word of this command as well: an `image` argv that spells `add` is refused before `spawn` is called, whether it spells it in the command path or in the flags it fixes',
     where: 'internal/cli/image_catalog.go:337 (Use: "add <name>")',
+    // The write's two operations, by name, for the models argv row's reason: an
+    // exception grants an operation and never a word, so `image ls --json` and
+    // `image add --no-apply` are told apart by the operation that built them and
+    // not by the `add` in the line. `image rm` and `image promote` keep their own
+    // rows below, and no other `image` operation may spell this word.
+    except: ['image.add.plan', 'image.add'],
   },
   {
     shape: 'argv',
@@ -3972,16 +4307,18 @@ function validateValue(
       if (!SECRET_SCOPES.includes(value)) return refuse(`${spec.key} must be ${SECRET_SCOPES.join(' or ')}`)
       return { ok: true, value }
     case 'graphSource':
-      // The graph read's scope (CG9a): `all`, `coordinator`, or an id-carrying
-      // scope whose id matches the CLI's own pattern. This is the half that
-      // keeps a value from being a path, a flag or another word of the command
-      // -- `-x`, `all --source local:o1`, `orchestrator:../..` and a 41-character
-      // id are all refused here, before a child exists -- and the other half,
-      // that the scope is one a previous read of this document named, is the
-      // source's (`createBoundSource`, F21).
+      // The graph read's scope (CG9a; named ids with CG7a): `all`, `coordinator`,
+      // or an id-carrying scope whose id is C-ORCH's orchestrator id -- a project
+      // name and, for a named orchestrator, a `~` and a name. This is the half
+      // that keeps a value from being a path, a flag or another word of the
+      // command -- `-x`, `all --source local:o1`, `orchestrator:../..`, a
+      // 41-character project half and a name over 40 characters are all refused
+      // here, before a child exists -- and the other half, that the scope is one
+      // a previous read of this document named, is the source's
+      // (`createBoundSource`, F21).
       if (!GRAPH_SCOPE_RE.test(value)) {
         return refuse(
-          `${spec.key} must be all, coordinator, or orchestrator:<id> / local:<id> with an id of 1 to 40 characters of a-z, 0-9 and -`,
+          `${spec.key} must be all, coordinator, or orchestrator:<id> / local:<id> with an id of a project name, optionally ~ and a name of 1 to 40 characters of a-z, 0-9 and -`,
         )
       }
       return { ok: true, value }
@@ -4108,6 +4445,81 @@ function validateValue(
       }
       return { ok: true, value }
     }
+    case 'imageName': {
+      // The CLI's own catalog-name rule (`IMAGE_NAME_RE` above), and the shape
+      // is the whole check: whether the catalog already holds this name is the
+      // child's question, and its sentence -- which names the entry -- is the one
+      // the screen shows.
+      if (!IMAGE_NAME_RE.test(value)) {
+        return refuse(`${spec.key} must be a catalog entry name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or a digit`)
+      }
+      return { ok: true, value }
+    }
+    case 'imageDockerfile': {
+      // `owner/name:path`, cut at the **first** colon exactly as the CLI cuts it
+      // (`catalogEntryFromFlags`, `internal/cli/image_catalog.go:672`): a second
+      // colon belongs to the path, and a value with no colon, an empty half or a
+      // repository that is not `owner/name` is one the CLI would refuse a process
+      // later. Both halves are checked here so the console never spells it.
+      const colon = value.indexOf(':')
+      if (colon < 0) {
+        return refuse(`${spec.key} must be a Dockerfile in one of the project's repositories, as owner/name:path`)
+      }
+      const repo = value.slice(0, colon)
+      const path = value.slice(colon + 1)
+      if (!REPOSITORY_RE.test(repo) || path === '') {
+        return refuse(`${spec.key} must be a Dockerfile in one of the project's repositories, as owner/name:path`)
+      }
+      // The path's own rules, which are the CLI's for a dockerfile source
+      // (`catalogPathMessage`, `internal/config/catalog.go:448`): it is fetched
+      // from a repository and read by a build, so it is one clean relative path
+      // inside that repository: never absolute, never carrying a `..`, a `.` or
+      // an empty segment, and never empty. A control character is already refused
+      // for every string argument (`hiddenCharacterReason` above).
+      const segments = path.split('/')
+      if (
+        path.startsWith('/') ||
+        segments.includes('..') ||
+        segments.includes('.') ||
+        segments.includes('') ||
+        path === '.'
+      ) {
+        return refuse(`${spec.key} must name a path inside the repository: relative, with no '..' or '.' segment`)
+      }
+      return { ok: true, value }
+    }
+    case 'imageTags': {
+      // A **shape per member and not a membership**, which is `modelRoute`'s
+      // reading one list over: the CLI's own tag grammar is `IMAGE_TAG_RE` and
+      // the set of tags a project uses is the project's own, so a tag this
+      // installation holds nothing for is refused by the selection's sentence
+      // rather than here. What main refuses is a list that is empty, longer than
+      // the CLI's own count, made of a member outside the grammar, or wide
+      // enough to be one argv element this process will not hand a child.
+      const members = value.split(',')
+      if (
+        value === '' ||
+        members.length > IMAGE_TAGS_MAX ||
+        members.some((member) => !IMAGE_TAG_RE.test(member))
+      ) {
+        return refuse(`${spec.key} must be a comma-separated list of tags: at most ${IMAGE_TAGS_MAX} of a-z, 0-9, '.', '_' and '-', each starting with a letter or a digit`)
+      }
+      return { ok: true, value }
+    }
+    case 'imageDescription': {
+      // **An empty description is refused rather than sent.** The CLI takes an
+      // entry with no description -- `description:` is optional in the catalog --
+      // and the way a renderer says so is by omitting the argument, which is what
+      // leaves the flag off the argv: an empty `--description=` would be a
+      // different argv for the same entry. A tab, a newline and every other
+      // invisible character are already refused for every string argument
+      // (`hiddenCharacterReason` above), which is the CLI's own rule for a
+      // description (a listing prints it on one line).
+      if (value === '') {
+        return refuse(`${spec.key} must be a description: leave it out for an entry with none`)
+      }
+      return { ok: true, value }
+    }
     default:
       return refuse(`${operation} does not take ${spec.key}`)
   }
@@ -4206,6 +4618,18 @@ function kindLimit(kind: ArgumentKind): number {
       return 64
     case 'modelPrice':
       return MODEL_PRICE_MAX_LENGTH
+    // The image write's four (MW2), each the length bound of the rule above it:
+    // the name's is the grammar's own 40 and the description's is the CLI's 200,
+    // while the definition's and the list's are the console's own bound on one
+    // argv element -- narrower than the CLI's, and so the one that bites.
+    case 'imageName':
+      return 40
+    case 'imageDockerfile':
+      return MAX_IMAGE_DOCKERFILE_LENGTH
+    case 'imageTags':
+      return MAX_IMAGE_TAGS_LENGTH
+    case 'imageDescription':
+      return MAX_IMAGE_DESCRIPTION_LENGTH
     case 'installationName':
       return MAX_INSTALLATION_NAME_LENGTH
     case 'installationCheckout':
@@ -4747,49 +5171,19 @@ export interface IpcMainLike {
  * verbatim -- and a generic one otherwise, so a thrown non-Error cannot put an
  * object on the wire.
  *
- * "Bounded" is meant literally, and it is the three things `boundReason` does: a
+ * "Bounded" is meant literally, and it is the two things `boundReason` does: a
  * message is flattened to one line (a CLI sentence is one line; a message with
  * newlines in it is either a stack or something written to look like the
- * console's own output), its absolute paths are replaced (the CLI's refusals
- * name flags and values, never the machine's directories, and a path in a
- * refusal is a path a screen would print), and it is cut at
- * `MAX_REPLY_REASON_LENGTH`. The CLI's own sentences are short enough that none
- * of the three touches them; a hostile message hits all three.
+ * console's own output), and it is cut at `MAX_REPLY_REASON_LENGTH`. A path is
+ * **not** one of them: the CLI's refusals name flags, values and the operator's
+ * own directories, so a path in a refusal is a path a screen would print, and
+ * D3213 (2026-11-21) leaves it as written -- the renderer's `sanitizeRefusal` is
+ * what masks a secret, wherever one stands. The CLI's own sentences are short
+ * enough that neither of the two touches them; a hostile message hits both.
  */
 function replyReason(error: unknown): string {
   if (error instanceof Error && error.message !== '') return boundReason(error.message)
   return 'the operation failed'
-}
-
-/**
- * ABSOLUTE_PATH_RE matches an absolute path in a message: a POSIX one (`/etc`,
- * `/home/me/x`), a home-relative one (`~/x`), or a Windows one with a drive
- * letter or a UNC prefix. It is anchored on a separator that cannot be part of
- * a word -- the start of the message, whitespace, a quote, a backtick, an
- * opening bracket, `=`, `,`, `;` or `:` -- so a flag like `--repo owner/name`
- * keeps its slash, and it stops at the first character that closes a path in a
- * sentence: whitespace, a quote, a backtick, `)`, `]` or `>`.
- *
- * A colon *is* an anchor, because Go's own wrapped errors put a path straight
- * after one (`open:/Users/me/.config/...`), and so is a drive letter after one
- * (`dir:C:\Users\me`). What keeps a URL from being cut at its `//` -- which
- * would turn `https://x/y` into `https:<path>`, a corrupted sentence rather than
- * a redaction -- is the first alternative: a `scheme://` URL is matched whole,
- * first, and kept, except a `file://` one, which *is* a path and is replaced
- * whole. `replacePath` is the replacer that makes that choice. The scheme is
- * bounded and must start a word, so a long run of letters is scanned once
- * rather than once per position.
- */
-const ABSOLUTE_PATH_RE =
-  /((?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/[^\s'"`)\]>]*)|(^|[\s'"`([<{=,;:])(?:~[\\/]|[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`)\]>]*/g
-
-/** PATH_PLACEHOLDER is what an absolute path in a message becomes. It names
- * *that* a path was there, which is what a reader needs, and not which one. */
-const PATH_PLACEHOLDER = '<path>'
-
-function replacePath(_match: string, url: string | undefined, anchor: string | undefined): string {
-  if (url !== undefined) return /^file:/i.test(url) ? PATH_PLACEHOLDER : url
-  return `${anchor ?? ''}${PATH_PLACEHOLDER}`
 }
 
 /** INVISIBLE_RE is the shared set of invisible characters
@@ -4807,10 +5201,10 @@ const LONE_SURROGATE_RE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff
 /**
  * boundReason is the one place a handler-authored message is made safe to put in
  * front of a user: control characters out, invisible format characters out,
- * half-characters replaced, absolute paths out, one line, and a hard length cut
- * on a character boundary. It never returns an empty string -- a refusal with
- * no text is a screen with nothing to draw -- and it never echoes more of the
- * message than the bound allows.
+ * half-characters replaced, one line, and a hard length cut on a character
+ * boundary. It never returns an empty string -- a refusal with no text is a
+ * screen with nothing to draw -- and it never echoes more of the message than
+ * the bound allows.
  */
 function boundReason(message: string): string {
   // Every pass below is linear, and the input is first cut to a few times the
@@ -4824,24 +5218,24 @@ function boundReason(message: string): string {
     .replace(/\s+/g, ' ')
     .trim()
   if (flattened === '') return 'the operation failed'
-  const redacted = flattened.replace(ABSOLUTE_PATH_RE, replacePath)
-  if (redacted.length <= MAX_REPLY_REASON_LENGTH) return redacted
+  if (flattened.length <= MAX_REPLY_REASON_LENGTH) return flattened
   // The cut is marked, so a reader can tell a truncated sentence from a whole
   // one rather than wondering what the CLI meant to say. It is in UTF-16 code
   // units, like the bound, and it steps back one when it would land between
   // the two halves of a surrogate pair: half an emoji is not text.
   let cut = MAX_REPLY_REASON_LENGTH - 1
-  const last = redacted.charCodeAt(cut - 1)
+  const last = flattened.charCodeAt(cut - 1)
   if (last >= 0xd800 && last <= 0xdbff) cut -= 1
-  return `${redacted.slice(0, cut).trimEnd()}…`
+  return `${flattened.slice(0, cut).trimEnd()}…`
 }
 
 /**
  * assertReachableSurface throws unless every entry of a table is one the console
  * may drive: its command and its flags are clear of `NEVER_REACHABLE`, the flags
  * it fixes are the surface's own two, the lapse's refused class holds only rows
- * that spawn a command and names its target installation only in a required
- * `installationName` argument of its own, and no two entries share a name.
+ * that spawn a command or drive one the lapse itself takes away, and names its
+ * target installation only in a required `installationName` argument of its own,
+ * and no two entries share a name.
  *
  * It takes the table as an argument so that the guard is a pure function of one
  * and the test can hand it the mutation directly -- a table with `budget kill`
@@ -4863,17 +5257,41 @@ export function assertReachableSurface(operations: readonly ConsoleOperation[]):
         throw new Error(`${operation.name} fixes ${flag}, which is not a flag the surface may fix`)
       }
     }
-    // The lapse's refused class is the three writes (`run.launch`, `settings.edit`
-    // and `roadmap.move`), and the design's kept set includes every answer the
-    // console gives out of its own process: a row with no command spawns
-    // nothing, so refusing it would take away a read, the key
-    // screen (the way out, §5.6), or the console's own surface -- and never a
-    // capability the licence granted. A later task that wants to refuse one of
-    // these has to come back here and say why, which is the point.
-    if (operation.refusedAfterLapse === true && operation.command === null) {
+    // The lapse's refused class is the operations that change something
+    // (`run.launch`, `settings.edit`, `roadmap.move`, `setup.apply` and
+    // `models.add`), and the design's kept set includes every answer the console
+    // gives out of its own process: a row with no command spawns nothing, so
+    // refusing it would take away a read, the key screen (the way out, §5.6), or
+    // the console's own surface -- and never a capability the licence granted.
+    // The one row that spawns nothing as itself and belongs to the class anyway
+    // is a window that drives one of those operations (`drivesOperation`), which
+    // is checked just below: it spawns the write's own phases through the source,
+    // so a lapse that kept it would keep the write. A later task that wants to
+    // refuse one of these has to come back here and say why, which is the point.
+    if (operation.refusedAfterLapse === true && operation.command === null && operation.drivesOperation === undefined) {
       throw new Error(
         `${operation.name} is refused after a lapse and spawns no command: the operations the lapse takes away are the ones that spawn a command, and the console's own answers stay`,
       )
+    }
+    // A row that drives another one's command (`drivesOperation`) may belong to
+    // the refused class without a command of its own, and only that way: the name
+    // has to be a row of this same table, and for a refused row it has to be a
+    // row the lapse itself takes away -- pointing one window at a read would put
+    // it in the class on a command nobody loses after a lapse, and a name that
+    // matched no row would leave the window working with nothing to refuse.
+    if (operation.drivesOperation !== undefined) {
+      const drivenName = operation.drivesOperation
+      const driven = operations.find((candidate) => candidate.name === drivenName)
+      if (driven === undefined) {
+        throw new Error(
+          `${operation.name} drives ${drivenName}, which is not an operation of this surface`,
+        )
+      }
+      if (operation.refusedAfterLapse === true && (driven.refusedAfterLapse !== true || driven.command === null)) {
+        throw new Error(
+          `${operation.name} is refused after a lapse and drives ${driven.name}, which the lapse does not take away: a row with no command of its own is in the refused class only through an operation the lapse refuses`,
+        )
+      }
     }
     // The lapse gate asks about the installation a row's own payload names
     // (`installationArgument`), so the column has to name an argument of this

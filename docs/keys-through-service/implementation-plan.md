@@ -26,7 +26,7 @@ otherwise stop it.
 KS6, KS9 and KS10, which it waited on, are withdrawn and replaced by credentials belong to models'
 CM16 and CM15, CM6, and CM9 (F48, F49), and those tasks are themselves withdrawn with every task
 of that plan that is not merged (2026-11-22, that plan's D3170), so the wait is on model
-credentials routing's I1 (its F50). KS14 and KS15 are not launched before the plan that
+credentials routing's I1 (its A1). KS14 and KS15 are not launched before the plan that
 removes budget mode off has merged its removal (R13). Until then a budget-off repository keeps its
 mounted keys. **KS6, KS9 and KS10 are withdrawn, and KS7 and KS8 are dropped** with D3002 and
 D3004 (F48); their numbers are not reused.
@@ -127,7 +127,7 @@ CM9**, and **KS13 waits on its I1 in their place** (F49). **Amended 2026-11-22:*
 belong to models is itself superseded in part by
 [model credentials routing](../model-credentials-routing/README.md) (its D3170), which withdraws
 the CM16, CM15, CM6 and CM9 that replaced them, with every other task of that plan that is not
-merged, so **KS13 now waits on model credentials routing's I1** (its F50).
+merged, so **KS13 now waits on model credentials routing's I1** (its A1).
 
 ### KS1: named provider entries in the bundle
 - Acceptance: the bundle decodes and serves one key per repository and named provider credential,

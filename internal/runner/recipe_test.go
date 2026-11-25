@@ -1,7 +1,6 @@
 package runner_test
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -11,7 +10,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/diagnoseagent"
 	"github.com/dimipaun/fugaro/internal/recipe"
-	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -70,20 +68,24 @@ func TestRecipeEmbeddedCatalog(t *testing.T) {
 	}
 }
 
-func TestRecipeRepoLayerWins(t *testing.T) {
-	// The task embeds a recipe named cheap-loop-senior; the repository has
-	// its own file of that name, which wins.
+// TestRecipeEmbeddedWinsOverTheFolderFile: the task's own copy is the
+// recipe, even where the repository still commits a file of that name — the
+// folder is no longer read (D3304; the never-read proof itself is
+// recipe_lift_test.go's TestRunnerNeverReadsTheFolder).
+func TestRecipeEmbeddedWinsOverTheFolderFile(t *testing.T) {
 	own := "version: 1\nname: cheap-loop-senior\nsteps:\n  - review: { max_rounds: 1 }\n"
-	h := newHarnessFiles(t, firstLineCfg(t, 2, ""), recipeSpec(embeddedTask("cheap-loop-senior", retiredCheapLoopSenior)),
+	h := newHarnessFiles(t, firstLineCfg(t, 3, "  first_line_review: off\n"), recipeSpec(embeddedTask("cheap-loop-senior", retiredCheapLoopSenior)),
 		map[string]string{".fugaro/recipes/cheap-loop-senior.yaml": own})
-	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	rec, err := h.run(t, implement("feature"), review("changes", 1), fixStep, review("changes", 1), fixStep, review("changes", 1))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := stageNames(rec); !eq(got, "implement", "review") {
+	// TestRecipeEmbeddedCatalog's own stages: the file's single review round
+	// is not what ran.
+	if got := stageNames(rec); !eq(got, "implement", "review_first", "fix", "review_first", "fix", "review") {
 		t.Fatalf("stages = %v", got)
 	}
-	if r := rec.Recipe; r.Source != "repo" || r.SHA256 != recipe.Sum([]byte(own)) {
+	if r := rec.Recipe; r.Source != "catalog" || r.SHA256 != recipe.Sum([]byte(retiredCheapLoopSenior)) {
 		t.Fatalf("recipe = %+v", r)
 	}
 }
@@ -100,24 +102,17 @@ func TestRecipeAgentRecipeOnFirstRun(t *testing.T) {
 	}
 }
 
-// Review Focus 2.
-func TestRecipeRepoSourceMissingAtRefFails(t *testing.T) {
-	h := newHarness(t, firstLineCfg(t, 2, ""), recipeSpec(&task.Recipe{Name: "two-rounds", Source: "repo"}))
+// TestRecipeInvalidFailsNoFallback: a broken embedded recipe is the run's
+// error, not a reason to fall back to default. The repository commits a
+// file of that name holding a recipe that would parse — the refusal comes
+// from the task's text, so the folder is not what was read either.
+func TestRecipeInvalidFailsNoFallback(t *testing.T) {
+	broken := "version: 1\nname: broken\nsteps:\n  - first_line: {}\n"
+	h := newHarnessFiles(t, firstLineCfg(t, 2, ""), recipeSpec(embeddedTask("broken", broken)),
+		map[string]string{".fugaro/recipes/broken.yaml": twoRounds})
 	rec, err := h.run(t, implement("feature"))
-	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "commit and push it") || !strings.Contains(rec.Reason, "at its base") {
-		t.Fatalf("rec = %+v, err = %v", rec, err)
-	}
-	if len(h.agent.calls) != 0 {
-		t.Fatalf("%d agent calls, want none", len(h.agent.calls))
-	}
-}
-
-func TestRecipeRepoInvalidFailsNoFallback(t *testing.T) {
-	h := newHarnessFiles(t, firstLineCfg(t, 2, "  recipe: broken\n"), nil,
-		map[string]string{".fugaro/recipes/broken.yaml": "version: 1\nname: broken\nsteps:\n  - first_line: {}\n"})
-	rec, err := h.run(t, implement("feature"))
-	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, ".fugaro/recipes/broken.yaml") ||
-		!strings.Contains(rec.Reason, "must end with a review step") || len(h.agent.calls) != 0 {
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "must end with a review step") ||
+		!strings.Contains(rec.Reason, "embedded in task.json") || len(h.agent.calls) != 0 {
 		t.Fatalf("rec = %+v, err = %v, calls %d", rec, err, len(h.agent.calls))
 	}
 }
@@ -283,9 +278,9 @@ func TestRecipeCheckStepReachesTheGate(t *testing.T) {
 }
 
 // Review Focus 4.
-func TestRecipeRepoNameMismatch(t *testing.T) {
-	h := newHarnessFiles(t, firstLineCfg(t, 2, "  recipe: mine\n"), nil,
-		map[string]string{".fugaro/recipes/mine.yaml": strings.Replace(twoRounds, "name: two-rounds", "name: claude-solo", 1)})
+func TestRecipeNameMismatch(t *testing.T) {
+	mismatched := strings.Replace(twoRounds, "name: two-rounds", "name: claude-solo", 1)
+	h := newHarness(t, firstLineCfg(t, 2, ""), recipeSpec(embeddedTask("mine", mismatched)))
 	rec, err := h.run(t, implement("feature"))
 	if err == nil || !strings.Contains(rec.Reason, "file name and the name must agree") {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
@@ -295,12 +290,16 @@ func TestRecipeRepoNameMismatch(t *testing.T) {
 func TestRecipeUnknownName(t *testing.T) {
 	h := newHarness(t, firstLineCfg(t, 2, "  recipe: nowhere\n"), nil)
 	rec, err := h.run(t, implement("feature"))
-	if err == nil || !strings.Contains(rec.Reason, "recipe nowhere is not in .fugaro/recipes") {
+	if err == nil || !strings.Contains(rec.Reason, "recipe nowhere is neither embedded in the task nor in the catalog") {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 }
 
-func TestRecipeRepoSymlinkRefused(t *testing.T) {
+// TestRecipeSymlinkAtRefRefused: a link left at .fugaro/recipes/<name>.yaml
+// is an entry at that path, so an unembedded task naming it is refused like
+// any other (D3304). Nothing is opened: the link points outside the checkout
+// and its target is never read.
+func TestRecipeSymlinkAtRefRefused(t *testing.T) {
 	outside := filepath.Join(t.TempDir(), "x.yaml")
 	if err := os.WriteFile(outside, []byte(twoRounds), 0o644); err != nil {
 		t.Fatal(err)
@@ -315,14 +314,16 @@ func TestRecipeRepoSymlinkRefused(t *testing.T) {
 		}
 	})
 	rec, err := h.run(t, implement("feature"))
-	if err == nil || !strings.Contains(rec.Reason, "not a regular file") {
+	if err == nil || !strings.Contains(rec.Reason, ".fugaro/recipes/two-rounds.yaml") ||
+		!strings.Contains(rec.Reason, "no longer reads") {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 }
 
-// A follow-up reads the repository layer from its base, never from the PR's
-// branch (which an earlier agent could have changed).
-func TestRecipeFollowUpReadsBase(t *testing.T) {
+// A follow-up runs the copy its task carries, never the repository's file at
+// either end: an earlier agent loosened that file on the branch, and neither
+// it nor the base's version is read (D3304).
+func TestRecipeFollowUpIgnoresTheFoldersCopies(t *testing.T) {
 	h := followUpHarness(t, "", func(h *harness) {
 		commitToRemote(t, h, func(dir string) {
 			testutil.WriteFiles(t, dir, map[string]string{".fugaro/recipes/two-rounds.yaml": twoRounds})
@@ -331,15 +332,7 @@ func TestRecipeFollowUpReadsBase(t *testing.T) {
 		testutil.WriteFiles(t, req.Dir, map[string]string{".fugaro/recipes/two-rounds.yaml": strings.Replace(twoRounds, "max_rounds: 2", "max_rounds: 9", 1)})
 		shell(t, req, "git add -A && git commit -qm 'Loosen the recipe'")
 	}), review("ship", 0))
-	h.followUp(t, followID, runID, "Tidy up.")
-	spec, err := h.store.ReadTask(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec.Recipe = &task.Recipe{Name: "two-rounds", Source: "repo"}
-	if err := h.store.WriteTask(context.Background(), spec); err != nil {
-		t.Fatal(err)
-	}
+	h.followUpRecipe(t, followID, runID, "Tidy up.", projectTask("two-rounds", twoRounds))
 	// The follow-up ends on the escalation's adversarial step, and that is this
 	// fixture's own doing rather than the recipe's: the branch's two rounds
 	// arrived on `.fugaro/recipes/two-rounds.yaml`, a row of the floor, and a
@@ -350,7 +343,7 @@ func TestRecipeFollowUpReadsBase(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := stageNames(rec); !eq(got, "implement", "review", "fix", "review", "adversarial") || rec.Recipe.SHA256 != recipe.Sum([]byte(twoRounds)) {
-		t.Fatalf("stages = %v, recipe %+v (the base's two rounds, not the branch's nine)", got, rec.Recipe)
+		t.Fatalf("stages = %v, recipe %+v (the task's two rounds, not the branch's nine)", got, rec.Recipe)
 	}
 }
 
@@ -371,9 +364,13 @@ func TestRecipeRoundsComeFromThePlan(t *testing.T) {
 func TestRecipeFollowUpIgnoresAgentRecipe(t *testing.T) {
 	cfg := strings.Replace(followUpYAML(t, ""), "  review_rounds: 2\n", "  review_rounds: 2\n  recipe: two-rounds\n", 1)
 	h := followUpHarness(t, cfg, func(h *harness) {
-		commitToRemote(t, h, func(dir string) {
-			testutil.WriteFiles(t, dir, map[string]string{".fugaro/recipes/two-rounds.yaml": twoRounds})
-		})
+		// The first run's task carries the copy the project holds, which is
+		// what a launch embeds now (liftedRecipe reads the fixture's files,
+		// not one prep commits after the harness was built). The follow-up's
+		// task carries none, so the name the config asks for is all that is
+		// left to ignore — which is the point of the test.
+		h.setSpec(t, &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app",
+			Task: "Add a feature", Recipe: projectTask("two-rounds", twoRounds)})
 	})
 	if h.first.Recipe == nil || h.first.Recipe.Name != "two-rounds" {
 		t.Fatalf("first run recipe = %+v", h.first.Recipe)
@@ -388,26 +385,11 @@ func TestRecipeFollowUpIgnoresAgentRecipe(t *testing.T) {
 	}
 }
 
-func TestRecipeFollowUpOversizeBaseFileFails(t *testing.T) {
-	h := followUpHarness(t, "", func(h *harness) {
-		commitToRemote(t, h, func(dir string) {
-			testutil.WriteFiles(t, dir, map[string]string{".fugaro/recipes/big.yaml": "# " + strings.Repeat("x", 2<<20)})
-		})
-	})
-	h.followUp(t, followID, runID, "Tidy up.")
-	spec, err := h.store.ReadTask(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec.Recipe = &task.Recipe{Name: "big", Source: "repo"}
-	if err := h.store.WriteTask(context.Background(), spec); err != nil {
-		t.Fatal(err)
-	}
-	defer runner.FailOnShowRepoFile(func() { t.Error("the base file was read before its size was checked") })()
-	rec, err := h.run(t, implement("tidy"))
-	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "16 KiB") {
-		t.Fatalf("rec = %+v, err = %v", rec, err)
-	}
+// projectTask is embeddedTask for a recipe the project store holds: the shape
+// `fugaro run` writes once B16 has lifted a repository recipe there (PR2, and
+// what this package's fixtures now launch with, liftedRecipe).
+func projectTask(name, yaml string) *task.Recipe {
+	return &task.Recipe{Name: name, Source: string(recipe.SourceProject), SHA256: recipe.Sum([]byte(yaml)), YAML: yaml}
 }
 
 // TestRecipeHandOverSkipsFix is E5's red step: a review step with hand_over

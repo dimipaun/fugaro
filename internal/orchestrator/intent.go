@@ -52,14 +52,42 @@ func startable(p Phase) bool {
 	return p == PhaseQueued || p == PhaseFailed || p == PhaseBlocked
 }
 
-// dependenciesDone reports whether every item this one depends on is done. A
-// dependency the list does not carry holds the item rather than being read as
-// done: that is a thing for a person to look at, and holding back is the
+// crossPhases is what the references into other orchestrators resolved to, as
+// the one reading that resolves them keeps them (D3208): the phase of the item a
+// reference names, keyed by the reference exactly as the item wrote it. A
+// reference the reading did not resolve has no entry, and a nil map resolves
+// none — which is the same answer an unresolved local dependency gets, and the
 // direction that starts nothing.
+type crossPhases map[string]Phase
+
+// dependenciesDone reports whether every item this one depends on is done, read
+// off the one node the item is on. It is dependenciesMet with no reading of the
+// other orchestrators: what a caller that holds one — a cycle's plan — uses is
+// that function, and every other caller's items depend on their own node's.
 func dependenciesDone(s State, w WorkItem) bool {
-	for _, id := range w.DependsOn {
-		dep, ok := s.Item(id)
-		if !ok || !dep.Phase.Done() {
+	return dependenciesMet(s, nil, w)
+}
+
+// dependenciesMet reports whether every item this one depends on is done: the
+// items of its own node read off s, and the items of other orchestrators read
+// off the phases a cycle resolved for this node's references (D3208). A
+// dependency either reading does not carry holds the item rather than being read
+// as done: that is a thing for a person to look at, and holding back is the
+// direction that starts nothing.
+//
+// A reference to this node's own orchestrator is a cross reference by shape and
+// resolves like any other, which is what keeps one rule for both spellings: the
+// cycle that resolved it read this node's items anyway.
+func dependenciesMet(s State, other crossPhases, w WorkItem) bool {
+	for _, dep := range w.DependsOn {
+		if _, cross, err := depRef(dep); err == nil && cross {
+			if phase, ok := other[dep]; !ok || !phase.Done() {
+				return false
+			}
+			continue
+		}
+		item, ok := s.Item(dep)
+		if !ok || !item.Phase.Done() {
 			return false
 		}
 	}
@@ -220,7 +248,12 @@ func ladderCoveredDigest(s State, w WorkItem, at time.Time) (Digest, bool) {
 // side owes is this count, and until it holds it the item waits — the direction
 // that starts nothing rather than the one that spends a person's attempt on a
 // run the ladder launched.
-func nextAttempt(s State, w WorkItem) (Action, bool) {
+//
+// other is what this cycle resolved the item's cross references to (D3208), and
+// nil for a caller that holds no such reading: an item depending on another
+// orchestrator's work then waits, which is the direction a plan that cannot see
+// the far end fails in.
+func nextAttempt(s State, other crossPhases, w WorkItem) (Action, bool) {
 	approval := w.Approved
 	if approval == nil || !startable(w.Phase) {
 		return Action{}, false
@@ -231,7 +264,7 @@ func nextAttempt(s State, w WorkItem) (Action, bool) {
 		// another spec, so there is nothing here to start under their go.
 		return Action{}, false
 	}
-	if !dependenciesDone(s, w) {
+	if !dependenciesMet(s, other, w) {
 		return Action{}, false
 	}
 	under := normalRunsUnder(s, w, *approval)
@@ -346,6 +379,19 @@ func reissuable(s State, a Action) (WorkItem, error) {
 // launcher's own gate refuses, and a second copy of these checks in the issuer
 // is exactly where the two would come apart. An error is a refusal of the ask,
 // never the service's own failure.
+//
+// A RESUME IS NOT ONE OF THESE, and that is why nothing here recognises one
+// (D3189). A resume continues a paused run: its run id is a new one, so this
+// record carries no attempt of it — openAttempt asks for the intent's own run id
+// and a paused run's intent was recorded under the paused run — and a paused run
+// a person launched has no intent of this record at all. What the issuer is
+// served on for a resume is therefore not this record but the node the
+// credentials service itself wrote, which is the one case D3136 was widened by
+// and the reason the widening is the service's own check and not this one: this
+// side's record is written by a job's own container, and a resume derived from a
+// job-written record would be a resume any agent could ask for (F52). What the
+// two cases share is only the shape of the ask (identitywire.TicketRequest): one
+// names an attempt, the other names a resume, and never both.
 func ReissuableAttempt(s State, attempt, runID string) (WorkItem, error) {
 	w, _, err := openAttempt(s, IntentItem(attempt), attempt, runID)
 	return w, err

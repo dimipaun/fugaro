@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The daemon: its start-up, its loop and the boundary it holds (O8).
@@ -72,7 +73,7 @@ func (f *daemonFixture) daemon(t *testing.T, binary string) (*orchestratorDaemon
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := orchestrator.NewLease(db, id, daemonHolder, db.ServerNow)
+	lease, err := orchestrator.NewLease(db, id, daemonHolder, daemonDriver, db.ServerNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,8 +102,13 @@ func (f *daemonFixture) daemon(t *testing.T, binary string) (*orchestratorDaemon
 }
 
 // daemonHolder is the name the fixture's daemon holds the lease under, the way
-// task.NewRunID names a real one.
-const daemonHolder = "20261109-101500-abcd"
+// task.NewRunID names a real one, and daemonDriver is the principal whose
+// credential holds it — what `fugaro orchestrator run` reads from the local
+// config (D3218).
+const (
+	daemonHolder = "20261109-101500-abcd"
+	daemonDriver = "driver@example.com"
+)
 
 // statePath is where the fixture's daemon reads its node.
 func (f *daemonFixture) statePath(t *testing.T) string {
@@ -1017,7 +1023,7 @@ func TestRunOnceTakesOneCycleAndReleasesTheLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := orchestrator.NewLease(db, "aurora", daemonHolder, db.ServerNow)
+	lease, err := orchestrator.NewLease(db, "aurora", daemonHolder, daemonDriver, db.ServerNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1251,7 +1257,7 @@ func TestRunOnceReportsAFailedCycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := orchestrator.NewLease(db, "aurora", daemonHolder, db.ServerNow)
+	lease, err := orchestrator.NewLease(db, "aurora", daemonHolder, daemonDriver, db.ServerNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1421,5 +1427,176 @@ func TestRunViewCarriesTheWorkspaceRefusal(t *testing.T) {
 	}
 	if reports[0].WorkspaceRefusal != "" || reports[0].Halt != (orchestrator.Halt{}) {
 		t.Errorf("an ordinary run's report is %+v, want no marker and no halt", reports[0])
+	}
+}
+
+// TestRunViewCarriesThePauseNode is the filler C3's node needs on the reader
+// side: a run that suspended itself is reported with the node the credentials
+// service recorded for it (D3189), which is the only place the instant it comes
+// back is written — the run's own record carries none, and a job that could name
+// its own resume time would be an agent choosing when to spend (R8). Without it
+// the fold has nothing to tell a person a pause with, and the notice the
+// orchestrator draws for a suspended run reaches no sink at all.
+//
+// The node is read for the runs whose own record ended `paused` and no others:
+// the service records one for exactly those, so a node standing over any other
+// run is not a pause this reader hands on.
+func TestRunViewCarriesThePauseNode(t *testing.T) {
+	f, d, cs := crashDaemon(t, true, false)
+	ctx := context.Background()
+	resumeAt := f.now.Add(45 * time.Minute)
+	node := runstore.PauseNode{Launcher: "person@example.com", ResumeAt: resumeAt.UnixMilli(), Chain: cs.runID}
+	f.db.Set(runstore.PauseNodePath(appSlug, cs.runID), node)
+
+	rec := &runstore.Record{
+		Version: 1, RunID: cs.runID, Execution: "exec-1", Status: runstore.StatusPaused,
+		Stage: "implement", Outcome: runstore.OutcomeNone, StartedAt: f.now,
+	}
+	if err := f.runStore(t, cs.runID).WriteRecord(ctx, rec); err != nil {
+		t.Fatalf("writing the record of the run that suspended itself: %v", err)
+	}
+
+	reports, err := d.tick.Runs.Runs(ctx, []string{cs.runID})
+	if err != nil {
+		t.Fatalf("the reader over a suspended run: %v", err)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("the reader answered %d report(s) for one run id", len(reports))
+	}
+	rep := reports[0]
+	if rep.Pause == nil {
+		t.Fatalf("the report of a run whose record says it suspended itself carries no pause, so nothing tells a person it is coming back: %+v", rep)
+	}
+	if *rep.Pause != node {
+		t.Errorf("the report carries the pause %+v, want the node the credentials service recorded: %+v", *rep.Pause, node)
+	}
+
+	// The same node over a run that did not suspend itself is nothing this
+	// reader reports: a pause is what the service recorded it for the run whose
+	// own record ended `paused` (C3), and a stale node is not one.
+	rec.Status = runstore.StatusFailed
+	if err := f.runStore(t, cs.runID).WriteRecord(ctx, rec); err != nil {
+		t.Fatalf("writing the record of a run that failed: %v", err)
+	}
+	reports, err = d.tick.Runs.Runs(ctx, []string{cs.runID})
+	if err != nil {
+		t.Fatalf("the reader over a failed run: %v", err)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("the reader answered %d report(s) for one run id", len(reports))
+	}
+	if reports[0].Pause != nil {
+		t.Errorf("a run whose record does not say it suspended itself was reported with the pause %+v", *reports[0].Pause)
+	}
+}
+
+// TestRunViewTellsNoPauseItCouldNotRead is the other half of the reader the
+// test above pins, and the half pauseNode's own rule is about: the node is
+// handed on as a pause only when the service's record is there and this release
+// can place it. A read that did not happen, a run the service recorded no node
+// for and a node this release cannot read are each no pause — and each is said
+// on the daemon's own output, because an operator has nothing else. What none
+// of them may be is a pause: the record behind the read already says the run
+// ended, so a pause drawn from less than a whole node is the line promising a
+// return that nothing backs, which is the one lie this reader could tell
+// (D3197, R18). What none of them may do either is stop the cycle — a daemon
+// that refused its tick over a broken pause resumes nobody, which is a worse
+// answer than the run ending as a halt.
+func TestRunViewTellsNoPauseItCouldNotRead(t *testing.T) {
+	cases := []struct {
+		name string
+		// seed is what stands at the node the service writes, or what keeps the
+		// read from reaching it: the three answers pauseNode reads and the one
+		// the node itself gives.
+		seed  func(t *testing.T, f *daemonFixture, path string)
+		wants string
+	}{
+		{
+			// A read the database refused — the rules no longer grant it, or
+			// the backend answered nothing at all. It is the case a rule
+			// deployment is most likely to produce and the one a reader must
+			// not read past.
+			name: "a read that did not happen",
+			seed: func(_ *testing.T, f *daemonFixture, path string) {
+				f.db.DenyRead(path)
+			},
+			wants: "could not be read",
+		},
+		{
+			// The service recorded no pause for a run whose own record says it
+			// suspended itself: the contract's order ends a run paused only
+			// after the ask that writes the node (C3), so this is a broken
+			// pause and not a pause nothing has got round to marking.
+			name: "a run the service recorded no pause for",
+			seed: func(_ *testing.T, _ *daemonFixture, _ string) {},
+			// The absent-node line is the one of the three that says what
+			// follows from it, and that is the fact a person acts on.
+			wants: "recorded no pause",
+		},
+		{
+			// A node carrying a member this release does not know: the pause
+			// spans a fugaro update (F36), so a node written by another release
+			// is a shape this one refuses rather than reads as the members it
+			// happens to recognise (R18, R25's own rule).
+			name: "a node this release cannot place",
+			seed: func(_ *testing.T, f *daemonFixture, path string) {
+				f.db.Set(path, map[string]any{
+					"launcher": "person@example.com", "resume_at": f.now.Add(time.Hour).UnixMilli(),
+					"chain": "20261122-120000-abcd", "resumed_by": "20261122-130000-bbbb",
+				})
+			},
+			wants: "not one this release can read",
+		},
+		{
+			// Half a node: every member known, and one of them naming no usable
+			// pause. Half a node is not one the orchestrator may resume on
+			// (R18), and the instant it does not back is exactly what the
+			// notice would promise.
+			name: "half a node",
+			seed: func(_ *testing.T, f *daemonFixture, path string) {
+				f.db.Set(path, map[string]any{"resume_at": f.now.Add(time.Hour).UnixMilli(), "chain": "20261122-120000-abcd"})
+			},
+			wants: "not one this release can read",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, d, cs := crashDaemon(t, true, false)
+			ctx := context.Background()
+			path := runstore.PauseNodePath(appSlug, cs.runID)
+			c.seed(t, f, path)
+
+			// The record is the run's own: it says the run ended paused, which
+			// is the one thing that makes the reader look at the node at all.
+			rec := &runstore.Record{
+				Version: 1, RunID: cs.runID, Execution: "exec-1", Status: runstore.StatusPaused,
+				Stage: "implement", Outcome: runstore.OutcomeNone, StartedAt: f.now.Add(-time.Hour),
+			}
+			if err := f.runStore(t, cs.runID).WriteRecord(ctx, rec); err != nil {
+				t.Fatalf("writing the record of the run that suspended itself: %v", err)
+			}
+
+			reports, err := d.tick.Runs.Runs(ctx, []string{cs.runID})
+			if err != nil {
+				t.Fatalf("the reader failed over a run whose pause node is %s: %v — a broken pause is a warning and never a stopped cycle, because a daemon that will not tick resumes nobody", c.name, err)
+			}
+			if len(reports) != 1 {
+				t.Fatalf("the reader answered %d report(s) for one run id", len(reports))
+			}
+			if reports[0].Pause != nil {
+				t.Errorf("a run whose pause node is %s was reported with the pause %+v: the notice would promise a return nothing backs", c.name, *reports[0].Pause)
+			}
+
+			// The daemon's own output is the only place this failure is
+			// visible — the report handed to the fold carries no pause and no
+			// word about why — and it names the run the way every warning about
+			// one does: the short form, which is what a person types back into
+			// `fugaro diagnose`.
+			out := f.out.String()
+			if short := task.ShortRun(cs.runID); !strings.Contains(out, short) || !strings.Contains(out, c.wants) {
+				t.Errorf("the daemon said %q over a run whose pause node is %s, and the operator's only signal is a line naming the run (%s) and what was wrong (%q)", out, c.name, short, c.wants)
+			}
+		})
 	}
 }

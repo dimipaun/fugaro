@@ -114,13 +114,25 @@ func pickerRun(t *testing.T, terminal bool, stdin string, o *initOptions) (*init
 // — the intro, with the rows indented under it — goes, and what a test reads
 // is what is left, so an assertion about "what the run wrote" means what it
 // says without exempting the run from R7.
+//
+// The run's own heading goes the same way: it is printed with the first thing
+// the run says and asks nothing (initRun.printRunHeader, report.Style.Header),
+// so a test asking whether the wizard asked a question reads the output without
+// it.
+const runHeadingPrefix = "==> "
+
 func withoutPlacement(out string) string {
 	var keep []string
 	skipping := false
 	for _, l := range strings.Split(out, "\n") {
 		switch {
 		case strings.Contains(l, whereEachThingGoesIntro):
+			// R7's placement block, heading and rows: the run's own reading of
+			// the mapping and not a question. It is tested before the run's
+			// other headings, because the block's own heading is one.
 			skipping = true
+		case strings.HasPrefix(l, runHeadingPrefix):
+			// The run's own heading: not one of its questions.
 		case skipping && strings.HasPrefix(l, "  "):
 			// One of the block's own rows.
 		default:
@@ -134,11 +146,13 @@ func withoutPlacement(out string) string {
 // pickerAnswers is the stdin that answers the wizard's questions before the
 // billing one — the GCP project (there is none to suggest here, so Enter is
 // not an answer), the region (Enter), the name (Enter), the rigor mode (the
-// one question with no suggestion, so a mode is typed; task W) and the bake
-// switch (Enter, which is the suggestion an installation that never answers it
-// reads as anyway; IS7) — with answer answering the billing question.
+// one question with no suggestion, so a mode is typed; task W), the budget
+// amount (Enter, which is the default the alert is created with; T2b of
+// docs/managed-flag-ergonomics) and the bake switch (Enter, which is the
+// suggestion an installation that never answers it reads as anyway; IS7) —
+// with answer answering the billing question.
 func pickerAnswers(answer string) string {
-	return "proj-1234\n" + "\n" + "\n" + string(rigor.Pro) + "\n" + "\n" + answer + "\n"
+	return "proj-1234\n" + "\n" + "\n" + string(rigor.Pro) + "\n" + "\n" + "\n" + answer + "\n"
 }
 
 // billingListCalls is how many times the account list was asked for: the
@@ -248,8 +262,8 @@ func TestPickerEnterOnSeveralAccountsAsksAgain(t *testing.T) {
 	if r.o.linkBilling != offered[1] {
 		t.Errorf("Enter on a list of two left the question answered with %q, want the number typed after it (%q)\n%s", r.o.linkBilling, offered[1], out)
 	}
-	if n := strings.Count(out.String(), "Type the billing account"); n < 2 {
-		t.Errorf("the empty answer was taken as an answer: the entry was shown %d time(s), want it asked again\n%s", n, out)
+	if n := strings.Count(out.String(), "a number from 1 to 2, or none to link none now"); n < 2 {
+		t.Errorf("the empty answer was taken as an answer: the question was shown %d time(s), want it asked again\n%s", n, out)
 	}
 	if strings.Contains(out.String(), "[1]") {
 		t.Errorf("the question offers a default it does not have — with two accounts there is nothing for Enter to take:\n%s", out)
@@ -281,7 +295,7 @@ func TestPickerSingleAccountIsTheDefault(t *testing.T) {
 	if r.o.linkBilling != only {
 		t.Errorf("Enter did not take the single account: %q, want %q\n%s", r.o.linkBilling, only, out)
 	}
-	if !strings.Contains(out.String(), "[1]") {
+	if !strings.Contains(out.String(), "the operator's own account (") {
 		t.Errorf("the question does not show the single account as the default:\n%s", out)
 	}
 }
@@ -419,7 +433,7 @@ func TestPickerNeverRunsInAnAgentSession(t *testing.T) {
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out.String(), "the GCP project's ID") {
+	if !strings.Contains(out.String(), askedPrompt("--gcp-project")) {
 		t.Errorf("the run asks nothing at all, and only the billing question is an agent's to refuse:\n%s", out)
 	}
 	if r.o.linkBilling != "" || billingListCalls(f) != 0 || strings.Contains(out.String(), acct) {
@@ -801,8 +815,21 @@ func TestPickerStoresNothing(t *testing.T) {
 	if answered.linkBilling != picked {
 		t.Fatalf("the picker recorded %q, want %q", answered.linkBilling, picked)
 	}
+	// The pick carries exactly one thing with it (T2b of
+	// docs/managed-flag-ergonomics; D2216, settleBudget): the account the
+	// project's budget alert is on is the account the run linked, and a run that
+	// linked none carries no budget at all. Both are this question's doing, and
+	// neither is the account list kept anywhere.
+	if answered.billingAccount != picked || answered.budget == 0 || answered.budgetCurrency == "" {
+		t.Errorf("the account the pick linked is not the budget's own: %q, budget %d %s", answered.billingAccount, answered.budget, answered.budgetCurrency)
+	}
+	if control.billingAccount != "" || control.budget != 0 || control.budgetCurrency != "" {
+		t.Errorf("a run whose question linked nothing carries a budget: %q, %d %s", control.billingAccount, control.budget, control.budgetCurrency)
+	}
 	got, want := *answered, *control
-	got.linkBilling, want.linkBilling = "", ""
+	for _, o := range []*initOptions{&got, &want} {
+		o.linkBilling, o.billingAccount, o.budget, o.budgetCurrency = "", "", 0, ""
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("the question changed more than --link-billing:\n%+v\nwant\n%+v", got, want)
 	}

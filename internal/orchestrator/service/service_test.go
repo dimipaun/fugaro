@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"encoding/xml"
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -73,6 +75,77 @@ func TestSystemdUnitMatchesTheGolden(t *testing.T) {
 	}
 	if u.Platform != "systemd" || u.Name != systemdName {
 		t.Errorf("the unit is %s %s, want systemd %s", u.Platform, u.Name, systemdName)
+	}
+}
+
+// TestNamedUnitIsAUnitOfItsOwn: one unit per orchestrator name (D3206, D3207).
+// A named orchestrator's unit differs from the project's own in exactly three
+// places — its file, its label or unit name, and the `--name` the daemon is run
+// with — and everything the unit exists for stays: the stable binary path named
+// twice, and the command it runs being `orchestrator run`.
+func TestNamedUnitIsAUnitOfItsOwn(t *testing.T) {
+	for _, tc := range []struct {
+		goos, platform, binary string
+		env                    map[string]string
+		wantName               string
+		wantPath               string
+	}{
+		{"darwin", "launchd", darwinBinary, map[string]string{"HOME": darwinHome},
+			Label + ".night", filepath.Join(darwinHome, "Library", "LaunchAgents", Label+".night.plist")},
+		{"linux", "systemd", linuxBinary, map[string]string{"XDG_CONFIG_HOME": systemdConfig},
+			"fugaro-orchestrator-night.service", filepath.Join(systemdConfig, "systemd", "user", "fugaro-orchestrator-night.service")},
+	} {
+		own, err := Render(mapGetenv(tc.env), tc.goos, tc.binary)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.goos, err)
+		}
+		u, err := RenderNamed(mapGetenv(tc.env), tc.goos, tc.binary, "night")
+		if err != nil {
+			t.Fatalf("%s: %v", tc.goos, err)
+		}
+		if u.Platform != tc.platform || u.Name != tc.wantName || u.Path != tc.wantPath {
+			t.Errorf("%s: the named unit is %s %s at %s, want %s %s at %s",
+				tc.goos, u.Platform, u.Name, u.Path, tc.platform, tc.wantName, tc.wantPath)
+		}
+		if u.Name == own.Name || u.Path == own.Path {
+			t.Errorf("%s: the named unit is the project's own unit", tc.goos)
+		}
+		if !strings.Contains(u.Text, "--name") || !strings.Contains(u.Text, "night") {
+			t.Errorf("%s: the named unit does not run the daemon with --name:\n%s", tc.goos, u.Text)
+		}
+		if n := strings.Count(u.Text, tc.binary); n != 2 {
+			t.Errorf("%s: the named unit names %s %d times, and the unit names it twice whatever its name:\n%s", tc.goos, tc.binary, n, u.Text)
+		}
+		// The whole file, read as the platform's own parser reads it: a plist is
+		// XML and its label has to be the one launchd will be asked for, and a
+		// systemd unit is a directive per line. A named unit that was the right
+		// text but the wrong label would be one the manager refuses to boot out
+		// again (Reload's own target).
+		switch tc.goos {
+		case "darwin":
+			// The dict's own <string> values in the order they are written: the
+			// Label's first, since it is the dict's first key, and ProcessType's
+			// after it — the array's strings are its own and are read below.
+			var plist struct {
+				Strings []string `xml:"dict>string"`
+				Args    []string `xml:"dict>array>string"`
+			}
+			if err := xml.Unmarshal([]byte(u.Text), &plist); err != nil {
+				t.Fatalf("the named plist is not XML: %v\n%s", err, u.Text)
+			}
+			if len(plist.Strings) == 0 || plist.Strings[0] != Label+".night" {
+				t.Errorf("the plist's first value is %q, want the label %q", plist.Strings, Label+".night")
+			}
+			want := []string{tc.binary, "orchestrator", "run", "--name", "night", "--binary", tc.binary}
+			if !slices.Equal(plist.Args, want) {
+				t.Errorf("the plist's arguments are %q, want %q", plist.Args, want)
+			}
+		case "linux":
+			want := `ExecStart="` + tc.binary + `" orchestrator run --name night --binary "` + tc.binary + `"`
+			if !strings.Contains(u.Text, want) {
+				t.Errorf("the named unit does not carry %s:\n%s", want, u.Text)
+			}
+		}
 	}
 }
 
