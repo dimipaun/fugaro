@@ -2835,6 +2835,51 @@ func TestWorkspaceMemberEntryValidation(t *testing.T) {
 	}
 }
 
+// TestWorkspaceSharedEntryIsOneOfTwoDeclarations: a written entry states the
+// members it may be served to, and there are exactly two ways to say it — the
+// list of projects it names, or the key that offers it to every member of the
+// workspace (D2977, contract C3's rule 5). The loader asks the pair the way the
+// node's own reader does, so a file that says both, or neither, is refused here
+// rather than reaching the writer: an entry read as one of the two when the
+// owner wrote the other is a pool wider or narrower than the declaration beside
+// it.
+func TestWorkspaceSharedEntryIsOneOfTwoDeclarations(t *testing.T) {
+	doc := func(fields string) string {
+		return sample + "workspace_shared:\n  anthropic-api-key:\n" + fields
+	}
+	for name, tc := range map[string]struct{ yaml, msg string }{
+		"both declarations":   {doc("    kind: model\n    all_members: true\n    projects: [aurora]\n"), "carries both all_members and projects"},
+		"neither declaration": {doc("    kind: model\n"), "names no project and does not offer the credential to every member"},
+		"the members it names": {
+			doc("    kind: model\n    projects: [aurora]\n"), ""},
+		"every member": {doc("    kind: model\n    all_members: true\n"), ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.yaml))
+			if tc.msg == "" {
+				if err != nil {
+					t.Fatalf("a declaration the loader accepts was refused: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.msg) {
+				t.Fatalf("err = %v, want ~%q", err, tc.msg)
+			}
+		})
+	}
+	// The key is read INTO the entry and not only accepted: what the writer
+	// publishes is the declaration the owner wrote, so an entry carrying it
+	// carries no projects beside it.
+	c, err := Parse([]byte(doc("    kind: model\n    all_members: true\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh := (*c.WorkspaceShared)["anthropic-api-key"]
+	if !sh.AllMembers || len(sh.Projects) != 0 {
+		t.Fatalf("the entry is %+v, want all_members with no projects", sh)
+	}
+}
+
 // TestVersionTwoMemberAccountsFold: a version-2 file spells
 // `workspace_members.*.job_service_accounts` as a list of service account
 // addresses and this release reads a list of entries carrying the address and

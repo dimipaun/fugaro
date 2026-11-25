@@ -325,17 +325,21 @@ func (k *fakeKills) readCount() int {
 // refusal was taken on, which is the one thing refusallog.go's line has to
 // name (refusallog_test.go).
 type fakeStore struct {
-	mu         sync.Mutex
-	marks      map[string]creds.Mark
-	current    map[string]string
-	leases     map[string]creds.Lease
-	rr         int64
-	repoAuth   map[string]creds.RepoAuth
-	err        error
-	updateErr  error
-	marksErr   error
-	leasesErr  error
-	currentErr error
+	mu sync.Mutex
+	// observations is the record of what each credential's last answer carried
+	// (creds.Observation, Check 880): a node of its own beside the marks, which
+	// is where the fake keeps it too, because the two must be read apart.
+	observations map[string]creds.Observation
+	marks        map[string]creds.Mark
+	current      map[string]string
+	leases       map[string]creds.Lease
+	rr           int64
+	repoAuth     map[string]creds.RepoAuth
+	err          error
+	updateErr    error
+	marksErr     error
+	leasesErr    error
+	currentErr   error
 	// repoAuthErr fails the repository auth record's read alone. It is its own
 	// error for the reason the three per-read ones are: a refusal taken on a
 	// record that could not be read is a different incident from one taken on
@@ -344,7 +348,38 @@ type fakeStore struct {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{marks: map[string]creds.Mark{}, current: map[string]string{}, leases: map[string]creds.Lease{}, repoAuth: map[string]creds.RepoAuth{}}
+	return &fakeStore{
+		observations: map[string]creds.Observation{},
+		marks:        map[string]creds.Mark{}, current: map[string]string{}, leases: map[string]creds.Lease{}, repoAuth: map[string]creds.RepoAuth{},
+	}
+}
+
+// UpdateObservation records what an answer carried, as the store the service
+// holds does (creds.ObservationStore, Check 880). It fails on the same err the
+// other writes fail on, so a test can drive the write that could not be made.
+func (s *fakeStore) UpdateObservation(_ context.Context, name string, f func(creds.Observation, bool) (creds.Observation, error)) (creds.Observation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err != nil {
+		return creds.Observation{}, s.err
+	}
+	prev, found := s.observations[name]
+	next, err := f(prev, found)
+	if err != nil {
+		return creds.Observation{}, err
+	}
+	s.observations[name] = next
+	return next, nil
+}
+
+// observation is what a source's last recorded answer carried, and whether any
+// has been recorded for it at all: an absent node and one that names nothing are
+// different answers (creds.Observation).
+func (s *fakeStore) observation(name string) (creds.Observation, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	o, ok := s.observations[name]
+	return o, ok
 }
 
 // setRepoAuth records what `fugaro update` would have written for a repository,

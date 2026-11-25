@@ -2,6 +2,7 @@ package rigor
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
 )
@@ -71,6 +72,17 @@ func (a Area) matches(repo string, paths []string) bool {
 	if a.Match != "" && matches(a.Match, paths) {
 		return true
 	}
+	return a.matchesMember(repo, paths)
+}
+
+// matchesMember is matches' member half alone: the rule is in effect for this
+// run through a member naming repo whose paths match (a member with no paths
+// is the whole repository, so it matches whatever the run declared). Resolve
+// reads the two halves apart (D3294): a rule that matched through a member
+// naming this repository ranks above the project's own entry for it, while a
+// rule that matched through its Match alone answers for every repository of
+// the project and keeps LD4's rank below the entry.
+func (a Area) matchesMember(repo string, paths []string) bool {
 	if repo == "" {
 		return false
 	}
@@ -87,6 +99,49 @@ func (a Area) matches(repo string, paths []string) bool {
 			if matches(p, paths) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// namesRepo reports whether the rule names repo at all — one of its members is
+// that repository, whatever paths of it the member lists and whether they
+// match. It is a property of the rule rather than of a run, and it is the
+// question D3294 ranks a project rule by: a rule that names this repository
+// answers for a named part of it, so it ranks above the project's entry for
+// the whole of it, and Configured asks the same question to decide whether the
+// rule is about this repository at all.
+//
+// A repository the rule does not name is unaffected: a member list naming
+// another repository is that repository's business, and a rule with no members
+// at all is in effect for every repository through its Match (Area.Validate
+// refuses a project rule with neither).
+func (a Area) namesRepo(repo string) bool {
+	if repo == "" {
+		return false
+	}
+	for _, m := range a.Members {
+		if m.Repo == repo {
+			return true
+		}
+	}
+	return false
+}
+
+// projectWideAmong reports whether any of areas is in effect for every
+// repository of the project: it carries a Match, the glob D20c shipped and
+// still reads beside its members, which is a claim about the project and not
+// about one of its repositories. It is what Configured reads as the area half
+// of "the project layer opted this repository in".
+//
+// A match of nothing but space counts as no match, which is the reading
+// Area.ValidateProject already gives it: such a rule is in effect for no path
+// and opts nobody in, rather than opting every repository in and deciding
+// nothing.
+func projectWideAmong(areas []Area) bool {
+	for _, a := range areas {
+		if strings.TrimSpace(a.Match) != "" {
+			return true
 		}
 	}
 	return false

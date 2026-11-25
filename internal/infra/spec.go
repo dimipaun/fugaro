@@ -405,6 +405,14 @@ type VoiceService struct {
 // answer: a second implementation would be a second answer, and the state
 // where the two disagree is a job whose credential was dropped and whose
 // launch was told about no service to get it from.
+//
+// It is the release-1 bridge's arm and no longer the whole answer: a
+// repository the project's routing table serves is on the service whatever
+// this function says about its auth, and that arm is
+// CredentialsServiceServesChains, read beside it where the switch is decided
+// (resolve). This one keeps its meaning and its signature — it answers about
+// agent.auth, which is what a repository with no table is still served by
+// (O7: the flip list and this question are the owner's to retire, not CS11's).
 func CredentialsServiceServes(installed, ready bool, auth, mode string) bool {
 	if !installed || !ready {
 		return false
@@ -442,16 +450,38 @@ func CredentialsServiceServes(installed, ready bool, auth, mode string) bool {
 //
 //   - `none`: the switch is off for this repository. Nothing is served, so
 //     every mount stays and the module drops no accessor.
-//   - `all`: the cascade's job, whose runner reads every model credential from
-//     the service. That is the answer this branch shipped before, and the
+//   - `all`: a repository whose every call the service makes with a credential
+//     of its own — the cascade's job since the first release, whose runner
+//     reads every model credential from the service, and since CS11 a
+//     repository the project's routing table serves, whose run's gateway holds
+//     no key at all and whose chain names the source per call (R2). That is
+//     also the answer this branch shipped before the input existed, and the
 //     module's own default for a root applied with an older tfvars.
 //   - `anthropic`: an auth in config.ServiceServedAuths — the service hands
 //     back the Claude OAuth token and the Anthropic key, and only those two:
 //     a provider's key is forwarded, not attached, by the route that spends it
 //     (R6, D1634), so its mount is the run's own and stays.
-func ModelSecretsServed(serves bool, auth string) string {
+//
+// `serves` gates the table, and the order matters: `serves` is the switch's
+// answer, which CredentialsServiceServesChains holds to installed-and-ready
+// just as CredentialsServiceServes does, so `plan.Serves` on a repository of an
+// installation with no service — or one whose root has not recorded readiness —
+// is a table this run is not told about. Reading the table first would drop the
+// job's model mounts there and leave it with CredentialsService nil beside them,
+// which is exactly the state the switch exists to prevent: no mount and no
+// address is a run that reaches no credential at all.
+//
+// So a repository the table serves AND the switch reaches is `all` however its
+// file names its auth — including a `vertex` one, which no arm below answers for
+// and which has no credential to mount either way — and a repository the table
+// does not serve is the bridge's, `none` or `anthropic` by the list above.
+// `plan` is ChainPlanFor's answer for this repository.
+func ModelSecretsServed(plan ChainPlan, serves bool, auth string) string {
 	if !serves {
 		return config.ModelSecretServedNone
+	}
+	if plan.Serves {
+		return config.ModelSecretServedAll
 	}
 	if auth == config.AuthCascade {
 		return config.ModelSecretServedAll
@@ -528,8 +558,16 @@ type WorkflowSpec struct {
 	// repository's budget token objects, tokens/<slug>/
 	// (gcp.TokenBucketCondition; budget-token-channel.md §7.2, D16).
 	TokenCondition Condition `json:"token_condition"`
-	Vertex         bool      `json:"vertex"`
-	DeployJob      bool      `json:"deploy_job"`
+	// Vertex is whether this job's account is planned the Vertex permission
+	// (modules/workflow/sa.tf's one aiplatform member), and it is the fact this
+	// spec's own address set is read from, so the grant and the address cannot
+	// disagree. It is the repository reaching Vertex AND the project's mode
+	// allowing the grant (VertexGrantForJob): under `enforce` no run in flight
+	// can be using it, so release 1 plans none, and the two Vertex names in Env
+	// go with it — an agent on `agent.auth: vertex` reads them, and that run is
+	// the one the gateway refuses first.
+	Vertex    bool `json:"vertex"`
+	DeployJob bool `json:"deploy_job"`
 	// StageAccount is whether this is a mixed stage account's own variant job
 	// (mixedStageAccountJob): the job a run's `review`, `adversarial` and
 	// `triage` stages go out on when an api-key repository mixes a Claude
@@ -775,6 +813,23 @@ type RepoSpec struct {
 	// values, so no plan of this release leaves the question to the default.
 	ModelSecretsServed string `json:"model_secrets_served,omitempty"`
 
+	// ReachesVertex is whether this repository's runs reach Vertex at all: its
+	// file's `agent.auth: vertex`, or a chain of the project's table that may
+	// serve it naming Vertex (ChainPlan.Vertex — a repository the service
+	// reaches Vertex for, which names no Vertex in its own file at all).
+	// UsesVertex is this, and it is what `fugaro update` records into the local
+	// config as repos.<repo>.vertex and what the installation enables the
+	// Vertex AI API from.
+	//
+	// It is a fact of its own because the GRANT comes apart from it: under
+	// `budget.mode: enforce` release 1 plans no job's account the Vertex
+	// permission (VertexGrantForJob) while the API must stay on and the
+	// credentials service must keep its own permission, the service being what
+	// calls Vertex on its behalf (D3174). It is json:"-" the way the spec's
+	// other in-process facts are: no Terraform input carries it, and the
+	// repository root plans exactly what it planned before this field existed.
+	ReachesVertex bool `json:"-"`
+
 	// ProjectSecretCandidates are the logical names this repository may use
 	// project-wide, mapped to the secret ID they would resolve to
 	// (gcp.ProjectSecretID). Candidate data only: being here says nothing
@@ -804,6 +859,21 @@ type RepoSpec struct {
 	// mapped to the project secret ID. This is the field that reaches
 	// tfvars as repo.project_secrets.
 	ProjectSecrets map[string]string `json:"project_secrets,omitempty"`
+
+	// DefaultAccountUnused says no run of this project's configuration holds
+	// the unsuffixed default Claude account (localcfg's
+	// RunsOnDefaultClaudeAccount): every account a launch picks is a named one,
+	// so the bare claude-oauth-token is a token nothing mounts and its absence
+	// is not a repository's missing secret. Readiness drops the mount of that
+	// name from every job and SecretCommands prints no step for it, because a
+	// step would send the owner to mint a token for an account their own
+	// configuration never chooses — the one repository copy no project-wide
+	// copy can replace (the bare name is deliberately outside D2's sweep). The
+	// job itself is unchanged and still deployed: an explicit
+	// `fugaro run --token default` targets it, and the account's own allow-list
+	// is what refuses that launch, not a job that is not there. json:"-": no
+	// Terraform input reads it.
+	DefaultAccountUnused bool `json:"-"`
 
 	// AccountProfiles names, for each named Claude account this repository's
 	// jobs mount, the profile whose claude_accounts already lists it
@@ -861,8 +931,16 @@ type repoCtx struct {
 	credentialsServiceOn bool
 	// budgetMode is the mode the published node carries, read once by resolve
 	// from Inputs.Policy: the switch's fourth condition for an `api-key` or
-	// `oauth` repository (D2071). It is "" where the caller read no node.
+	// `oauth` repository (D2071), and the fact VertexGrantForJob reads to take
+	// a job's Vertex permission away on an enforcing project. It is "" where
+	// the caller read no node.
 	budgetMode string
+	// chain is what the project's routing table decides for this repository,
+	// read once by resolve (ChainPlanFor): whether a chain of it may serve this
+	// repository — which is what puts its runs on the credentials service
+	// beside the switch's own answer, CredentialsServiceServesChains — whether
+	// it reaches Vertex, and whether the project publishes a table at all.
+	chain ChainPlan
 	// providerKeysServed and stageAccountServed are R12's two facts as this
 	// repository's entry in the local config records them, read once by
 	// resolve: the owner's own `fugaro update` judged each of them and wrote
@@ -968,7 +1046,15 @@ func resolve(in Inputs) (*repoCtx, error) {
 	if in.Policy != nil {
 		c.budgetMode = in.Policy.Budget.Mode
 	}
-	c.credentialsServiceOn = CredentialsServiceServes(c.inst.CredentialsService != nil, local.CredentialsServiceOn(), in.Cfg.Agent.Auth, c.budgetMode)
+	c.chain = ChainPlanFor(lc, in.Repo)
+	installed, ready := c.inst.CredentialsService != nil, local.CredentialsServiceOn()
+	// Two arms, one answer: the release-1 bridge, which reads agent.auth, and
+	// the table, which does not (ChainPlanFor). A repository the table serves
+	// is on the service whatever its file names — and a repository the bridge
+	// would serve keeps its answer, so an installation whose table names no
+	// chain for it moves nothing (MG1's per-repository migration).
+	c.credentialsServiceOn = CredentialsServiceServes(installed, ready, in.Cfg.Agent.Auth, c.budgetMode) ||
+		CredentialsServiceServesChains(installed, ready, c.chain)
 	c.providerKeysServed = local.ProviderKeysServedOn()
 	c.stageAccountServed = local.StageAccountServedOn()
 	return c, nil
@@ -1729,7 +1815,7 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 			Title:      gcp.TokenBucketConditionTitle(saID),
 			Expression: gcp.TokenBucketCondition(c.bucket, slug),
 		},
-		Vertex:    c.in.Cfg.Agent.Auth == "vertex",
+		Vertex:    c.reachesVertex() && VertexGrantForJob(c.budgetMode),
 		DeployJob: true,
 
 		Name:                name,
@@ -1890,7 +1976,7 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 			ws.Env[config.StageAccountServedEnv] = config.ServedValue
 		}
 	}
-	if served := ModelSecretsServed(c.credentialsServiceOn, c.in.Cfg.Agent.Auth); served != config.ModelSecretServedNone {
+	if served := ModelSecretsServed(c.chain, c.credentialsServiceOn, c.in.Cfg.Agent.Auth); served != config.ModelSecretServedNone {
 		dropModelMounts(&ws, served)
 	}
 	// And the workflow's OWN secrets go the same way for a repository the
@@ -2075,14 +2161,16 @@ func Repo(in Inputs) (RepoSpec, error) {
 			CredentialsService:         repoCredentialsService(c.inst.CredentialsService, c.credentialsServiceOn),
 			CatalogCheckServiceAccount: c.inst.CatalogCheckServiceAccount,
 		},
-		BitbucketProxied: c.bitbucketProxied,
-		Shared:           c.sharedRepo(),
+		BitbucketProxied:     c.bitbucketProxied,
+		Shared:               c.sharedRepo(),
+		DefaultAccountUnused: !lc.RunsOnDefaultClaudeAccount(),
 		// The same answer workflow() dropped the mounts with, read from the
 		// same two facts, so the module's accessor drop and this spec's mount
 		// drop cannot disagree: a job whose account lost an accessor on a
 		// secret its container still mounts is a job Cloud Run refuses to
 		// create.
-		ModelSecretsServed: ModelSecretsServed(c.credentialsServiceOn, in.Cfg.Agent.Auth),
+		ModelSecretsServed: ModelSecretsServed(c.chain, c.credentialsServiceOn, in.Cfg.Agent.Auth),
+		ReachesVertex:      c.reachesVertex(),
 
 		GitHubAppID:              c.appID,
 		RepoURL:                  c.repoURL,
@@ -2384,16 +2472,18 @@ func (rs RepoSpec) MountSecretID(logical string) string {
 	return rs.Secrets[logical]
 }
 
-// UsesVertex reports whether any of the repository's workflows
-// authenticates its agent through Vertex AI.
-func (rs RepoSpec) UsesVertex() bool {
-	for _, ws := range rs.Workflows {
-		if ws.Vertex {
-			return true
-		}
-	}
-	return false
-}
+// UsesVertex reports whether this repository's runs reach Vertex AI at all,
+// which is the fact the installation plans the Vertex AI API and the
+// credentials service's own permission from (ChainsNameVertex, and the record
+// `fugaro update` writes into the local config's repos.<repo>.vertex).
+//
+// It is ReachesVertex and deliberately NOT "some workflow's job holds the
+// grant": since CS11 a job's Vertex grant is planned away on an enforcing
+// project while the API has to stay enabled for the credentials service, so a
+// reader that answered from ws.Vertex would disable the API and plan the
+// service no permission exactly where the service is the only thing left that
+// calls Vertex.
+func (rs RepoSpec) UsesVertex() bool { return rs.ReachesVertex }
 
 // BaseImageWarnings are the warnings for each of the local config's base
 // images (kind -> image) that is in neither of the installation's own image

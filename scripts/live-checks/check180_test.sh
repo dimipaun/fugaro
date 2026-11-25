@@ -626,9 +626,11 @@ write_token() { # write_token FILE [value]
 # run180 DIR — runs the check once against the fakes. RUN180_ARGS appends
 # arguments, RUN180_MODE picks the fake fugaro's behaviour, RUN180_API_MODE the
 # fake Bitbucket's, RUN180_NAME_A/RUN180_NAME_B/RUN180_PROBE replace the
-# repository names the check is pointed at, and RUN180_ENV names environment
-# variables (NAME=value) to set, so a test can add a bad override. Sets $status,
-# $out and $err.
+# repository names the check is pointed at, RUN180_WORKSPACE the workspace the
+# check is told its repositories live in (the default here is the fakes' own
+# `sandbox`; the script's own default is the owner's `dimi_bmb`), and RUN180_ENV
+# names environment variables (NAME=value) to set, so a test can add a bad
+# override. Sets $status, $out and $err.
 run180() {
   local dir=$work/$1
   mkdir -p "$dir/tmp" "$dir/checkout-a/.git" "$dir/checkout-b/.git" "$dir/bin" "$dir/state" "$dir/gcloudconfig"
@@ -660,6 +662,7 @@ run180() {
     --repo "${RUN180_NAME_A:-sandbox/one}=$dir/checkout-a" \
     --repo "${RUN180_NAME_B:-sandbox/two}=$dir/checkout-b" \
     --probe-repo "${RUN180_PROBE:-sandbox/probe}" --source "$dir/source" \
+    --workspace "${RUN180_WORKSPACE:-sandbox}" \
     ${RUN180_ARGS[@]+"${RUN180_ARGS[@]}"} \
     >"$dir/out" 2>"$dir/err" || status=$?
   out=$(cat "$dir/out")
@@ -670,6 +673,7 @@ run180() {
   RUN180_NAME_A=""
   RUN180_NAME_B=""
   RUN180_PROBE=""
+  RUN180_WORKSPACE=""
   RUN180_UNSET_HOME=""
 }
 
@@ -882,7 +886,7 @@ test_the_plan_and_the_usage_need_no_cloud_tools() {
     bash "$script" --dry-run \
     --installation sandbox --token-file "$work/plan-no-tools/token" \
     --repo "sandbox/one=$work/plan-no-tools/one" --repo "sandbox/two=$work/plan-no-tools/two" \
-    --probe-repo sandbox/probe 2>"$work/plan-no-tools/err") || status=$?
+    --probe-repo sandbox/probe --workspace sandbox 2>"$work/plan-no-tools/err") || status=$?
   expect_status "$status" 0 "the plan without the cloud tools"
   expect_contains "$out" "This is the PLAN" "the plan without the cloud tools: the plan"
   expect_absent "$(cat "$work/plan-no-tools/err")" "on PATH and it is not there" \
@@ -894,6 +898,42 @@ test_the_plan_and_the_usage_need_no_cloud_tools() {
   expect_contains "$out" "usage: check180.sh --installation" "the usage without the cloud tools: the usage line"
   expect_absent "$(cat "$work/plan-no-tools/err-help")" "on PATH and it is not there" \
     "the usage without the cloud tools: a refusal for a tool the usage never uses"
+}
+
+# The workspace the check runs on. It defaults to the owner's own Premium
+# sandbox workspace, `dimi_bmb` (U6 of the reconciliation, unknown until
+# 2026-11-23), and every repository named has to be in it: a repository from
+# another workspace is one the project-wide token's block cannot name, so a run
+# over it would be a run measuring something else. The refusal is the same shape
+# as the `belong` one — before anything is sent.
+test_the_workspace_guard() {
+  local tools=/usr/bin:/bin
+  mkdir -p "$work/ws-default/home"
+  status=0
+  out=$(env PATH="$tools" HOME="$work/ws-default/home" GOOGLE_APPLICATION_CREDENTIALS= CLOUDSDK_CONFIG= \
+    bash "$script" --dry-run \
+    --installation sandbox --token-file "$work/ws-default/token" \
+    --repo "dimi_bmb/one=$work/ws-default/one" --repo "dimi_bmb/two=$work/ws-default/two" \
+    --probe-repo dimi_bmb/probe 2>"$work/ws-default/err") || status=$?
+  expect_status "$status" 0 "the workspace default"
+  expect_contains "$out" "workspace      dimi_bmb" "the workspace default: the plan"
+
+  RUN180_NAME_A=other/one
+  RUN180_WORKSPACE=dimi_bmb
+  run180 ws-outside
+  expect_status "$status" 2 "a repository outside --workspace"
+  expect_contains "$out" "is in the workspace 'other'" "a repository outside --workspace: the refusal"
+  expect_no_request "$work/ws-outside" "a repository outside --workspace"
+
+  # The flag is what wins over the default, and three repositories in the
+  # workspace the flag names are not refused: the guard is the workspace, not
+  # the name.
+  RUN180_NAME_A=other/one
+  RUN180_NAME_B=other/two
+  RUN180_PROBE=other/probe
+  RUN180_ARGS=(--workspace other)
+  run180 ws-override
+  expect_absent "$out" "is in the workspace" "a repository in the workspace the flag names"
 }
 
 test_belong_is_refused_everywhere() {
@@ -1291,7 +1331,7 @@ test_xtrace_is_refused() {
   env PATH="$dir/bin:$PATH" TMPDIR="$dir/tmp" \
     bash -x "$script" --installation sandbox --token-file "$dir/token" \
     --repo sandbox/one="$dir/checkout-a" --repo sandbox/two="$dir/checkout-b" \
-    --probe-repo sandbox/probe --source "$dir/source" \
+    --probe-repo sandbox/probe --source "$dir/source" --workspace sandbox \
     >"$dir/out" 2>"$dir/err" || status=$?
   out=$(cat "$dir/out")
   expect_status "$status" 2 "xtrace"
@@ -1386,6 +1426,7 @@ t test_doctor_exit_1_is_an_answer
 t test_unmeasured_criteria_are_not_a_pass
 t test_dry_run_touches_nothing
 t test_the_plan_and_the_usage_need_no_cloud_tools
+t test_the_workspace_guard
 t test_belong_is_refused_everywhere
 t test_endpoint_override_shapes_are_refused
 t test_token_file_complaints

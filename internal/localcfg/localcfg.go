@@ -286,9 +286,17 @@ type Config struct {
 	// a credential is a spending and data-egress grant (F12, D1628), which is
 	// why a repository may select among them and never add one.
 	Credentials []config.Credential `yaml:"credentials,omitempty"`
-	// Pools are named, ordered lists of those credentials with a strategy
-	// (spec §2). They are created where credentials are, and for the same
-	// reason.
+	// Pools are named, ordered lists of those credentials with a rule: the
+	// `strategy` they were written with, which still means what it means, and
+	// the `rule` that arrived with the routing table, which is served where it
+	// is written and resolved from the strategy where it is not (spec §2, R5,
+	// R21). A pool also names the `principal` it belongs to, which is optional
+	// until the migration writes one (MG2), and a `threshold`, which validation
+	// refuses wherever it is written: no rule set this release ships acts on one,
+	// so the member arrives with the rule that reads it (PL8). An installation
+	// that has not migrated carries neither, and a pool moves only where its
+	// owner wrote a rule (config.Pool.RuleOrDefault). They are created where
+	// credentials are, and for the same reason.
 	Pools []config.Pool `yaml:"pools,omitempty"`
 	// SubscriptionSpread is whether a run may spread across two or more Claude
 	// OAuth subscription credentials at all (D1622, D1636): the D875 switch
@@ -1118,6 +1126,18 @@ type WorkspaceShared struct {
 	// file does not know is refused rather than read as a model one, because
 	// the kind is what decides whether Covers is required.
 	Kind string `yaml:"kind"`
+	// AllMembers offers the credential to every member of the workspace, the
+	// ones that join later included (D2977). It is exclusive with Projects and
+	// one of the two is written (contract C3's rule 5): an entry offered to the
+	// members it names carries Projects and no AllMembers at all, and one
+	// offered to every member carries AllMembers and no Projects. The reader
+	// refuses a node that carries both rather than picking one, because a
+	// reader that picked would be deciding who may be served a credential.
+	//
+	// An entry offered to every member is bounded by the workspace's ceiling
+	// alone, which is why the workspace's own cap has to be stated before
+	// `fugaro workspace share --all-members` writes one (D2977).
+	AllMembers bool `yaml:"all_members,omitempty"`
 	// Projects are the member projects this credential may be served to, as
 	// project names. It is the workspace's own allow-list, and the effective
 	// set is this list intersected with the member's own policy (D1298): a
@@ -1210,6 +1230,30 @@ func (c *Config) choiceRefProblem(name string) string {
 // allow-list, is the shape this method exists to keep out of the tree.
 func (c *Config) ResolveAccount(name string) (account, alias string) {
 	return config.ResolveAccountAlias(c.ClaudeAccountAliases, name)
+}
+
+// RunsOnDefaultClaudeAccount reports whether any run of this project holds the
+// unsuffixed default Claude account: its default_claude_account key names that
+// account or names nothing, or one of its stage keys does. An installation
+// whose runs are all on a named account answers false, and the bare
+// claude-oauth-token is then a token no run of it holds — the name the secrets
+// stage must not ask for, and the one Readiness must not hold a job back for.
+// Which account a run holds is this key's and the stage keys' answer and
+// nothing else's: neither a repository's file nor the project layer may name
+// one (DefaultClaudeAccount's comment), so the answer is total here.
+func (c *Config) RunsOnDefaultClaudeAccount() bool {
+	if c == nil {
+		return true
+	}
+	if name, _ := c.ResolveAccount(c.DefaultClaudeAccount); name == "" || name == config.DefaultClaudeAccount {
+		return true
+	}
+	for _, choice := range c.ClaudeAccountStages {
+		if name, _ := c.ResolveAccount(choice.ClaudeAccount); name == "" || name == config.DefaultClaudeAccount {
+			return true
+		}
+	}
+	return false
 }
 
 // Mailbox is the mailbox block: what the mailbox consumer needs from the
@@ -2117,9 +2161,11 @@ type Repo struct {
 	// GitHubAppID is the repository's GitHub App, for GitHub
 	// repositories. It is not a secret.
 	GitHubAppID string `yaml:"github_app_id,omitempty"`
-	// Vertex records that one of the repository's workflows authenticates
-	// its agent through Vertex AI (agent.auth: vertex), so fugaro update
-	// enables the Vertex AI API. fugaro update sets it.
+	// Vertex records that the repository's runs reach Vertex AI at all —
+	// its file's agent.auth: vertex, or a chain of the project's own
+	// routing table that may serve it naming Vertex — so fugaro update
+	// enables the Vertex AI API. fugaro update sets it, from
+	// infra.RepoSpec.UsesVertex.
 	Vertex bool `yaml:"vertex,omitempty"`
 	// CredentialsServiceReady records that this repository's root has been
 	// applied with the installation's credentials service ON — its bundle
@@ -3920,8 +3966,17 @@ func validateWorkspace(c *Config, bad func(string, ...any)) {
 					bad("workspace_shared.%s: covers lists %s twice", name, why)
 				}
 			}
-			if len(s.Projects) == 0 {
-				bad("workspace_shared.%s names no project: a written entry states the members it may be served to, and an empty list is refused rather than read as every member", name)
+			// Who the entry may be served to is one of two declarations and
+			// never both (contract C3's rule 5): the members it names, or every
+			// member of the workspace. A file that carried both, or neither, is
+			// refused here as the node's own reader refuses it — an entry read
+			// as one of the two when the owner wrote the other would be a pool
+			// wider or narrower than the declaration beside it.
+			switch {
+			case s.AllMembers && len(s.Projects) > 0:
+				bad("workspace_shared.%s carries both all_members and projects: they are exclusive — an entry offered to the members it names carries `projects` and no all_members, and one offered to every member carries `all_members: true` and no projects", name)
+			case !s.AllMembers && len(s.Projects) == 0:
+				bad("workspace_shared.%s names no project and does not offer the credential to every member: a written entry states the members it may be served to — a list of `projects`, or `all_members: true` — and one that says neither is refused rather than read as every member", name)
 			}
 			for _, p := range s.Projects {
 				if !config.ProjectNameRE.MatchString(p) {

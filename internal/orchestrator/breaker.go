@@ -83,7 +83,9 @@ const (
 	CycleFailed CycleOutcome = "failed"
 	// CycleEmpty is a cycle with nothing to do and nothing done.
 	CycleEmpty CycleOutcome = "empty"
-	// CycleInFlight is a cycle whose only news is a run still going.
+	// CycleInFlight is a cycle whose only news is work still going: a run this
+	// daemon started that has not reported, a wait a hook retried, or an item
+	// another orchestrator of the project holds the claim on (Skipped).
 	CycleInFlight CycleOutcome = "in-flight"
 )
 

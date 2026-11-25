@@ -69,6 +69,7 @@ release could observe or lose.
 | policy, the `bitbucket_tokens` half | The same stage publishes the typed Bitbucket tokens the local config records, each with the coverage it reaches and the identity the creds state store proved (R5, R12). A project naming no record derives no key at all, so an installation holding the legacy `bitbucket-token` alone converges with no step and no read of the store (R3) | A **proxied** call re-reads the node on every request it serves (`bitbucketproxy.go`: the selection is made from the node's coverage), so the first call after the publish may be served by a different token than the call before it — a record the operator added takes over a repository it covers, and one they narrowed stops serving it, which is their own records taking effect. A run of the release behind meets the key too and does not refuse it: its runner tolerates an unknown top-level key and falls back to its single `GET /user` identity (R5). Nothing of the run is rewritten, and no run is asked to finish first | Safe, named in the line | `buildProjectPolicy`, `policyConfigDrift`, `internal/cli/init_policy_publish.go`; `bitbucketTokenIdentities`, `internal/cli/project_cmd.go`; `tokensPublishReachesRuns`, `internal/cli/update_in_flight.go` |
 | policy, the Bitbucket proxy switch | The same stage turns the switch on in the operator's local config — `project_secrets.bitbucket-token.proxy`, with the project's Bitbucket repositories added to that entry's `allow_data_to` — for a project with a Bitbucket repository whose installation carries the credentials service and whose runner is at `proxySince` (S6, D2306, D493), and the node's `bitbucket_token` block is published from that very entry, so the file and the block never disagree for `resolveBitbucketProxied`. A bundle holding no Bitbucket token leaves it off, with one line naming `fugaro creds set bitbucket-token--<name>` (R7); two Bitbucket workspaces in one project leave it off too, with one line naming the second (D2314, as amended 2026-11-18: the warning holds the switch back and the update finishes every other step); and a machine whose local config records a `policy_generation` the published node has moved past leaves it off for that run, with one line saying the re-seed records the generation and the next update turns the switch on (S6's fix, 2026-11-18: `bitbucket_token` is a member D854's re-seed splice table has no case for, so a plan built with the switch lands on the fallback that refuses the whole update) | None for a run in flight. Its job's execution is what carries the service's address, and its runner read the node once, at bootstrap: `proxiedBitbucket` is computed there and never again, so a run that was not proxied when it started keeps the credential it has. What this step sets, where it turns the switch at all, is the **address** the repository's jobs are admitted by — the node's `bitbucket_token` block, derived from the entry the same run writes — and not the job's own shape: the mount comes off at the **next** update's repository stage (the drop, `update_proxied.go`), because this update's repository stage ran before the node carried the block. So the launch that fetches its credential from the service is the one after that update, and a launch before it still holds the mount it had. Nothing of the run is rewritten, and no run is asked to finish first | Safe, named in the line | `bitbucketProxyFlip`, `internal/cli/update_proxy_switch.go`; `bitbucketProxySwitchTurns`, `internal/cli/update_in_flight.go` |
 | credentials-service | Moves the installation's recorded credentials image onto this release's, then applies the installation root with it | The service reads the published node once per cascade and Bitbucket-proxied call and refuses a node its own binary does not understand, so this apply may not run before the policy stage's migration; it follows it in the stage immediately after, with nothing between the two, and it is an apply of tfvars alone — every image it needs was published by the images stage. What the order cannot reach is the release behind's own service, which refuses the migrated node until this apply lands: the window is that one apply, and the binary that reads it was released. A run that replaces no service raises no node either: the policy stage holds its write at the version it found — a coding agent's session and a development build both replace nothing, and the image the move would pin is resolved **before** that write, so a resolve this run cannot make fails with the node exactly where it was | Safe by intent, named in the line: the policy clause names the cascade read, and this row's window is named when the same run raises the node's version and moves the service | `newCredentialsStage`, `moveCredentialsImage`, `credentialsMoveHeld`, `credentialsResolveBeforeRaise`, `internal/cli/init_stages.go`; `credentialsWindowOpens`, `internal/cli/update_in_flight.go` |
+| version-stamp | Raises `config/policy/required_cli` to this release — one conditional write under the ETag it read, and the node is never lowered (D3260, D3262) — for a project whose database is this installation's and whose node names a release below this binary's, and only when that release is one the releases API answers for (D3267, D3269) | None. The node is what a binary read at START refuses itself on, so what a raise reaches is the next launch of every member of the project — which is the whole point of it — and a run already bootstrapped under the previous release reads it nowhere: no stage of a run in flight reads this node, nothing of its records, its ledger or its counters is touched, and its every write still lands. The one reader that is not a launch is the resident daemon, which reads it per tick and stops claiming rather than driving on (R7 of the spec, `orchestrator_run.go`): that is the fence working on the machine whose binary this same update moves, and it asks no run to finish first. The raise is also held where this run replaces no credentials service (a coding agent's session, a development build) and where the recorded service image is not this release's, so a node raised here never lands over a service that would refuse it | Safe | `newVersionStampStage`, `versionStampPlan.payload`, `versionStampPlan.write`, `internal/cli/update_version_stamp.go`; `TestUpdateLeavesARunInFlightRunning`, `internal/cli/update_in_flight_test.go`; `TestUpdateRaisesTheStampToItsRelease`, `internal/cli/update_version_stamp_test.go` |
 | workspace-project | Terraform root `workspace`: the workspace's own project's two accounts and its one database grant, and — W3's stage, planned before the record it serves — the workspace's own credentials service, a **second** Cloud Run service on the images stage's image, told what it is by `FUGARO_WORKSPACE_MODE`, with one invoke grant per member job account the owner's config names (`deploy/terraform/gcp/roots/workspace`, `internal/creds.WorkspaceServiceName`). The image is this release's, resolved through the installation's remote repository exactly as the installation's own service pins it, and the address is read back from the root's `workspace_service_url` output in a second apply. A workspace whose Firebase is another project's deploys no service at all, and the skip's own sentence says why (R12) | A member's run calls the service at the address it started with, and this apply puts a new revision behind that same address: the old revision keeps serving until its calls drain while the new one takes them as they land, so a call may be served by either binary — both read the same bundle and the same workspace record. Both applies are of tfvars alone; every image they name was published by the images stage. A member the owner's config no longer names loses their invoke grant in this same apply, which is WS4's step of this note and not this row's. Nothing of the run is rewritten, and no run is asked to finish first | Safe by intent, named in the line (R11): the drain is a rolling replacement and not a stop, and a run bootstrapped under the previous release keeps the environment and the route it started with | `newWorkspaceProjectStage`, `serviceBlock`, `fillServiceURL`, `internal/cli/workspace_create.go`; `workspaceServiceRevisionStale`, `internal/cli/update_in_flight.go`; `deploy/terraform/gcp/roots/workspace` |
 | workspace | Migrates and/or publishes the workspace record `workspaces/<name>` and the credentials node `workspace_credentials/<name>` in the workspace's own database | No run reads the workspace record: it is the workspace owner's document (`docs/workspaces/spec.md`). A member's run makes no request for it at all. The **credentials node** is another matter: the workspace's own service re-reads it as it serves a call (R13, at most 60 seconds old), so a member the table this run publishes no longer declares, or a pool entry it no longer holds, stops being served at the service's next read of the node, with the refusal that names the workspace owner's `fugaro update` (R11, R19). A run in flight is not stopped and nothing of it is rewritten — its records, its ledger and its counters are untouched, and its every write still lands — and the reach is named in the line | Safe, named in the line | `newWorkspaceStage`, `workspaceDropsReach`, `internal/cli/update_workspace.go`; `internal/cli/update_in_flight.go` |
 | layer | Publishes the project layer object and seeds/re-seeds the local file | A run's layer travels with its task and is parsed at bootstrap (`resolveConfig`, `internal/runner/runner.go`); there is no mid-run re-read | Safe | `newLayerStage`, `internal/cli/init_layer_stage.go` |
@@ -215,6 +216,38 @@ retype bumps the version — is what keeps an old runner's record readable by a 
 binary. A shape change is therefore a release's decision and not an update's
 hazard; adding a field is safe for both directions.
 
+**A paused run.** A run that suspends itself has ended its execution and released its lease
+(R12), so the registry the note's count otherwise reads holds no entry of it. The pause is
+written in two places instead (C3, [contract-pause.md](../model-credentials-routing/contract-pause.md)):
+the record `pause.json` in the run's own bucket prefix, which the run that resumes it reads, and
+the credentials service's node `paused/<slug>/<run>` in the Realtime Database, which says who
+launched the run, on what pool and until when (R6, R8, R26 — the node is display data to a
+launcher and an input only to the service and the orchestrator). A paused chain is in flight the
+way a running one is (PR12, D3195), so the update counts it too, and says under the count how many
+of the runs in flight are paused (`pausedRuns`, `internal/cli/update_in_flight.go`). A node is not
+on its own a paused run: it is the service's record that a pause was asked for, and what makes the
+run count is the run's own record still ending `paused` — the reading every guard makes of a pause
+(`pauseInFlight`, `pauseStands`, `internal/cli/runs_prstate.go`) and the one a resume reads it by
+(PR4: a node whose run did not end paused is resumed no more than a cancelled one). A node a
+launcher has cancelled is not counted either — the chain is over and no guard reads it as in flight
+(D3197) — and one this release cannot place is no pause the orchestrator would resume
+(`ErrInvalidPauseNode`), nor is a node whose record the bucket no longer has: a run's objects live
+in the bucket for a window and age out together, which is what bounds this figure over an
+installation's history.
+
+What that figure is, exactly, is the count of the pauses the door can see standing, and not a
+promise that the orchestrator still has each resume to do. The contract puts no resumed mark on the
+node (C3), and the run a pause was resumed with is found in the chain instead — the run whose task
+names `resumes` with the paused run's id (PR5) — which this count does not walk. A pause that has
+already been resumed is therefore counted while its record ends `paused`, and the line under the
+count says what was read (`held by a pause that still stands`) rather than that one is still due.
+
+The update rewrites nothing a paused run holds:
+its record, its node, its saved session and its chain's ledger are exactly as the suspend left
+them (F36), and the run the orchestrator resumes it with reads `pause.json`, checks out the
+checkpoint and enters the stage the paused run was in (PR5) — so the pause spans the update the
+way a running run does, on either release.
+
 ## What the update must do about it
 
 Nothing in the table asks a person to stop a run, and one row did the opposite:
@@ -230,12 +263,29 @@ it with fourteen runs going and no output at all (the feedback of 2026-11-15).
 What it prints after that is the count's own line: how many runs are in flight,
 that the update waits for none of them and changes nothing they hold. Then one
 short line per step that can still reach one, indented under it, or a single line
-saying no step does (`inFlightSteps`). The note is exactly as long as that count
-and no longer — plus R5's own line, printed where this machine's config still
-says the word (`budgetOffRunFinishes`): a run that started with the budget off
-has no session for the mode to bound and holds its key already, so the count's
-line cannot carry it, and what the note owes the person is that such a run
-finishes. Beyond that line the note is as short as the count: the same feedback
+saying no step does (`inFlightSteps`). Nothing is inserted into the count's own
+sentence: it is the one the live checks read as a whole, count and all
+([gcp-live-checklist.md](../gcp-live-checklist.md), Check 632). The note is
+exactly as long as that count
+and no longer — plus the lines that are not steps and carry the facts the
+count's own sentence cannot: how many of the runs in flight are held by a pause
+that still stands (PR6, because a suspended run's execution has ended and left
+the registry the count otherwise reads — R12), R5's, and MG3's. R5's is printed where this machine's config still says the
+word (`budgetOffRunFinishes`): a run that started with the budget off has no
+session for the mode to bound and holds its key already, so what the note owes
+the person is that such a run finishes. MG3's says that this release keeps
+writing the repository's old access record beside the routing table, which is
+what a run whose image predates the table resolves from (`repoAuthSources`,
+`internal/cli/update_repoauth.go`; `legacy_auth.go`, `internal/credsvc`) — and it
+counts those runs, because the image a run is running is a fact this machine
+does hold: the run's own record carries it (`ImageInfo`, written at bootstrap out
+of the statement the image makes about itself), so the line reads each run of the
+registry against the moment the table reached the branch (`chainIntroduced`,
+`runsOnTheOldRecord`) and says how many of the count above are its readers. A
+record that names no build time, and one that cannot be read at all, count —
+the direction the image-age gate takes for an image it cannot place — and the
+line is printed only when the number is not zero.
+Beyond those lines the note is as short as the count: the same feedback
 could not find what it was after in the paragraph this used to be, and what each
 line stands for — the question its step is gated on — is written where that
 step's own code and gate are. It never
@@ -302,7 +352,12 @@ The tests are `TestUpdateLeavesARunInFlightRunning` and its siblings
 converges under `fugaro update` while a run of its own repository is in flight,
 and that run's later writes — its lease, the ledger and the counters the report
 settles, the outcome it ends with, its record and its review session — still
-land under the new rules and the migrated policy.
+land under the new rules and the migrated policy. The same fixture carries a
+paused run beside the running one (PR6): the update rewrites nothing it holds —
+its record, its node, its saved session and its chain's ledger — the note counts
+it and says how many of the runs in flight are paused
+(`TestUpdateCountsPausedRuns`), and the run that resumes it picks the chain up
+afterwards.
 `TestUpdateAddsTheImplicitReviewJobAndLeavesARunInFlightRunning`
 (`internal/cli/update_review_job_test.go`) is the same fixture read against the
 one job this release adds (the row above): an installation at the previous

@@ -30,10 +30,12 @@ func TestRefusalNamesTheWorkingCommandLine(t *testing.T) {
 		want []string
 	}{
 		// A family's own row: the `models` family's key is refused with the
-		// command that writes it and its whole line.
+		// command that writes it and its whole line. The line names the project
+		// layer, because a model is the project's choice and no repository
+		// states one any more (D3237, S4).
 		{
 			key:  "agent.model",
-			want: []string{"agent.model is written by fugaro models use", "run `fugaro models use agent.model <value> --layer repo`"},
+			want: []string{"agent.model is written by fugaro models use", "run `fugaro models use agent.model <value> --layer project`"},
 		},
 		// A row no family of the write's own map carries: the budget's caps are
 		// T1's writers and the allowlist refuses them, so the sentence is the

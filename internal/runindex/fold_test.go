@@ -29,6 +29,11 @@ const (
 	// moment.
 	runOne = "20261120-093000-a1b2"
 	runTwo = "20261120-101500-c3d4"
+	// runThree is older than both, and runGhost sits between them: a run
+	// directory a walk reaches and reads nothing from (RI5's failure test).
+	runThree = "20261120-080000-eeee"
+	runGhost = "20261120-090000-ffff"
+	runFour  = "20261120-113000-e5f6"
 )
 
 var foldNow = time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
@@ -49,9 +54,9 @@ func newFoldEnv(t *testing.T) *foldEnv {
 	return &foldEnv{t: t, db: gcpfake.NewRTDB(t), fs: gcpfake.NewFirestore(t), bucket: memblob.OpenBucket(nil), now: foldNow}
 }
 
-// fold runs one fold, as the sweep does: the lease's holder is the execution's
+// index is the folder one pass runs as: the lease's holder is the execution's
 // name and the wall clock is the fixture's.
-func (e *foldEnv) fold() (FoldReport, error) {
+func (e *foldEnv) index() *Fold {
 	e.t.Helper()
 	c, err := rtdb.New(e.db.URL, rtdb.Auth{IDToken: func() string { return "" }})
 	if err != nil {
@@ -61,9 +66,29 @@ func (e *foldEnv) fold() (FoldReport, error) {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	f := &Fold{DB: c, FS: fs, Bucket: e.bucket, Holder: "exec-1", Now: func() time.Time { return e.now },
+	return &Fold{DB: c, FS: fs, Bucket: e.bucket, Holder: "exec-1", Now: func() time.Time { return e.now },
 		Warn: func(s string) { e.warns = append(e.warns, s) }}
-	return f.Fold(context.Background())
+}
+
+// fold runs one fold, as the sweep does.
+func (e *foldEnv) fold() (FoldReport, error) {
+	e.t.Helper()
+	return e.index().Fold(context.Background())
+}
+
+// reader is the real Reader over the fixture's two fakes, for a test that reads
+// back what a fold wrote.
+func (e *foldEnv) reader() Reader {
+	e.t.Helper()
+	client, err := firestore.New(e.fs.URL, "aurora-fp", oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "tok-SECRET"}))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	live, err := rtdb.New(e.db.URL, rtdb.Auth{IDToken: func() string { return "" }})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return NewFirestore(client, live, WithClock(func() time.Time { return e.now }))
 }
 
 // agent is a run's registry heartbeat: what a live run writes, and the fold's
@@ -344,6 +369,212 @@ func TestFoldUpsertsChangedRuns(t *testing.T) {
 	}
 }
 
+// TestFoldStampsAClaimedNeverLaunchedRunWithItsMintTime is the sort key's last
+// fallback, the one case where the entry takes no moment from a record at all:
+// a run a launcher claimed and no execution ever picked up, so the bucket holds
+// a task.json and nothing else. The run's own id names the moment it was minted
+// (`runstore.RunTime`), and the entry is stamped with it -- an entry with no
+// sort key falls outside every `--since` window, and `runs stats`'s
+// `unlaunched`, the window's count of runs that never started, is counted off a
+// page of entries, so such a run would be on none of them and the figure would
+// be zero while the record read counts them (contract-index.md, the
+// `updated_at` row).
+//
+// The fold is handed the run the way the reindex walk hands it one (RI5); what
+// the test pins is the document that comes out of it, and that the reader
+// places that document in the window the run was minted in and in no later one.
+func TestFoldStampsAClaimedNeverLaunchedRunWithItsMintTime(t *testing.T) {
+	e := newFoldEnv(t)
+	run := "20261120-110000-e5f6"
+	minted, err := runstore.RunTime(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.objects(foldSlug, foldSpec(run), nil, nil)
+	f := e.index()
+	entry, err := f.read(context.Background(), runKey{slug: foldSlug, run: run})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry == nil {
+		t.Fatal("the fold found nothing to write for a run whose task.json is there: the run exists")
+	}
+	if entry.Status != "" || entry.Launch != nil || entry.Record != nil {
+		t.Fatalf("entry = %+v, want a run that launched nothing and settled nothing", entry)
+	}
+	if !entry.UpdatedAt.Equal(minted) {
+		t.Fatalf("updated_at = %s, want the run id's mint time %s: a run that never launched has no record and no launch to take a moment from",
+			entry.UpdatedAt, minted)
+	}
+	if err := f.write(context.Background(), entry); err != nil {
+		t.Fatal(err)
+	}
+
+	// The read end: the entry is placed by that key, so the window it was
+	// minted in carries it and a window that opens after it does not.
+	r := e.reader()
+	inside, err := r.List(context.Background(), Filter{Slugs: []string{foldSlug}, Since: minted.Add(-time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(inside); !reflect.DeepEqual(got, []string{run}) {
+		t.Fatalf("the window that opens before the run was minted lists %v, want the run alone: it is on no other read's page either", got)
+	}
+	if row := rowOf(t, inside, run); row.Status != "" || !row.UpdatedAt.Equal(minted) {
+		t.Fatalf("the row = %+v, want the run settled nothing and placed by its mint time", row)
+	}
+	after, err := r.List(context.Background(), Filter{Slugs: []string{foldSlug}, Since: minted.Add(time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(after); len(got) != 0 {
+		t.Fatalf("a window that opens after the run was minted lists %v, want nothing", got)
+	}
+}
+
+// TestFoldCarriesAnUnreadableObject is the difference the entry has to keep
+// between "the run wrote no such object" and "the run wrote one nobody can
+// read". An object the bucket holds and the fold cannot use -- a syntax error,
+// a shape the decoder refuses, one past the size cap -- is a run that happened,
+// so the fold writes its entry with LaunchUnreadable/RecordUnreadable set, and
+// a run whose launch.json is corrupt and which died before finalize is not
+// folded as a run that was claimed and never launched. The read is tolerating
+// the object rather than failing the pass: a fold that returned an error here
+// would stop the sweep on one run's broken object, and a reader that reads no
+// object would never learn the run existed.
+func TestFoldCarriesAnUnreadableObject(t *testing.T) {
+	e := newFoldEnv(t)
+	started := foldNow.Add(-3 * time.Hour)
+	e.agent(foldSlug, runOne, started)
+	e.agent(foldSlug, runTwo, started)
+	e.agent(foldSlug, runFour, started)
+	// The first run is the finding's case: a task, a launch.json that is there
+	// and unreadable, and no result.json. The second is the same for its
+	// record, with a launch the fold can read. The third is that launch with
+	// nothing else at all: no task beside it, so it is the state fold.read
+	// skips only when it has no unreadable object either.
+	e.objects(foldSlug, foldSpec(runOne), nil, nil)
+	e.objects(foldSlug, foldSpec(runTwo), foldLaunch(runTwo, started.Add(-time.Minute)), nil)
+	put := func(run, name, body string) {
+		t.Helper()
+		if err := runstore.Open(e.bucket, foldSlug, run).
+			PutFile(context.Background(), name, []byte(body), "application/json"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(runOne, "launch.json", `{"version":1,`)
+	put(runTwo, "result.json", `{"version":1,`)
+	put(runFour, "launch.json", `{"version":1,`)
+
+	rep, err := e.fold()
+	if err != nil {
+		t.Fatalf("the fold failed on a run whose object is corrupt: %v", err)
+	}
+	if rep.Folded != 3 || rep.Unreadable != 0 || rep.Held {
+		t.Fatalf("report = %+v", rep)
+	}
+
+	one := e.doc(runOne)
+	if _, ok := one["launch"]; ok {
+		t.Fatalf("the entry carries a launch nobody can read: %v", one)
+	}
+	if one["launch_unreadable"] != true {
+		t.Fatalf("launch_unreadable = %#v, want true: the bucket holds a launch.json the fold could not use", one["launch_unreadable"])
+	}
+	if _, ok := one["record"]; ok {
+		t.Fatalf("a run that never finalized carries a record: %v", one)
+	}
+	if _, ok := one["status"]; ok {
+		t.Fatalf("a run that never finalized carries a status: %v", one)
+	}
+	minted, err := runstore.RunTime(runOne)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if at, ok := one["updated_at"].(time.Time); !ok || !at.Equal(minted) {
+		t.Fatalf("updated_at = %#v, want the run id's mint time: a corrupt launch is no moment", one["updated_at"])
+	}
+
+	two := e.doc(runTwo)
+	if _, ok := two["record"]; ok {
+		t.Fatalf("the entry carries a record nobody can read: %v", two)
+	}
+	if two["record_unreadable"] != true {
+		t.Fatalf("record_unreadable = %#v, want true", two["record_unreadable"])
+	}
+	if _, ok := two["launch"].(map[string]any); !ok {
+		t.Fatalf("launch = %#v, want the launch the fold could read", two["launch"])
+	}
+
+	// Without the guard's own clause this run is skipped outright -- no entry,
+	// and rep.Unreadable above reads 1 -- and the index, which is the only
+	// thing a reader of it sees, would say the run never existed.
+	three := e.doc(runFour)
+	if three["launch_unreadable"] != true {
+		t.Fatalf("launch_unreadable = %#v, want true: the bucket holds a launch.json the fold could not use", three["launch_unreadable"])
+	}
+	if _, ok := three["launch"]; ok {
+		t.Fatalf("the entry carries a launch nobody can read: %v", three)
+	}
+	threeMinted, err := runstore.RunTime(runFour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if at, ok := three["updated_at"].(time.Time); !ok || !at.Equal(threeMinted) {
+		t.Fatalf("updated_at = %#v, want the run id's mint time: a corrupt launch is no moment", three["updated_at"])
+	}
+}
+
+// TestFoldReadsACorruptTaskAsNoTask is the same rule one object over. task.json
+// is the third object the fold reads, and a task.json this build cannot parse
+// -- a syntax error, or a field a newer CLI wrote that Parse's
+// DisallowUnknownFields refuses -- must cost that one run its task-derived
+// fields, not fail the sweep: a fold that returned the parse error stops every
+// other run's entry with it, and a stamp that never moves repeats that every
+// sweep while the index's reader sees no sign of any of them.
+func TestFoldReadsACorruptTaskAsNoTask(t *testing.T) {
+	e := newFoldEnv(t)
+	started := foldNow.Add(-3 * time.Hour)
+	e.agent(foldSlug, runOne, started)
+	e.agent(foldSlug, runTwo, started)
+	// The healthy run beside the broken one is the point: a sweep that stopped
+	// on runOne's task would not fold it.
+	e.objects(foldSlug, foldSpec(runTwo), foldLaunch(runTwo, started.Add(-time.Minute)),
+		foldRecord(runTwo, runstore.StatusSucceeded, started, foldCost(1.0, 0.0, 0.1, true)))
+	st := runstore.Open(e.bucket, foldSlug, runOne)
+	if err := st.WriteLaunch(context.Background(), foldLaunch(runOne, started.Add(-time.Minute))); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutFile(context.Background(), "task.json", []byte(`{"version":1,`), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := e.fold()
+	if err != nil {
+		t.Fatalf("the fold failed on a run whose task.json is unreadable: %v", err)
+	}
+	if rep.Folded != 2 || rep.Unreadable != 0 || rep.Held {
+		t.Fatalf("report = %+v", rep)
+	}
+
+	one := e.doc(runOne)
+	if _, ok := one["title"]; ok {
+		t.Fatalf("the entry carries a title from a task nobody can read: %v", one)
+	}
+	if _, ok := one["requested_by"]; ok {
+		t.Fatalf("the entry carries a requester from a task nobody can read: %v", one)
+	}
+	if _, ok := one["launch"].(map[string]any); !ok {
+		t.Fatalf("launch = %#v, want the launch the fold could read", one["launch"])
+	}
+	if at, ok := one["updated_at"].(time.Time); !ok || !at.Equal(started.Add(-time.Minute)) {
+		t.Fatalf("updated_at = %#v, want the launch's own moment", one["updated_at"])
+	}
+	if _, ok := e.doc(runTwo)["title"]; !ok {
+		t.Fatalf("the healthy run beside the broken one was not folded: %v", e.doc(runTwo))
+	}
+}
+
 // TestFoldAppliesCountDeltas is the summary's own rule: a fold moves the
 // counts and the money by the run's own state change, so a run that ends
 // differently is counted once and not twice, and a run whose compute stops
@@ -484,5 +715,38 @@ func TestFoldLeavesTheStampOnFailure(t *testing.T) {
 	}
 	if got := e.summary()["folded_through"]; got != stamp {
 		t.Fatalf("a failed fold moved the stamp: %v became %v", stamp, got)
+	}
+}
+
+// TestFoldProjectsTheTaskBranch is run 1a21's deferred review finding, on the
+// writing side. indexRun rebuilt the coordinator view from the entry's two
+// records alone, so a run whose record is absent or unreadable lost the branch
+// coordinatorRun falls back to the task for. The fold is where that fallback is
+// preserved: the entry projects the branch runview.Join joins (the record's,
+// else the task's), so a reader of the index draws the same branch the bucket
+// read draws. A record-less run is the case that makes the projection
+// load-bearing, and the one asserted here.
+func TestFoldProjectsTheTaskBranch(t *testing.T) {
+	e := newFoldEnv(t)
+	branch := "fugaro/" + runTwo
+	spec := &task.Spec{
+		Version: 1, RunID: runTwo, Repo: foldRepo, Ref: "main", Workflow: "go",
+		Task: "# Task: a run in flight\n\nthe body", Title: "a run in flight",
+		Branch: branch, PR: 41, PreviousRun: runOne,
+	}
+	// A task and a launch, no record at all: the state whose branch nothing
+	// else in the entry can answer for.
+	e.agent(foldSlug, runTwo, foldNow.Add(-2*time.Minute))
+	e.objects(foldSlug, spec, foldLaunch(runTwo, foldNow.Add(-3*time.Minute)), nil)
+
+	if _, err := e.fold(); err != nil {
+		t.Fatal(err)
+	}
+	two := e.doc(runTwo)
+	if got := two["branch"]; got != branch {
+		t.Fatalf("branch = %#v, want the task's %s", got, branch)
+	}
+	if _, ok := two["record"]; ok {
+		t.Fatalf("a run that never finalized carries a record: %v", two)
 	}
 }

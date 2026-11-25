@@ -14,7 +14,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/budget"
-	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -442,26 +441,23 @@ func chainRead(ctx context.Context, env *cloudEnv, slug, from string) (*runstore
 
 // launcherLedgers is the ledger reader a chain read speaks with: the launcher's
 // own viewer role, which reads every path of the budget database (L1, U4). nil
-// is an installation whose budget is off, where there is no ledger at all and
-// the chain is UNENFORCED with its records as its figures (D1046).
+// is an installation with no database, where there is no ledger at all and the
+// chain is UNENFORCED with its records as its figures (D1046).
 //
-// budgetBackendOn is deliberately not the test here: it also refuses a launch
-// whose installation names no token_signer, and that signer is the identity the
-// *run* is minted with, not the one this read uses — a chain read is nothing
-// the run's missing identity should stop, and the launch's own gates refuse
-// that launch a few lines later anyway.
+// The mode is not read here any more (AB4): an installation whose budget was
+// off still has a database with every run's ledger on it, and a chain read that
+// returned nil for it would count a chain's spending as its records alone while
+// the ledgers sat one call away. What is left is the only thing that decides
+// whether a ledger exists.
 //
-// An installation that writes no mode is the same state here as the word that
-// was a mode until this release, which is the shape the release behind gave this
-// reader: the local config now answers observe for both (AB2, D3010,
-// localcfg.BudgetMode), and reading that answer would make every existing
-// installation with a database start its chain reads against a ledger whose
-// counters the run that wrote the records never filled — a move AB4 owns ("the
-// chain's ledger reader … stop reading off") and AB2's merge moves no chain's
-// figures. AB4 drops this read.
+// budgetBackendOn is deliberately not the test here: it also demands a
+// token_signer, and that signer is the identity the *run* is minted with, not
+// the one this read uses — a chain read is nothing the run's missing identity
+// should stop, and the launch's own gates refuse that launch a few lines later
+// anyway.
 func launcherLedgers(ctx context.Context, env *cloudEnv) (runstore.LedgerReader, error) {
 	lc := env.lc
-	if lc.Budget == nil || lc.Budget.Mode == "" || lc.BudgetMode() == localcfg.BudgetOff || lc.Budget.RTDBURL == "" {
+	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
 		return nil, nil
 	}
 	db, err := newBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)

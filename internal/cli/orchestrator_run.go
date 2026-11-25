@@ -27,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/versionstamp"
 )
 
 // fugaro orchestrator run: the foreground daemon (O8).
@@ -162,7 +163,13 @@ func runOrchestratorRun(cmd *cobra.Command, o *orchestratorRunOptions) error {
 		lc: lc, id: id, db: db, env: env, node: node, lease: lease, holder: holder,
 		interval: o.interval, beat: orchestrator.LeaseBeat,
 		binary: o.binary, running: Version, once: o.once, decide: o.decide,
-		out: cmd.OutOrStdout(), warn: cmd.ErrOrStderr(),
+		// The required-CLI stamp is read through the CLI's one seam, over the
+		// project's own database, exactly as the root fence and `update`'s door
+		// read it (T1, T6): the daemon is exempt from the root refusal and holds
+		// here instead, because a unit starts it again after any exit (R7).
+		stamp:    newStampSource(versionstamp.Options{Open: stampOpen, Getenv: os.Getenv}),
+		out:      cmd.OutOrStdout(),
+		warn:     cmd.ErrOrStderr(),
 		launched: &launchInFlight{},
 		// The endpoint's registry goes under the user's state directory, read
 		// from the process's own environment the way the cached brief is.
@@ -195,12 +202,26 @@ type orchestratorDaemon struct {
 	// below it is a claim that lapses between beats, and the person's own knob
 	// is the interval.
 	beat time.Duration
+	// stamp is the reader of the project's required CLI (T1), which the daemon
+	// reads at start and at every tick (R7): this command is exempt from the
+	// root fence, and holds below the stamp instead of refusing. A nil one is a
+	// daemon with no fence at all, which is what a test that is not about the
+	// stamp builds — the same nil-tolerance d.wake, d.endpoint and
+	// d.registryGetenv have.
+	stamp versionstamp.Source
 	// once is --once: one cycle, then the clean exit, and decide is --decide:
 	// whether the tick this daemon builds reaches the decision agent at all.
-	once     bool
-	decide   bool
-	tick     *orchestrator.Tick
-	cache    *orchestrator.BriefCacheWriter
+	once   bool
+	decide bool
+	tick   *orchestrator.Tick
+	cache  *orchestrator.BriefCacheWriter
+	// claims is the guard the tick takes this daemon's claims through and
+	// releases the finished ones on (D3209), kept here as well because the beat
+	// re-stamps them beside the lease (orchestrator.Claim.Refresh): what the
+	// node records is when its holder last confirmed an item was still its own,
+	// and a daemon that beats only its lease would leave that stamp on the day
+	// the item was taken.
+	claims   *orchestrator.Claim
 	launched *launchInFlight
 	// launcher is the launcher the tick starts runs through, kept here because
 	// the list of nodes it finds an item in moves with the plans (nodes,
@@ -295,6 +316,14 @@ func (d *orchestratorDaemon) start(ctx context.Context) error {
 	if due, err := d.updateDue(ctx); err != nil {
 		return err
 	} else if due {
+		return d.holdForUpdate(ctx)
+	}
+	// The stamp is asked before the lease is taken, for the reason updateDue is:
+	// a daemon that is going to claim nothing must not hold the id even for a
+	// moment (R7). Under a unit this is a hold and not an exit, because the unit
+	// starts the same old binary again after any exit; under --once or with no
+	// --binary, holdForUpdate returns nil and this daemon exits 0.
+	if d.belowRequiredCLI(ctx, false) {
 		return d.holdForUpdate(ctx)
 	}
 	state, err := d.lease.Acquire(ctx)
@@ -493,6 +522,67 @@ func (d *orchestratorDaemon) updateDue(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
+// belowRequiredCLI reports whether the project's required CLI is above this
+// binary, and says so when it is: the daemon is exempt from the root refusal
+// (R7), so this is where the one line the person reads comes from, and the
+// caller is what does the holding.
+//
+// The read goes through versionstamp.Source, so the cache rule is the CLI's one
+// rule (D3263) and the fail-open rule is the CLI's too: a database that cannot
+// be read is one line and a daemon that drives on (D3264), and only a stamp
+// that is really above this binary stops it. The cache bounds this to one read
+// per quarter hour once the node is there; a project whose node is absent
+// caches nothing — a read that finds no stamp removes the entry, so that a node
+// somebody deleted cannot go on refusing from a fresh one — and until that
+// project's first post-L1 `fugaro update` writes it, this is one read a cycle
+// (the 30s interval), not one a quarter hour.
+//
+// A stamp that is present and malformed is the one case a read fails closed
+// (T1): the sentence names the node and the one thing that repairs it, and the
+// daemon stops on it exactly as it stops on a stamp above it, because a project
+// whose fence this binary cannot read is not one to drive.
+//
+// midRun says which stop this is, so the line the person reads matches it: at
+// start nothing is claimed yet, and mid-run the id is going back (the caller
+// releases it).
+func (d *orchestratorDaemon) belowRequiredCLI(ctx context.Context, midRun bool) bool {
+	if d.stamp == nil {
+		return false
+	}
+	res, err := d.stamp.Required(ctx, versionstamp.Query{URL: d.lc.Budget.RTDBURL, NoAuth: d.lc.Endpoints.NoAuth})
+	if err != nil {
+		d.reportRequiredCLI(safetext.OneLine(err.Error()), midRun)
+		return true
+	}
+	if res.Origin == versionstamp.OriginNone {
+		fmt.Fprintf(d.warn, "orchestrator %s: the project's required CLI could not be read, so this daemon drives on: %s\n",
+			safetext.Field(d.id), safetext.OneLine(res.Reason))
+		return false
+	}
+	if !res.Found || !versionstamp.Below(res.Stamp, d.running) {
+		return false
+	}
+	d.reportRequiredCLI((&versionstamp.BelowError{Stamp: res.Stamp, Version: d.running}).Error(), midRun)
+	return true
+}
+
+// reportRequiredCLI is that one line: the refusal sentence — which names the
+// required release, the date the installation set it and the brew command, and
+// comes from internal/versionstamp and nowhere else — and then what this daemon
+// does about it. The ending is updateDue's own choice of words: a unit starts
+// this binary again after any exit, so there the report is not the end of
+// anything and the daemon says so.
+func (d *orchestratorDaemon) reportRequiredCLI(sentence string, midRun bool) {
+	ending := "This daemon is stopping, and it claimed nothing."
+	switch {
+	case d.binary != "" && !d.once:
+		ending = "This daemon is holding instead of exiting, because the unit starts it again after any exit: it claims nothing and drives nothing, and it exits only once the binary the unit names has moved on."
+	case midRun:
+		ending = "This daemon is stopping; the lease is released."
+	}
+	fmt.Fprintf(d.out, "orchestrator %s: %s %s\n", safetext.Field(d.id), sentence, ending)
+}
+
 // holdForUpdate is what a daemon does with an update due while a unit runs it:
 // nothing at all, for as long as it takes.
 //
@@ -683,27 +773,47 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		nodes:  append([]orchestrator.Store{d.node}, d.nodes...),
 		now:    d.db.ServerNow,
 	}
+	claims, err := orchestrator.NewClaim(d.db, d.id, d.db.ServerNow)
+	if err != nil {
+		return nil, userErr("%v", err)
+	}
+	// The same guard goes on the daemon: the beat re-stamps the claims it holds
+	// along with the lease it holds (beatAndRefresh).
+	d.claims = claims
 	return &orchestrator.Tick{
 		Store: d.node,
 		// The nodes beside the state node: the standing backlog's and one per
 		// imported plan (D2735), which refreshNodes has built before this tick
 		// was and rebuilds after it.
 		Nodes:    d.nodes,
-		Runs:     &orchestratorRunView{bucket: d.env.bucket.Bucket, env: d.env, warn: d.warn},
+		Runs:     &orchestratorRunView{bucket: d.env.bucket.Bucket, env: d.env, db: d.db, warn: d.warn},
 		Launcher: d.launcher,
-		Mint:     func(now time.Time) (string, error) { return task.NewRunID(now, crand.Reader) },
-		Caps:     caps,
-		Breaker:  &orchestrator.Breaker{},
-		// A tick has four things to say — a run it folded ended, it committed
+		// The project's claims (D3209): the daemon takes the claim of a plan
+		// task or a backlog item before it starts the run for it and settles it
+		// when the item is finished — a plan task's claim marked finished and
+		// left standing, so that a second orchestrator of this project, whose
+		// own node still carries the task as approved, skips it rather than
+		// starting a second run of one piece of work — while a backlog item's
+		// claim comes off. The node is one under `orchestrator/~claims`, which
+		// the daemon writes with the credential it writes the state with — over
+		// IAM, since every token is refused there (F33, and no rules change).
+		Claims:  claims,
+		Mint:    func(now time.Time) (string, error) { return task.NewRunID(now, crand.Reader) },
+		Caps:    caps,
+		Breaker: &orchestrator.Breaker{},
+		// A tick has six things to say — a run it folded ended, it committed
 		// a question (O7), it merged under a ceiling that tells somebody
-		// (D2030), and it blocked an item on a cycle across orchestrators
-		// (D3220) — and the log sink is the channel slice 1 ships, one cleaned
+		// (D2030), it blocked an item on a cycle across orchestrators (D3220),
+		// and the two readings of a chain that ran out of models, a run that
+		// suspended itself until a time and one that halted for want of one
+		// (C3) — and the log sink is the channel slice 1 ships, one cleaned
 		// line on this daemon's own output, which is where the person running it
 		// in the foreground reads what it did (and where the login unit collects
 		// it). Left unset, every say() in a cycle returns at its nil check: the
 		// daemon would stop a run nobody hears about, pause on a spend question
-		// nobody sees, land a merge nobody is told to read, and block an item on
-		// a deadlock nobody can break.
+		// nobody sees, land a merge nobody is told to read, block an item on
+		// a deadlock nobody can break, and leave a run that stopped on an
+		// exhausted chain with nobody told whether anything resumes it.
 		Notifier: orchestrator.LogSink{W: d.out},
 		Triage:   orchestratorTriageSeams(d),
 		// The labels of the pull requests the runs it launched opened (F25, T7):
@@ -1049,7 +1159,7 @@ func (d *orchestratorDaemon) refreshCaps(ctx context.Context) {
 // somebody else's.
 func (d *orchestratorDaemon) loop(ctx context.Context) error {
 	for {
-		if err := d.lease.Beat(ctx); err != nil {
+		if err := d.beatAndRefresh(ctx); err != nil {
 			if ctx.Err() != nil {
 				return d.cancelled(ctx)
 			}
@@ -1070,6 +1180,23 @@ func (d *orchestratorDaemon) loop(ctx context.Context) error {
 			// gives up for good over one refused write.
 			d.release(ctx)
 			return dbErr(d.lc, err, false)
+		}
+		// The stamp is read again every cycle, through the cache (R7): an admin's
+		// `fugaro update` raises it under a running daemon, and this one stops
+		// claiming and driving rather than act on an installation that has moved
+		// past it. The id goes back the way abandon gives it back, and what this
+		// daemon does next is what it does below the stamp at start: it holds
+		// under a unit and exits 0 under --once or with no --binary.
+		//
+		// The local endpoint stops before the hold and not with the process: a
+		// hold under a unit does not end — it lasts until the binary the unit
+		// names moves on — and a reader on this machine would go on being
+		// answered from a feed no cycle refreshes, which is the one thing a
+		// daemon that has stopped driving owes nobody (R7).
+		if d.belowRequiredCLI(ctx, true) {
+			d.release(ctx)
+			d.unserve(ctx)
+			return d.holdForUpdate(ctx)
 		}
 		d.refreshCaps(ctx)
 		// The plans are listed again every cycle: a plan imported while this
@@ -1110,6 +1237,39 @@ func (d *orchestratorDaemon) loop(ctx context.Context) error {
 			return err
 		}
 	}
+}
+
+// beatAndRefresh is the daemon's beat: the lease it holds, and the claims it
+// holds beside it.
+//
+// The claims are re-stamped here and not released here: what releases a claim is
+// its item, and only the cycle that reads the nodes knows which items are
+// finished (orchestrator.Claim.Refresh, and the tick's last step). What the beat
+// adds is the stamp the node carries — the server time its holder last confirmed
+// the item was still its own — kept inside the beat's own cadence rather than
+// left on the day the item was taken. What it re-stamps is the picture the last
+// cycle read off the daemon's own nodes (orchestrator.Tick.Held) and not a walk
+// of the project's claims node, which grows with every claim the project ever
+// made.
+//
+// A refresh that failed is not the lease's failure, and this does not answer it
+// the way the loop answers a beat that failed: a lease failure has one answer
+// (the loop's own comment), while a claim whose stamp could not be written is a
+// node that no longer says when its holder last confirmed the item was still its
+// own — and stopping the daemon over it would cost the project every other item
+// it drives. It is said instead, once per failed beat, and the beat goes on.
+func (d *orchestratorDaemon) beatAndRefresh(ctx context.Context) error {
+	if err := d.lease.Beat(ctx); err != nil {
+		return err
+	}
+	if d.claims == nil || d.tick == nil {
+		return nil
+	}
+	if err := d.claims.Refresh(ctx, d.tick.Held()); err != nil {
+		fmt.Fprintf(d.warn, "orchestrator %s: the claims this daemon holds could not be re-stamped, so the node says this daemon confirmed an item it holds as long ago as it took it: %s\n",
+			safetext.Field(d.id), safetext.OneLine(err.Error()))
+	}
+	return nil
 }
 
 // handOver reports whether the binary the unit names has moved on from this
@@ -1244,7 +1404,7 @@ func (d *orchestratorDaemon) report(rep orchestrator.Report, err error) {
 	if err != nil {
 		return
 	}
-	fmt.Fprintf(d.out, "orchestrator %s: %s (%d folded, %d carried, %d judged)\n", safetext.Field(d.id), safetext.OneLine(string(rep.Outcome)), rep.Folded, rep.Carried, rep.Decided)
+	fmt.Fprintf(d.out, "orchestrator %s: %s (%d folded, %d carried, %d skipped, %d judged)\n", safetext.Field(d.id), safetext.OneLine(string(rep.Outcome)), rep.Folded, rep.Carried, rep.Skipped, rep.Decided)
 	// A judgement that failed is said and not raised: the cycle it was part of
 	// still folded its runs and still carries its items, and what a person
 	// reads here is that one case went unanswered — the fence was not written,
@@ -1281,15 +1441,17 @@ func (d *orchestratorDaemon) report(rep orchestrator.Report, err error) {
 // and not a reconnect's — because it is the node as it already stands and not a
 // change; the waker passes over each one it reads.
 //
-// The wait beats the claim while it runs, on the lease's own cadence. The
-// interval is a person's value and the claim expires at LeaseTTL, so a wait
-// that honoured the flag alone would leave the id un-beaten for a whole
-// interval: an interval a little under the TTL is a claim that lapses under the
+// The wait beats the id while it runs, on the lease's own cadence. The
+// interval is a person's value and the id's lease expires at LeaseTTL, so a
+// wait that honoured the flag alone would leave the id un-beaten for a whole
+// interval: an interval a little under the TTL is a lease that lapses under the
 // daemon holding it, and a second daemon takes that id while this one is still
-// driving it. A beat that failed is not answered here — it ends the wait, and
-// the loop's own Beat at the top of the cycle decides it, because a lease
-// failure has one answer and it is not this function's (a claim that went to
-// another machine stops the daemon, a database error is the process's).
+// driving it. An item's claim is a different thing with no clock of its own
+// (claim.go): it lapses under nobody, so nothing here is about it. A beat that
+// failed is not answered here — it ends the wait, and the loop's own Beat at the
+// top of the cycle decides it, because a lease failure has one answer and it is
+// not this function's (a lease that went to another machine stops the daemon, a
+// database error is the process's).
 func (d *orchestratorDaemon) wait(ctx context.Context) error {
 	if d.wake != nil {
 		return d.wake(ctx)
@@ -1322,7 +1484,7 @@ func (d *orchestratorDaemon) wait(ctx context.Context) error {
 			d.noteWake(w)
 			return nil
 		case <-beats:
-			if err := d.lease.Beat(ctx); err != nil {
+			if err := d.beatAndRefresh(ctx); err != nil {
 				return nil
 			}
 		case <-timer.C:
@@ -1469,13 +1631,31 @@ func (f *launchInFlight) busy() bool {
 // a cycle that is still going and not an item nobody can move again, as long as
 // the platform agrees the run is still going: a run the platform has already
 // ended is one that died without writing anything, which executionOver reads.
+//
+// A run that ended paused is the other case of a run that is not going and is
+// not over: the chain is in flight and this daemon is what resumes it (D3185,
+// R15), so its item stays running and its ended execution means nothing —
+// ending the execution is what a pause is (R12). The one thing that ends such a
+// run for this view is the launcher's own cancellation of the pause (D3197),
+// which the service writes on the node and this view reads through the
+// database the daemon already holds (db, orchestrator_cmd.openBudget).
 type orchestratorRunView struct {
 	bucket *blob.Bucket
 	env    *cloudEnv
-	warn   io.Writer
+	// db is the installation's budget database, which is where the credentials
+	// service records a run that suspended itself (pauseNode, C3): the runs
+	// bucket carries the run's own words and the pause mark is not one of them.
+	db   *rtdb.Client
+	warn io.Writer
 }
 
 func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orchestrator.RunReport, error) {
+	// One lookup for the whole cycle, over the daemon's own client: the node is
+	// read for a record that says paused and for nothing else, and a cycle that
+	// holds none reads no node at all.
+	pauses := pauseLookupWith(ctx, v.db, func(format string, a ...any) {
+		fmt.Fprintf(v.warn, format, a...)
+	})
 	reports := make([]orchestrator.RunReport, 0, len(runIDs))
 	for _, id := range runIDs {
 		slug, run, err := runstore.Locate(ctx, v.bucket, id)
@@ -1514,6 +1694,14 @@ func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orch
 			rep.Discovered = rec.Discovered
 			rep.ConflictPaths = rec.ConflictPaths
 		}
+		if rec != nil && rec.Status == runstore.StatusPaused {
+			// A run that suspended itself is reported with the pause holding it
+			// (C3), which is what the fold tells a person instead of the
+			// ending it would otherwise read: the run neither finished the work
+			// nor failed at it, and which outcome a record saying `paused`
+			// means is the fold's own work (PR11, PR12) and not this reader's.
+			rep.Pause = v.pauseNode(ctx, slug, run)
+		}
 		if rec != nil && rec.PR != nil && rec.PR.Number > 0 {
 			// The pull request the run left, which is the record's own answer
 			// (F25) and the whole of what tells a fold of a succeeded run that
@@ -1537,44 +1725,119 @@ func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orch
 			}
 			rep.WorkspaceRefusal = rec.Halt.WorkspaceRefusal
 		}
-		if done, outcome := orchestratorOutcome(rec); done {
+		// A record that says paused is the one case where the platform's word
+		// on the execution is worth nothing: a pause ends the execution by
+		// design (R12), so folding on it would read every suspended chain as a
+		// run that died without reporting — and a cancelled pause's chain is
+		// over, which is the cancellation its launcher made and not a failure a
+		// standing approval may retry (D3197).
+		suspended, cancelled := false, false
+		if rec != nil && rec.Status == runstore.StatusPaused {
+			suspended = true
+			if pauses != nil {
+				if f, ok := pauses(slug, run); ok {
+					cancelled = f.cancelled
+				}
+			}
+		}
+		switch done, outcome := orchestratorOutcome(rec); {
+		case cancelled:
+			// The one thing that ends a suspended run for this view: the
+			// launcher cancelled the pause, so nothing will resume the chain and
+			// the item is done with. It is folded as a cancellation, which is
+			// the outcome no standing approval retries (orchestratorOutcome's
+			// own rule for a cancelled run).
+			rep.Finished, rep.Outcome = true, orchestrator.OutcomeCancelled
+		case suspended:
+			// In flight: the daemon resumes this chain at the instant the node
+			// names (D3185), so the item stays running and the attempt is not
+			// closed. This is the whole of "the orchestrator's own view counts
+			// it" (F64): before this, a paused record fell to the failure below
+			// and the item was closed on the run the pause is holding open.
+		case done:
 			rep.Finished, rep.Outcome = true, outcome
-		} else if state, over := v.executionOver(ctx, slug, run, launch); rep.Started && over {
-			// The record said the run was still going when it was read, and
-			// the platform says the execution is over. The runner may have
-			// written its last record in between: result.json is the runner's
-			// last act and the execution ends with it, so a run that succeeded
-			// a moment after this read is a run whose record says so, and
-			// folding the ended execution over the stale read would close a
-			// successful attempt as failed — and the same cycle would start a
-			// retry under the standing approval, a second execution and a
-			// second pull request for work that is already done. So the record
-			// is read again, and only a record that still says running (or one
-			// that is gone) is the run that died without reporting.
-			fresh, err := s.ReadRecord(ctx)
-			switch {
-			case errors.Is(err, runstore.ErrNotFound):
-				fresh = nil
-			case err != nil:
-				return nil, err
+		default:
+			if state, over := v.executionOver(ctx, slug, run, launch); rep.Started && over {
+				// The record said the run was still going when it was read, and
+				// the platform says the execution is over. The runner may have
+				// written its last record in between: result.json is the runner's
+				// last act and the execution ends with it, so a run that succeeded
+				// a moment after this read is a run whose record says so, and
+				// folding the ended execution over the stale read would close a
+				// successful attempt as failed — and the same cycle would start a
+				// retry under the standing approval, a second execution and a
+				// second pull request for work that is already done. So the record
+				// is read again, and only a record that still says running (or one
+				// that is gone) is the run that died without reporting.
+				fresh, err := s.ReadRecord(ctx)
+				switch {
+				case errors.Is(err, runstore.ErrNotFound):
+					fresh = nil
+				case err != nil:
+					return nil, err
+				}
+				// The state the platform reported, which is what a run whose
+				// record still says running leaves as its only word: a
+				// cancellation is a person's own act and never retried, a
+				// failure is what a retry is for (executionOver's comment is
+				// the why).
+				outcome := orchestrator.OutcomeFailed
+				if state == backend.StateCancelled {
+					outcome = orchestrator.OutcomeCancelled
+				}
+				if done, o := orchestratorOutcome(fresh); done {
+					outcome = o
+				}
+				rep.Finished, rep.Outcome = true, outcome
 			}
-			// The state the platform reported, which is what a run whose
-			// record still says running leaves as its only word: a
-			// cancellation is a person's own act and never retried, a
-			// failure is what a retry is for (executionOver's comment is
-			// the why).
-			outcome := orchestrator.OutcomeFailed
-			if state == backend.StateCancelled {
-				outcome = orchestrator.OutcomeCancelled
-			}
-			if done, o := orchestratorOutcome(fresh); done {
-				outcome = o
-			}
-			rep.Finished, rep.Outcome = true, outcome
 		}
 		reports = append(reports, rep)
 	}
 	return reports, nil
+}
+
+// pauseNode reads the node the credentials service recorded for a run that
+// suspended itself (C3, D3189): paused/<slug>/<run>, the one place the instant a
+// run comes back is written, and whether its launcher cancelled the pause before
+// then. Neither is on the run's own record, and a job that could name its own
+// resume time would be an agent choosing when to spend (R8).
+//
+// It is asked about the runs whose own record ended `paused` and no others: the
+// service records a node for exactly those — the order the contract fixes ends a
+// run paused only after the ask that writes it — so a read per open attempt
+// would be a database read per run for a mark at most one of them carries.
+//
+// A node that is absent, one this release cannot place, and a read that did not
+// happen are all reported as no pause and named on the daemon's own output. The
+// record behind them says the run ended, and a line promising a run comes back
+// when nothing will resume it is the one lie this reader could tell; what none
+// of them may be is a pause, and what none of them may do is stop the cycle —
+// the daemon's own output is where a broken pause is reported, and a stopped
+// daemon resumes nobody.
+func (v *orchestratorRunView) pauseNode(ctx context.Context, slug, runID string) *runstore.PauseNode {
+	var raw json.RawMessage
+	found, err := v.db.Get(ctx, runstore.PauseNodePath(slug, runID), &raw)
+	switch {
+	case err != nil:
+		fmt.Fprintf(v.warn, "run %s/%s: it ended paused and its pause node could not be read: %s\n",
+			slug, task.ShortRun(oneLine(runID)), safetext.OneLine(err.Error()))
+		return nil
+	case !found:
+		fmt.Fprintf(v.warn, "run %s/%s: it ended paused and the credentials service recorded no pause for it, so nothing will resume it\n",
+			slug, task.ShortRun(oneLine(runID)))
+		return nil
+	}
+	node, err := runstore.ParsePauseNode(raw)
+	if err != nil {
+		// A node carrying a member this release does not know, or one naming no
+		// usable pause: half a node is not a pause the orchestrator may act on
+		// (R18, R25's own rule), and what a person is told is that there is
+		// none rather than an instant nothing backs.
+		fmt.Fprintf(v.warn, "run %s/%s: it ended paused and its pause node is not one this release can read: %s\n",
+			slug, task.ShortRun(oneLine(runID)), safetext.OneLine(err.Error()))
+		return nil
+	}
+	return node
 }
 
 // executionOver reports whether the platform has ended the run's execution,
@@ -1646,19 +1909,28 @@ func (v *orchestratorRunView) executionOver(ctx context.Context, slug, runID str
 // finished failure: the attempt is over and the item must not stay running for
 // ever, and a failed attempt is the one a person looks at.
 //
-// A halted run is the exception, and it is the one case where the two outcomes
-// differ in what happens next: a spend cap, the kill switch or a governance
-// tripwire stopped a run that started, which is a refusal and not a failure
-// (G4), and a refusal is never retried. Folded as failed it would be: the
-// attempt would be one a person's standing approval still covers, so the very
-// next cycle would relaunch work that was refused, and it would only stop when
-// it ran out of allowance.
+// A paused run is not a finished one, and it is the second exception: the run
+// suspended itself and this daemon resumes the chain at the instant the pause
+// names (D3185, R15), so the item it belongs to is one still going and the
+// attempt must not be closed (F64). It is the record alone that decides here —
+// whether the pause still stands or was cancelled is written on the service's
+// node (D3197), and the view reads that beside this answer rather than in it.
+//
+// A halted run is the other exception, and it is the one case where the two
+// outcomes differ in what happens next: a spend cap, the kill switch or a
+// governance tripwire stopped a run that started, which is a refusal and not a
+// failure (G4), and a refusal is never retried. Folded as failed it would be:
+// the attempt would be one a person's standing approval still covers, so the
+// very next cycle would relaunch work that was refused, and it would only stop
+// when it ran out of allowance.
 func orchestratorOutcome(rec *runstore.Record) (bool, orchestrator.Outcome) {
 	if rec == nil {
 		return false, ""
 	}
 	switch rec.Status {
 	case runstore.StatusRunning:
+		return false, ""
+	case runstore.StatusPaused:
 		return false, ""
 	case runstore.StatusSucceeded:
 		return true, orchestrator.OutcomeSucceeded

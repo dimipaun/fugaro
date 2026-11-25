@@ -355,6 +355,13 @@ func Validate(c *Config) []Problem {
 				add(sp+".name", "%s is the credentials service's own bundle container (the platform's), not a workflow secret", CredentialsBundleSecret)
 			}
 			switch {
+			case s.File && s.Env == "":
+				// A file secret's variable is where the PATH lands (D3327), so
+				// an entry that names none would leave the value written
+				// somewhere nothing points at. Refused with the path in the
+				// sentence rather than by the env-name rule below, which would
+				// read as a typo in a field the file deliberately left out.
+				add(sp+".env", "a file secret's variable must be named: the value is written to a file and this variable receives the path")
 			case !envNameRE.MatchString(s.Env):
 				add(sp+".env", "must be an upper-case environment variable name")
 			case slices.Contains(ReservedEnvNames, strings.ToUpper(s.Env)):

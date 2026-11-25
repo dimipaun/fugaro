@@ -16,10 +16,11 @@ import (
 // 181, the shared project job end to end and the allow-list refusal at publish,
 // at deploy and at the proxy, is task T2.6's, and it landed on 2026-11-16: the
 // register now carries its row and its `## Check 181:` section, and this file
-// holds both. The two are registered differently and the table below says how —
-// 180 is a script with a dry driver, 181 ships as the steps the owner types —
-// so what each number's own registration must name is that number's, not the
-// block's.
+// holds both. Both are scripts with a dry driver — 180's is T1.3's, 181's is
+// T2.7's, which turned the steps the owner used to type into
+// `scripts/live-checks/check181.sh` — so what each number's own registration
+// must name is that number's script, its test and the commands its steps are,
+// not the block's.
 //
 // What these tests hold, and why the register needs each one: a check is
 // registered by two things — a row in the summary table and a `## Check N`
@@ -36,12 +37,13 @@ import (
 // first failure names the row that is missing, and the second the section.
 
 // bitbucketWorkspaceCheck is one check of the block, with the strings its OWN
-// registration has to name in the row and in the section below it. The two
-// checks of the block are registered differently — 180 ships as a script with a
-// dry driver and one command with required arguments, 181 as the steps the
-// owner types with no script at all (task T2.7: "the owner types the commands
-// T2.6's section gives") — so a shared list of names would pin one check's
-// entry points onto the other.
+// registration has to name in the row and in the section below it. Both checks
+// of the block ship as a script with a dry driver and one command with required
+// arguments, but each names its own script, its own test and its own commands —
+// 180's are `--repo owner/name=<checkout>` pairs and a probe repository, 181's
+// are `fugaro project policy publish`, `fugaro update` and `fugaro run --repo`
+// — so a shared list of names would pin one check's entry points onto the
+// other.
 type bitbucketWorkspaceCheck struct {
 	number string
 	// named is what this check's registration names, in the row and in the
@@ -63,11 +65,18 @@ var bitbucketWorkspaceRegisterChecks = []bitbucketWorkspaceCheck{
 	{
 		number: "181",
 		named: []string{
-			// The three commands the check is run with, in the order T2.7's
+			// The script the owner types, and the test that drives it dry, as
+			// 180's row and section name its own: T2.7 turned T2.6's steps into
+			// one command, and a registration that still sent the reader to a
+			// list of commands they have to run by hand would be a check whose
+			// registration and whose script disagree.
+			"scripts/live-checks/check181.sh",
+			"scripts/live-checks/check181_test.sh",
+			// The three commands the script's steps are, in the order T2.7's
 			// steps give them: the publish that refuses a profile admitting a
 			// repository the allow-list does not name, the deploy that creates
 			// the one shared job, and the two runs on it. A section that gave
-			// the steps without them would be a check a reader cannot start.
+			// the script without them would be a check a reader cannot follow.
 			"`fugaro project policy publish`",
 			"`fugaro update`",
 			"`fugaro run --repo <owner/name>`",
@@ -249,8 +258,12 @@ func TestDocsCheck180StatesWhatOnlyATokenSettles(t *testing.T) {
 		"`CHECK 180 RESULT: PASS (exit 0)`",
 		"`INCOMPLETE (exit 3)`",
 		"`UNVERIFIED`",
-		// U6, the reason the check cannot run today.
-		"no Premium sandbox workspace is known",
+		// U6, settled: the Premium sandbox workspace is the owner's own
+		// `dimi_bmb`, and it is the `--workspace` the script defaults to. This
+		// sentence used to read "no Premium sandbox workspace is known", which
+		// is what made the check unrunnable rather than unmeasured.
+		"the Premium sandbox workspace is the owner's own **`dimi_bmb`**",
+		"`--workspace`",
 	} {
 		if !strings.Contains(flat, strings.Join(strings.Fields(want), " ")) {
 			t.Errorf("Check 180's section does not say %q: the check is the only place these facts are ever measured, and T1.4 runs this section", want)

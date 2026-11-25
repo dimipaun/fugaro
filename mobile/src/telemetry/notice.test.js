@@ -76,23 +76,25 @@ const OWN_HOST = Object.freeze(['fugaro.dev']);
  * "the app versions"), and the point of the list is that neither side can be
  * edited into disagreeing with the other.
  *
- * Three of them are what the app collects, and not only where it goes: the app
- * ships both Firebase reporters today, so a statement that named only the crash
- * one would tell a reader that the crash reports are the whole of the
- * collection. Which reporters ship is `mobile/package.json`'s business, and the
- * test below holds the statement to that file rather than to this list.
+ * What the app collects, and not only where it goes, is in the list below: the
+ * clause about the crash reporter, the clause about what a report holds and the
+ * clause about the switch. Which reporters ship is `mobile/package.json`'s
+ * business, and the test below holds the statement to that file rather than to
+ * this list -- which is how T3.1's removal of Analytics (D731) emptied the
+ * statement of it, and why the Analytics clause is gone from both sides here.
  *
- * When `website/src/pages/privacy.astro` is rewritten (task T3.1 moves its app
- * paragraph with the Analytics package), a clause that moves with it fails here
- * on purpose: the app's statement has to move in the same change.
+ * When `website/src/pages/privacy.astro` is rewritten, a clause that moves with
+ * it fails here on purpose: the app's statement has to move in the same change.
+ * T3.1 moved both -- the page's paragraph and this list -- together.
  */
 const PAGE_CLAUSES = [
   'to a Firebase project the Fugaro project operates, and not to your own',
-  'crashes, through Firebase Crashlytics, and anonymous usage, through Firebase Analytics',
+  'crashes, through Firebase Crashlytics',
   'A crash report holds the crash\'s logs, diagnostics and app performance data',
-  'the usage count says which screens were opened',
-  'Firebase gives the app an app-instance identifier of its own, and that travels with both',
-  'The reports are read to find and fix crashes and to see which screens are used, and for nothing else',
+  'an app-instance identifier of its own, and that travels with the report',
+  'The reports are read to find and fix crashes, and for nothing else',
+  'The switch is the project\'s own published policy',
+  'nothing is sent before the app has read it',
   'Never sent: the contents of any message, anything from your installation or its mailbox, your credentials and your keys',
   'The app carries no advertising identifier',
 ];
@@ -113,7 +115,6 @@ const PACKAGE = JSON.parse(
  */
 const REPORTING_PACKAGES = Object.freeze({
   '@react-native-firebase/crashlytics': 'Firebase Crashlytics',
-  '@react-native-firebase/analytics': 'Firebase Analytics',
 });
 const CORE_PACKAGE = '@react-native-firebase/app';
 
@@ -255,8 +256,9 @@ test('the statement names every reporter the app ships, and none it does not', (
 
   // Both directions, and the second is the one that keeps the statement honest
   // when a package goes: the statement may not name a reporter the app no
-  // longer ships -- T3.1 drops Analytics under D731, and this is what makes the
-  // statement leave with it in the same change.
+  // longer ships. That is exactly how D731's removal of Analytics emptied the
+  // clause out of the statement, and the explicit assertion below is the other
+  // half of it -- the one that does not depend on a package being listed here.
   for (const [pkg, product] of Object.entries(REPORTING_PACKAGES)) {
     const shipped = firebase.includes(pkg);
     assert.equal(
@@ -267,6 +269,25 @@ test('the statement names every reporter the app ships, and none it does not', (
         : `the statement names ${product}, and mobile/package.json no longer carries ${pkg}: the app stopped sending it, so the clause has to leave the statement with the package`,
     );
   }
+  // Analytics, named rather than left to the loop: the package is gone from the
+  // manifest, so nothing about it may be in the statement either -- and this is
+  // the assertion that fails the day a clause about it is typed back in beside
+  // a package that is not there.
+  assert.equal(
+    firebase.includes('@react-native-firebase/analytics'),
+    false,
+    'the app still declares the Analytics package, so this case is not about D731\'s removal',
+  );
+  assert.equal(
+    STATEMENT.includes('Firebase Analytics'),
+    false,
+    'the statement still names Firebase Analytics, and D731 dropped it from the app: the clause has to leave with the package',
+  );
+  assert.equal(
+    /\banonymous usage\b|\bwhich screens\b/.test(STATEMENT),
+    false,
+    'the statement still describes the usage Analytics collected: with the package gone there is no usage report to describe',
+  );
 });
 
 test('the module holds one URL, and it is the privacy page', () => {
