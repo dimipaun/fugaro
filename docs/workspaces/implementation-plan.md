@@ -585,10 +585,11 @@ a call resolved to, the settle with the call refused when that write fails, and 
 an answer that is already going out are behavior, which the fix round after a review may not add.
 **The read grants before anything reads through it**: `workspace_access.tf` binds the
 workspace's account to the member's **entire** database (Realtime Database IAM has no path scope), and
-the run that applies it for real at the member's owner's terminal is `fugaro update
---firebase-project <the member's own Firebase project>` — the Firebase root is the only root that
-carries the module and its stage skips without that flag, so the plain `fugaro update` the join
-handoff prints (`fugaro workspace add`, `internal/cli/workspace.go`) binds nothing. **The
+the run that applies it for real at the member's owner's terminal is `fugaro update` — the Firebase
+root is the only root that carries the module, and its stage is one the converge runs while the
+member's own pin names an account and that root's state does not already carry the binding — so the
+plain `fugaro update` the join handoff prints (`fugaro workspace add`, `internal/cli/workspace.go`)
+is the whole of the member's step, which is the owner's ruling of 2026-11-24. **The
 reconciliation alarm still runs nowhere**, and that is the owner's own decision rather than a gap:
 D2991 deferred it, because it needs a ledger record no member writes and it gets a spec of its own
 ([workspace-service](../workspace-service/implementation-plan.md) §10, "Considered and declined"), so

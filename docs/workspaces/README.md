@@ -141,14 +141,15 @@ service account the grant is bound to is ever aimed by a value the workspace's r
 fugaro workspace add workspace-alpha --firebase-project <the workspace's Firebase project id> \
   --issuer https://securetoken.google.com/<the same id> --assertion-key <the pinned key> \
   --service-account <the workspace service account> --service-address <the service's address>
-fugaro update --firebase-project <the member's own Firebase project id>
+fugaro update
 ```
 
-**The Firebase flag is the one that binds.** The workspace's account is bound to the member's
-database by the Firebase root of the converge, and that stage runs only with `--firebase-project`
-(or where the member's config records no database yet): a plain `fugaro update`, which is what the
-join's handoff prints, publishes everything else and binds nothing, so the workspace's service cannot
-read that member's record and its workspace-served runs fail.
+**`fugaro update` is the whole of the member's step**, which is what the join's handoff prints
+(`internal/cli/workspace.go`). The workspace's account is bound to the member's database by the
+Firebase root of the converge, and a plain `fugaro update` is enough for it: while the member's pin
+names an account and that root's state does not already carry the binding, the stage that applies it
+is one the converge runs, with no flag and no second command. The same run publishes where each of
+the member's repositories is served (R4).
 
 A member that adds a repository of its own is the case above: the workspace owner declares it and
 converges first, and until then that repository's runs halt with a reason naming the step
