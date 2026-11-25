@@ -483,6 +483,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro project repos status": {args: []string{"github/acme/app"}},
 	"fugaro project routing set":  {args: []string{"claude", "--via", "direct"}},
 	"fugaro recipes publish":      {args: []string{"slug"}},
+	"fugaro recipes rm":           {args: []string{"slug"}},
 	"fugaro recipes show":         {args: []string{"slug"}},
 	"fugaro recipes validate":     {args: []string{"slug"}},
 	"fugaro restore":              {args: []string{"proj-2", "root"}},
