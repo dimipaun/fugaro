@@ -18,9 +18,12 @@
 # WHAT THE INSTALLATION BUILDS NOW (changed 2026-11-24). A repository's own
 # derived image is disabled (D1900): `fugaro image build --workflow` and
 # `fugaro image refresh` print a notice and build nothing, and what the owner's
-# repositories build is the CATALOG ENTRY their `image_map` names. That build is
-# not a repository's build at all. `fugaro image build <entry>` (and the same
-# step inside `fugaro apply`, apply.CatalogBuild) submits it as
+# repositories build is the CATALOG ENTRY their repository-to-image map names:
+# `repo_images`, keyed `provider/owner/name`, so the same `owner/name` at two
+# providers is two repositories (F35) — or, on an installation the release that
+# writes it has not reached, the bare-name `image_map` it still carries. That
+# build is not a repository's build at all. `fugaro image build <entry>` (and
+# the same step inside `fugaro apply`, apply.CatalogBuild) submits it as
 # gcp.CatalogBuildSpec: it runs as the PROJECT'S BUILD IDENTITY
 # (fugaro-build-identity@<project>.iam.gserviceaccount.com, B6/D2301) and never
 # as the repository's own `fugaro-b-…` build account; its request names the
@@ -49,15 +52,25 @@
 #             bash scripts/live-checks/check196.sh --after-flip   (Check 196's
 #             second half: the check job's accessor and availableSecrets gone, a
 #             build that still succeeds)
+#             bash scripts/live-checks/check196.sh --preflight
+#             --preflight makes the check's own READS and evaluates every
+#             precondition before anything is written or launched (the inputs,
+#             the installation's project and version, the image_map, the
+#             region's builds, the jobs, the service, its IAM policy, the
+#             executions and the log read), prints every blocker at once with
+#             the command that clears it, writes nothing and launches nothing,
+#             and exits non-zero when anything blocks.
 # Needs:      bash, mktemp, python3, gcloud (authenticated as you: list the
 #             REGION's own builds and read each repository's own catalog builds
 #             out of them, read the credentials service itself and ONE of its
 #             executions, read Cloud Run jobs, read the service's own IAM
 #             policy, and read the service's own lines out of Cloud Logging) and
 #             fugaro (doctor, version, and `project policy show --json`, which
-#             is where the project's published `image_map` is read). The
-#             project config under $XDG_CONFIG_HOME/fugaro/projects is read as
-#             a file when it states a map of its own. Nothing is installed and
+#             is where the project's published repository-to-image map
+#             (`repo_images`) is read, and its legacy `image_map` where that is
+#             what it still carries). The project config under
+#             $XDG_CONFIG_HOME/fugaro/projects is read as a file when it states
+#             a map of its own. Nothing is installed and
 #             nothing is fetched.
 # Where:      installation `fugaro` ONLY — project fugaro-dev, region us-east5.
 #             Both are HARD-CODED in this file and never read from `gcloud
@@ -104,15 +117,22 @@
 # repository, which the same installation serves); CHECK196_BUILDS (how many of
 # the project's recent builds to read; default 50), CHECK196_LOG_AGE,
 # CHECK196_LOG_LIMIT, CHECK196_LOG_WAIT_SECONDS, CHECK196_LOG_POLL_SECONDS,
-# CHECK196_DRY_RUN, CHECK196_KEEP_SCRATCH. None of them can point this check at
+# CHECK196_DRY_RUN, CHECK196_PREFLIGHT, CHECK196_KEEP_SCRATCH. None of them can
+# point this check at
 # another project or another region: those two are constants in this file.
 #
-# WHICH BUILDS ARE A REPOSITORY'S (changed 2026-11-24). The entry is the one the
-# project's EFFECTIVE `image_map` names for the repository (D1906): this
-# machine's project config when it states a map, the published policy node's
-# otherwise — read with `fugaro project policy show --json`, the one read of the
-# node this check makes — and the repository's builds are the newest ones whose
-# `_IMAGE` names `catalog-<that entry>`. The build's own `_REPO_URL` is the
+# WHICH BUILDS ARE A REPOSITORY'S (changed 2026-11-25). The entry is the one the
+# project's EFFECTIVE repository-to-image map names for the repository: the
+# `repo_images` member the release writes — keyed `provider/owner/name`, and the
+# lookup is under the repository's OWN provider, because two providers' same
+# `owner/name` are two repositories (F35/R2) — or, only where neither this
+# machine's project config nor the published policy node states a `repo_images`
+# member at all, the bare-name `image_map` an installation the release has not
+# reached still carries. Both halves are read the same way the legacy map alone
+# was (R2): this machine's project config when it states the member, the
+# published policy node's otherwise, read with `fugaro project policy show
+# --json`, the one read of the node this check makes. The repository's builds
+# are the newest ones whose `_IMAGE` names `catalog-<that entry>`. The build's own `_REPO_URL` is the
 # ENTRY's source repository — the Dockerfile's repository, which one shared
 # entry serves to every repository mapped to it — so matching a repository's
 # builds by it missed every repository that is not the entry's source. A
@@ -192,6 +212,13 @@ on_error() {
   say "an internal error ended this check at line $line"
   exit 2
 }
+
+# The shared `--preflight` driver (scripts/live-checks/lib/preflight.sh).
+live_check_lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$live_check_lib_dir}
+# shellcheck source=lib/preflight.sh
+. "$LIVE_CHECK_LIB/preflight.sh"
+PREFLIGHT_TOOL=check196
 
 # ---------------------------------------------------------------- requirements
 need() { command -v "$1" >/dev/null 2>&1 || die "Check 196 needs '$1' on PATH and it is not there${2:+ ($2)}"; }
@@ -298,6 +325,12 @@ cleanup() {
 finish() {
   local status=$?
   trap - EXIT
+  if [ "$PREFLIGHT_MODE" = yes ]; then
+    # A preflight wrote nothing and launched nothing: it prints its own lines
+    # and no RESULT block.
+    remove_scratch
+    exit "$status"
+  fi
   # INT, TERM and HUP are NOT reset here: cleanup is about to run, and a second
   # Ctrl-C during it would kill this shell with the reading half done.
   CLEANUP_RUNNING=yes
@@ -384,7 +417,8 @@ write_reader() {
 any of them.
 
 builds  argv: `gcloud builds list --region=<region> --format=json`'s file, a
-        repository and the catalog entry the project's `image_map` names for it
+        repository and the catalog entry the project's effective map names for
+        it (under the repository's own provider's key)
         (empty when the map does not mention the repository). Prints the
         repository's OWN newest CATALOG-ENTRY build field by field: its id, its
         status, the account it ran as (a resource name, reduced to the address
@@ -406,11 +440,14 @@ builds  argv: `gcloud builds list --region=<region> --format=json`'s file, a
         none of the repository's.
 imagemap argv: a project config's path (or `-`), and `fugaro project policy
         show --json`'s file (or `-`). Prints the project's EFFECTIVE
-        repo-to-image map (D1906) as `map=<repo>|<entry>` lines, and
-        `map-read=local|published|none` naming which layer answered: the config
-        when it states an `image_map` block of its own (an empty block is a
-        stated empty map, which takes a published one away), the published
-        node's otherwise.
+        repo-to-image map as `map=<key>|<entry>` lines, with
+        `map-member=repo_images|image_map|none` naming the member the keys
+        belong to and `map-read=local|published|none` naming which layer
+        answered: the `repo_images` member (keys `provider/owner/name`) wherever
+        any layer states one, this machine's project config first and the
+        published node second, and the legacy `image_map` (keys `owner/name`)
+        only where neither states one (R2/F35). An empty block the config states
+        is a stated empty map, which takes a published one away.
 job     argv: `gcloud run jobs list --format=json`'s file, a repository
         (`<workspace>/<repository>`). Prints the repository's own daily CHECK job
         (named `fugarochk-…`, gcp.CheckJobName), found by the clone URL its own
@@ -576,7 +613,7 @@ def builds_of(path, repo, entry=""):
     """Every CATALOG-ENTRY build of one repository, newest first, and which of
     the two answers selected them.
 
-    With an ENTRY (the catalog entry the project's `image_map` names for the
+    With an ENTRY (the catalog entry the project's effective map names for the
     repository) the builds are the ones whose `_IMAGE` names `catalog-<entry>`:
     that is the image the repository runs, and one entry may serve several
     repositories, so the build's own `_REPO_URL` — the entry's SOURCE repository
@@ -612,14 +649,15 @@ def yaml_scalar(s):
     return s
 
 
-def local_image_map(path):
-    """The `image_map` block of a project config, or None when the file states
-    no such block. None is not {}: a file that says nothing keeps the published
-    node's map, while a written block with no entry in it is how a published one
-    is taken away on purpose (localcfg's ImageMapEffective). The block is read
-    from the file's own lines rather than through a YAML library, because the
-    one shape this file writes for a `map[string]string` is `key: value` lines
-    indented under the key; a value the writer quoted is unquoted here."""
+def local_image_map(path, member="image_map"):
+    """The `image_map` block of a project config — or, with MEMBER, the
+    `repo_images` block beside it — or None when the file states no such block.
+    None is not {}: a file that says nothing keeps the published node's map,
+    while a written block with no entry in it is how a published one is taken
+    away on purpose (localcfg). The block is read from the file's own lines
+    rather than through a YAML library, because the one shape this file writes
+    for a `map[string]string` is `key: value` lines indented under the key; a
+    value the writer quoted is unquoted here."""
     if not path or path == "-":
         return None
     try:
@@ -633,7 +671,7 @@ def local_image_map(path):
             continue
         if raw[:1] not in (" ", "\t"):
             key, sep, rest = raw.partition(":")
-            inblock = bool(sep) and key.strip() == "image_map"
+            inblock = bool(sep) and key.strip() == member
             if inblock:
                 saw = True
                 inner = rest.strip()
@@ -652,18 +690,21 @@ def local_image_map(path):
     return out if saw else None
 
 
-def published_image_map(path):
-    """The project's published `image_map` out of `fugaro project policy
-    show --json`, or None when nothing is published and when the node states no
-    map at all (both are "no map of the node's", which the file's own answer
-    then stands in for or leaves absent)."""
+def published_image_map(path, member="image_map"):
+    """The project's published repo-to-image map out of `fugaro project policy
+    show --json` — its `repo_images` member with MEMBER=repo_images, the legacy
+    `image_map` otherwise — or None when nothing is published and when it states no
+    such map at all (both are "no map of the node's", which the file's own
+    answer then stands in for or leaves absent). A member of the wrong shape is
+    no map either, which is what keeps a node that has not yet learned to print
+    the newer one from being read as one that names nothing."""
     doc = load(path)
     if not isinstance(doc, dict):
         return None
     policy = doc.get("policy")
     if not isinstance(policy, dict):
         return None
-    m = policy.get("image_map")
+    m = policy.get(member)
     if not isinstance(m, dict) or not m:
         return None
     return {str(k): str(v) for k, v in m.items()}
@@ -741,24 +782,28 @@ if cmd == "builds":
         for name in envs:
             print("secretenv_name=%s" % word(name, 80))
 elif cmd == "imagemap":
-    # The EFFECTIVE map (localcfg's ImageMapEffective): this machine's project
-    # config when it states an `image_map` block — an empty block included,
-    # which is a published map taken away on purpose — and the published policy
-    # node's otherwise. The repository keys are printed as written: they are
-    # `owner/name` and the caller looks one up by the name it was given.
-    local = local_image_map(sys.argv[2] if len(sys.argv) > 2 else "")
-    if local is not None:
-        print("map-read=local")
-        for repo in sorted(local):
-            print("map=%s|%s" % (repo, local[repo]))
-    else:
-        published = published_image_map(sys.argv[3] if len(sys.argv) > 3 else "")
-        if published is not None:
-            print("map-read=published")
-            for repo in sorted(published):
-                print("map=%s|%s" % (repo, published[repo]))
-        else:
-            print("map-read=none")
+    # The EFFECTIVE map, member by member (R2). `repo_images` wins wherever it
+    # is stated at all — this machine's project config first, the published
+    # policy node's second — and the legacy `image_map` is read only where
+    # neither states one (local first again). An empty block the file states is
+    # a stated empty map, which is how a published one is taken away on purpose.
+    # The member read is printed beside the keys, because the key a repository
+    # is looked up by is the member's own: `provider/owner/name` under
+    # `repo_images`, the bare `owner/name` under the legacy `image_map` (F35).
+    cfg = sys.argv[2] if len(sys.argv) > 2 else ""
+    node = sys.argv[3] if len(sys.argv) > 3 else ""
+    for member in ("repo_images", "image_map"):
+        for read, m in (("local", local_image_map(cfg, member)),
+                        ("published", published_image_map(node, member))):
+            if m is None:
+                continue
+            print("map-member=%s" % member)
+            print("map-read=%s" % read)
+            for key in sorted(m):
+                print("map=%s|%s" % (key, m[key]))
+            sys.exit(0)
+    print("map-member=none")
+    print("map-read=none")
 elif cmd == "job":
     # The repository is named as a person writes it (`<workspace>/<repository>`),
     # never by its slug: a CATALOG build carries no `_SLUG` substitution, so the
@@ -958,6 +1003,125 @@ guard_inputs() {
   fact inputs PASS "GitHub ${REPO}, Bitbucket ${BB_REPO} (sandbox repositories of the fugaro-dev installation; never belong)"
 }
 
+# ---------------------------------------------------------------- preflight
+# step_preflight: --preflight. The reads this check makes, every precondition it
+# has evaluated, nothing written and nothing launched. The inputs are argument
+# validation (guard_inputs stops on a missing or owner's own repository, the way
+# check630's --sandbox does); everything else is the state of the live
+# installation, and each one that does not hold is one blocker, all of them
+# printed at once.
+step_preflight() {
+  preflight_agent_session
+  guard_inputs
+  preflight_note inputs "GitHub ${REPO}, Bitbucket ${BB_REPO} (the two sandbox repositories this run would read)"
+
+  local doctor_out v
+  doctor_out=$(fugaro doctor --project "${NAME}" --all || true)
+  if printf '%s\n' "$doctor_out" | grep "^project: .*(GCP ${P}," >/dev/null 2>&1; then
+    preflight_note installation "${NAME} (GCP ${P}, ${L}), read from fugaro doctor --project ${NAME} --all"
+  else
+    preflight_block installation \
+      "fugaro doctor --project ${NAME} --all prints no 'project: ... (GCP ${P},' line: this is not the ${P} installation, or --project ${NAME} disagrees with this checkout's project:, or doctor failed" \
+      "fugaro doctor --project ${NAME} --all"
+  fi
+  v=$(fugaro version 2>/dev/null | head -n 1 || true)
+  case "$v" in
+  dev | *-dev* | *dirty*)
+    preflight_block fugaro-version \
+      "fugaro version reads '${v}': a development build is not the release under test, and it resolves no released credentials-service image to deploy" \
+      "install the release under test, then run 'fugaro version' and check it is no longer '${v}'"
+    ;;
+  *) preflight_note fugaro-version "${v:-fugaro version printed nothing}" ;;
+  esac
+
+  # The effective image_map, read like read_image_map. A published node that
+  # cannot be read is NOT a blocker: the check tolerates it and the local half
+  # answers alone (D1906), so it is a note either way.
+  local cfg policy=$SCRATCH/pf-policy.json mapfile=$SCRATCH/pf-imagemap map_err=""
+  cfg=$(project_config_file)
+  if ! fugaro project policy show --json --project "${NAME}" >"$policy" 2>"$SCRATCH/pf-policy.err"; then
+    map_err="the published node could not be read ($(last_lines "$SCRATCH/pf-policy.err"))"
+    : >"$policy"
+  fi
+  if reader imagemap "$cfg" "$policy" >"$mapfile" 2>"$SCRATCH/pf-imagemap.err"; then
+    local mapread mapped
+    mapread=$(field_of map-read "$(cat "$mapfile")")
+    mapped=$(grep -c '^map=' "$mapfile" 2>/dev/null || true)
+    preflight_note image_map \
+      "the effective image_map reads ${mapread:-unknown}, naming ${mapped:-0} repo(s)${map_err:+ (${map_err})}"
+  else
+    preflight_block image_map \
+      "the project's image_map could not be read (the reader failed): $(last_lines "$SCRATCH/pf-imagemap.err")" \
+      "fugaro project policy show --json --project ${NAME}"
+  fi
+
+  local builds=$SCRATCH/pf-builds.json
+  if gcloud builds list --project="$P" --region="$L" --limit="$BUILDS" --format=json >"$builds" 2>"$SCRATCH/pf-builds.err"; then
+    preflight_note builds "the last ${BUILDS} builds of ${P}/${L} are readable (a regional listing: a catalog build is regional)"
+  else
+    preflight_block builds \
+      "the region's builds cannot be read (yours needs cloudbuild.builds.list in ${L}): $(last_lines "$SCRATCH/pf-builds.err")" \
+      "gcloud builds list --project=${P} --region=${L} --limit=${BUILDS} --format=json"
+  fi
+
+  local jobs=$SCRATCH/pf-jobs.json
+  if gcloud run jobs list --project="$P" --region="$L" --format=json >"$jobs" 2>"$SCRATCH/pf-jobs.err"; then
+    preflight_note jobs "the installation's Cloud Run jobs are readable (yours needs run.jobs.list on ${P})"
+  else
+    preflight_block jobs \
+      "the installation's Cloud Run jobs cannot be read (yours needs run.jobs.list on ${P}): $(last_lines "$SCRATCH/pf-jobs.err")" \
+      "gcloud run jobs list --project=${P} --region=${L} --format=json"
+  fi
+
+  local svc=$SCRATCH/pf-service.json
+  if gcloud run services describe "${SVC}" --project="$P" --region="$L" --format=json >"$svc" 2>"$SCRATCH/pf-service.err"; then
+    preflight_note service "the credentials service ${SVC} is readable in ${P}/${L} (yours needs run.services.get)"
+  else
+    preflight_block service \
+      "the credentials service ${SVC} cannot be read (yours needs run.services.get on ${P}): $(last_lines "$SCRATCH/pf-service.err")" \
+      "gcloud run services describe ${SVC} --project=${P} --region=${L} --format=json"
+  fi
+
+  local iam=$SCRATCH/pf-serviceiam.json
+  if gcloud run services get-iam-policy "${SVC}" --project="$P" --region="$L" --format=json >"$iam" 2>"$SCRATCH/pf-serviceiam.err"; then
+    preflight_note boundary "the service's own IAM policy is readable (yours needs run.services.getIamPolicy on ${P})"
+  else
+    preflight_block boundary \
+      "the credentials service's own IAM policy cannot be read (yours needs run.services.getIamPolicy on ${P}): $(last_lines "$SCRATCH/pf-serviceiam.err")" \
+      "gcloud run services get-iam-policy ${SVC} --project=${P} --region=${L} --format=json"
+  fi
+
+  # Each repository's daily check job and its newest execution, read off the jobs
+  # listing above. A repository with no `fugarochk-` job is the shape D1900 gives
+  # one that has none, and is a note rather than a blocker.
+  local label repo ans jname
+  for label in github bitbucket; do
+    if [ "$label" = github ]; then repo=$REPO; else repo=$BB_REPO; fi
+    ans=$(reader job "$jobs" "$repo" 2>/dev/null || true)
+    if [ "$(field_of found "$ans")" = yes ]; then
+      jname=$(field_of name "$ans")
+      if gcloud run jobs executions list --project="$P" --region="$L" --job="$jname" --limit=1 --format=json >/dev/null 2>"$SCRATCH/pf-exec-$label.err"; then
+        preflight_note "check-$label" "the daily check job ${jname} of ${repo} and its newest execution are readable"
+      else
+        preflight_block "check-$label" \
+          "the daily check job ${jname} of ${repo} exists but its executions cannot be read: $(last_lines "$SCRATCH/pf-exec-$label.err")" \
+          "gcloud run jobs executions list --project=${P} --region=${L} --job=${jname} --limit=1 --format=json"
+      fi
+    else
+      preflight_note "check-$label" "no daily check job (${CHECK_JOB_PREFIX}…) for ${repo}, which is the shape D1900 gives a repository that has none"
+    fi
+  done
+
+  local logfilter="resource.type=\"cloud_run_revision\" resource.labels.service_name=\"${SVC}\" jsonPayload.purpose=\"build\""
+  if gcloud logging read "$logfilter" --project="$P" --freshness="$LOG_AGE" --limit="$LOG_LIMIT" --format=json >/dev/null 2>"$SCRATCH/pf-log.err"; then
+    preflight_note log "the service's own credsvc: audit lines are readable in Cloud Logging (yours needs roles/logging.viewer on ${P})"
+  else
+    preflight_block log \
+      "the service's own lines cannot be read (yours needs roles/logging.viewer on ${P}): $(last_lines "$SCRATCH/pf-log.err")" \
+      "gcloud logging read \"resource.labels.service_name=${SVC} jsonPayload.purpose=build\" --project=${P} --freshness=${LOG_AGE} --limit=${LOG_LIMIT} --format=json"
+  fi
+}
+
 # ---------------------------------------------------------------- the reading
 BUILDS_FILE=""
 JOBS_FILE=""
@@ -1002,7 +1166,7 @@ read_builds() {
 }
 
 # project_config_file — this machine's own project config for the installation,
-# the file whose `image_map` is the map's local half (localcfg's ImageMapEffective):
+# the file whose `repo_images` (or legacy `image_map`) is the map's local half:
 # $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml, else ~/.config/fugaro/projects/<name>.yaml,
 # and $FUGARO_CONFIG when the canonical path holds nothing (the same order
 # localcfg's selector takes). A path that is not there is not a failure: the
@@ -1016,8 +1180,12 @@ project_config_file() {
   printf '%s\n' "$cfg"
 }
 
-# read_image_map: the project's EFFECTIVE repo-to-image map (D1906), once, for
-# both repositories. The local config's block wins when it states one — an empty
+# read_image_map: the project's EFFECTIVE repository-to-image map, once, for both
+# repositories. The member is `repo_images` (keys `provider/owner/name`) wherever
+# any layer states one — this machine's project config first, the published
+# policy node second — and the legacy `image_map` (bare names) only where neither
+# does (R2), which is what an installation the release has not reached still
+# carries (F35). The local config's block wins when it states one — an empty
 # block is a stated empty map and takes a published one away — and the published
 # policy node's map stands otherwise, which is what a job reads. Both are read
 # here and the keep rule is the reader's: a node that cannot be read is not a
@@ -1025,6 +1193,7 @@ project_config_file() {
 # when the file states none either, which the build rows then say).
 IMAGE_MAP_FILE=""
 IMAGE_MAP_READ=""
+IMAGE_MAP_MEMBER=""
 IMAGE_MAP_ERR=""
 read_image_map() {
   IMAGE_MAP_FILE=$SCRATCH/imagemap
@@ -1036,54 +1205,85 @@ read_image_map() {
     : >"$policy"
   fi
   if ! reader imagemap "$cfg" "$policy" >"$IMAGE_MAP_FILE" 2>"$SCRATCH/imagemap.err"; then
-    stop "the project's image_map could not be read (the reader failed): $(last_lines "$SCRATCH/imagemap.err")"
+    stop "the project's repository-to-image map could not be read (the reader failed): $(last_lines "$SCRATCH/imagemap.err")"
   fi
-  IMAGE_MAP_READ=$(field_of map-read "$(cat "$IMAGE_MAP_FILE")")
+  local ans
+  ans=$(cat "$IMAGE_MAP_FILE")
+  IMAGE_MAP_READ=$(field_of map-read "$ans")
+  IMAGE_MAP_MEMBER=$(field_of map-member "$ans")
 }
 
-# map_entry_for REPO — the catalog entry the project's effective image_map names
-# for a repository, or nothing when the map does not mention it (which is not a
-# failure: a repository no map names keeps the `_REPO_URL` match, and a map the
-# check could not read at all names nothing).
-map_entry_for() { # map_entry_for REPO
+# map_key_for REPO PROVIDER — the key a repository is looked up by in the
+# effective map: its OWN provider's, `provider/owner/name`, under `repo_images`,
+# and the bare `owner/name` under the legacy `image_map`, which is the only
+# member a bare name is ever looked up in (F35/R2). A provider this check has no
+# name for reads as itself, so the key is still the provider's own.
+map_key_for() { # map_key_for REPO PROVIDER
+  case "$IMAGE_MAP_MEMBER" in
+  repo_images) printf '%s/%s\n' "$2" "$1" ;;
+  *) printf '%s\n' "$1" ;;
+  esac
+}
+
+# map_entry_for REPO PROVIDER — the catalog entry the project's effective map
+# names for a repository, or nothing when the map does not mention it (which is
+# not a failure: a repository no map names keeps the `_REPO_URL` match, and a map
+# the check could not read at all names nothing).
+map_entry_for() { # map_entry_for REPO PROVIDER
   [ -f "$IMAGE_MAP_FILE" ] || return 0
-  awk -F'|' -v r="$1" '$1 == "map=" r { print $2; exit }' "$IMAGE_MAP_FILE"
+  awk -F'|' -v r="map=$(map_key_for "$1" "$2")" '$1 == r { print $2; exit }' "$IMAGE_MAP_FILE"
 }
 
-# map_phrase REPO — how a row says which answer found the repository's builds,
-# in one clause: the entry its image_map names, or the `_REPO_URL` match and why
-# the map did not answer.
-map_phrase() { # map_phrase REPO ENTRY MATCH
-  local repo=$1 entry=$2 match=$3
+# map_member_phrase — the map a row is talking about, named as the member it
+# really read: `repo_images` on a release that writes it, the legacy `image_map`
+# on one that does not, and "project map" when there is none to name. Without a
+# leading article, so that a caller can put it after "its" as well as after
+# "the".
+map_member_phrase() {
+  case "$IMAGE_MAP_MEMBER" in
+  repo_images) printf 'repository-to-image map (repo_images)' ;;
+  image_map) printf 'legacy image_map' ;;
+  *) printf 'project map' ;;
+  esac
+}
+
+# map_phrase REPO PROVIDER ENTRY MATCH — how a row says which answer found the
+# repository's builds, in one clause: the entry its map names, or the `_REPO_URL`
+# match and why the map did not answer.
+map_phrase() { # map_phrase REPO PROVIDER ENTRY MATCH
+  local repo=$1 provider=$2 entry=$3 match=$4
   if [ "$match" = map ]; then
-    printf 'the catalog entry %s its image_map names' "$entry"
+    printf 'the catalog entry %s its %s names' "$entry" "$(map_member_phrase)"
     return 0
   fi
   case "$IMAGE_MAP_READ" in
   none)
-    printf 'the builds whose _REPO_URL is its own clone URL (the project image_map names no entry for %s, so the map did not select them%s)' \
+    printf 'the builds whose _REPO_URL is its own clone URL (the project map names no entry for %s, so the map did not select them%s)' \
       "$repo" "${IMAGE_MAP_ERR:+; $IMAGE_MAP_ERR}"
     ;;
   *)
-    printf 'the builds whose _REPO_URL is its own clone URL (the project image_map does not name an entry for %s)' "$repo"
+    printf 'the builds whose _REPO_URL is its own clone URL (the %s does not name an entry for %s)' \
+      "$(map_member_phrase)" "$(map_key_for "$repo" "$provider")"
     ;;
   esac
 }
 
-# no_build_remedy REPO — why no build was found for a repository and the one
-# command that submits it. A repository the map names has an entry to build and
-# a command that names it; one the map does not name has to be mapped first, and
-# the sentence says so rather than naming an entry the project never chose.
-no_build_remedy() { # no_build_remedy REPO
-  local repo=$1 entry
-  entry=$(map_entry_for "$repo")
+# no_build_remedy REPO PROVIDER — why no build was found for a repository and
+# the one command that submits it. A repository the map names has an entry to
+# build and a command that names it; one the map does not name has to be mapped
+# first — under its OWN provider's key — and the sentence says so rather than
+# naming an entry the project never chose.
+no_build_remedy() { # no_build_remedy REPO PROVIDER
+  local repo=$1 provider=$2 entry key
+  key=$(map_key_for "$repo" "$provider")
+  entry=$(map_entry_for "$repo" "$provider")
   if [ -n "$entry" ]; then
-    printf "A repository-level derived image is disabled (D1900) and 'fugaro image refresh' is refused, so what a repository runs is the CATALOG ENTRY its image_map names — %s for %s — and this repository's builds are the newest whose _IMAGE names catalog-%s. Submit it with 'fugaro image build %s' in a checkout of the entry's source repository (or with 'fugaro apply', whose owed catalog-build step submits the same build) and run this check again" \
-      "$entry" "$repo" "$entry" "$entry"
+    printf "A repository-level derived image is disabled (D1900) and 'fugaro image refresh' is refused, so what a repository runs is the CATALOG ENTRY its %s names — %s for %s — and this repository's builds are the newest whose _IMAGE names catalog-%s. Submit it with 'fugaro image build %s' in a checkout of the entry's source repository (or with 'fugaro apply', whose owed catalog-build step submits the same build) and run this check again" \
+      "$(map_member_phrase)" "$entry" "$repo" "$entry" "$entry"
     return 0
   fi
-  printf "The project's effective image_map names no entry for %s (read %s%s), so the check looked for the builds whose _REPO_URL is its own clone URL. A repository-level derived image is disabled (D1900) and 'fugaro image refresh' is refused, so what a repository runs is the CATALOG ENTRY its image_map names: map %s to one with 'fugaro image map set %s <entry>', submit it with 'fugaro image build <entry>' (or 'fugaro apply'), and run this check again" \
-    "$repo" "${IMAGE_MAP_READ:-none}" "${IMAGE_MAP_ERR:+; $IMAGE_MAP_ERR}" "$repo" "$repo"
+  printf "The project's effective %s names no entry for %s (read %s%s), so the check looked for the builds whose _REPO_URL is its own clone URL. A repository-level derived image is disabled (D1900) and 'fugaro image refresh' is refused, so what a repository runs is the CATALOG ENTRY its %s names: map %s to one with 'fugaro image map set %s <entry>', submit it with 'fugaro image build <entry>' (or with 'fugaro apply'), and run this check again" \
+    "$(map_member_phrase)" "$key" "${IMAGE_MAP_READ:-none}" "${IMAGE_MAP_ERR:+; $IMAGE_MAP_ERR}" "$(map_member_phrase)" "$key" "$key"
 }
 
 # read_jobs: the installation's Cloud Run jobs, once, for both repositories.
@@ -1094,13 +1294,14 @@ read_jobs() {
   fi
 }
 
-# read_build REPO KEY — read the repository's newest build into the scratch
-# directory, and print the reader's answer. Cached so the two rows about one
-# repository read it once. The catalog entry comes from the project's effective
-# image_map (map_entry_for) and is what selects the builds; empty means the map
-# names no entry for the repository and the `_REPO_URL` match stands.
-read_build() { # read_build REPO KEY
-  local key=$2 f
+# read_build REPO PROVIDER KEY — read the repository's newest build into the
+# scratch directory, and print the reader's answer. Cached so the two rows about
+# one repository read it once. The catalog entry comes from the project's
+# effective map (map_entry_for), looked up under the repository's OWN provider's
+# key, and is what selects the builds; empty means the map names no entry for the
+# repository and the `_REPO_URL` match stands.
+read_build() { # read_build REPO PROVIDER KEY
+  local key=$3 f
   f="$SCRATCH/builds-$key"
   if [ ! -f "$f" ]; then
     # A reader that failed returns non-zero and the CALLER stops the run: a
@@ -1108,16 +1309,17 @@ read_build() { # read_build REPO KEY
     # it through, which would end that subshell rather than this check and reach
     # the owner as "an internal error ended this check" instead of as the one
     # reason it could not measure.
-    reader builds "$BUILDS_FILE" "$1" "$(map_entry_for "$1")" >"$f" 2>"$SCRATCH/builds-$key.err" || return 1
+    reader builds "$BUILDS_FILE" "$1" "$(map_entry_for "$1" "$2")" >"$f" 2>"$SCRATCH/builds-$key.err" || return 1
   fi
   cat "$f"
 }
 
-# build_read REPO KEY — read_build, with a reader that failed stopping the run.
-build_read() { # build_read REPO KEY
+# build_read REPO PROVIDER KEY — read_build, with a reader that failed stopping
+# the run.
+build_read() { # build_read REPO PROVIDER KEY
   local ans
-  if ! ans=$(read_build "$1" "$2"); then
-    stop "the region's own builds could not be read (the reader failed on ${1}): $(last_lines "$SCRATCH/builds-$2.err")"
+  if ! ans=$(read_build "$1" "$2" "$3"); then
+    stop "the region's own builds could not be read (the reader failed on ${1}): $(last_lines "$SCRATCH/builds-$3.err")"
   fi
   printf '%s\n' "$ans"
 }
@@ -1260,15 +1462,15 @@ step_service() {
 }
 
 # step_repo LABEL REPO PROVIDER — the image one sandbox repository builds (the
-# catalog entry its image_map names), the credential that build mounts, and the
-# service's own lines for the repository.
+# catalog entry its provider's key in the map names), the credential that build
+# mounts, and the service's own lines for the repository.
 step_repo() { # step_repo LABEL REPO PROVIDER
   local label=$1 repo=$2 provider=$3 ans
-  ans=$(build_read "$repo" "$label")
+  ans=$(build_read "$repo" "$provider" "$label")
   local found id status account entry image src_repo match containers url slug
   found=$(field_of found "$ans")
   if [ "$found" != yes ]; then
-    unmeasured "build-$label" "no CATALOG-ENTRY build of ${repo} is among the ${L} region's last ${BUILDS} builds, so the image this repository runs could not be read. $(no_build_remedy "$repo")"
+    unmeasured "build-$label" "no CATALOG-ENTRY build of ${repo} is among the ${L} region's last ${BUILDS} builds, so the image this repository runs could not be read. $(no_build_remedy "$repo" "$provider")"
     unmeasured "mounts-$label" "no catalog-entry build of ${repo} was read, so the secrets its request carries could not be measured"
     unmeasured "served-$label" "no catalog-entry build of ${repo} was read, so the service's own lines for it could not be measured"
     return 0
@@ -1287,7 +1489,7 @@ step_repo() { # step_repo LABEL REPO PROVIDER
   slug=$(repo_slug "$(field_of slug "$ans")" "$label" "$repo")
 
   # build-LABEL: the image this repository really runs — the CATALOG ENTRY its
-  # image_map names, baked from the ENTRY's source repository (the checkout the
+  # own key in the map names, baked from the ENTRY's source repository (the checkout the
   # build bakes, which is the served repository only where the entry is sourced
   # from it) — ended SUCCESS and ran as the installation's build identity, which
   # is the account a catalog build runs as and the only one
@@ -1295,11 +1497,11 @@ step_repo() { # step_repo LABEL REPO PROVIDER
   # credentials service, and that is the shape since IS8: the entry's git
   # credential is what its credential step asks that service for (D3330).
   if [ "$status" != SUCCESS ]; then
-    fact "build-$label" FAIL "the newest catalog build of ${repo} (${id}, the entry ${entry:-unknown}'s image, found by $(map_phrase "$repo" "$entry" "$match")) ended ${status}, not SUCCESS: $(read_audit_said "$slug") . Read it with 'gcloud builds log ${id} --project=${P} --region=${L}'. A catalog entry's build bakes from the entry's source repository (${src_repo:-unknown}) and asks the credentials service (${url_value:-no address}) for that entry's git credential, so a build that cannot finish is that call, the entry's definition or that checkout"
+    fact "build-$label" FAIL "the newest catalog build of ${repo} (${id}, the entry ${entry:-unknown}'s image, found by $(map_phrase "$repo" "$provider" "$entry" "$match")) ended ${status}, not SUCCESS: $(read_audit_said "$slug") . Read it with 'gcloud builds log ${id} --project=${P} --region=${L}'. A catalog entry's build bakes from the entry's source repository (${src_repo:-unknown}) and asks the credentials service (${url_value:-no address}) for that entry's git credential, so a build that cannot finish is that call, the entry's definition or that checkout"
   elif ! is_build_identity "$account"; then
     fact "build-$label" FAIL "the newest catalog build of ${repo} (${id}, entry ${entry}) ended SUCCESS but its own record says it ran as ${account:-nobody this reading can name}, not as the installation's build identity (${BUILD_IDENTITY_ID}@${P}.iam.gserviceaccount.com): a catalog entry's build runs as the project's build identity — which is the caller the service's entry route admits — and never as a repository's build account, and a build that ran as another identity is not a statement about this installation's entry builds"
   else
-    fact "build-$label" PASS "the newest build of ${repo} is the CATALOG ENTRY ${entry}'s image (${image}, build ${id}, found by $(map_phrase "$repo" "$entry" "$match")): it ended SUCCESS and ran as ${account}, the installation's build identity — so the image this repository runs really is the entry its image_map names, baked from that entry's source repository (${src_repo:-unknown}), and the account is the one gcp.CatalogBuildSpec.check admits. Its request names the credentials service (${url_value:-none}) and carries no secret of its own: the credential step asks that service for the entry's git credential, as the project's build identity, which is the caller the entry route admits (IS8, D3330)"
+    fact "build-$label" PASS "the newest build of ${repo} is the CATALOG ENTRY ${entry}'s image (${image}, build ${id}, found by $(map_phrase "$repo" "$provider" "$entry" "$match")): it ended SUCCESS and ran as ${account}, the installation's build identity — so the image this repository runs really is the entry its own $(map_key_for "$repo" "$provider") key names in the $(map_member_phrase), baked from that entry's source repository (${src_repo:-unknown}), and the account is the one gcp.CatalogBuildSpec.check admits. Its request names the credentials service (${url_value:-none}) and carries no secret of its own: the credential step asks that service for the entry's git credential, as the project's build identity, which is the caller the entry route admits (IS8, D3330)"
   fi
 
   # mounts-LABEL: the secrets a catalog build carries. Since IS8 (D3330) the
@@ -1583,9 +1785,9 @@ step_boundary() {
 # repository is its daily check job, which is the noaccessor-LABEL row below.
 step_flip_repo() { # step_flip_repo LABEL REPO PROVIDER
   local label=$1 repo=$2 provider=$3 ans
-  ans=$(build_read "$repo" "$label")
+  ans=$(build_read "$repo" "$provider" "$label")
   if [ "$(field_of found "$ans")" != yes ]; then
-    unmeasured "noavailable-$label" "no CATALOG-ENTRY build of ${repo} is among the ${L} region's last ${BUILDS} builds, so what the flip left on this repository's build could not be read. $(no_build_remedy "$repo")"
+    unmeasured "noavailable-$label" "no CATALOG-ENTRY build of ${repo} is among the ${L} region's last ${BUILDS} builds, so what the flip left on this repository's build could not be read. $(no_build_remedy "$repo" "$provider")"
     unmeasured "build-flip-$label" "no catalog-entry build of ${repo} was read"
     unmeasured "served-$label-flip" "no catalog-entry build of ${repo} was read"
     unmeasured "noaccessor-$label" "no catalog-entry build of ${repo} was read"
@@ -1633,7 +1835,7 @@ step_flip_repo() { # step_flip_repo LABEL REPO PROVIDER
   # build-flip-LABEL: a build after the flip still succeeds and still runs as
   # the account a catalog build runs as.
   if [ "$status" = SUCCESS ] && is_build_identity "$account"; then
-    fact "build-flip-$label" PASS "the newest build of ${repo} is the CATALOG ENTRY ${entry}'s image (${id}, found by $(map_phrase "$repo" "$entry" "$match")): it ended SUCCESS and ran as ${account}, the installation's build identity, taking its git credential from the service's entry route — so the image this repository runs still bakes, and nothing the flip took was a path this build used"
+    fact "build-flip-$label" PASS "the newest build of ${repo} is the CATALOG ENTRY ${entry}'s image (${id}, found by $(map_phrase "$repo" "$provider" "$entry" "$match")): it ended SUCCESS and ran as ${account}, the installation's build identity, taking its git credential from the service's entry route — so the image this repository runs still bakes, and nothing the flip took was a path this build used"
   else
     fact "build-flip-$label" FAIL "the newest catalog build of ${repo} (${id}, entry ${entry:-unknown}) did not read as a success of a catalog build: status ${status}, account ${account:-none}, service ${url}. A catalog entry's build runs as the installation's build identity (${BUILD_IDENTITY_ID}@${P}.iam.gserviceaccount.com), which is the caller the service's entry route admits, so a build that could not finish is that call, the entry's definition or the entry's source repository (${src_repo:-unknown}) having broken"
   fi
@@ -1686,9 +1888,9 @@ step_flip_repo() { # step_flip_repo LABEL REPO PROVIDER
 # delete. Printed by --dry-run, which runs NOTHING: no gcloud and no fugaro is
 # called, so this mode is safe on a machine with no credentials at all.
 print_plan() {
-  say "dry run: NOTHING below was run, and no tool was called at all — not gcloud, not fugaro. A real run would first check that this is the fugaro-dev installation (fugaro doctor --project fugaro --all) and that fugaro version is not a development build, then read the project's effective image_map — this machine's project config for ${NAME} when it states one, the published policy node otherwise — and then, in this order:"
-  say "  [network] gcloud builds list --project=${P} --region=${L} --limit=${BUILDS} --format=json  (the INSTALLATION'S REGION's recent builds — a listing with no --region reads the global region and would find none of them; each repository's own are the newest builds whose _IMAGE names catalog-<the entry its image_map names>, and a repository the map does not mention is matched by its own _REPO_URL clone URL instead — a repository-level derived image is disabled, D1900)"
-  say "  [network] fugaro project policy show --json --project ${NAME}  (the published policy node, read for its image_map when this machine's project config states none — the map's local half wins where it writes one, D1906; a node that cannot be read is not a failure, the local half answers alone)"
+  say "dry run: NOTHING below was run, and no tool was called at all — not gcloud, not fugaro. A real run would first check that this is the fugaro-dev installation (fugaro doctor --project fugaro --all) and that fugaro version is not a development build, then read the project's effective repository-to-image map — its repo_images member (keys provider/owner/name, each repository looked up under its OWN provider, F35) wherever any layer states one, this machine's project config for ${NAME} first and the published policy node second, and the legacy bare-name image_map only where neither does — and then, in this order:"
+  say "  [network] gcloud builds list --project=${P} --region=${L} --limit=${BUILDS} --format=json  (the INSTALLATION'S REGION's recent builds — a listing with no --region reads the global region and would find none of them; each repository's own are the newest builds whose _IMAGE names catalog-<the entry its own provider-keyed entry in the map names>, and a repository the map does not mention is matched by its own _REPO_URL clone URL instead — a repository-level derived image is disabled, D1900)"
+  say "  [network] fugaro project policy show --json --project ${NAME}  (the published policy node, read for its repo_images when this machine's project config states none — the local half wins where it writes one, R2; a node that cannot be read is not a failure, the local half answers alone. A node that still carries only the legacy image_map is read as that, and its keys are bare names)"
   say "  [network] gcloud run services describe ${SVC} --project=${P} --region=${L} --format=json  (the credentials service ITSELF: this row is read off the service and not off any build, so it is measured even when the project holds no build at all)"
   say "  [network] gcloud run jobs list --project=${P} --region=${L} --format=json  (the installation's Cloud Run jobs; each repository's daily check job is the fugarochk-… one, found by its FUGARO_REMOTE clone URL or its fugaro_repo label)"
   say "  [network] gcloud logging read 'resource.labels.service_name=${SVC} jsonPayload.purpose=build' --project=${P}  (the service's OWN credsvc: audit lines for each repository, retried while Cloud Logging catches up)"
@@ -1707,6 +1909,12 @@ main() {
   scratch_up
   write_reader
   guard_xtrace
+
+  if [ -n "$PREFLIGHT" ]; then
+    step_preflight
+    preflight_report
+  fi
+
   guard_inputs
 
   if [ -n "$DRY_RUN" ]; then
@@ -1785,19 +1993,17 @@ on_signal() {
 }
 
 MODE=switch
-case "${1:-}" in
---dry-run) DRY_RUN=1 ;;
---after-flip)
-  MODE=flip
-  case "${2:-}" in
+PREFLIGHT_CLI=""
+while [ $# -gt 0 ]; do
+  case "$1" in
   --dry-run) DRY_RUN=1 ;;
+  --after-flip) MODE=flip ;;
+  --preflight) PREFLIGHT_CLI=1 ;;
   "") ;;
-  *) die "usage: $PROG [--dry-run|--after-flip [--dry-run]]" ;;
+  *) die "usage: $PROG [--dry-run|--after-flip|--preflight]" ;;
   esac
-  ;;
-"") ;;
-*) die "usage: $PROG [--dry-run|--after-flip [--dry-run]]" ;;
-esac
+  shift
+done
 
 REPO=${CHECK196_REPO:-}
 BB_REPO=${CHECK196_BITBUCKET:-}
@@ -1807,6 +2013,9 @@ LOG_LIMIT=${CHECK196_LOG_LIMIT:-200}
 LOG_WAIT_SECONDS=${CHECK196_LOG_WAIT_SECONDS:-60}
 LOG_POLL_SECONDS=${CHECK196_LOG_POLL_SECONDS:-10}
 DRY_RUN=${CHECK196_DRY_RUN:-${DRY_RUN:-}}
+PREFLIGHT=${CHECK196_PREFLIGHT:-$PREFLIGHT_CLI}
+PREFLIGHT_MODE=no
+[ -z "$PREFLIGHT" ] || PREFLIGHT_MODE=yes
 KEEP_SCRATCH=${CHECK196_KEEP_SCRATCH:-}
 
 trap finish EXIT

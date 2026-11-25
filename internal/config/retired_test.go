@@ -99,6 +99,31 @@ func TestEveryRetiredKeyIsNamedWhereItIsWritten(t *testing.T) {
 	}
 }
 
+// TestRetiredNotesNameTheRoutingTable is MG5's red step
+// (docs/model-credentials-routing/implementation-plan.md, F46 of its
+// reconciliation.md): a note is what a person reads where a document still
+// writes a retired key, and what replaced every one of these keys is the
+// project's routing table and its pools. A note that still sends the reader to
+// a craft's access sends them to a key this release no longer honours, and the
+// key it names is not the one that decides the source.
+func TestRetiredNotesNameTheRoutingTable(t *testing.T) {
+	if len(RetiredKeys) == 0 {
+		t.Fatal("this test reads nothing")
+	}
+	for _, rk := range RetiredKeys {
+		why := rk.Why
+		if strings.Contains(why, "craft's access") || strings.Contains(why, "crafts' access") {
+			t.Errorf("%s (%s): the note still sends the reader to a craft's access: %q", rk.Key, docKindName(rk.In), why)
+		}
+		if !strings.Contains(why, "routing table") {
+			t.Errorf("%s (%s): the note does not name the project's routing table: %q", rk.Key, docKindName(rk.In), why)
+		}
+		if !strings.Contains(why, "pool") {
+			t.Errorf("%s (%s): the note does not name the project's pools: %q", rk.Key, docKindName(rk.In), why)
+		}
+	}
+}
+
 // namesRetired reports whether keys names key retired in doc, and retiredIn is
 // its entry — the pair compared on Key and In alone, so an empty Why in a
 // test's own expectation is not what decides the answer.

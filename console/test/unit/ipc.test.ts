@@ -112,7 +112,6 @@ import {
   isConsoleSenderUrl,
   isSenderOnDocument,
   isNeverReachable,
-  openPullRequestHandler,
   operationFor,
   readStoredCompatibility,
   reducedModeHandlers,
@@ -589,10 +588,6 @@ interface CliCommand {
  * it that is not `allowed` may be driven either. Keeping the list complete is
  * what makes "the console is read-only" a fact about the surface rather than a
  * claim about the argvs we happened to think of.
- *
- * `coordinator status` was already a leaf of this CLI on that date; it is listed
- * as `allowed` from Bitbucket credentials T1.2, when the project view became the
- * first screen to read it.
  */
 const CLI_COMMANDS: readonly CliCommand[] = [
   // The thirteen dashboard commands the design's allow-list admits (fourteen
@@ -624,23 +619,6 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   { command: 'accounts ls', kind: 'allowed', where: 'internal/cli/accounts.go:70' },
   { command: 'version', kind: 'allowed', where: 'internal/cli/root.go:84' },
   { command: 'doctor', kind: 'allowed', where: 'internal/cli/doctor.go:159' },
-  // Bitbucket credentials T1.2: the project view's read, the one command here
-  // whose subject is the coordinator's *stored* view rather than a live read.
-  { command: 'coordinator status', kind: 'allowed', where: 'ee/coordinator/cli/coordinator.go:565' },
-  // Coordinator v2 C3: the pull request read, next to the stored view's. It is
-  // `allowed` and not `unused` because the surface drives it -- and it is the
-  // second command here whose child mints a credential of the host's (`run`'s
-  // below is the first, and its run's token can write), which is exactly why its
-  // argv is pinned (the repository, the number and `--json`, and no token field
-  // anywhere).
-  { command: 'coordinator show', kind: 'allowed', where: 'ee/coordinator/cli/coordinator_show.go:46' },
-  // Coordinator v2 C4: the declarations the fleet's writers stored. It is
-  // `allowed` and not `unused` because the surface drives it, and unlike C3's
-  // row its argv is the row's own fixed words -- `--all --json` and nothing a
-  // caller fills -- so this list's convention leaves it whole and the child has
-  // no argument it could be steered with. It mints nothing of the host's: the
-  // read is the caller's own database node (design §5.1 rule 6).
-  { command: 'coordinator intents', kind: 'allowed', where: 'ee/coordinator/cli/coordinator_intents.go:66' },
   // The managed screens' plan's CM3 and CM4: the Project tab's two managed
   // reads, both `allowed` because the surface drives them and both with no
   // argument at all -- `managed status --json` (the marks and the newest audit
@@ -830,12 +808,12 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * is still `runs ls --json` and rule 6's row carries the two words in its
  * parenthetical.
  *
- * **It is thirty-nine argvs, and this surface is the same thirty-nine.** (The
+ * **It is thirty-six argvs, and this surface is the same thirty-six.** (The
  * enumeration below numbers twenty-two of them: CG9a's `graph --json` landed
- * after it was written and sits between `plan status --json` and
- * `coordinator status --from-store --all --json`, and this plan's
+ * after it was written and sits between `plan status --json` and the rows below
+ * it, and this plan's
  * `managed status --json` and `project policy show --json` are the two rows
- * after `coordinator intents --all --json`.) CG9b's `graph --watch --json` is
+ * after `orchestrator map --json`.) CG9b's `graph --watch --json` is
  * the twenty-sixth and sits directly under the read it is a word longer than,
  * and the subscriptions plan's S4.2 is the twenty-seventh: the
  * Project tab's seat estimate, `seats --json`, whose one fixed flag is the
@@ -849,18 +827,14 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * 2026-10-25): until that ruling there were twelve here and it was pinned where
  * the picker's table was, and the ruling made the read the dashboard's own
  * operation. The fourteenth is GV2.1's `plan status --json` (the graph
- * screen's per-task state; `console/docs/json-contract.md` §6.12), the
- * fifteenth is T1.2's `coordinator status --from-store --all --json`, whose two
- * extra words are fixed flags of the row rather than arguments
- * (`console/docs/json-contract.md` §6.13), and the sixteenth is V2.5.1a's
+ * screen's per-task state; `console/docs/json-contract.md` §6.12), and the
+ * sixteenth is V2.5.1a's
  * launch -- rule 11's exact argv with the words an argument fills
  * (`--run-id <run id>`, `--repo <owner/name>`, `--title=<T>`,
  * `--plan-task=<P>`) and the console's own state (`--project`, `--config`)
- * taken out, which is this file's convention for every row here. The three
- * rows after it are C3's pull request read (`coordinator show --json`, D816),
- * C4c's declarations read (`coordinator intents --all --json`, D827) and
- * console 0.119.0's totals read (`runs summary --json`, B4's console half) --
- * the seventeenth, eighteenth and nineteenth. The twentieth is the same
+ * taken out, which is this file's convention for every row here. The next row
+ * is console 0.119.0's totals read (`runs summary --json`, B4's console half),
+ * the nineteenth. The twentieth is the same
  * release's models read (`models ls --json`, the Project tab's read-only
  * panel): the command and its one fixed flag and nothing else, because the
  * command takes no argument at all. The twenty-first is the same tab's third
@@ -939,19 +913,6 @@ const DESIGN_ARGV: readonly string[] = [
   // that names no word at all (`src/main/spawn.ts`'s `flag: null`). The design's
   // own row states the whole argv, `graph --watch --json [--source <v>]` and all.
   'graph --watch --json',
-  'coordinator status --from-store --all --json',
-  // The pull request read (coordinator v2 C3, D816): `--repo R` and `--pr N`
-  // are the operation's two declared arguments, so this file's convention --
-  // the command and the flags it *fixes*, with what an argument fills taken
-  // out -- leaves the row as it is written here. The design's own row states
-  // the whole argv, `--repo <owner/name> --pr <n> --json` and all.
-  'coordinator show --json',
-  // The declarations read (coordinator v2 C4, D827). This row is the
-  // whole argv and there is nothing left over: `--all` is a fixed word of
-  // the command, not a control, so the convention above has nothing to take
-  // out -- and with no argument to fill, no caller word can reach the child
-  // (`src/main/spawn.ts`'s empty `args`).
-  'coordinator intents --all --json',
   // The orchestrator map (the console-fixes plan's CG7a, D3221; C-ORCH's
   // document, `internal/orchestrator/mapdoc.go`). The declarations read's shape
   // exactly: the whole argv is the row's own words -- `--json` included -- and
@@ -1140,16 +1101,16 @@ describe("the allow-list's read-only invariant", () => {
     expect(driven).toHaveLength(DESIGN_ARGV.length)
   })
 
-  it('has exactly twelve operations spawn nothing at all, and names each of them', () => {
+  it('has exactly eleven operations spawn nothing at all, and names each of them', () => {
     // Task 3.3 added the handshake's answer, Task 3.4b `installation.current`
     // (plan step 6: "added to SHIPPED_SURFACE deliberately"), the owner's
     // design ruling of 2026-10-25 the rail's five store-and-window operations,
-    // K2a `link.openPullRequest`, and S2.7 `licence.read` and `licence.save`.
-    // **The console improvements plan's AL added the twelfth**,
+    // and S2.7 `licence.read` and `licence.save`.
+    // **The console improvements plan's AL added the last one**,
     // `settings.editor.open`: the settings editor's window, which spawns no
     // child of its own (the dry run and the write behind it are `settings.edit`'s
     // row). The number is the claim: these rows are the console's own state, and
-    // a thirteenth operation with no command would be a surface that answers
+    // a twelfth operation with no command would be a surface that answers
     // something no CLI read produced.
     //
     // **The two licence rows are a different kind of no-command operation from
@@ -1168,7 +1129,6 @@ describe("the allow-list's read-only invariant", () => {
       'installation.reveal',
       'installation.open',
       'link.openExternal',
-      'link.openPullRequest',
       'licence.read',
       'licence.save',
       'settings.editor.open',
@@ -1184,7 +1144,6 @@ describe("the allow-list's read-only invariant", () => {
       'revealInstallation',
       'openInstallations',
       'openExternal',
-      'openPullRequest',
       'readLicence',
       'saveLicence',
       'openSettingsEditor',
@@ -1750,7 +1709,7 @@ describe("the allow-list's read-only invariant", () => {
     }
   })
 
-  it('fixes only the four flags the surface may fix, and never --url with --json', () => {
+  it('fixes only the three flags the surface may fix, and never --url with --json', () => {
     for (const operation of CONSOLE_OPERATIONS) {
       for (const flag of operation.flags) {
         expect(ALLOWED_OPERATION_FLAGS, `${operation.name} fixes ${flag}`).toContain(flag)
@@ -1758,12 +1717,11 @@ describe("the allow-list's read-only invariant", () => {
       const flags = flagsOf(operation)
       expect(flags.includes('--url') && flags.includes('--json'), operation.name).toBe(false)
     }
-    // `--from-store` and `--all` are T1.2's two, fixed together on
-    // `coordinator status` alone: the stored view and the project-wide wrapper
-    // are one question, and no screen control turns either off. Widening this
-    // list is what a new operation fixing a new flag costs, and the exact-argv
-    // pin above is what keeps that from being a free widening.
-    expect([...ALLOWED_OPERATION_FLAGS]).toEqual(['--json', '--url', '--from-store', '--all'])
+    // `--url` is `logs --url`'s second read of the same run, and `--all` is the
+    // project-wide wrapper the graph read and `run --task-file -` fix.
+    // Widening this list is what a new operation fixing a new flag costs, and
+    // the exact-argv pin above is what keeps that from being a free widening.
+    expect([...ALLOWED_OPERATION_FLAGS]).toEqual(['--json', '--url', '--all'])
   })
 })
 
@@ -2156,21 +2114,6 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // child, and it is the only argument on this surface that reaches no word of
   // any argv (`src/main/spawn.ts`).
   'graph.watch': {},
-  // No `repo`, no `since`, no `path`: T1.2's read is the installation's whole
-  // repository set, from the view the coordinator already stored, so this
-  // payload is empty on purpose (Bitbucket credentials T1.2).
-  'coordinator.status': {},
-  // The two arguments the pull request read is asked with (coordinator v2 C3):
-  // the repository as the CLI's own canonical `owner/name`, and the number as
-  // the plain positive integer the `pullRequest` kind exists for. There is no
-  // `url`, no `path` and no token field -- the read mints its own credential in
-  // the child and says so in the console's own words.
-  'coordinator.show': { repo: 'acme/app', pr: 42 },
-  // The empty payload: the declarations read has no argument at all, so what a
-  // renderer may say to it is nothing (coordinator v2 C4). `--all` is the
-  // command's own fixed word and not a field here, which is why there is no
-  // `all: true` and why the pin below refuses every key.
-  'coordinator.intents': {},
   // The move's two keys and its confirmation (the dependency-graph plan's
   // GV3.2). `node` is a graph document key -- `source:id`, contract §6.22, and
   // the record's own task id is the qualified `<plan>/<task>` (D2111) -- and
@@ -2224,10 +2167,6 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   'installation.current': {},
   'environment.report': {},
   'link.openExternal': { url: 'https://github.com/acme/app/pull/1' },
-  // The three fields the main process builds a pull request link from, and
-  // **no URL**: a `url` key here would be a shape this operation does not have
-  // (K2a, D815).
-  'link.openPullRequest': { provider: 'github', repo: 'acme/app', number: 42 },
   // The installation rail (owner's design ruling of 2026-10-25). The project
   // names and the directory are invented, and the directory is absolute -- the
   // grammar decides the shape and nothing else, and whether the CLI ever listed
@@ -2842,59 +2781,6 @@ describe('the argument schemas', () => {
         checkout: '/home/operator/src/aurora',
       }).ok,
     ).toBe(true)
-  })
-
-  it('pins `coordinator.show`’s two arguments, which are the whole of what it may send', () => {
-    // **C3's read is the second operation here that mints a credential of the
-    // host's** (the coordinator's own read-only installation token, D816), so
-    // its payload is the whole of what a renderer can influence about the argv:
-    // the repository and the number, both required, and no third key. A token, a
-    // host, a path or a flag name is not a key of this schema, and a key it does
-    // not declare is refused by name (`takes no key it does not declare` above);
-    // the two it does declare are kinds that refuse what they are not.
-    expect(operationFor('coordinator.show').command).toBe('coordinator show')
-    expect(operationFor('coordinator.show').flags).toEqual(['--json'])
-    expect(operationFor('coordinator.show').args.map((spec) => [spec.key, spec.kind, spec.required])).toEqual([
-      ['repo', 'repository', true],
-      ['pr', 'pullRequest', true],
-    ])
-    // Both are required: the CLI refuses an argv missing either (`--repo %q must
-    // look like owner/name`, `--pr %d is not a pull request number`), so a
-    // payload missing one is refused here, before a child exists.
-    expect(validateArguments('coordinator.show', {}).ok).toBe(false)
-    expect(validateArguments('coordinator.show', { repo: 'acme/app' }).ok).toBe(false)
-    expect(validateArguments('coordinator.show', { pr: 42 }).ok).toBe(false)
-    // ...and what each kind refuses: a repository that is not the CLI's own
-    // `owner/name`, and a number that is not a pull request number.
-    expect(validateArguments('coordinator.show', { repo: 'acme', pr: 42 }).ok).toBe(false)
-    expect(validateArguments('coordinator.show', { repo: 'acme/app', pr: 0 }).ok).toBe(false)
-    expect(validateArguments('coordinator.show', { repo: 'acme/app', pr: 1.5 }).ok).toBe(false)
-    expect(validateArguments('coordinator.show', WELL_FORMED['coordinator.show']).ok).toBe(true)
-  })
-
-  it('pins `coordinator.intents`’s empty schema, which is the whole of what it may send', () => {
-    // **C4's read has no argument at all** (coordinator v2 C4, D827), so its
-    // argv is entirely the row's own words: `--all` and `--json`. This is the
-    // strongest form of the argv pin -- there is no field a renderer could fill,
-    // so the operation is not a way to steer the child anywhere. The read is the
-    // caller's own database node and mints nothing of the host's, which is what
-    // the empty schema is for.
-    expect(operationFor('coordinator.intents').command).toBe('coordinator intents')
-    expect(operationFor('coordinator.intents').flags).toEqual(['--all', '--json'])
-    expect(operationFor('coordinator.intents').args).toEqual([])
-    // The empty payload is accepted, and it is the only accepted payload: every
-    // key is refused, whether it names a real flag of this command (`--repo`,
-    // `--since`), the command's own fixed word, or a transport word.
-    expect(validateArguments('coordinator.intents', WELL_FORMED['coordinator.intents']).ok).toBe(true)
-    for (const key of ['repo', 'since', 'all', 'json', 'project', 'path', 'command', 'token', 'fromStore']) {
-      const decision = validateArguments('coordinator.intents', { [key]: key === 'all' ? true : 'x' })
-      expect(decision.ok, `coordinator.intents accepted ${key}`).toBe(false)
-      expect(decision.ok ? '' : decision.reason).toBe(`coordinator.intents takes no ${key}`)
-    }
-    // `--project` is not a key here and never could be: it is the row's own
-    // fixed word, filled from the screened context and never from a payload
-    // (`src/main/spawn.ts`), so the operation cannot ask for another project's
-    // node. `spawn.test.ts` pins that word into the argv.
   })
 
   it('pins the two managed reads’ empty schemas, which are the whole of what they may send', () => {
@@ -3842,7 +3728,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these fifty-seven, and no others".
+ * channel. The claim is "these fifty-three, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -4136,19 +4022,15 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['installation.current', 'getInstallation'],
   ['environment.report', 'environmentReport'],
   ['link.openExternal', 'openExternal'],
-  ['link.openPullRequest', 'openPullRequest'],
   ['installation.list', 'listInstallations'],
   ['installation.choose', 'chooseInstallation'],
   ['installation.checkout', 'setInstallationCheckout'],
   ['installation.remove', 'removeInstallation'],
   ['installation.reveal', 'revealInstallation'],
   ['installation.open', 'openInstallations'],
-  ['coordinator.status', 'coordinatorStatus'],
-  ['coordinator.show', 'coordinatorShow'],
-  ['coordinator.intents', 'coordinatorIntents'],
   // The Coordinator tab's map read (the console-fixes plan's CG7a, D3221), in
-  // the preload table's own order: `fugaro orchestrator map --json` sits beside
-  // the declarations read it replaces on that screen's v2 sections. It is a read
+  // the preload table's own order: `fugaro orchestrator map --json` sits where
+  // that screen's v2 reads used to. It is a read
   // with no argument at all -- the whole argv is the row's own words and the
   // installation's two -- and it is behind `ORCHESTRATOR_MAP_CLI_FLOOR`
   // (`src/shared/version.ts`), because the command it spawns is registered from
@@ -4275,7 +4157,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these fifty-seven, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these fifty-three, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -4292,11 +4174,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A fifty-eighth channel: what each task added must stay one row, and the
+    // A fifty-fourth channel: what each task added must stay one row, and the
     // next task that adds a read cannot do it quietly.
-    const fiftyThird = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
-    expect(fiftyThird).toContain('fleet.report: a channel this console does not ship')
-    expect(fiftyThird).toContain('58 rows, and this console ships 57')
+    const nextChannel = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
+    expect(nextChannel).toContain('fleet.report: a channel this console does not ship')
+    expect(nextChannel).toContain('54 rows, and this console ships 53')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -4310,7 +4192,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('56 rows, and this console ships 57')
+    expect(withoutTheNewRow).toContain('52 rows, and this console ships 53')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -4325,8 +4207,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the fifty-seven methods and nothing else', () => {
-    // The bridge the window is handed: the fifty-seven methods and the names,
+  it('is frozen, and hands the window a bridge with the fifty-three methods and nothing else', () => {
+    // The bridge the window is handed: the fifty-three methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -4393,138 +4275,6 @@ describe('the one URL-shaped argument', () => {
         if (spec.kind === 'link') expect(operation.name).toBe('link.openExternal')
       }
     }
-  })
-})
-
-// ---------------------------------------------------------------------------
-// The pull request link the main process builds (Coordinator v2 K2a, D814/D815)
-// ---------------------------------------------------------------------------
-//
-// `link.openPullRequest` is the second operation that reaches
-// `shell.openExternal`, and the difference between it and the first is the whole
-// of its safety: it is handed **three fields and no URL**, and the main process
-// spells the link from them. So there are two things to hold here -- that the
-// schema cannot be made to carry a URL (a `url` key, or a `repo` that is one),
-// and that a triple the builder refuses opens nothing at all.
-describe('the pull request link the main process builds (K2a, D814/D815)', () => {
-  it('takes exactly the three fields, and refuses a fourth key', () => {
-    const decision = validateArguments('link.openPullRequest', {
-      ...WELL_FORMED['link.openPullRequest'],
-      url: 'https://github.com/acme/app/pull/1',
-    })
-    expect(decision.ok).toBe(false)
-    expect(decision.ok === false && decision.reason).toContain('url')
-  })
-
-  it('refuses a payload that carries a URL under any of its own keys', () => {
-    // The three keys are the whole of what a renderer may say, and a URL-shaped
-    // value is refused wherever it is put: the provider is a closed set of two
-    // words, the repository is `owner/name`, and the number is a number. There
-    // is no key here a document's `url` could travel in (D815).
-    const url = 'https://github.com/acme/app/pull/1'
-    for (const key of ['provider', 'repo', 'number']) {
-      const decision = validateArguments('link.openPullRequest', {
-        ...WELL_FORMED['link.openPullRequest'],
-        [key]: url,
-      })
-      expect(decision.ok, `${key} accepted a URL`).toBe(false)
-    }
-  })
-
-  it('refuses a repository that walks out of its own path, a URL, and a bare word', () => {
-    // The shapes the `repository` kind refuses. `owner/repo-a/pull/1` is not one
-    // of them -- three segments is a repository as far as that grammar is
-    // concerned -- and it is the case the builder catches, one test below.
-    for (const repo of ['owner/../evil', 'https://github.com/acme/app', 'acme', '', 'owner/repo-a/']) {
-      const decision = validateArguments('link.openPullRequest', { provider: 'github', repo, number: 1 })
-      expect(decision.ok, `repo accepted ${repo}`).toBe(false)
-    }
-  })
-
-  it('refuses a provider outside the two, and a number that is not a pull request number', () => {
-    for (const provider of ['gitlab', 'GitHub', '', 'github.com', 'constructor', '__proto__']) {
-      expect(
-        validateArguments('link.openPullRequest', { provider, repo: 'acme/app', number: 1 }).ok,
-        `provider accepted ${provider}`,
-      ).toBe(false)
-    }
-    for (const number of [0, -1, 1.5, '1', true, null, 2 ** 53]) {
-      expect(
-        validateArguments('link.openPullRequest', { provider: 'github', repo: 'acme/app', number }).ok,
-        `number accepted ${String(number)}`,
-      ).toBe(false)
-    }
-    for (const provider of ['github', 'bitbucket']) {
-      expect(validateArguments('link.openPullRequest', { provider, repo: 'acme/app', number: 1 }).ok).toBe(true)
-    }
-  })
-
-  it('opens nothing at all for a triple the builder refuses, and the opener is never called', async () => {
-    // **The headline test of K2a.** The spy is the only way to the browser, and
-    // the hostile values below are sent through the real registrar, the real
-    // validator and the real bridge -- so what is asserted is the operation, not
-    // the handler in isolation. `owner/repo-a/pull/1` is the interesting one: it
-    // passes the schema and is refused by `pullRequestUrl`, which is the gate
-    // that exists precisely because a `repo` field could be one.
-    const opened: string[] = []
-    const { bridge } = wiredConsole({
-      'link.openPullRequest': openPullRequestHandler(async (url) => {
-        opened.push(url)
-      }),
-    })
-    // The first gate refuses these: they are not the three fields at all.
-    const refusedByTheSchema = [
-      { provider: 'gitlab', repo: 'owner/repo-a', number: 42 },
-      { provider: 'github', repo: 'owner/../evil', number: 42 },
-      { provider: 'github', repo: 'owner/repo-a', number: 0 },
-      { provider: 'github', repo: 'owner/repo-a', number: 1.5 },
-    ]
-    for (const args of refusedByTheSchema) {
-      const reply = await asCallable(bridge.openPullRequest)(args)
-      expect(reply.ok, JSON.stringify(args)).toBe(false)
-    }
-    // And these pass the schema and are refused by the builder -- the second
-    // gate, and the reason it exists: a `repo` field can be a path or a host.
-    const refusedByTheBuilder = [
-      { provider: 'github', repo: 'owner/repo-a/pull/1', number: 42 },
-      { provider: 'github', repo: 'github.com/owner/repo-a', number: 42 },
-    ]
-    for (const args of refusedByTheBuilder) {
-      const reply = await asCallable(bridge.openPullRequest)(args)
-      expect(reply, JSON.stringify(args)).toEqual({ ok: true, data: null })
-    }
-    // Neither gate opened anything.
-    expect(opened).toEqual([])
-  })
-
-  it('opens the built URL exactly once for a good triple, and never the document’s own url', async () => {
-    const opened: string[] = []
-    const { bridge } = wiredConsole({
-      'link.openPullRequest': openPullRequestHandler(async (url) => {
-        opened.push(url)
-      }),
-    })
-    // The payload a document's three fields would produce.
-    const reply = await asCallable(bridge.openPullRequest)({
-      provider: 'bitbucket',
-      repo: 'owner/repo-a',
-      number: 1458,
-    })
-    expect(reply).toEqual({ ok: true, data: null })
-    expect(opened).toEqual(['https://bitbucket.org/owner/repo-a/pull-requests/1458'])
-
-    // The same three fields with the `url` the same document carries beside
-    // them: it is not a key this schema has, so the whole payload is refused
-    // rather than a field being opened.
-    const withUrl = await asCallable(bridge.openPullRequest)({
-      provider: 'bitbucket',
-      repo: 'owner/repo-a',
-      number: 1458,
-      url: 'https://evil.test/owner/repo-a/pull-requests/1458',
-    })
-    expect(withUrl.ok).toBe(false)
-    // Still exactly the one URL, built here: the refused payload opened nothing.
-    expect(opened).toEqual(['https://bitbucket.org/owner/repo-a/pull-requests/1458'])
   })
 })
 
@@ -5521,7 +5271,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: forty-eight of the surface's fifty-seven operations,
+    // The non-vacuity half: forty-four of the surface's fifty-three operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its
@@ -5633,14 +5383,14 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // and MW2, D2903), each pair open for `settings.edit`'s reason.
     //
     // **`orchestrator.map` (the console-fixes plan's CG7a, D3221) is the
-    // forty-eighth**, and it is here for `graph.read`'s reason: the map is
+    // forty-fourth**, and it is here for `graph.read`'s reason: the map is
     // repository state -- the orchestrators being driven right now, the edges
     // between them and the coordinator's heartbeat -- so there is no spent
     // dollar, no notional dollar and no cap anywhere in its document for the
     // reduced mode to withhold. Withholding it would take away the one read
     // that says what is running, which is what an operator bringing an
     // installation back needs.
-    expect(THE_OPEN_OPERATIONS.length).toBe(48)
+    expect(THE_OPEN_OPERATIONS.length).toBe(44)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(

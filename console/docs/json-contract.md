@@ -669,7 +669,7 @@ states, and withholds it in the reduced mode with the rest of the Spend view.
 | `runs` | `[]runview.Row` | no | `[]` when none |
 | `totals` | `runview.Totals` | no | below |
 | `groups` | `[]object` | **yes** | **only under `runs ls --group-by failure_class`** (`internal/cli/runs_group.go`): the window's failures grouped, one object per class of the closed vocabulary of `docs/failure-classes/design.md` §3 that some run of the window ended in, beside the `runs` array rather than instead of it. Each group carries `class` (one of the nineteen names), `runs` (how many of the window's runs ended in it), `share` (that count's share **of the window's runs**, never of the spend — D1465) and `spend_usd` (what those runs cost). The order is the vocabulary's own (`failure.Classes()`), so two readers of one window read the same block. **`omitempty` is what keeps the phone's degraded feed alive**: the degraded watch document embeds this shape and the app refuses a key it does not know, so a block printed by a listing that never grouped would break the degraded screen (`internal/cli/watch.go`) |
-| `index_complete` | bool | **yes** | the run index's own answer about whether a walk has ever reached the end of history (D3215): **`false` until one has**, which is what makes a listing that reads the index honest about a short list — a reader that showed the rows of an unfinished index as the whole history would be showing a number the index does not support. **Present only on a listing whose rows came from the index** and absent on every listing the window answered (a flag the index does not serve, and every release that still reads the index's stub), because a listing that read no index has nothing to say about one; the document then reads exactly as it did before the field existed. `omitempty` is what keeps that safe: the degraded watch document embeds this shape and the app refuses a key it does not know, so a field a listing did not read must not reach the document it writes — the `groups` rule above |
+| `index_complete` | bool | **yes** | the run index's own answer about whether a walk has ever reached the end of history (D3215): **`false` until one has**, which is what makes a listing that reads the index honest about a short list — a reader that showed the rows of an unfinished index as the whole history would be showing a number the index does not support. **Present only on a listing whose rows came from the index** and absent on every listing the window answered (a flag the index does not serve, and an installation with no index to read at all), because a listing that read no index has nothing to say about one; the document then reads exactly as it did before the field existed. `omitempty` is what keeps that safe: the degraded watch document embeds this shape and the app refuses a key it does not know, so a field a listing did not read must not reach the document it writes — the `groups` rule above |
 | `folded_through` | time.Time | **yes** | RFC 3339: **the moment the index is folded through** — how fresh the listing's rows are, since the index answers from what it has folded and a run minted after that moment is not in it yet. Carried with `index_complete` under the rule above: present exactly when the rows came from the index, absent otherwise, and **absent even there when the index has folded nothing** (it has no moment to name) |
 | `warnings` | `[]string` | no | the lines a human listing prints before its table |
 
@@ -934,8 +934,8 @@ come from it, and the pull request's own index in the bucket and the other sourc
 go on covering the runs the run index does not have (`internal/cli/runs_pr.go`).
 
 **A listing the index cannot answer reads the window.** An index that has folded nothing
-and finished no walk — a fresh installation, and the stub every release before the index
-is wired answers with — is answered the way every listing was answered before the index
+and finished no walk — a fresh installation, and an installation that names no database
+for one to live in — is answered the way every listing was answered before the index
 existed, and **says nothing**: the window it reads is the listing, not a fallback from
 one, so there is no note to print and neither of the two fields below reaches the
 document (which is why the document is byte for byte the one this command printed before
@@ -3471,7 +3471,7 @@ The document:
 | `sources` | array | never | never | one entry per scope the document covers, below. `[]` is a fact — the document covers nothing — and never a null: an empty list is written as an array (`MarshalJSON`), and a `null` read back is the empty list it means |
 | `releases` | array | never | never | the project's release boxes, below, as the roadmap record holds them (GV4.1). **They belong to the project and not to a scope** — the record is project-level (D2111) — so a box is drawn whichever scope a task it holds came from, and the list is written once however many scopes the document covers. `[]` is the ordinary case for a project that has never written one, and there is no `null`: a `null` read back is the empty list it means |
 | `nodes` | array | never | never | the graph's nodes, below. `[]` is a fact — the scope has nothing to draw — and the scope's own state sits beside it in `sources`, so a screen tells "empty" from "down" (H3) |
-| `edges` | array | never | never | the relations between nodes, by `key`, below. **The coordinator's stored view has no edges, so a document drawn from it alone carries `[]`** (F17); the two sources that fill it are the orchestrator scopes' `depends_on` (CG5) and the roadmap record's own cross-plan dependencies (D2112, GV4.1) |
+| `edges` | array | never | never | the relations between nodes, by `key`, below. **The coordinator's stored view has no edges, so a document drawn from it alone carries `[]`** (F17); the two sources that fill it are the orchestrator scopes' `depends_on` (CG5) and the roadmap record's own cross-plan dependencies (D2112, GV4.1). **An edge may join two orchestrators** (F17, C-ORCH): `from` and `to` are node keys rather than a scope's own pair, so one named orchestrator's item waiting on another named orchestrator's is an edge between the two, and a document asked for one scope may carry an edge whose other end is not in it (D3208) |
 | `warnings` | array | never | never | what the read could not do, as sentences fit to print; `[]` is the ordinary case. Sanitised with `safetext.Field` like every other string here |
 
 one entry of `sources`:
@@ -3564,8 +3564,8 @@ one entry of `edges`:
 
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
-| `from` | string | never | never | the `key` of the node the relation starts at |
-| `to` | string | never | never | the `key` of the node it ends at |
+| `from` | string | never | never | the `key` of the node the relation starts at. **It may belong to another orchestrator than `to` does** (F17): a dependency is a relation between two items, and the two items are not required to be the same orchestrator's, so a scope's document carries an edge whose far end is out of scope |
+| `to` | string | never | never | the `key` of the node it ends at, on `from`'s own rule — the two keys are node keys and never a pair (F17) |
 | `kind` | string | never | never | the source's own word for the relation (`depends_on` is the word both sources that draw one use: the orchestrator state's own, F14, and the roadmap record's cross-plan dependency, D2112, which is the same relation from the same direction — the needing task to what it needs); the document defines no vocabulary of its own. **An edge is always within one source**, since a key carries its source: the record's edges are all `coordinator:` keys, and a key that names no node in the same document is drawn as nothing rather than as a node of its own — a record edge to a dangling task is not that case, because the dangling id is a node of its own (`dangling`, above), which is the whole point of D2115 |
 
 **`graph --watch --json`: whole snapshots, one per change.** The stream prints
@@ -4476,6 +4476,92 @@ deliberate click and no tick. `fugaro image add` is otherwise the never table's,
 as a command and as a word of `image`.
 
 
+### 6.35 `fugaro orchestrator map --json` — the project's active orchestrators, their connections and the coordinator's heartbeat (C-ORCH; the console's `orchestrator.map`, D3221)
+
+**Command:** `ee/orchestrator/cli/map.go` `NewMapCmd` / `runMap`, registered
+through `RegisterSubcommand` as a subcommand of the core's `orchestrator`
+family rather than as a command of its own (`ee/register/orchestrator.go`) — a
+**paid command** like the graph's, because its overlap edges are the
+coordinator's own stored collisions.
+**Document:** `internal/orchestrator/mapdoc.go` `MapDoc`, `MapNode`, `MapEdge`
+and `MapHealth` (`MapDocVersion`, `1` today), one object, assembled by
+`ee/orchestrator/mapbuild.go` `BuildMap` and written through
+`orchestrator.EncodeMapDoc` — the encoder is what the console's decoder is held
+against, so what this command publishes is what this release reads back.
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `version` | int | never | never | the document's own shape version, `1` today (`orchestrator.MapDocVersion`). A field never changes meaning under it: a new one is additive, and a removed or retyped one is a new version |
+| `project` | string | never | never | the project whose orchestrators these are. Every node belongs to it — one map is one project — and it is a project name (`config.ProjectNameRE`) |
+| `generated_at` | string | never | never | RFC 3339; when the document was assembled, on the reader's clock. It is a **clock and not an as-of**: how old one node is, is `nodes[].lease_age_seconds` |
+| `nodes` | array | never | never | the active orchestrators, below. `[]` is a fact — no orchestrator of this project is being driven — and never a `null`: an absent or null list is refused, not read as empty |
+| `edges` | array | never | never | the connections between two of those nodes, below, by node `id`. `[]` is the ordinary case, and never a `null` |
+| `health` | object | never | never | the coordinator's own state, below. A project whose sweep is off carries a health with `sweep: false` rather than no health |
+
+one entry of `nodes`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | string | never | never | the orchestrator's id, and a node of **this** document's project: an id of another project, a duplicate id and a `name` that disagrees with the id's own half are each refused (`orchestrator.ParseOrchestratorID`) |
+| `name` | string | never | never | the id's name half, `""` for the project's default orchestrator — a screen draws the project's own name for that one. It is **not** sanitised and never may be: a rewritten name is another orchestrator |
+| `driver` | string | never | never | the principal the driver node names — a person's account or a service account's address — and `""` when the node is absent or unreadable. **Untrusted display text**, sanitised with `safetext.Field` |
+| `active_tasks` | number | never | never | how many of the orchestrator's items are still being worked, counted over its shards, and never negative |
+| `running_jobs` | number | never | never | how many runs it has going, counted the same way, and never negative |
+| `lease_age_seconds` | number | never | **yes** | how long ago the holder last beat, in seconds. **Null when the lease carries no readable stamp**, which is "the age is unknown" and never `0` — and the figure is measured against the database's own clock, not this machine's (D1230) |
+
+one entry of `edges`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `from` | string | never | never | an orchestrator `id` of this document's own `nodes`, and the one that waits for a dependency |
+| `to` | string | never | never | an orchestrator `id` of this document's own `nodes`, and the one waited on. An edge naming an orchestrator the document does not draw, or joining one to itself, is refused |
+| `kind` | string | never | never | `dependency` or `overlap` (`orchestrator.MapEdgeDependency`, `MapEdgeOverlap`). A dependency is one orchestrator's item waiting on another's (D3208); an overlap is two orchestrators on the same work — the collision the coordinator stored, or a pull request two of them have runs on (D3211, D3222) |
+| `reason` | string | never | never | what the edge is, in words, for an overlap, and `""` for a dependency, which the two ids already say. **Untrusted display text**, sanitised with `safetext.Field` |
+
+the `health` object:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `sweep` | bool | never | never | whether the coordinator's sweep is on for this project |
+| `started_at` | string | never | **yes** | RFC 3339; when the last sweep started, and null when there is no heartbeat to read |
+| `ok_at` | string | never | **yes** | RFC 3339; when a sweep last finished reading everything, null on the same rule |
+| `at` | string | never | **yes** | RFC 3339; the server time the heartbeat was written, null on the same rule |
+| `note` | string | never | never | why the health is what it is, `""` when there is nothing to say. **Untrusted display text**, sanitised with `safetext.Field` |
+
+**Nothing historical is on it.** A node is on the map because a credential is
+driving it now; an orchestrator nobody drives is **not a node with empty
+figures but no node at all**, and neither is an edge to it. A reader therefore
+tells "this project drives one orchestrator" from "this project has driven
+nothing", and the two are not the same fact.
+
+**Sweep off is a state and not an absence of overlaps.** With the coordinator's
+sweep off there is no heartbeat and no stored collision to read, so the health
+says `sweep: false` and `note` is
+`orchestrator.MapSweepOffNote`'s own sentence: the map then carries the nodes
+and their dependencies alone, and the absence of an overlap edge means
+**nobody has looked, never that nothing overlaps** (F23). When `sweep` is
+false the three times are null, and a health that says the sweep is off and
+carries a heartbeat is refused.
+
+**A refused read is the other case, and it is terminal.** A project with no
+database, or a read the database refused, is an error with a non-zero exit and
+**no document at all** — exit 1 for a project with no database and exit 2 for a
+failure of one (`ee/orchestrator/cli/map.go`). Nothing is drawn from a partial
+answer, so a screen shows the refusal's sentence rather than a map with nodes
+quietly missing.
+
+**It is the Coordinator tab's read, and it takes no argument at all.** The
+console spawns exactly `orchestrator map --json --project <name> [--config
+<path>]` (design §5.1 rule 6): the map is already one project's whole active
+set, so no word of the argv is caller-influenced, and neither `--repo` nor a
+scope is a word this command has. **Its child asks nothing of the host** — the
+nodes, their leases, the claims and the heartbeat are read from the caller's own
+database node (`roles/firebasedatabase.viewer`), and the coordinator's stored
+views go through the same client — so no provider is opened and no host is
+reached. The console's read sits behind a CLI version floor
+(`ORCHESTRATOR_MAP_CLI_FLOOR`, `console/src/shared/version.ts`) because no
+release carries the command yet.
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
@@ -4600,7 +4686,11 @@ table against the live constructors.
    `link.openPullRequest` took it to twenty-five and writes nothing, and C4c's
    `coordinator.intents` took it to twenty-six and writes nothing — **the
    counts in this parenthesis are the history up to that commit, and rule 5's
-   fifty-two is today's**), and no other argv that writes is reachable
+   fifty-three is today's**: the console-fixes plan's I-ORCH took four back
+   (2026-11-25) — `coordinator.status`, `coordinator.show`,
+   `coordinator.intents` and `link.openPullRequest`, none of which any screen
+   reaches — so the surface shrank from fifty-seven to fifty-three and this
+   history names two operations that are no longer on it), and no other argv that writes is reachable
    from a renderer. Two further commands this file
    describes are writes, and **neither is in the console's set**: `fugaro cancel
    RUN --json` (§6.3), which is on the design's "never" table and which no v1
