@@ -360,10 +360,24 @@ func TestImageAddRefusesExecutableContentForAnAgent(t *testing.T) {
 // removal leaves.
 func TestImageRmOwesNoBuild(t *testing.T) {
 	r, fb := imageAddChainWorld(t)
+	// The first addition anchors the checkout (gcp_project in its fugaro.yaml),
+	// and every command after it resolves the project layer that anchor makes
+	// apply: a bucket this world names as gs://, which this package's TestMain
+	// refuses to open for real. The layer is empty here, the state every fixture
+	// in this package is in (managementWorldImageRm's own override).
+	oldOpen := layerBucketOpener
+	t.Cleanup(func() { layerBucketOpener = oldOpen })
+	layerBucketOpener = func(ctx context.Context, _ string) (*blobx.Bucket, error) {
+		return blobx.Open(ctx, "file://"+t.TempDir())
+	}
 	df := entryDockerfile(t, catalogBuildInline)
 	if out, errOut, err := executeStdin(t, "", "image", "add", "base", "--inline", df, "--default"); err != nil {
 		t.Fatalf("image add base: %v\n%s", err, out+errOut)
 	}
+	// The redeploy refuses a working tree that is not the default branch's until
+	// the anchor is committed (enrolLanded), which is what a person running the
+	// two commands a moment apart does.
+	enrolLanded(t)
 	if out, errOut, err := executeStdin(t, "", "image", "add", "tools", "--inline", df); err != nil {
 		t.Fatalf("image add tools: %v\n%s", err, out+errOut)
 	}
