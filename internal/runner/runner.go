@@ -922,6 +922,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	}()
 
 	r.addSealKey()
+	r.addIdentityTicket()
 	r.addMountedSecrets()
 	r.registerModelCredentials()
 	if onNewRun != nil {
