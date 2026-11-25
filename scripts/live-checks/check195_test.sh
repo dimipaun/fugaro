@@ -397,6 +397,11 @@ elif sub == ("storage", "buckets", "describe"):
         # session that expired, which is why the check may read it as neither
         # "mine" nor "somebody else's".
         die("storage.buckets.get was refused: the session has expired")
+    if state_get("bucket") in ("", "0"):
+        # The real API's 404 for a bucket that is not there, and the same failure
+        # the session-expired mode above gives: a describe cannot tell the two
+        # apart, which is what the check reads the LIST for.
+        die("NOT_FOUND: %s not found" % (positionals[3] if len(positionals) > 3 else "the bucket"))
     if mode == "bucket-other-label":
         emit("somebody-elses-nonce")
     else:
@@ -1698,6 +1703,60 @@ test_a_bucket_whose_label_cannot_be_read_is_not_deleted() {
   expect_contains "$out" "FACT restore: FAIL" "unreadable label: the Restore row"
 }
 
+# The ordinary refusal of a create: no bucket of that name at all. The LIST is
+# what says so, and describe cannot — a missing bucket is a 404, the same failure
+# an expired session gives. Read as a kept record, this run would report a
+# leftover no read-back could ever confirm, over a bucket that never existed.
+test_a_refused_bucket_create_is_not_a_leftover() {
+  local dir=$work/bucketcreatefails
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=bucket-create-fails
+  expect_status "$status" 1 "refused create: the verdict"
+  expect_contains "$err" "No bucket of that name is in fugaro-dev (read from a listing)" "refused create: the stop says the list is what read it"
+  expect_contains "$err" "storage.buckets.create" "refused create: the stop names the permission this needs"
+  expect_absent "$err" "delete it yourself only if it carries that label" "refused create: nobody is sent to delete a bucket that is not there"
+  expect_contains "$out" "FACT bucket-deleted: PASS" "refused create: the row"
+  expect_absent "$out" "FACT bucket-deleted: FAIL" "refused create: no leftover is claimed"
+  expect_contains "$out" "FACT restore: PASS" "refused create: nothing of this check's was created"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "storage rm --recursive" "refused create: no delete was issued"
+}
+
+# And the order is the guard: with the label read FIRST — the shape before the list
+# was consulted — a describe of a bucket that is not there fails, the record is
+# kept, and the run reports a FAILed leftover for a bucket that never existed. The
+# copy has the pre-fix order in both places, and both rows have to come back.
+test_a_refused_bucket_create_read_by_the_label_first_is_a_false_leftover() {
+  local dir=$work/bucketcreatefailslabel
+  prepare "$dir"
+  mkdir -p "$dir/copy"
+  sed -e 's|case "$(bucket_state)" in|case "there" in|' \
+    -e 's|bucket_before=$(bucket_state)|bucket_before=there|' \
+    "$script" >"$dir/copy/check195.sh"
+  expect_contains "$(cat "$dir/copy/check195.sh")" 'case "there" in' "label first: the copy reads the label without asking the list"
+  run_copy "$dir" "$dir/copy/check195.sh" FAKE_GCLOUD_MODE=bucket-create-fails
+  expect_status "$status" 1 "label first: the verdict"
+  expect_contains "$out" "FACT bucket-deleted: FAIL" "label first: the bucket that never existed is FAILed"
+  expect_contains "$out" "the describe failed with ERROR: (gcloud) NOT_FOUND" "label first: the row names what the describe answered"
+  expect_contains "$out" "FACT restore: FAIL" "label first: the Restore row"
+}
+
+# A refusal at the bucket-level grant, the binding the brief asks for by name: the
+# bucket is already this run's by then, so the stop leaves the Restore to delete it
+# with the object in it, and nothing is built.
+test_an_objectcreator_grant_that_fails_leaves_nothing_behind() {
+  local dir=$work/objectcreatorfails
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=objectcreator-fails
+  expect_status "$status" 1 "objectCreator grant fails: the verdict"
+  expect_contains "$out" "FACT invoker-grant: FAIL" "objectCreator grant fails: the row"
+  expect_contains "$err" "roles/storage.objectCreator" "objectCreator grant fails: the stop names the role"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "builds submit" "objectCreator grant fails: no build was submitted"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "storage rm --recursive gs://fugaro-dev-chk195-" "objectCreator grant fails: the bucket is deleted with the object in it"
+  expect_contains "$out" "FACT bucket-deleted: PASS" "objectCreator grant fails: the bucket row"
+  expect_contains "$out" "FACT account-deleted: PASS" "objectCreator grant fails: the account row"
+  expect_contains "$out" "FACT restore: PASS" "objectCreator grant fails: everything created was deleted and read back"
+}
+
 # A delete the bucket refuses is a FAIL that names the one command that can still
 # remove it, and that command is `rm --recursive`: the step's object is in the
 # bucket, and the API refuses a plain buckets delete on a bucket that holds one.
@@ -1845,6 +1904,9 @@ t test_a_grant_that_fails_stops_before_the_build
 t test_a_service_that_cannot_be_deleted_is_a_failure
 t test_a_bucket_that_is_not_this_runs_is_left_alone
 t test_a_bucket_whose_label_cannot_be_read_is_not_deleted
+t test_a_refused_bucket_create_is_not_a_leftover
+t test_a_refused_bucket_create_read_by_the_label_first_is_a_false_leftover
+t test_an_objectcreator_grant_that_fails_leaves_nothing_behind
 t test_a_bucket_that_cannot_be_deleted_is_a_failure
 t test_a_bucket_delete_that_refuses_a_non_empty_bucket
 t test_an_account_that_cannot_be_deleted_is_a_failure
