@@ -27,9 +27,11 @@
 # any process here either.
 #
 # The fake `fugaro` carries the gate the real one carries: `accounts add --type`
-# on a managed project is created at the owner's own terminal, and a caller whose
-# stdin is a pipe is refused in the gate's own words. A check that read the value
-# itself and handed it over on a pipe therefore fails here, which is the whole
+# on a managed project is created at the owner's own terminal — a terminal on the
+# command's input AND a terminal on its output — and a caller holding either
+# stream to anything else is refused in the gate's own words. A check that read
+# the value itself and handed it over on a pipe, or that captured the command's
+# output without giving it a terminal, therefore fails here, which is the whole
 # point of that fence: it is what the release does.
 #
 # Usage: bash scripts/live-checks/check631_test.sh
@@ -218,11 +220,15 @@ accounts_add() { # accounts_add NAME TYPE
   local name=$1 type=$2 value=""
   # The gate, in the words the release prints it in
   # (internal/cli/accounts_managed.go: accountsAddOwnTerminal, accountsAddRefusal).
-  # A managed project's credential is created at the owner's own terminal: a
-  # coding agent's session is refused the grant by name and told the step that
-  # unblocks it, and a caller whose stdin is a pipe — a run, a --yes, a check that
-  # read the value itself — is refused the owner's terminal. A check that handed
-  # the value over on a pipe fails here exactly as it fails against the release.
+  # A managed project's credential is created at the owner's own terminal, and
+  # that is FOUR readings: no coding agent's marker, no --yes, a terminal on the
+  # command's input AND a terminal on its output — the token's repositories are
+  # printed before the prompt, and a run whose output is a pipe has nowhere to
+  # print them. A coding agent's session is refused the grant by name and told
+  # the step that unblocks it; a caller holding either stream to a pipe — a run,
+  # a --yes, a check that read the value itself, a check that captured the
+  # command's output — is refused the owner's terminal. A check that gives the
+  # command anything less fails here exactly as it fails against the release.
   if [ "$mode" != session-accepts ]; then
     if [ -n "${CLAUDECODE:-}" ]; then
       if [ "$mode" = session-unnamed ]; then
@@ -236,7 +242,7 @@ accounts_add() { # accounts_add NAME TYPE
       printf "fugaro: This creates the credential credentials.%s, and a managed project's owner is the one who creates credentials.\nDeclare the account without --type, or run this in your own terminal.\n" "$name" >&2
       exit 1
     fi
-    if [ ! -t 0 ]; then
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
       printf "fugaro: This creates the credential credentials.%s, and a managed project's owner is the one who creates credentials.\nRun this in your own terminal.\n" "$name" >&2
       exit 1
     fi

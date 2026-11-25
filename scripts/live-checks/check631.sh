@@ -25,13 +25,13 @@
 #     left behind;
 #   * **the command's own hidden prompt, and nothing echoed**: BOTH credentials
 #     are declared with the value pasted at the COMMAND's own hidden prompt —
-#     `fugaro accounts add <name> --type <type>` runs with your terminal as its
-#     stdin, which is the prompt the acceptance names and the only door a
-#     managed project's credential is created through — so this check never
-#     holds the value at all: no flag, no argument, no environment and no pipe
-#     carries it. The check reads each command's own prompt sentence out of that
-#     command's output, and proves no stream of either carries a line shaped
-#     like a provider key;
+#     `fugaro accounts add <name> --type <type>` runs AT your terminal: the
+#     terminal on its input and a terminal on its output, which is the whole of
+#     the door a managed project's credential is created through
+#     (accountsAddOwnTerminal) — so this check never holds the value at all: no
+#     flag, no argument, no environment and no pipe carries it. The check reads
+#     each command's own prompt sentence out of that command's output, and
+#     proves no stream of either carries a line shaped like a provider key;
 #   * **no key shape in a file, and none in a history**: every file under the
 #     fugaro config directory (`~/.config/fugaro/`, the `.bak-<UTC>` backups
 #     included) and every shell history file on this machine is scanned for a
@@ -101,7 +101,8 @@
 # LOG_VIEW, RUN_TIMEOUT_SECONDS (3600), POLL_SECONDS (15), CLI_TIMEOUT_SECONDS
 # (180), DOCTOR_TIMEOUT_SECONDS (300), LAUNCH_TIMEOUT_SECONDS (600),
 # PUBLISH_TIMEOUT_SECONDS (600) and TTY (/dev/tty: the terminal both commands
-# read their value from, which only the check's own test points elsewhere).
+# run at and read their value from, which only the check's own test points
+# elsewhere).
 set -Eeuo pipefail
 
 # No xtrace, whatever the shell it was started from had: this check reads a live
@@ -442,18 +443,125 @@ bound_loop() { # bound_loop SECONDS PID
 run_bounded() { # run_bounded SECONDS KEY DIR CMD...
   local secs=$1 key=$2 dir=$3
   shift 3
-  # A background job of a non-interactive shell gets /dev/null for stdin, which
-  # would take the terminal away from the commands that read a value at their own
-  # prompt — so those hand it back from fd 5 (open_terminal) inside the subshell.
-  ( trap - ERR; cd "$dir" || exit 1
-    [ -z "${TTY_STDIN:-}" ] || exec 0<&5
-    exec "$@" ) >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" &
+  ( trap - ERR; cd "$dir" || exit 1; exec "$@" ) >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" &
   bound_loop "$secs" "$!"
 }
 
-# run_bounded_tty runs a command with the owner's terminal as its stdin.
-run_bounded_tty() { # run_bounded_tty SECONDS KEY DIR CMD...
-  TTY_STDIN=1 run_bounded "$@"
+# run_at_terminal runs a command at the owner's OWN terminal: the terminal
+# itself on the command's input, and a terminal on each of its two output
+# streams. That is the whole of the door a managed project's credential is
+# created through — no coding agent's marker, no --yes, a terminal on the run's
+# input and a terminal on its output (accountsAddOwnTerminal,
+# internal/cli/accounts_managed.go) — and a command given anything less is
+# refused before it reads a value. The value travels from the terminal to the
+# command on the command's own fd 0, so this check never holds it; what the
+# command prints is captured, its two streams apart, and relayed to this
+# check's own stderr, which is the screen the person at the terminal is reading
+# the prompt on.
+run_at_terminal() { # run_at_terminal SECONDS KEY DIR CMD...
+  local secs=$1 key=$2 dir=$3
+  shift 3
+  ( trap - ERR; cd "$dir" || exit 1
+    exec python3 "$SCRATCH/at_terminal.py" "$secs" "$SCRATCH/$key.out" "$SCRATCH/$key.err" "$@" ) &
+  bound_loop "$secs" "$!"
+  # The runner ends a command that outstayed its deadline itself, with 124, the
+  # child killed by its own process group rather than by this shell.
+  [ "$BOUNDED_STATUS" != 124 ] || BOUNDED_TIMED_OUT=yes
+}
+
+# write_terminal_runner is the child that runs one declaration at the owner's
+# terminal. fd 5 is that terminal (open_terminal); fd 4 is this check's stderr,
+# the screen the command's own output is relayed to. Each of the command's
+# output streams gets a terminal of its own, and everything written to it is
+# appended to that stream's capture file as well, so the command sees the
+# terminal the door asks for while this check can still read what it printed.
+# NO_COLOR is set for the command: a terminal writer draws its steps with colour
+# and an in-flight line, and the escape sequences are not what any row of this
+# check reads.
+write_terminal_runner() {
+  cat >"$SCRATCH/at_terminal.py" <<'PY'
+import os
+import pty
+import select
+import signal
+import subprocess
+import sys
+import termios
+import time
+
+
+def output_terminal():
+    master, slave = pty.openpty()
+    attrs = termios.tcgetattr(slave)
+    attrs[1] = 0  # no output post-processing, so the capture keeps the bytes
+    termios.tcsetattr(slave, termios.TCSANOW, attrs)
+    return master, slave
+
+
+secs = float(sys.argv[1])
+out_path, err_path = sys.argv[2], sys.argv[3]
+argv = sys.argv[4:]
+
+out_master, out_slave = output_terminal()
+err_master, err_slave = output_terminal()
+env = dict(os.environ, NO_COLOR="1")
+child = subprocess.Popen(argv, stdin=5, stdout=out_slave, stderr=err_slave,
+                         env=env, start_new_session=True, close_fds=True)
+os.close(out_slave)
+os.close(err_slave)
+screen = os.fdopen(os.dup(4), "wb", 0)
+captures = {out_master: open(out_path, "wb"), err_master: open(err_path, "wb")}
+
+
+def relay(master):
+    try:
+        chunk = os.read(master, 65536)
+    except OSError:
+        chunk = b""
+    if not chunk:
+        return False
+    captures[master].write(chunk)
+    captures[master].flush()
+    screen.write(chunk)
+    screen.flush()
+    return True
+
+
+live = set(captures)
+deadline = time.time() + secs
+timed_out = False
+while True:
+    if live:
+        ready, _, _ = select.select(list(live), [], [], 0.2)
+    else:
+        ready = []
+        time.sleep(0.2)
+    for master in ready:
+        if not relay(master):
+            live.discard(master)
+    if child.poll() is not None:
+        break
+    if time.time() > deadline:
+        timed_out = True
+        try:
+            os.killpg(os.getpgid(child.pid), signal.SIGKILL)
+        except OSError:
+            pass
+        child.wait()
+        break
+# The child is gone; drain what its terminals still hold, briefly.
+edge = time.time() + 1.0
+while live and time.time() < edge:
+    ready, _, _ = select.select(list(live), [], [], 0.1)
+    for master in ready:
+        if not relay(master):
+            live.discard(master)
+for fh in captures.values():
+    fh.close()
+screen.close()
+sys.exit(124 if timed_out else child.returncode)
+PY
+  chmod 700 "$SCRATCH/at_terminal.py"
 }
 
 # ---------------------------------------------------------------- the guards
@@ -637,11 +745,12 @@ add_streams() { # add_streams NAME — sets ADD_STREAMS
 }
 
 # step_add_anthropic: the acceptance's first verb, at the COMMAND's own hidden
-# prompt. Its stdin is your terminal, so the value is read by the command and by
-# nothing else here: the gate a managed project's credential is created through
-# admits the owner's own terminal and refuses a pipe, a run and a --yes
-# (accountsAddOwnTerminal, internal/cli/accounts_managed.go), which is why this
-# check never holds the value and proves what it can prove — the shape.
+# prompt. It runs at your terminal — the terminal on its input, a terminal on
+# its output — so the value is read by the command and by nothing else here: the
+# gate a managed project's credential is created through admits the owner's own
+# terminal and refuses a pipe, a run and a --yes (accountsAddOwnTerminal,
+# internal/cli/accounts_managed.go), which is why this check never holds the
+# value and proves what it can prove — the shape.
 step_add_anthropic() {
   if [ -z "$INSTALLATION" ]; then
     unmeasured add-anthropic "there is no installation to declare the credential on (the installation row above says why), so no value was asked for: a value pasted for a check that cannot store it is a value in a transcript for nothing"
@@ -651,8 +760,8 @@ step_add_anthropic() {
   owner "Paste the value for the credential ${ANTHROPIC} (--type anthropic) now, at the COMMAND's own hidden prompt."
   owner "That prompt is the one the acceptance names: it is hidden by the command itself, what you type is read by the command and by nothing else here, and this check never holds it."
   owner ""
-  say "declaring the Anthropic-key credential: fugaro accounts add ${ANTHROPIC} --type anthropic (its own hidden prompt, on your terminal)"
-  run_bounded_tty "$CLI_TIMEOUT" add-anthropic "$SANDBOX" "$FUGARO_BIN" accounts add "$ANTHROPIC" --type anthropic
+  say "declaring the Anthropic-key credential: fugaro accounts add ${ANTHROPIC} --type anthropic (at your terminal: its own hidden prompt, and what it prints comes back here)"
+  run_at_terminal "$CLI_TIMEOUT" add-anthropic "$SANDBOX" "$FUGARO_BIN" accounts add "$ANTHROPIC" --type anthropic
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
     unmeasured add-anthropic "fugaro accounts add ${ANTHROPIC} --type anthropic did not finish inside ${CLI_TIMEOUT}s and was ended: what it printed is in $SCRATCH/add-anthropic.out and $SCRATCH/add-anthropic.err"
     return 0
@@ -698,7 +807,7 @@ step_nothing_echoed() {
 }
 
 # step_add_openrouter: the acceptance's second type, at the COMMAND's own hidden
-# prompt — its stdin is your terminal, so the prompt below is the command's.
+# prompt — it runs at your terminal, so the prompt below is the command's.
 step_add_openrouter() {
   if [ "$ANTHROPIC_DECLARED" != yes ]; then
     unmeasured add-openrouter "the Anthropic-key credential this check's own sandbox run is served by was not declared (its row above says why), so the second type was not declared either: fix that row and run the check again"
@@ -708,8 +817,8 @@ step_add_openrouter() {
   owner "Now paste the value for the credential ${OPENROUTER} (--type openrouter) at the COMMAND's own prompt."
   owner "That prompt is the one the acceptance names: it is hidden by the command itself, and what you type is read by the command and by nothing else here."
   owner ""
-  say "declaring the OpenRouter credential: fugaro accounts add ${OPENROUTER} --type openrouter (its own hidden prompt, on your terminal)"
-  run_bounded_tty "$CLI_TIMEOUT" add-openrouter "$SANDBOX" "$FUGARO_BIN" accounts add "$OPENROUTER" --type openrouter
+  say "declaring the OpenRouter credential: fugaro accounts add ${OPENROUTER} --type openrouter (at your terminal: its own hidden prompt, and what it prints comes back here)"
+  run_at_terminal "$CLI_TIMEOUT" add-openrouter "$SANDBOX" "$FUGARO_BIN" accounts add "$OPENROUTER" --type openrouter
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
     unmeasured add-openrouter "fugaro accounts add ${OPENROUTER} --type openrouter did not finish inside ${CLI_TIMEOUT}s and was ended: what it printed is in $SCRATCH/add-openrouter.out and $SCRATCH/add-openrouter.err"
     return 0
@@ -1443,6 +1552,7 @@ main() {
   trap on_error ERR
   write_reader
   write_sweeper
+  write_terminal_runner
   guard_xtrace
   guard_agent_session
   guard_belong
